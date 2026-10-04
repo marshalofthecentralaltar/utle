@@ -391,19 +391,19 @@ The model is one of three tiers that turn an utterance into an action. Each tier
 
 | Tier | Where | Answers | Network |
 |---|---|---|---|
-| Quick reply |  | yes, no, a number, undo, stop, help, sleep, wake | none |
-| Local command |  | moving through the document, reading aloud, deleting a paragraph by number | none |
-| Interpreter |  | everything else | model |
+| Quick reply | `core/quickReply.ts` | yes, no, a number, undo, stop, help, sleep, wake | none |
+| Local command | `core/localIntent.ts` | moving through the document, reading aloud, deleting a paragraph by number | none |
+| Interpreter | `server/interpret.ts` | everything else | model |
 
-A local command returns the same  the interpreter would, so the reducer treats both alike and edits still need yes. Only a whole utterance can be a local command. A sentence that merely starts like one goes to the interpreter.
+A local command returns the same `Intent` the interpreter would, so the reducer treats both alike and edits still need yes. Only a whole utterance can be a local command. A sentence that merely starts like one goes to the interpreter.
 
-Reading aloud is an effect.  with  sets  and emits ; a heading reads its whole section. While reading, any utterance emits  first. The recogniser stays open during reading so that stop can be heard, which is why reading can never be allowed to produce an edit by itself: an utterance heard while reading stops the reading and is then handled as usual, and the user is expected to wear a headset.
+Reading aloud is an effect. `navigate` with `readAloud` sets `reading` and emits `speak`; a heading reads its whole section. While reading, any handled utterance emits `hush` first. The recogniser stays open during reading so that stop can be heard, which is why reading can never be allowed to produce an edit by itself: an utterance heard while reading stops the reading and is then handled as usual, and the user is expected to wear a headset.
 
 The assembler releases at once anything the hook marks as instant (a quick reply or a local command on the current document), looking through the recogniser's alternatives while nothing is held. Everything else waits for the hold so a pause does not split a sentence.
 
 Hands-free start: the first visit needs one click, because browsers require a gesture to grant the microphone. After that the page starts listening by itself when permission is already held and the microphone was on last time.
 
-Proof without a person:  is a recogniser that replays a script with realistic timing, including a mid-sentence silence.  plays the demo hands-off. The voice check scores real recognition against the demo lines with word error rate (), per language, so "is Chrome's Estonian good enough" becomes a number.
+Proof without a person: `speech/scripted.ts` is a recogniser that replays a script with realistic timing, including a mid-sentence silence. `?voice=demo` plays the demo hands-off. The voice check scores real recognition against the demo lines with word error rate (`core/wer.ts`), per language, so "is Chrome's Estonian good enough" becomes a number.
 
 ## 19. Design
 
@@ -423,13 +423,24 @@ Proof without a person:  is a recogniser that replays a script with realistic ti
 | Red pencil: removed text, the listening dots | #C8281E | #FF6E61 |
 | Blue pencil: added text, focus, links | #1F45C4 | #94ABFF |
 | Highlighter: candidates | #FFE04A | #6E5A00 |
-| Caption strip | #14161A on any theme | #000000 |
+| Caption strip | #14161A | #000000 |
 
 **Type.** Atkinson Hyperlegible Next for everything. It was drawn for the Braille Institute for readers with low vision, which is the reason it is here. Weights 400, 600 and 800. Paragraph numbers use tabular figures. Sizes: 15 interface, 18 document, 22 captions, 40 wordmark. Sentence case everywhere.
 
 **Layout.** A desk with one sheet, left-aligned.
 
-\
+```
+ ütle        English | Eesti    Microphone on    Voice check
+   +----------------------------------+
+ 1 | Minutes: supplier onboarding     |   Changes
+ 2 | Attendees: ...                   |   Budget: Thursday becomes Friday
+ 6 ▌ ... to finance by Thursday Friday|   3 edits, 54 words, 0 hands
+   +----------------------------------+
+ ===============================================================
+  Change the budget deadline to Friday.
+  Budget: Thursday becomes Friday.          Say yes or no   Yes  No
+```
+
 The caption strip is fixed to the bottom and set large, so it reads from a metre away. The typed box lives in the strip; it is the fallback, not the product.
 
 **Rules.** No cards, no shadows, no rounded panels, no all-caps labels, no monospace labels, no gradient, no icon set. A rule or a fill appears only where it carries a state: the change bar, the highlight, the focus mark.
