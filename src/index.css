@@ -1,89 +1,193 @@
 @import 'tailwindcss';
 
-/* Tokens from the approved mock-up. Light is the base; dark redefines the same names. */
+/*
+ * A copy desk, operated by voice. See docs/ARCHITECTURE.md section 19.
+ *
+ * Two sets of tokens. The desk (page ground, controls, margin notes) follows the theme.
+ * The paper does not: a sheet stays white with dark ink in the dark theme too, the way a
+ * page stays a page on a dark desk. The pencils and the highlighter only ever mark paper.
+ */
 :root {
-  --bg: #f2f6f4;
-  --surface: #ffffff;
-  --ink: #15211d;
-  --muted: #566660;
-  --rule: #d3ddd8;
-  --accent: #0d6b5b;
-  --accent-soft: #ddefea;
-  --warn: #a85608;
-  --warn-soft: #fbebd6;
-  --bar: #103a33;
-  --bar-ink: #e6f2ee;
-  --bar-muted: #9cc4ba;
-  --live: #58d6b8;
-  --wait: #f0b25e;
-  --sleep: #7f958f;
+  --desk: #e4e6ea;
+  --ink: #14161a;
+  --soft: #5b6270;
+  --edge: #c4c9d1;
+  --link: #1f45c4;
+  --signal: #c8281e;
+
+  --paper: #ffffff;
+  --paper-ink: #14161a;
+  --paper-soft: #5b6270;
+  --paper-edge: #c4c9d1;
+  --pencil-red: #c8281e;
+  --pencil-blue: #1f45c4;
+  --mark: #ffe04a;
+
+  --strip: #14161a;
+  --strip-ink: #ffffff;
+  --strip-soft: #a9b0bd;
+  --strip-edge: #3a3f48;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #0f1614;
-    --surface: #172220;
-    --ink: #e3ece8;
-    --muted: #9baba5;
-    --rule: #2b3a36;
-    --accent: #5fcdb6;
-    --accent-soft: #17332d;
-    --warn: #eba85a;
-    --warn-soft: #3a2a14;
-    --bar: #0a2823;
-    --bar-ink: #e6f2ee;
-    --bar-muted: #8fb5ab;
+    --desk: #0e1013;
+    --ink: #eceef2;
+    --soft: #9aa3b2;
+    --edge: #30353d;
+    --link: #94abff;
+    --signal: #ff6e61;
+
+    --paper: #f1f2f4;
+    --paper-edge: #f1f2f4;
+
+    --strip: #000000;
+    --strip-edge: #30353d;
   }
 }
 
 @theme inline {
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
+  --color-desk: var(--desk);
   --color-ink: var(--ink);
-  --color-muted: var(--muted);
-  --color-rule: var(--rule);
-  --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
-  --color-warn: var(--warn);
-  --color-warn-soft: var(--warn-soft);
-  --color-bar: var(--bar);
-  --color-bar-ink: var(--bar-ink);
-  --color-bar-muted: var(--bar-muted);
-  --color-live: var(--live);
-  --color-wait: var(--wait);
-  --color-sleep: var(--sleep);
-  --font-display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
-  --font-body: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', Consolas, monospace;
+  --color-soft: var(--soft);
+  --color-edge: var(--edge);
+  --color-link: var(--link);
+  --color-signal: var(--signal);
+  --color-paper: var(--paper);
+  --color-paper-ink: var(--paper-ink);
+  --color-paper-soft: var(--paper-soft);
+  --color-paper-edge: var(--paper-edge);
+  --color-pencil-red: var(--pencil-red);
+  --color-pencil-blue: var(--pencil-blue);
+  --color-mark: var(--mark);
+  --color-strip: var(--strip);
+  --color-strip-ink: var(--strip-ink);
+  --color-strip-soft: var(--strip-soft);
+  --color-strip-edge: var(--strip-edge);
+  --font-sans: 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', Verdana, sans-serif;
 }
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--desk);
   color: var(--ink);
-  font-family: var(--font-body);
-  font-size: 17px;
-  line-height: 1.55;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
 }
 
+/* In the base layer, so a utility class on a button still wins. */
+@layer base {
+  button,
+  input {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+:focus-visible {
+  outline: 3px solid var(--link);
+  outline-offset: 2px;
+}
+
+/* The copy desk: a red pencil for what goes, a blue pencil for what comes. */
 del {
-  color: var(--warn);
+  color: var(--pencil-red);
   text-decoration: line-through;
+  text-decoration-thickness: 0.09em;
 }
 
 ins {
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 600;
+  color: var(--pencil-blue);
+  text-decoration: underline;
+  text-decoration-thickness: 0.09em;
+  text-underline-offset: 0.18em;
 }
 
-/* The old and the new text sit side by side; keep them from running together. */
 del + ins {
   margin-left: 0.3em;
 }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+/* A yellow highlighter for "which of these". */
+.highlight {
+  background: var(--mark);
+  color: var(--paper-ink);
+  padding: 0.08em 0.12em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/*
+ * The wordmark. The two dots of the ü are the listening light:
+ * hollow when the microphone is off, solid when listening, swelling with the voice.
+ */
+.wordmark {
+  display: inline-block;
+  font-weight: 800;
+  font-size: 3rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  user-select: none;
+}
+
+.wordmark-u {
+  position: relative;
+  display: inline-block;
+}
+
+.wordmark-dots {
+  position: absolute;
+  inset-inline: 0;
+  top: 0.06em;
+  display: flex;
+  justify-content: center;
+  gap: 0.11em;
+}
+
+.wordmark-dots i {
+  width: 0.19em;
+  height: 0.19em;
+  border-radius: 50%;
+  background: var(--signal);
+  transform: scale(calc(1 + var(--level, 0) * 0.85));
+  transition: transform 90ms linear;
+}
+
+.wordmark[data-voice='off'] .wordmark-dots i {
+  background: transparent;
+  box-shadow: inset 0 0 0 0.045em var(--soft);
+}
+
+.wordmark[data-voice='asleep'] .wordmark-dots i {
+  background: var(--soft);
+}
+
+.wordmark[data-voice='reading'] .wordmark-dots i {
+  background: var(--link);
+}
+
+.wordmark[data-voice='thinking'] .wordmark-dots i {
+  animation: wordmark-think 0.7s ease-in-out infinite alternate;
+}
+
+.wordmark[data-voice='thinking'] .wordmark-dots i + i {
+  animation-delay: 0.35s;
+}
+
+@keyframes wordmark-think {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wordmark-dots i {
+    transform: none;
+    transition: none;
+    animation: none !important;
+  }
 }
