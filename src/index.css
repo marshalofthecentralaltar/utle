@@ -1,0 +1,84 @@
+@import 'tailwindcss';
+
+/* Tokens from the approved mock-up. Light is the base; dark redefines the same names. */
+:root {
+  --bg: #f2f6f4;
+  --surface: #ffffff;
+  --ink: #15211d;
+  --muted: #566660;
+  --rule: #d3ddd8;
+  --accent: #0d6b5b;
+  --accent-soft: #ddefea;
+  --warn: #a85608;
+  --warn-soft: #fbebd6;
+  --bar: #103a33;
+  --bar-ink: #e6f2ee;
+  --bar-muted: #9cc4ba;
+  --live: #58d6b8;
+  --wait: #f0b25e;
+  --sleep: #7f958f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0f1614;
+    --surface: #172220;
+    --ink: #e3ece8;
+    --muted: #9baba5;
+    --rule: #2b3a36;
+    --accent: #5fcdb6;
+    --accent-soft: #17332d;
+    --warn: #eba85a;
+    --warn-soft: #3a2a14;
+    --bar: #0a2823;
+    --bar-ink: #e6f2ee;
+    --bar-muted: #8fb5ab;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bar: var(--bar);
+  --color-bar-ink: var(--bar-ink);
+  --color-bar-muted: var(--bar-muted);
+  --color-live: var(--live);
+  --color-wait: var(--wait);
+  --color-sleep: var(--sleep);
+  --font-display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+  --font-body: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, monospace;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+del {
+  color: var(--warn);
+  text-decoration: line-through;
+}
+
+ins {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
