@@ -11,7 +11,8 @@
     "test": "vitest run",
     "smoke": "tsx scripts/smoke.ts",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "rehearse": "vite --mode rehearsal"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

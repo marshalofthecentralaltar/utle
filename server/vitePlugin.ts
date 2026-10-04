@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import Anthropic from '@anthropic-ai/sdk'
 import type { Plugin } from 'vite'
+import { InterpretRequestSchema } from '../src/core/intent.ts'
 import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode, MessagesClient } from './interpret.ts'
+import { rehearse } from './rehearsal.ts'
 
 const DEFAULT_MODEL = 'claude-haiku-4-5'
 const MAX_BODY_BYTES = 1_000_000
@@ -39,11 +41,16 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
- * Hosts POST /api/interpret on the Vite dev server, so `npm run dev` is the whole product.
+ * Hosts the API on the Vite dev server, so `npm run dev` is the whole product.
+ *   POST /api/interpret  one utterance in, one Intent out
+ *   GET  /api/status     which interpreter is answering
  * The Anthropic key is read from the server's environment and never reaches the browser (principle P8).
+ * `vite --mode rehearsal` answers from the demo script instead of the model.
  */
 export function utleApi(): Plugin {
   let client: MessagesClient | null = null
+  let rehearsal = false
+  const model = (): string => process.env.UTLE_MODEL ?? DEFAULT_MODEL
 
   const getClient = (): MessagesClient => {
     if (!client) {
@@ -53,9 +60,27 @@ export function utleApi(): Plugin {
     return client
   }
 
+  const answer = async (input: unknown) => {
+    if (!rehearsal) return interpret(input, { client: getClient(), model: model() })
+    const parsed = InterpretRequestSchema.safeParse(input)
+    if (!parsed.success) throw new InterpretError('bad_request', 'The request is malformed.')
+    return rehearse(parsed.data)
+  }
+
   return {
     name: 'utle-api',
+    configResolved(config) {
+      rehearsal = config.mode === 'rehearsal'
+    },
     configureServer(server) {
+      server.middlewares.use('/api/status', (req, res, next) => {
+        if (req.method !== 'GET') {
+          next()
+          return
+        }
+        send(res, 200, rehearsal ? { mode: 'rehearsal', model: null } : { mode: 'live', model: model() })
+      })
+
       server.middlewares.use('/api/interpret', (req, res, next) => {
         if (req.method !== 'POST') {
           next()
@@ -70,8 +95,7 @@ export function utleApi(): Plugin {
               if (error instanceof InterpretError) throw error
               throw new InterpretError('bad_request', 'The request body is not JSON.')
             }
-            const model = process.env.UTLE_MODEL ?? DEFAULT_MODEL
-            send(res, 200, await interpret(input, { client: getClient(), model }))
+            send(res, 200, await answer(input))
           } catch (error) {
             const known =
               error instanceof InterpretError

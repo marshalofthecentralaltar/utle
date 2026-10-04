@@ -41,7 +41,7 @@ function notUnderstood(message: string): Intent {
 }
 
 /** Why an intent cannot be used on this document, or null when it can. The text goes back to the model. */
-function problemWith(doc: Doc, intent: Intent): string | null {
+export function problemWith(doc: Doc, intent: Intent): string | null {
   switch (intent.kind) {
     case 'propose_edit': {
       const result = applyOps(doc, intent.ops)
