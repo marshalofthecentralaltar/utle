@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
-    "diff": "^9.0.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zod": "^4.6.5"
