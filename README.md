@@ -54,7 +54,7 @@ sheet are the measurements for the pitch.
 ## Checks
 
 ```
-npm run check      # typecheck, lint, 263 tests, build
+npm run check      # typecheck, lint, 269 tests, build
 npm run smoke      # the demo script through the real model; spends a few cents
 ```
 

@@ -295,7 +295,9 @@ Chrome ends a result on a short silence, so a pause to think splits one sentence
 finals. The assembler holds a final for `holdMs` (1200) and joins it with what follows; any
 interim activity restarts the hold. A final that is a quick reply on its own, with nothing
 held, is released at once so yes and no stay instant. The recogniser restarts itself when
-Chrome ends the session. The interpreter is language-agnostic; only the recogniser has a language.
+Chrome ends the session, except after an error the user is shown and must act on (microphone
+blocked or missing, speech service unreachable, language unsupported): then it stops until it is
+turned on again. The interpreter is language-agnostic; only the recogniser has a language.
 
 ## 12. Server
 
@@ -379,7 +381,7 @@ Gate: `npm run check` runs typecheck, lint, tests and build. All four green befo
 
 | Thing | State |
 |---|---|
-| Core, server and speech units | 263 tests pass. |
+| Core, server and speech units | 269 tests pass. |
 | Interface | Walked in Chrome on localhost in rehearsal mode with typed input: preview, yes, no by key, move, which-one, repair, insert, navigation, undo, sleep, read aloud, stop, help. |
 | Voice path without a person (M3) | The scripted recogniser played the demo hands-off from page load to asleep: three edits standing after an undo, 45 words, 0 hands. Its first line is sent as two finals with a silence between and arrived as one utterance. |
 | Voice check | Ran in scripted mode: 3 of 41 words wrong, 7.3 percent, from the three slips written into the script. Real recognition is not measured yet. |

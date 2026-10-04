@@ -41,12 +41,12 @@ const ERRORS: Record<string, string> = {
   'not-allowed': 'The microphone is blocked for this page. Allow it in the address bar, or type instead.',
   'service-not-allowed': 'Speech recognition is not allowed in this browser. Type instead.',
   'audio-capture': 'No microphone was found. Plug one in, or type instead.',
-  network: 'Speech recognition needs an internet connection. Type instead.',
+  network: 'This browser could not reach its speech service. Open the page in Google Chrome and check the connection, or type instead.',
   'language-not-supported': 'This browser cannot recognise that language. Switch language, or type instead.',
 }
 
 /** Errors after which restarting would only fail again. */
-const FATAL = new Set(['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'])
+const FATAL = new Set(['not-allowed', 'service-not-allowed', 'audio-capture', 'network', 'language-not-supported'])
 
 /**
  * Chrome's built-in speech recognition behind the Recognizer interface.
