@@ -2,8 +2,10 @@ import type { Candidate } from './candidates.ts'
 import { numberOf } from './document.ts'
 import type { Doc } from './document.ts'
 import type { Intent, InterpretRequest, Pending } from './intent.ts'
+import { localIntent, sectionText } from './localIntent.ts'
 import { applyOps } from './ops.ts'
 import { quickReply } from './quickReply.ts'
+import type { Quick } from './quickReply.ts'
 
 export type Mode = 'listening' | 'thinking' | 'confirming' | 'choosing' | 'asleep'
 
@@ -26,6 +28,10 @@ export interface Session {
   pending: Pending | null
   choice: Choice | null
   focusId: string | null
+  /** True while the editor is reading text aloud. */
+  reading: boolean
+  /** True while the list of things to say is shown. */
+  help: boolean
   /** The last utterance, as recognised. */
   heard: string
   /** What the editor made of it. */
@@ -47,8 +53,14 @@ export type Event =
   | { type: 'key'; key: 'confirm' | 'reject' }
   | { type: 'intent'; seq: number; intent: Intent }
   | { type: 'interpretFailed'; seq: number; message: string }
+  | { type: 'speechEnded' }
 
-export type Effect = { type: 'interpret'; seq: number; request: InterpretRequest }
+export type Effect =
+  | { type: 'interpret'; seq: number; request: InterpretRequest }
+  /** Read this text aloud. */
+  | { type: 'speak'; text: string }
+  /** Stop reading aloud. */
+  | { type: 'hush' }
 
 export interface StepResult {
   state: Session
@@ -60,6 +72,7 @@ const PROMPT = {
   thinking: 'Working on it.',
   confirming: 'Say yes or no, or only the word to change.',
   asleep: 'Say wake up to continue.',
+  reading: 'Say stop to end the reading.',
 } as const
 
 function choosingPrompt(count: number): string {
@@ -76,6 +89,8 @@ export function initialSession(doc: Doc): Session {
     pending: null,
     choice: null,
     focusId: null,
+    reading: false,
+    help: false,
     heard: '',
     understood: 'Waiting for you to speak.',
     prompt: PROMPT.listening,
@@ -147,94 +162,7 @@ function sleep(s: Session): Session {
   }
 }
 
-function onUtterance(s: Session, text: string, source: 'voice' | 'typed'): StepResult {
-  const heard = text.trim()
-  if (heard === '') return done(s)
-  if (s.mode === 'thinking') return done({ ...s, understood: 'One moment, still working on the last one.' })
-
-  const quick = quickReply(heard, { expectNumber: s.mode === 'choosing' })
-  if (s.mode === 'asleep') {
-    if (quick?.kind !== 'wake') return done(s)
-  }
-
-  const counted: Session = {
-    ...s,
-    heard,
-    words: s.words + wordCount(heard),
-    hands: s.hands + (source === 'typed' ? 1 : 0),
-  }
-
-  if (counted.mode === 'asleep') return done(toListening(counted, 'Listening.'))
-  if (quick?.kind === 'sleep') return done(sleep(counted))
-  if (quick?.kind === 'wake') return done({ ...counted, understood: 'Already listening.' })
-
-  switch (counted.mode) {
-    case 'listening': {
-      if (quick?.kind === 'undo') {
-        const previous = counted.history.at(-1)
-        if (!previous) return done({ ...counted, understood: 'Nothing to undo.' })
-        const undone = counted.log.at(-1) ?? 'the last edit'
-        return done({
-          ...counted,
-          doc: previous,
-          history: counted.history.slice(0, -1),
-          log: counted.log.slice(0, -1),
-          understood: `Undone: ${undone}`,
-        })
-      }
-      if (quick?.kind === 'number') {
-        const block = counted.doc[quick.n - 1]
-        if (!block) return done({ ...counted, understood: `There is no paragraph ${quick.n}.` })
-        return done({ ...counted, focusId: block.id, understood: `Paragraph ${quick.n}.` })
-      }
-      if (quick?.kind === 'yes' || quick?.kind === 'no') {
-        return done({ ...counted, understood: 'Nothing to confirm.' })
-      }
-      return ask(counted, heard, { pending: null, choice: null }, 'listening')
-    }
-
-    case 'confirming': {
-      if (quick?.kind === 'yes') return done(accept(counted))
-      if (quick?.kind === 'no' || quick?.kind === 'undo') {
-        return done(toListening(counted, 'Discarded. Nothing changed.'))
-      }
-      return ask(counted, heard, { pending: counted.pending, choice: null }, 'confirming')
-    }
-
-    case 'choosing': {
-      const choice = counted.choice
-      if (!choice) return done(toListening(counted, 'Nothing to choose.'))
-      if (quick?.kind === 'no' || quick?.kind === 'undo') {
-        return done(toListening(counted, 'Dropped. Nothing changed.'))
-      }
-      if (quick?.kind === 'number') {
-        if (quick.n > choice.candidates.length) {
-          return done({ ...counted, understood: `There are ${choice.candidates.length} to choose from.` })
-        }
-        const context = { utterance: choice.utterance, candidates: choice.candidates, picked: quick.n - 1 }
-        return ask(counted, choice.utterance, { pending: null, choice: context }, 'choosing')
-      }
-      const context = { utterance: choice.utterance, candidates: choice.candidates, picked: null }
-      return ask(counted, heard, { pending: null, choice: context }, 'choosing')
-    }
-
-    // 'thinking' and 'asleep' returned above; the compiler cannot see that through the copy.
-    default:
-      return done(counted)
-  }
-}
-
-function onKey(s: Session, key: 'confirm' | 'reject'): StepResult {
-  if (s.mode === 'confirming') {
-    const acted = { ...s, hands: s.hands + 1 }
-    return done(key === 'confirm' ? accept(acted) : toListening(acted, 'Discarded. Nothing changed.'))
-  }
-  if (s.mode === 'choosing' && key === 'reject') {
-    return done(toListening({ ...s, hands: s.hands + 1 }, 'Dropped. Nothing changed.'))
-  }
-  return done(s)
-}
-
+/** Acts on an Intent, whether it came from the interpreter or from a local command. */
 function onIntent(s: Session, intent: Intent): StepResult {
   switch (intent.kind) {
     case 'propose_edit': {
@@ -268,7 +196,14 @@ function onIntent(s: Session, intent: Intent): StepResult {
     case 'navigate': {
       const number = numberOf(s.doc, intent.blockId)
       if (number === 0) return done(toResume(s, 'I could not find that place.'))
-      return done({ ...toResume(s, `Paragraph ${number}.`), focusId: intent.blockId })
+      if (!intent.readAloud) return done({ ...toResume(s, `Paragraph ${number}.`), focusId: intent.blockId })
+      const state: Session = {
+        ...toResume(s, `Reading paragraph ${number}.`),
+        focusId: intent.blockId,
+        reading: true,
+        prompt: PROMPT.reading,
+      }
+      return { state, effects: [{ type: 'speak', text: sectionText(s.doc, intent.blockId) }] }
     }
 
     case 'not_understood':
@@ -276,9 +211,112 @@ function onIntent(s: Session, intent: Intent): StepResult {
   }
 }
 
+/** What one utterance does in the three modes that accept speech. The session is already counted. */
+function handle(s: Session, heard: string, quick: Quick | null): StepResult {
+  if (quick?.kind === 'sleep') return done(sleep(s))
+  if (quick?.kind === 'wake') return done({ ...s, understood: 'Already listening.' })
+  if (quick?.kind === 'help') return done({ ...s, help: true, understood: 'Here is what you can say.' })
+
+  switch (s.mode) {
+    case 'listening': {
+      if (quick?.kind === 'undo') {
+        const previous = s.history.at(-1)
+        if (!previous) return done({ ...s, understood: 'Nothing to undo.' })
+        const undone = s.log.at(-1) ?? 'the last edit'
+        return done({
+          ...s,
+          doc: previous,
+          history: s.history.slice(0, -1),
+          log: s.log.slice(0, -1),
+          understood: `Undone: ${undone}`,
+        })
+      }
+      if (quick?.kind === 'number') {
+        const block = s.doc[quick.n - 1]
+        if (!block) return done({ ...s, understood: `There is no paragraph ${quick.n}.` })
+        return done({ ...s, focusId: block.id, understood: `Paragraph ${quick.n}.` })
+      }
+      if (quick?.kind === 'yes' || quick?.kind === 'no') return done({ ...s, understood: 'Nothing to confirm.' })
+
+      const local = localIntent(heard, s.doc, s.focusId)
+      if (local) return onIntent({ ...s, resume: 'listening' }, local)
+      return ask(s, heard, { pending: null, choice: null }, 'listening')
+    }
+
+    case 'confirming': {
+      if (quick?.kind === 'yes') return done(accept(s))
+      if (quick?.kind === 'no' || quick?.kind === 'undo') return done(toListening(s, 'Discarded. Nothing changed.'))
+      const local = localIntent(heard, s.doc, s.focusId)
+      if (local?.kind === 'navigate') return onIntent({ ...s, resume: 'confirming' }, local)
+      return ask(s, heard, { pending: s.pending, choice: null }, 'confirming')
+    }
+
+    case 'choosing': {
+      const choice = s.choice
+      if (!choice) return done(toListening(s, 'Nothing to choose.'))
+      if (quick?.kind === 'no' || quick?.kind === 'undo') return done(toListening(s, 'Dropped. Nothing changed.'))
+      if (quick?.kind === 'number') {
+        if (quick.n > choice.candidates.length) {
+          return done({ ...s, understood: `There are ${choice.candidates.length} to choose from.` })
+        }
+        const context = { utterance: choice.utterance, candidates: choice.candidates, picked: quick.n - 1 }
+        return ask(s, choice.utterance, { pending: null, choice: context }, 'choosing')
+      }
+      const local = localIntent(heard, s.doc, s.focusId)
+      if (local?.kind === 'navigate') return onIntent({ ...s, resume: 'choosing' }, local)
+      const context = { utterance: choice.utterance, candidates: choice.candidates, picked: null }
+      return ask(s, heard, { pending: null, choice: context }, 'choosing')
+    }
+
+    // 'thinking' and 'asleep' never reach here.
+    default:
+      return done(s)
+  }
+}
+
+function onUtterance(s: Session, text: string, source: 'voice' | 'typed'): StepResult {
+  const heard = text.trim()
+  if (heard === '') return done(s)
+  if (s.mode === 'thinking') return done({ ...s, understood: 'One moment, still working on the last one.' })
+
+  const quick = quickReply(heard, { expectNumber: s.mode === 'choosing' })
+  if (s.mode === 'asleep' && quick?.kind !== 'wake') return done(s)
+
+  const wasReading = s.reading
+  const counted: Session = {
+    ...s,
+    heard,
+    help: false,
+    reading: false,
+    words: s.words + wordCount(heard),
+    hands: s.hands + (source === 'typed' ? 1 : 0),
+  }
+  // Anything heard while reading stops the reading first (spec section 18).
+  const hush: Effect[] = wasReading ? [{ type: 'hush' }] : []
+
+  if (counted.mode === 'asleep') return done(toListening(counted, 'Listening.'))
+  if (quick?.kind === 'stop') {
+    return { state: { ...toResume(counted, wasReading ? 'Stopped reading.' : 'Nothing is being read.') }, effects: hush }
+  }
+
+  const result = handle(counted, heard, quick)
+  return { state: result.state, effects: [...hush, ...result.effects] }
+}
+
+function onKey(s: Session, key: 'confirm' | 'reject'): StepResult {
+  if (s.mode === 'confirming') {
+    const acted = { ...s, hands: s.hands + 1 }
+    return done(key === 'confirm' ? accept(acted) : toListening(acted, 'Discarded. Nothing changed.'))
+  }
+  if (s.mode === 'choosing' && key === 'reject') {
+    return done(toListening({ ...s, hands: s.hands + 1 }, 'Dropped. Nothing changed.'))
+  }
+  return done(s)
+}
+
 /**
  * The whole conversation logic. Pure: returns the next session and the effects to run.
- * See the transition table in docs/ARCHITECTURE.md section 8.
+ * See the transition tables in docs/ARCHITECTURE.md sections 8 and 18.
  */
 export function step(s: Session, e: Event): StepResult {
   switch (e.type) {
@@ -292,5 +330,7 @@ export function step(s: Session, e: Event): StepResult {
     case 'interpretFailed':
       if (s.mode !== 'thinking' || e.seq !== s.seq) return done(s)
       return done(toResume(s, e.message))
+    case 'speechEnded':
+      return done(s.reading ? { ...s, reading: false, prompt: s.mode === 'listening' ? PROMPT.listening : s.prompt } : s)
   }
 }

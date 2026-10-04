@@ -1,11 +1,16 @@
-import { quickReply } from '../core/quickReply.ts'
-
 export interface Assembler {
-  /** A final result from the recogniser. */
-  final(text: string): void
+  /** A final result from the recogniser, with any other readings it offered. */
+  final(text: string, alternatives?: readonly string[]): void
   /** The user is audibly still speaking (an interim result arrived). */
   activity(): void
   dispose(): void
+}
+
+export interface AssemblerOptions {
+  holdMs: number
+  onUtterance(text: string): void
+  /** True for text that should not wait: a one-word reply or a command that needs no model. */
+  isInstant(text: string): boolean
 }
 
 /**
@@ -13,9 +18,10 @@ export interface Assembler {
  *
  * Recognisers end a result on a short silence, so a pause to think splits one sentence in two.
  * A final is held for holdMs and joined with whatever follows; speech activity restarts the hold.
- * A lone quick reply (yes, no, a number) is released at once so one-word answers stay instant.
+ * With nothing held, an instant command is released at once, and the recogniser's other
+ * readings are searched for one ("to" first and "two" second gives "two").
  */
-export function createAssembler(opts: { holdMs: number; onUtterance(text: string): void }): Assembler {
+export function createAssembler(opts: AssemblerOptions): Assembler {
   let held: string[] = []
   let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -38,12 +44,15 @@ export function createAssembler(opts: { holdMs: number; onUtterance(text: string
   }
 
   return {
-    final(text) {
+    final(text, alternatives = []) {
       const clean = text.trim()
       if (clean === '') return
-      if (held.length === 0 && quickReply(clean, { expectNumber: true }) !== null) {
-        opts.onUtterance(clean)
-        return
+      if (held.length === 0) {
+        const instant = [clean, ...alternatives.map((a) => a.trim())].find((reading) => reading !== '' && opts.isInstant(reading))
+        if (instant !== undefined) {
+          opts.onUtterance(instant)
+          return
+        }
       }
       held.push(clean)
       hold()

@@ -24,7 +24,7 @@ function play(lines: string[]): Session {
   for (const text of lines) {
     const said = step(session, { type: 'utterance', text, source: 'voice' })
     session = said.state
-    const effect = said.effects[0]
+    const effect = said.effects.find((e) => e.type === 'interpret')
     if (effect) {
       session = step(session, { type: 'intent', seq: effect.seq, intent: rehearse(effect.request) }).state
     }

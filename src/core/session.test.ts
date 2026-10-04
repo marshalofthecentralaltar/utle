@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { SAMPLE_DOC } from './document.ts'
 import type { Doc } from './document.ts'
-import type { Intent } from './intent.ts'
+import type { Intent, InterpretRequest } from './intent.ts'
+import { sectionText } from './localIntent.ts'
 import { initialSession, step } from './session.ts'
 import type { Effect, Event, Session } from './session.ts'
 import { clone, deepFreeze } from './testUtil.ts'
@@ -44,13 +45,19 @@ function say(text: string, source: 'voice' | 'typed' = 'voice'): Event {
 /** Says a line and, when the reducer asks the interpreter, answers with the given intent. */
 function converse(start: Session, text: string, intent?: Intent): Session {
   const first = run(start, say(text))
-  const request = first.effects[0]
+  const request = first.effects.find((effect) => effect.type === 'interpret')
   if (!request) {
     if (intent) throw new Error(`"${text}" made no request but an intent was scripted`)
     return first.state
   }
   if (!intent) throw new Error(`"${text}" made a request but no intent was scripted`)
   return run(first.state, { type: 'intent', seq: request.seq, intent }).state
+}
+
+/** The request of the interpret effect, when the reducer asked the interpreter. */
+function requestOf(effects: Effect[]): InterpretRequest | undefined {
+  for (const effect of effects) if (effect.type === 'interpret') return effect.request
+  return undefined
 }
 
 function textOf(doc: Doc, id: string): string {
@@ -169,9 +176,9 @@ describe('confirming', () => {
     const before = confirming()
     const { state, effects } = run(before, say('Not Friday. Monday.'))
     expect(state.mode).toBe('thinking')
-    expect(effects[0]?.request.pending).toEqual(before.pending)
-    expect(effects[0]?.request.utterance).toBe('Not Friday. Monday.')
-    expect(effects[0]?.request.choice).toBeNull()
+    expect(requestOf(effects)?.pending).toEqual(before.pending)
+    expect(requestOf(effects)?.utterance).toBe('Not Friday. Monday.')
+    expect(requestOf(effects)?.choice).toBeNull()
   })
 
   it('replaces the proposal when the repair comes back', () => {
@@ -200,7 +207,7 @@ describe('choosing', () => {
     const before = choosing()
     const { state, effects } = run(before, say('Two.'))
     expect(state.mode).toBe('thinking')
-    expect(effects[0]?.request).toEqual({
+    expect(requestOf(effects)).toEqual({
       doc: SAMPLE_DOC,
       utterance: 'Shorten the sentence about the supplier.',
       pending: null,
@@ -214,9 +221,9 @@ describe('choosing', () => {
 
   it('accepts recogniser homophones for numbers', () => {
     const { effects } = run(choosing(), say('to'))
-    expect(effects[0]?.request.choice?.picked).toBe(1)
+    expect(requestOf(effects)?.choice?.picked).toBe(1)
     const four = run(choosing(), say('for'))
-    expect(four.effects[0]?.request.choice?.picked).toBe(3)
+    expect(requestOf(four.effects)?.choice?.picked).toBe(3)
   })
 
   it('asks again when the number is out of range', () => {
@@ -236,8 +243,8 @@ describe('choosing', () => {
   it('sends any other answer to the interpreter with the question as context', () => {
     const before = choosing()
     const { effects } = run(before, say('the one about invoices'))
-    expect(effects[0]?.request.utterance).toBe('the one about invoices')
-    expect(effects[0]?.request.choice).toEqual({
+    expect(requestOf(effects)?.utterance).toBe('the one about invoices')
+    expect(requestOf(effects)?.choice).toEqual({
       utterance: 'Shorten the sentence about the supplier.',
       candidates: before.choice?.candidates,
       picked: null,
@@ -296,7 +303,7 @@ describe('thinking', () => {
   })
 
   it('focuses the block on navigate without asking for confirmation', () => {
-    const s = converse(initialSession(SAMPLE_DOC), 'Go to the summary.', {
+    const s = converse(initialSession(SAMPLE_DOC), 'Take me to the part about the pilot.', {
       kind: 'navigate',
       blockId: 'b3',
       readAloud: false,
@@ -306,7 +313,7 @@ describe('thinking', () => {
   })
 
   it('keeps a pending proposal across navigation', () => {
-    const s = converse(confirming(), 'Go to the summary.', { kind: 'navigate', blockId: 'b3', readAloud: false })
+    const s = converse(confirming(), 'Take me to the part about the pilot.', { kind: 'navigate', blockId: 'b3', readAloud: false })
     expect(s.mode).toBe('confirming')
     expect(s.pending).not.toBeNull()
     expect(s.focusId).toBe('b3')
@@ -394,6 +401,141 @@ describe('counting', () => {
     expect(voice.hands).toBe(0)
     const idleKey = run(initialSession(SAMPLE_DOC), { type: 'key', key: 'confirm' }).state
     expect(idleKey.hands).toBe(0)
+  })
+})
+
+describe('local commands', () => {
+  it('handles a local command at once, without a request', () => {
+    const start = initialSession(SAMPLE_DOC)
+    const { state, effects } = run(start, say('go to budget'))
+    expect(state.mode).toBe('listening')
+    expect(state.focusId).toBe('b5')
+    expect(state.seq).toBe(start.seq)
+    expect(effects).toEqual([])
+  })
+
+  it('deletes a paragraph by number with no request at any point, and still asks for yes', () => {
+    const proposed = run(initialSession(SAMPLE_DOC), say('delete paragraph 2'))
+    expect(proposed.state.mode).toBe('confirming')
+    expect(proposed.state.doc).toEqual(SAMPLE_DOC)
+    expect(proposed.effects).toEqual([])
+    const applied = run(proposed.state, say('yes'))
+    expect(applied.state.doc.map((b) => b.id)).not.toContain('b2')
+    expect(applied.effects).toEqual([])
+  })
+
+  it('moves locally while a proposal is pending and keeps the proposal', () => {
+    const before = confirming()
+    const { state, effects } = run(before, say('go to budget'))
+    expect(state.mode).toBe('confirming')
+    expect(state.pending).toEqual(before.pending)
+    expect(state.focusId).toBe('b5')
+    expect(effects).toEqual([])
+  })
+
+  it('sends anything but a move to the interpreter while a proposal is pending', () => {
+    const before = confirming()
+    const { state, effects } = run(before, say('delete paragraph 2'))
+    expect(state.mode).toBe('thinking')
+    expect(requestOf(effects)?.pending).toEqual(before.pending)
+  })
+
+  it('moves locally while a question is open and keeps the question', () => {
+    const before = choosing()
+    const { state } = run(before, say('go to budget'))
+    expect(state.mode).toBe('choosing')
+    expect(state.choice).toEqual(before.choice)
+    expect(state.focusId).toBe('b5')
+  })
+})
+
+describe('reading aloud', () => {
+  function reading(): Session {
+    return run(initialSession(SAMPLE_DOC), say('read paragraph 6')).state
+  }
+
+  it('speaks the paragraph and marks the session as reading', () => {
+    const { state, effects } = run(initialSession(SAMPLE_DOC), say('read paragraph 6'))
+    expect(state.reading).toBe(true)
+    expect(state.focusId).toBe('b6')
+    expect(state.mode).toBe('listening')
+    expect(effects).toEqual([{ type: 'speak', text: textOf(SAMPLE_DOC, 'b6') }])
+  })
+
+  it('speaks the whole section when the block is a heading', () => {
+    const { effects } = run(initialSession(SAMPLE_DOC), say('read the summary'))
+    expect(effects).toEqual([{ type: 'speak', text: sectionText(SAMPLE_DOC, 'b3') }])
+  })
+
+  it('speaks when the interpreter asks for it', () => {
+    const asked = run(initialSession(SAMPLE_DOC), say('Mine kokkuvõtte juurde ja loe see ette.'))
+    const { state, effects } = run(asked.state, {
+      type: 'intent',
+      seq: asked.state.seq,
+      intent: { kind: 'navigate', blockId: 'b3', readAloud: true },
+    })
+    expect(state.reading).toBe(true)
+    expect(effects).toEqual([{ type: 'speak', text: sectionText(SAMPLE_DOC, 'b3') }])
+  })
+
+  it('stops on stop', () => {
+    const { state, effects } = run(reading(), say('stop'))
+    expect(state.reading).toBe(false)
+    expect(effects).toEqual([{ type: 'hush' }])
+    expect(state.mode).toBe('listening')
+  })
+
+  it('stops first and then handles any other utterance', () => {
+    const moved = run(reading(), say('next'))
+    expect(moved.state.reading).toBe(false)
+    expect(moved.state.focusId).toBe('b7')
+    expect(moved.effects).toEqual([{ type: 'hush' }])
+
+    const asked = run(reading(), say('Change the budget deadline to Friday.'))
+    expect(asked.state.reading).toBe(false)
+    expect(asked.effects.map((effect) => effect.type)).toEqual(['hush', 'interpret'])
+  })
+
+  it('can start a new reading while one is running', () => {
+    const { state, effects } = run(reading(), say('read paragraph 2'))
+    expect(state.reading).toBe(true)
+    expect(effects).toEqual([{ type: 'hush' }, { type: 'speak', text: textOf(SAMPLE_DOC, 'b2') }])
+  })
+
+  it('says so when stop is said and nothing is being read', () => {
+    const start = initialSession(SAMPLE_DOC)
+    const { state, effects } = run(start, say('stop'))
+    expect(state.reading).toBe(false)
+    expect(state.understood).not.toBe(start.understood)
+    expect(effects).toEqual([])
+  })
+
+  it('ends when the speech ends', () => {
+    const { state, effects } = run(reading(), { type: 'speechEnded' })
+    expect(state.reading).toBe(false)
+    expect(effects).toEqual([])
+  })
+
+  it('goes quiet when told to sleep', () => {
+    const { state, effects } = run(reading(), say('stop listening'))
+    expect(state.mode).toBe('asleep')
+    expect(state.reading).toBe(false)
+    expect(effects).toEqual([{ type: 'hush' }])
+  })
+
+  it('never turns something heard while reading into an edit without yes', () => {
+    const { state } = run(reading(), say('delete paragraph 2'))
+    expect(state.mode).toBe('confirming')
+    expect(state.doc).toEqual(SAMPLE_DOC)
+  })
+})
+
+describe('help', () => {
+  it('opens on help and closes on the next utterance', () => {
+    const open = run(initialSession(SAMPLE_DOC), say('help'))
+    expect(open.state.help).toBe(true)
+    expect(open.effects).toEqual([])
+    expect(run(open.state, say('six')).state.help).toBe(false)
   })
 })
 

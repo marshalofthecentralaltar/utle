@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   for (const [index, line] of LINES.entries()) {
     const said = step(session, { type: 'utterance', text: line, source: 'voice' })
     session = said.state
-    const effect = said.effects[0]
+    const effect = said.effects.find((e) => e.type === 'interpret')
     let outcome = '(local)'
 
     if (effect) {

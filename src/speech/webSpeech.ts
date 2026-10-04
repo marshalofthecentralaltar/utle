@@ -2,14 +2,19 @@ import { createAssembler } from './assembler.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
 
 /** The parts of the browser's SpeechRecognition this adapter uses. */
+interface RecognitionResult extends ArrayLike<{ transcript: string }> {
+  isFinal: boolean
+}
+
 interface RecognitionResultEvent {
   resultIndex: number
-  results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }>
+  results: ArrayLike<RecognitionResult>
 }
 
 interface RecognitionLike {
   continuous: boolean
   interimResults: boolean
+  maxAlternatives: number
   lang: string
   onresult: ((event: RecognitionResultEvent) => void) | null
   onend: (() => void) | null
@@ -20,7 +25,7 @@ interface RecognitionLike {
 
 type RecognitionConstructor = new () => RecognitionLike
 
-const HOLD_MS = 1200
+export const HOLD_MS = 1200
 const RESTART_MS = 250
 
 function recognitionConstructor(): RecognitionConstructor | null {
@@ -47,9 +52,13 @@ const FATAL = new Set(['not-allowed', 'service-not-allowed', 'audio-capture', 'l
  * Chrome's built-in speech recognition behind the Recognizer interface.
  * Keeps listening until stopped: Chrome ends a session after a silence, so it is restarted.
  */
-export function createWebSpeechRecognizer(handlers: RecognizerHandlers, initialLang: string): Recognizer {
+export function createWebSpeechRecognizer(
+  handlers: RecognizerHandlers,
+  initialLang: string,
+  isInstant: (text: string) => boolean,
+): Recognizer {
   const Recognition = recognitionConstructor()
-  const assembler = createAssembler({ holdMs: HOLD_MS, onUtterance: handlers.onUtterance })
+  const assembler = createAssembler({ holdMs: HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
   let lang = initialLang
   let running = false
   let current: RecognitionLike | null = null
@@ -60,17 +69,20 @@ export function createWebSpeechRecognizer(handlers: RecognizerHandlers, initialL
     const recognition = new Recognition()
     recognition.continuous = true
     recognition.interimResults = true
+    recognition.maxAlternatives = 3
     recognition.lang = lang
 
     recognition.onresult = (event) => {
       let interim = ''
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i]
-        const transcript = result?.[0]?.transcript ?? ''
-        if (result?.isFinal) {
-          assembler.final(transcript)
+        if (!result) continue
+        const readings = Array.from({ length: result.length }, (_, k) => result[k]?.transcript ?? '')
+        const [first = '', ...alternatives] = readings
+        if (result.isFinal) {
+          assembler.final(first, alternatives)
         } else {
-          interim += transcript
+          interim += first
         }
       }
       if (interim.trim() !== '') assembler.activity()

@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { quickReply } from '../core/quickReply.ts'
 import { createAssembler } from './assembler.ts'
 
 describe('assembler', () => {
   let heard: string[]
-  const make = () => createAssembler({ holdMs: 1200, onUtterance: (text) => heard.push(text) })
+  const make = () =>
+    createAssembler({
+      holdMs: 1200,
+      onUtterance: (text) => heard.push(text),
+      isInstant: (text) => quickReply(text, { expectNumber: true }) !== null || text === 'next',
+    })
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -43,21 +49,50 @@ describe('assembler', () => {
     expect(heard).toEqual(['change the deadline'])
   })
 
-  it('releases a lone quick reply at once', () => {
+  it('releases a lone instant command at once', () => {
     const a = make()
     a.final(' Yes. ')
     expect(heard).toEqual(['Yes.'])
     a.final('two')
-    expect(heard).toEqual(['Yes.', 'two'])
+    a.final('next')
+    expect(heard).toEqual(['Yes.', 'two', 'next'])
   })
 
-  it('joins a quick word that follows held text instead of releasing it alone', () => {
+  it('joins an instant word that follows held text instead of releasing it alone', () => {
     const a = make()
     a.final('change the deadline')
     a.final('to')
     expect(heard).toEqual([])
     vi.advanceTimersByTime(1200)
     expect(heard).toEqual(['change the deadline to'])
+  })
+
+  it('takes the alternative that is an instant command when the first reading is not', () => {
+    const a = make()
+    a.final('yes sir', ['yes'])
+    expect(heard).toEqual(['yes'])
+  })
+
+  it('prefers the first reading when it is itself instant', () => {
+    const a = make()
+    a.final('no', ['yes'])
+    expect(heard).toEqual(['no'])
+  })
+
+  it('ignores alternatives once something is held', () => {
+    const a = make()
+    a.final('change the deadline')
+    a.final('too Friday', ['two'])
+    vi.advanceTimersByTime(1200)
+    expect(heard).toEqual(['change the deadline too Friday'])
+  })
+
+  it('holds the first reading when no reading is instant', () => {
+    const a = make()
+    a.final('change it', ['chain it'])
+    expect(heard).toEqual([])
+    vi.advanceTimersByTime(1200)
+    expect(heard).toEqual(['change it'])
   })
 
   it('ignores empty finals and activity with nothing held', () => {
