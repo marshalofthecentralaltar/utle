@@ -384,3 +384,52 @@ Gate: `npm run check` runs typecheck, lint, tests and build. All four green befo
 | Live model (`npm run smoke`) | Not passed. The Windows user-level `ANTHROPIC_API_KEY` is rejected: `401 authentication_error: API key is invalid`. Ralf is looking into the key. Until the smoke passes, the prompt and tool schemas are unproven against a real model. |
 | Voice | Not tested. Needs a person with a microphone in Chrome. |
 | Read aloud | `navigate.readAloud` is carried but nothing is spoken yet (M4). |
+
+## 18. Voice without a model (M3)
+
+The model is one of three tiers that turn an utterance into an action. Each tier is tried in order and the first that answers wins.
+
+| Tier | Where | Answers | Network |
+|---|---|---|---|
+| Quick reply |  | yes, no, a number, undo, stop, help, sleep, wake | none |
+| Local command |  | moving through the document, reading aloud, deleting a paragraph by number | none |
+| Interpreter |  | everything else | model |
+
+A local command returns the same  the interpreter would, so the reducer treats both alike and edits still need yes. Only a whole utterance can be a local command. A sentence that merely starts like one goes to the interpreter.
+
+Reading aloud is an effect.  with  sets  and emits ; a heading reads its whole section. While reading, any utterance emits  first. The recogniser stays open during reading so that stop can be heard, which is why reading can never be allowed to produce an edit by itself: an utterance heard while reading stops the reading and is then handled as usual, and the user is expected to wear a headset.
+
+The assembler releases at once anything the hook marks as instant (a quick reply or a local command on the current document), looking through the recogniser's alternatives while nothing is held. Everything else waits for the hold so a pause does not split a sentence.
+
+Hands-free start: the first visit needs one click, because browsers require a gesture to grant the microphone. After that the page starts listening by itself when permission is already held and the microphone was on last time.
+
+Proof without a person:  is a recogniser that replays a script with realistic timing, including a mid-sentence silence.  plays the demo hands-off. The voice check scores real recognition against the demo lines with word error rate (), per language, so "is Chrome's Estonian good enough" becomes a number.
+
+## 19. Design
+
+**Subject.** A copy desk, operated by voice. The vernacular is proofreading and captioning: a sheet of paper, a red pencil for what goes, a blue pencil for what comes, a yellow highlighter for "which of these", a change bar in the margin, and captions for what was heard.
+
+**The one bold thing.** The two dots of the ü are the listening light. They are hollow when the microphone is off, solid red when listening, and they swell with the voice. Everything else stays quiet.
+
+**Colour.** Light is the identity; dark follows the same roles.
+
+| Role | Light | Dark |
+|---|---|---|
+| Desk | #E4E6EA | #0E1013 |
+| Sheet | #FFFFFF | #1A1D22 |
+| Ink | #14161A | #ECEEF2 |
+| Soft ink | #5B6270 | #9AA3B2 |
+| Edge | #C4C9D1 | #30353D |
+| Red pencil: removed text, the listening dots | #C8281E | #FF6E61 |
+| Blue pencil: added text, focus, links | #1F45C4 | #94ABFF |
+| Highlighter: candidates | #FFE04A | #6E5A00 |
+| Caption strip | #14161A on any theme | #000000 |
+
+**Type.** Atkinson Hyperlegible Next for everything. It was drawn for the Braille Institute for readers with low vision, which is the reason it is here. Weights 400, 600 and 800. Paragraph numbers use tabular figures. Sizes: 15 interface, 18 document, 22 captions, 40 wordmark. Sentence case everywhere.
+
+**Layout.** A desk with one sheet, left-aligned.
+
+\
+The caption strip is fixed to the bottom and set large, so it reads from a metre away. The typed box lives in the strip; it is the fallback, not the product.
+
+**Rules.** No cards, no shadows, no rounded panels, no all-caps labels, no monospace labels, no gradient, no icon set. A rule or a fill appears only where it carries a state: the change bar, the highlight, the focus mark.
