@@ -1,6 +1,6 @@
 # Ütle: architecture
 
-As of 2026-10-05. Written before any code. This is the spec; the implementation plan in
+As of 2026-10-05. Written before any code, then corrected where the build taught something (section 17). This is the spec; the implementation plan in
 `docs/plans/` argues from it. When code and this file disagree, one of them is a bug.
 
 ## 1. What this is
@@ -77,8 +77,8 @@ through a Vite plugin, so `npm run dev` is the whole product. No database.
 |---|---|---|
 | `src/core/document.ts` | `Block`, `Doc`, the sample document, id generation | nothing |
 | `src/core/ops.ts` | `Op` union, `applyOps`, op validation | `document` |
-| `src/core/preview.ts` | `buildPreview(doc, ops)` for rendering a proposal | `document`, `ops`, `diff` |
-| `src/core/candidates.ts` | Mark candidate quotes in a block for the "which one" question | `document` |
+| `src/core/preview.ts` | `buildPreview(doc, ops)` and `diffSegments` for rendering a proposal | `document`, `ops` |
+| `src/core/candidates.ts` | `Candidate`, and marking candidate quotes in a block for the "which one" question | `document` |
 | `src/core/intent.ts` | `Intent`, `InterpretRequest`, zod schemas: the wire contract | `document`, `ops`, `zod` |
 | `src/core/quickReply.ts` | Local recogniser for yes, no, numbers, undo, sleep, wake (English and Estonian) | nothing |
 | `src/core/session.ts` | `Session`, `Event`, `Effect`, `step`: the state machine | all of core |
@@ -91,7 +91,8 @@ through a Vite plugin, so `npm run dev` is the whole product. No database.
 | `server/prompt.ts` | System prompt, document serialisation, context message | core |
 | `server/tools.ts` | JSON schemas of the four tools, mapping tool input to `Intent` | core |
 | `server/interpret.ts` | `interpret(request, client)`: call, validate, retry once | core, `prompt`, `tools`, SDK |
-| `server/vitePlugin.ts` | Mounts `POST /api/interpret` on the dev server | `interpret` |
+| `server/vitePlugin.ts` | Mounts `POST /api/interpret` and `GET /api/status` on the dev server | `interpret`, `rehearsal` |
+| `server/rehearsal.ts` | Scripted answers for the demo lines: no model, no network, no key | core, `interpret` |
 | `scripts/smoke.ts` | Runs the mock-up's script through the real model and prints the result | core, server |
 
 Rule: `src/core` never imports from `speech`, `api`, `ui` or `server`. `server` never imports
@@ -138,7 +139,7 @@ Validation rules, each with its error code:
   `find_ambiguous`. `find` equal to `replace` is `no_change`. An empty `find` is `find_not_found`.
 - `set_text` and `insert_block`: text that is empty after trimming is `empty_text`. `set_text`
   with identical text is `no_change`.
-- `move_blocks`: an empty list, a repeated id, or `beforeBlockId` inside the moved set is `bad_move`.
+- `move_blocks`: an empty list, a repeated id, or `beforeBlockId` inside the moved set is `bad_move`. A move that leaves the order as it was is `no_change`.
 - Ops apply in order against the result of the previous op. The first failure aborts the whole list.
 
 ## 7. The wire contract
@@ -187,6 +188,7 @@ export interface Session {
   words: number;                  // words spoken or typed
   hands: number;                  // typed submissions and key presses
   seq: number;                    // id of the request in flight
+  asked: string;                  // the instruction sent with that request
 }
 export type Event =
   | { type: 'utterance'; text: string; source: 'voice' | 'typed' }
@@ -206,7 +208,8 @@ Transition table. "Quick" means the result of `quickReply` on the utterance.
 | asleep | quick `wake` | `listening` |
 | asleep | anything else | no change, not counted |
 | thinking | utterance or key | no change, `understood` says a request is in progress |
-| listening | quick `sleep` | `asleep` |
+| listening, confirming, choosing | quick `sleep` | drop any proposal or question, clear the focus, `asleep` |
+| listening, confirming, choosing | quick `wake` | message: already listening |
 | listening | quick `undo`, history not empty | pop history and log, restore the document |
 | listening | quick `undo`, history empty | message: nothing to undo |
 | listening | quick `number` n naming a block | focus that block |
@@ -215,17 +218,16 @@ Transition table. "Quick" means the result of `quickReply` on the utterance.
 | listening | any other utterance | `thinking`, resume `listening`, effect `interpret` |
 | confirming | quick `yes`, or key `confirm` | apply ops, push history and log, `listening` |
 | confirming | quick `no` or `undo`, or key `reject` | drop the proposal, `listening` |
-| confirming | quick `sleep` | drop the proposal, `asleep` |
 | confirming | any other utterance | `thinking`, resume `confirming`, effect `interpret` with `pending` |
 | choosing | quick `number` in range | `thinking`, resume `choosing`, effect `interpret` with `choice.picked` |
 | choosing | quick `number` out of range | message: say a number from 1 to k |
-| choosing | quick `no`, or key `reject` | drop the question, `listening` |
+| choosing | quick `no` or `undo`, or key `reject` | drop the question, `listening` |
 | choosing | any other utterance | `thinking`, resume `choosing`, effect `interpret` with `choice.picked = null` |
 | thinking | intent with a stale `seq` | no change |
 | thinking | intent `propose_edit` whose ops apply | `confirming` with `pending` |
 | thinking | intent `propose_edit` whose ops fail | resume mode, message: nothing changed |
 | thinking | intent `ask_which` with two or more candidates | `choosing` |
-| thinking | intent `navigate` | `listening`, focus the block |
+| thinking | intent `navigate` | resume mode with the proposal or question intact, focus the block |
 | thinking | intent `not_understood` | resume mode, show the message, proposal intact |
 | thinking | `interpretFailed` with the current `seq` | resume mode, show the message, proposal intact |
 
@@ -264,8 +266,9 @@ export function buildPreview(doc: Doc, ops: Op[]): PreviewRow[];   // ops that f
 ```
 
 Rows keep the numbers of the current document, so what the user sees while deciding matches
-what they said. Text changes are word-level diffs. `added` rows sit after the nearest
-preceding block that did not move.
+what they said. A text change is shown as one span: the shared start, what goes, what comes,
+the shared end (`diffSegments`). One span reads better as a confirmation than an interleaved
+word diff. `added` rows sit after the nearest preceding block that did not move.
 
 ## 11. Speech
 
@@ -304,7 +307,8 @@ Chrome ends the session. The interpreter is language-agnostic; only the recognis
 3. Call the model with four strict tools and `tool_choice: { type: 'any', disable_parallel_tool_use: true }`,
    so the answer is exactly one tool call. Thinking is off. Timeout 20 s, one SDK retry.
 4. Map the tool input to an `Intent`, check it with `IntentSchema`, then check it against the
-   document: every id exists, `applyOps` succeeds, `ask_which` has two or more candidates.
+   document (`problemWith`): every id exists, `applyOps` succeeds, `ask_which` has two or more
+   candidates and every quote is an exact substring of its block.
 5. On a failed check, send the error back as a `tool_result` with `is_error` and ask once more.
    A second failure becomes `not_understood`. The user sees that nothing changed.
 6. `refusal` and `max_tokens` stop reasons become `not_understood`.
@@ -360,12 +364,23 @@ Gate: `npm run check` runs typecheck, lint, tests and build. All four green befo
 | D5 | Effects are data returned by the reducer | The whole conversation logic runs in tests without a browser, a microphone or a model. |
 | D6 | Chrome's built-in recognition first | Free and no key. The `Recognizer` interface lets a paid recogniser replace it. |
 | D7 | zod for both directions of the wire | The model's output is untrusted input. |
-| D8 | `diff` package for word diffs | Diffing is solved; a hand-rolled one is a liability. |
+| D8 | One-span diff written here, no `diff` package | The preview wants a single contiguous change, which is twenty lines and fully tested. Reversed from the first draft. |
 | D9 | Haiku 4.5 by default | Sub-second answers matter more than depth for single-sentence edits. The smoke test decides whether it is good enough. |
 | D10 | No persistence | Reload resets to the sample document, which is what a demo wants. |
+| D11 | Rehearsal mode (`npm run rehearse`) | Scripted answers checked by the same document validation. Lets the interface be exercised and the pitch rehearsed with no key, and covers a network failure at the venue. The interface says when it is on. Added during the build. |
 
 ## 16. Open questions for the room
 
 - Where does editing break in the Danish fieldwork: accuracy, moving around, correcting, formatting?
 - Is Chrome's Estonian recognition usable, or is a paid recogniser needed?
 - Which repair words does a person with lived experience actually reach for?
+
+## 17. State of the build, 2026-10-05
+
+| Thing | State |
+|---|---|
+| Core, server and speech units | 177 tests pass. |
+| Interface | Walked in Chrome on localhost in rehearsal mode with typed input: preview, yes, no by key, move, which-one, repair, insert, navigation, undo, sleep. |
+| Live model (`npm run smoke`) | Not passed. The Windows user-level `ANTHROPIC_API_KEY` is rejected: `401 authentication_error: API key is invalid`. Ralf is looking into the key. Until the smoke passes, the prompt and tool schemas are unproven against a real model. |
+| Voice | Not tested. Needs a person with a microphone in Chrome. |
+| Read aloud | `navigate.readAloud` is carried but nothing is spoken yet (M4). |

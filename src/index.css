@@ -78,6 +78,11 @@ ins {
   font-weight: 600;
 }
 
+/* The old and the new text sit side by side; keep them from running together. */
+del + ins {
+  margin-left: 0.3em;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
