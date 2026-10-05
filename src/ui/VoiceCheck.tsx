@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { langOfTag, STRINGS } from '../core/strings.ts'
 import { wordErrorRate } from '../core/wer.ts'
 import { CHECK_DEMO, CHECK_LINES } from '../speech/lines.ts'
 import { LANGUAGES } from '../speech/recognizer.ts'
@@ -14,6 +15,7 @@ const never = (): boolean => false
  */
 export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
   const lines = CHECK_LINES[lang] ?? []
+  const t = STRINGS[langOfTag(lang)].check
   const label = LANGUAGES.find((l) => l.tag === lang)?.label ?? lang
   const [heard, setHeard] = useState<string[]>([])
   const [running, setRunning] = useState(false)
@@ -50,13 +52,13 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
       ? createScriptedRecognizer(handlers, CHECK_DEMO, { startMs: 500, wordMs: 110, gapMs: 350, pauseMs: 0, holdMs: 500, isInstant: never })
       : createRecognizer(handlers, lang, never)
     if (!created.supported) {
-      setError('This browser has no speech recognition. Use Chrome.')
+      setError(t.noSpeech)
       return
     }
     recognizer.current = created
     created.start()
     setRunning(true)
-  }, [demo, lang, lines.length, stop])
+  }, [demo, lang, lines.length, stop, t.noSpeech])
 
   const restart = useCallback((): void => {
     stop()
@@ -80,8 +82,8 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
   const finished = heard.length >= lines.length && lines.length > 0
 
   const report = [
-    `Ütle voice check, ${label}: ${errors} of ${words} words wrong (${percent} percent).`,
-    ...heard.map((text, i) => `${i + 1}. expected "${lines[i] ?? ''}" heard "${text}" errors ${scores[i]?.errors ?? 0}`),
+    t.report(label, errors, words, percent),
+    ...heard.map((text, i) => t.reportLine(i + 1, lines[i] ?? '', text, scores[i]?.errors ?? 0)),
   ].join('\n')
 
   const copy = (): void => {
@@ -94,33 +96,32 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
   return (
     <section className="flex max-w-[52rem] flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <h1 className="m-0 text-[1.75rem] leading-tight font-extrabold tracking-tight">Voice check, {label}</h1>
+        <h1 className="m-0 text-[1.75rem] leading-tight font-extrabold tracking-tight">{t.title(label)}</h1>
         <p className="m-0 max-w-[62ch] text-lg">
-          Read each line aloud. The next line lights up when one has been heard. The score is the share of words the
-          recogniser got wrong.
+          {t.intro}
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         {running ? (
           <button type="button" onClick={stop} className="cursor-pointer border border-ink bg-ink px-4 py-2 font-semibold text-desk">
-            Stop
+            {t.stop}
           </button>
         ) : (
           !finished && (
             <button type="button" onClick={start} className="cursor-pointer border border-ink bg-ink px-4 py-2 font-semibold text-desk">
-              {heard.length === 0 ? 'Start' : 'Continue'}
+              {heard.length === 0 ? t.start : t.continue}
             </button>
           )
         )}
         {heard.length > 0 && (
           <button type="button" onClick={restart} className="cursor-pointer border border-ink px-4 py-2 font-semibold">
-            Start over
+            {t.startOver}
           </button>
         )}
         {heard.length > 0 && (
           <button type="button" onClick={copy} className="cursor-pointer border border-ink px-4 py-2 font-semibold">
-            {copied ? 'Copied' : 'Copy the result'}
+            {copied ? t.copied : t.copy}
           </button>
         )}
       </div>
@@ -141,11 +142,11 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
                 {score ? (
                   <span className={score.errors === 0 ? 'text-soft' : 'text-pencil-red'}>{heard[i]}</span>
                 ) : (
-                  current && <span className="text-soft">{interim === '' ? 'Listening.' : interim}</span>
+                  current && <span className="text-soft">{interim === '' ? t.listening : interim}</span>
                 )}
               </span>
               <span className="text-[0.95rem] text-soft tabular-nums">
-                {score ? (score.errors === 0 ? 'right' : `${score.errors} wrong`) : ''}
+                {score ? (score.errors === 0 ? t.right : t.wrong(score.errors)) : ''}
               </span>
             </li>
           )
@@ -154,8 +155,8 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
 
       {heard.length > 0 && (
         <p className="m-0 text-lg">
-          <b className="text-2xl font-extrabold tabular-nums">{percent}</b> percent of words wrong: {errors} of {words}
-          {finished ? '.' : ' so far.'}
+          <b className="text-2xl font-extrabold tabular-nums">{percent}</b> {t.percentWrong}
+          {t.ofWords(errors, words, finished)}
         </p>
       )}
     </section>

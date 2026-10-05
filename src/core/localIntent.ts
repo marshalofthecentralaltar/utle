@@ -1,6 +1,8 @@
 import type { Doc } from './document.ts'
 import type { Intent } from './intent.ts'
 import { normalise, spokenNumber } from './quickReply.ts'
+import { STRINGS } from './strings.ts'
+import type { Lang, Strings } from './strings.ts'
 
 /**
  * Commands answered without the model: moving through the document, reading aloud,
@@ -79,7 +81,7 @@ export function sectionText(doc: Doc, blockId: string): string {
 
 type Target = { blockId: string } | { problem: string } | null
 
-function resolve(rest: string, verb: Verb, doc: Doc, focusId: string | null): Target {
+function resolve(rest: string, verb: Verb, doc: Doc, focusId: string | null, t: Strings): Target {
   const last = doc.length - 1
   const focusAt = focusId === null ? -1 : doc.findIndex((b) => b.id === focusId)
   const at = (index: number): Target => {
@@ -89,7 +91,7 @@ function resolve(rest: string, verb: Verb, doc: Doc, focusId: string | null): Ta
 
   if (rest === '' || FOCUS.has(rest)) {
     if (verb === 'go' || verb === 'bare') return null
-    if (focusAt < 0) return { problem: verb === 'read' ? 'Say which paragraph to read.' : 'Say which paragraph to delete.' }
+    if (focusAt < 0) return { problem: verb === 'read' ? t.sayWhichToRead : t.sayWhichToDelete }
     return at(focusAt)
   }
 
@@ -106,7 +108,7 @@ function resolve(rest: string, verb: Verb, doc: Doc, focusId: string | null): Ta
   const n = spokenNumber(digits)
   if (n !== null && (named || verb === 'go' || verb === 'read')) {
     const block = doc[n - 1]
-    if (!block) return { problem: `There is no paragraph ${n}. The document has ${doc.length}.` }
+    if (!block) return { problem: t.noParagraphOf(n, doc.length) }
     return { blockId: block.id }
   }
 
@@ -118,7 +120,8 @@ function resolve(rest: string, verb: Verb, doc: Doc, focusId: string | null): Ta
   return null
 }
 
-export function localIntent(text: string, doc: Doc, focusId: string | null): Intent | null {
+export function localIntent(text: string, doc: Doc, focusId: string | null, lang: Lang = 'en'): Intent | null {
+  const t = STRINGS[lang]
   let rest = normalise(text)
   if (rest === '' || doc.length === 0) return null
 
@@ -144,7 +147,7 @@ export function localIntent(text: string, doc: Doc, focusId: string | null): Int
   if (readAloud && verb !== 'go' && verb !== 'read') return null
   rest = rest.trim()
 
-  const target = resolve(rest, verb, doc, focusId)
+  const target = resolve(rest, verb, doc, focusId, t)
   if (target === null) return null
   if ('problem' in target) return { kind: 'not_understood', message: target.problem }
 
@@ -152,7 +155,7 @@ export function localIntent(text: string, doc: Doc, focusId: string | null): Int
     const number = doc.findIndex((b) => b.id === target.blockId) + 1
     return {
       kind: 'propose_edit',
-      summary: `Paragraph ${number} deleted.`,
+      summary: t.paragraphDeleted(number),
       ops: [{ op: 'delete_block', blockId: target.blockId }],
     }
   }

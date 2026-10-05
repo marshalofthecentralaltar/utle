@@ -24,7 +24,7 @@ export const TOOLS: Anthropic.Tool[] = [
       'Propose a change to the document as a list of operations. The editor previews it and applies it only after the user says yes.',
     strict: true,
     input_schema: object({
-      summary: { type: 'string', description: 'One short sentence, in the language the user spoke, saying what will change.' },
+      summary: { type: 'string', description: 'One short sentence, in the reply language, saying what will change.' },
       ops: {
         type: 'array',
         description: 'Operations applied in order, each against the result of the previous one.',
@@ -57,7 +57,7 @@ export const TOOLS: Anthropic.Tool[] = [
       'Ask the user which place they mean when two or more fit the request equally well. The editor numbers the candidates and the user answers with a number.',
     strict: true,
     input_schema: object({
-      question: { type: 'string', description: 'One short sentence, e.g. "Four sentences mention the supplier."' },
+      question: { type: 'string', description: 'One short sentence in the reply language, e.g. "Four sentences mention the supplier."' },
       candidates: {
         type: 'array',
         description: 'Two or more places, ordered by position in the document.',
@@ -83,7 +83,7 @@ export const TOOLS: Anthropic.Tool[] = [
       'The utterance is not an instruction about this document, or asks for something the other tools cannot do. Nothing changes.',
     strict: true,
     input_schema: object({
-      message: { type: 'string', description: 'One short sentence, in the language the user spoke, saying what you need.' },
+      message: { type: 'string', description: 'One short sentence, in the reply language, saying what you need.' },
     }),
   },
 ]

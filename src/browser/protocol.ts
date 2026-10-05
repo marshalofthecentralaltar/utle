@@ -13,6 +13,9 @@ export const BRIDGE_EXTENSION = 'utle-extension'
 /** How long the page waits for an answer before it decides no extension is installed. */
 export const BRIDGE_TIMEOUT_MS = 1500
 
+/** How long the page waits for any command other than ping, which may load a page or a conversation first. */
+export const BRIDGE_COMMAND_TIMEOUT_MS = 20_000
+
 export type BrowserCommand =
   /** Answers at once. Tells the page the extension is there. */
   | { kind: 'ping' }

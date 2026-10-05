@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_DOC } from './document.ts'
+import type { BrowserCommand, BrowserResult } from '../browser/protocol.ts'
+import { BRIDGE_TIMED_OUT } from './browserIntent.ts'
+import { SAMPLE_DOC, sampleDoc } from './document.ts'
 import type { Doc } from './document.ts'
 import type { Intent, InterpretRequest } from './intent.ts'
 import { sectionText } from './localIntent.ts'
@@ -100,6 +102,8 @@ describe('listening', () => {
           utterance: 'Change the budget deadline to Friday.',
           pending: null,
           choice: null,
+          lang: 'en',
+          message: null,
         },
       },
     ])
@@ -216,6 +220,8 @@ describe('choosing', () => {
         candidates: before.choice?.candidates,
         picked: 1,
       },
+      lang: 'en',
+      message: null,
     })
   })
 
@@ -603,5 +609,401 @@ describe('scenario: the mock-up script', () => {
     expect(s.focusId).toBeNull()
     const spoken = lines.reduce((sum, [text]) => sum + text.trim().split(/\s+/).length, 0)
     expect(s.words).toBe(spoken)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// M4: Estonian first, browser commands, hint numbers, the message draft (ARCHITECTURE 20.3).
+
+const ET = (): Session => initialSession(sampleDoc('et'), 'et')
+
+function browserOf(effects: Effect[]): BrowserCommand[] {
+  return effects.flatMap((effect) => (effect.type === 'browser' ? [effect.command] : []))
+}
+
+function seqOf(effects: Effect[]): number {
+  for (const effect of effects) if (effect.type === 'browser') return effect.seq
+  throw new Error('no browser effect')
+}
+
+/** Answers the browser effect of a step with the given result. */
+function answer(previous: { state: Session; effects: Effect[] }, result: BrowserResult) {
+  const command = browserOf(previous.effects)[0]
+  if (!command) throw new Error('no browser effect to answer')
+  return run(previous.state, { type: 'browserResult', seq: seqOf(previous.effects), command, result })
+}
+
+const OK: BrowserResult = { ok: true }
+
+describe('Estonian first', () => {
+  it('speaks Estonian from the first line', () => {
+    const s = ET()
+    expect(s.lang).toBe('et')
+    expect(s.understood).toBe('Kuulan.')
+    expect(s.prompt).toBe('Ütle, mida muuta, või lõigu number.')
+  })
+
+  it('sends the language with every interpreter request', () => {
+    const { effects } = run(ET(), say('Muuda eelarve tähtaeg reedeks.'))
+    expect(requestOf(effects)?.lang).toBe('et')
+    expect(requestOf(effects)?.message).toBeNull()
+  })
+
+  it('answers local lines in Estonian', () => {
+    expect(run(ET(), say('võta tagasi')).state.understood).toBe('Pole midagi tagasi võtta.')
+    expect(run(ET(), say('neli')).state.understood).toBe('Lõik 4.')
+    expect(run(ET(), say('kustuta lõik neli')).state.understood).toBe('Kustutan lõigu 4.')
+  })
+
+  it('shows an interpreter failure in Estonian', () => {
+    const asked = run(ET(), say('Muuda eelarve tähtaeg reedeks.'))
+    const seq = asked.effects[0]?.type === 'interpret' ? asked.effects[0].seq : -1
+    const { state } = run(asked.state, { type: 'interpretFailed', seq, message: 'Abiline ei vasta.' })
+    expect(state.understood).toBe('Abiline ei vasta.')
+    expect(state.prompt).toBe('Ütle, mida muuta, või lõigu number.')
+  })
+
+  it('swaps the sample document when the language changes before anything was done', () => {
+    const { state } = run(ET(), { type: 'language', lang: 'en' })
+    expect(state.lang).toBe('en')
+    expect(state.doc).toEqual(SAMPLE_DOC)
+    expect(state.understood).toBe('Waiting for you to speak.')
+    expect(state.prompt).toBe('Say what to change, or a paragraph number.')
+  })
+
+  it('keeps an edited document when the language changes', () => {
+    const edited = converse(initialSession(SAMPLE_DOC), 'Change the budget deadline to Friday.', FRIDAY)
+    const { state } = run(edited, say('yes'), { type: 'language', lang: 'et' })
+    expect(textOf(state.doc, 'b6')).toContain('Friday')
+    expect(state.prompt).toBe('Ütle, mida muuta, või lõigu number.')
+  })
+})
+
+describe('browser commands: local, no model, no yes', () => {
+  const rows: Array<[string, BrowserCommand]> = [
+    ['ava uus vaheleht', { kind: 'newTab' }],
+    ['ava messenger', { kind: 'goTo', url: 'https://www.messenger.com/' }],
+    ['järgmine vaheleht', { kind: 'switchTab', to: 'next' }],
+    ['kolmas vaheleht', { kind: 'switchTab', to: { index: 3 } }],
+    ['mine tagasi', { kind: 'history', direction: 'back' }],
+    ['laadi uuesti', { kind: 'reload' }],
+    ['keri alla', { kind: 'scroll', direction: 'down' }],
+    ['otsi bussiaeg', { kind: 'goTo', url: 'https://www.google.com/search?q=bussiaeg' }],
+  ]
+  it.each(rows)('%s emits the browser effect and no interpret effect', (text, command) => {
+    const { state, effects } = run(ET(), say(text))
+    expect(browserOf(effects)).toEqual([command])
+    expect(requestOf(effects)).toBeUndefined()
+    expect(state.mode).toBe('listening')
+    expect(state.pending).toBeNull()
+  })
+
+  it('shows the result in the session language', () => {
+    const { state } = answer(run(ET(), say('ava messenger')), { ok: true, tab: { title: 'Messenger', url: 'https://www.messenger.com/' } })
+    expect(state.understood).toBe('Avatud: Messenger.')
+    const english = answer(run(initialSession(SAMPLE_DOC), say('open messenger')), { ok: true, tab: { title: 'Messenger', url: 'x' } })
+    expect(english.state.understood).toBe('Opened: Messenger.')
+  })
+
+  it('says how to fix a missing extension', () => {
+    const { state } = answer(run(ET(), say('uus vaheleht')), { ok: false, code: 'no_extension', message: 'timeout' })
+    expect(state.understood).toBe('Brauseri laiendus ei vasta. Paigalda Ütle laiendus ja laadi see leht uuesti.')
+  })
+
+  it('never shows the extension’s own failure text', () => {
+    const { state } = answer(run(ET(), say('sulge vaheleht')), { ok: false, code: 'failed', message: 'Tab could not be closed' })
+    expect(state.understood).toBe('See ei õnnestunud.')
+  })
+
+  it('ignores a stale result', () => {
+    const first = run(ET(), say('keri alla'))
+    const second = run(first.state, say('keri üles'))
+    const stale = run(second.state, {
+      type: 'browserResult',
+      seq: seqOf(first.effects),
+      command: { kind: 'scroll', direction: 'down' },
+      result: OK,
+    })
+    expect(stale.state.understood).toBe(second.state.understood)
+  })
+
+  it('keeps a pending proposal while moving in the browser', () => {
+    const s = converse(initialSession(SAMPLE_DOC), 'Change the budget deadline to Friday.', FRIDAY)
+    const { state, effects } = run(s, say('next tab'))
+    expect(browserOf(effects)).toEqual([{ kind: 'switchTab', to: 'next' }])
+    expect(state.mode).toBe('confirming')
+    expect(state.pending).toEqual(s.pending)
+  })
+})
+
+describe('the ambiguity rule: the document wins', () => {
+  it('"järgmine" is the next paragraph, "järgmine vaheleht" the next tab', () => {
+    const doc = run(ET(), say('järgmine'))
+    expect(browserOf(doc.effects)).toEqual([])
+    expect(doc.state.focusId).toBe('b1')
+    expect(browserOf(run(ET(), say('järgmine vaheleht')).effects)).toEqual([{ kind: 'switchTab', to: 'next' }])
+  })
+
+  it('"ava eelarve" opens the heading, "ava messenger" the site', () => {
+    const doc = run(ET(), say('ava eelarve'))
+    expect(browserOf(doc.effects)).toEqual([])
+    expect(doc.state.focusId).toBe('b5')
+    expect(browserOf(run(ET(), say('ava messenger')).effects)).toHaveLength(1)
+  })
+
+  it('English "go back" stays the previous paragraph; "page back" is the browser', () => {
+    const s = run(initialSession(SAMPLE_DOC), say('paragraph 4')).state
+    const doc = run(s, say('go back'))
+    expect(browserOf(doc.effects)).toEqual([])
+    expect(doc.state.focusId).toBe('b3')
+    expect(browserOf(run(s, say('page back')).effects)).toEqual([{ kind: 'history', direction: 'back' }])
+  })
+
+  it('"mine tagasi" is the browser, "võta tagasi" is undo', () => {
+    expect(browserOf(run(ET(), say('mine tagasi')).effects)).toEqual([{ kind: 'history', direction: 'back' }])
+    const undo = run(ET(), say('võta tagasi'))
+    expect(browserOf(undo.effects)).toEqual([])
+    expect(undo.state.understood).toBe('Pole midagi tagasi võtta.')
+  })
+})
+
+describe('hint numbers', () => {
+  function showing(): Session {
+    return answer(run(ET(), say('näita numbreid')), { ok: true, hints: 23 }).state
+  }
+
+  it('shows how many and expects a number', () => {
+    const s = showing()
+    expect(s.hints).toBe(true)
+    expect(s.understood).toBe('Numbrid on näha (23). Ütle number.')
+  })
+
+  it('a bare number clicks while labels show, and focuses a paragraph otherwise', () => {
+    const click = run(showing(), say('viis'))
+    expect(browserOf(click.effects)).toEqual([{ kind: 'clickHint', number: 5 }])
+    expect(click.state.hints).toBe(false)
+    expect(click.state.focusId).toBeNull()
+    const focus = run(ET(), say('viis'))
+    expect(browserOf(focus.effects)).toEqual([])
+    expect(focus.state.focusId).toBe('b5')
+  })
+
+  it('"vajuta viis" always clicks; "peida numbrid" hides', () => {
+    expect(browserOf(run(ET(), say('vajuta viis')).effects)).toEqual([{ kind: 'clickHint', number: 5 }])
+    const hidden = run(showing(), say('peida numbrid'))
+    expect(browserOf(hidden.effects)).toEqual([{ kind: 'hideHints' }])
+    expect(hidden.state.hints).toBe(false)
+  })
+
+  it('a failed showHints leaves no labels', () => {
+    const s = answer(run(ET(), say('näita numbreid')), { ok: false, code: 'not_allowed', message: 'chrome page' }).state
+    expect(s.hints).toBe(false)
+    expect(s.understood).toBe('Seda lehte ei saa Ütle juhtida.')
+  })
+})
+
+describe('the message draft', () => {
+  const TEXT = 'Ma jõuan homme kell kolm.'
+  const REPAIRED = 'Ma jõuan homme kell neli.'
+
+  function draft(): Session {
+    return run(ET(), say('kirjuta sõnum Marile')).state
+  }
+
+  /** A draft to Mari that holds TEXT, accepted. */
+  function written(): Session {
+    return run(draft(), say('ma jõuan homme kell kolm'), say('jah')).state
+  }
+
+  it('starts: the document is saved, an empty draft to Mari is shown', () => {
+    const s = draft()
+    expect(s.draft?.to).toBe('Mari')
+    expect(s.doc).toEqual([])
+    expect(s.draft?.saved.doc).toEqual(sampleDoc('et'))
+    expect(s.mode).toBe('listening')
+    expect(s.understood).toBe('Uus sõnum. Saaja: Mari.')
+    expect(s.prompt).toBe('Ütle, mida kirjutada. Kui valmis, ütle „saada“.')
+  })
+
+  it.each(['uus sõnum Marile', 'sõnum Marile', 'message Mari', 'write a message to Mari'])('"%s" starts a draft to Mari', (text) => {
+    expect(run(ET(), say(text)).state.draft?.to).toBe('Mari')
+  })
+
+  it('one breath: starts the draft with the text proposed', () => {
+    const { state, effects } = run(ET(), say('Kirjuta Marile, et ma jõuan homme kell kolm'))
+    expect(requestOf(effects)).toBeUndefined()
+    expect(state.draft?.to).toBe('Mari')
+    expect(state.mode).toBe('confirming')
+    expect(state.understood).toBe('Uus sõnum. Saaja: Mari.')
+    expect(state.pending?.ops).toEqual([{ op: 'insert_block', afterBlockId: null, blockType: 'p', text: TEXT }])
+  })
+
+  it('dictating into an empty draft proposes the words without the model', () => {
+    const { state, effects } = run(draft(), say('ma jõuan homme kell kolm'))
+    expect(requestOf(effects)).toBeUndefined()
+    expect(state.mode).toBe('confirming')
+    const accepted = run(state, say('jah')).state
+    expect(accepted.doc.map((b) => b.text)).toEqual([TEXT])
+    expect(accepted.mode).toBe('listening')
+    expect(accepted.prompt).toBe('Ütle, mida kirjutada. Kui valmis, ütle „saada“.')
+  })
+
+  it('a repair goes to the interpreter against the draft, in Estonian, with the recipient', () => {
+    const proposed = run(ET(), say('Kirjuta Marile, et ma jõuan homme kell kolm')).state
+    const request = requestOf(run(proposed, say('mitte kolm, vaid neli')).effects)
+    expect(request?.doc).toEqual([])
+    expect(request?.pending?.ops).toEqual(proposed.pending?.ops)
+    expect(request?.message).toEqual({ to: 'Mari' })
+    expect(request?.lang).toBe('et')
+    const repaired = converse(proposed, 'mitte kolm, vaid neli', {
+      kind: 'propose_edit',
+      summary: 'Kolme asemel neli.',
+      ops: [{ op: 'insert_block', afterBlockId: null, blockType: 'p', text: REPAIRED }],
+    })
+    expect(run(repaired, say('jah')).state.doc.map((b) => b.text)).toEqual([REPAIRED])
+  })
+
+  it('more words into a draft with text go to the interpreter', () => {
+    const request = requestOf(run(written(), say('lisa, et ma toon kooki')).effects)
+    expect(request?.doc.map((b) => b.text)).toEqual([TEXT])
+    expect(request?.message).toEqual({ to: 'Mari' })
+  })
+
+  it('send asks first, showing who and what', () => {
+    const { state, effects } = run(written(), say('saada'))
+    expect(effects).toEqual([])
+    expect(state.mode).toBe('confirmingSend')
+    expect(state.understood).toBe(`Saaja: Mari. „${TEXT}“ Kas saadan?`)
+    expect(state.prompt).toBe('Ütle jah või ei.')
+  })
+
+  it('yes sends: openConversation, then insertText with submit, then the document comes back', () => {
+    const yes = run(written(), say('saada'), say('jah'))
+    expect(yes.state.mode).toBe('sending')
+    expect(browserOf(yes.effects)).toEqual([{ kind: 'openConversation', name: 'Mari' }])
+    const opened = answer(yes, OK)
+    expect(browserOf(opened.effects)).toEqual([{ kind: 'insertText', text: TEXT, submit: true }])
+    const sent = answer(opened, OK)
+    expect(sent.state.draft).toBeNull()
+    expect(sent.state.doc).toEqual(sampleDoc('et'))
+    expect(sent.state.mode).toBe('listening')
+    expect(sent.state.understood).toBe('Saadetud. Saaja: Mari. Dokument on tagasi.')
+  })
+
+  it('the key confirms a send too', () => {
+    const { effects } = run(written(), say('saada'), { type: 'key', key: 'confirm' })
+    expect(browserOf(effects)).toEqual([{ kind: 'openConversation', name: 'Mari' }])
+  })
+
+  it('no returns to the draft', () => {
+    const { state, effects } = run(written(), say('saada'), say('ei'))
+    expect(effects).toEqual([])
+    expect(state.mode).toBe('listening')
+    expect(state.doc.map((b) => b.text)).toEqual([TEXT])
+    expect(state.understood).toBe('Ei saatnud. Sõnum on alles.')
+  })
+
+  it('a failed send keeps the draft and says why, in Estonian', () => {
+    const yes = run(written(), say('saada'), say('jah'))
+    const failed = answer(yes, { ok: false, code: 'not_found', message: 'No conversation matches Mari' })
+    expect(failed.state.mode).toBe('listening')
+    expect(failed.state.draft?.to).toBe('Mari')
+    expect(failed.state.doc.map((b) => b.text)).toEqual([TEXT])
+    expect(failed.state.understood).toBe('Ei saatnud. Vestlust „Mari“ ei leitud. Sõnum on alles.')
+    const later = answer(answer(yes, OK), { ok: false, code: 'no_extension', message: '' })
+    expect(later.state.draft).not.toBeNull()
+    expect(later.state.understood).toBe(
+      'Ei saatnud. Brauseri laiendus ei vasta. Paigalda Ütle laiendus ja laadi see leht uuesti. Sõnum on alles.',
+    )
+  })
+
+  it('a send the browser did not answer in time keeps the draft and says to look before sending again', () => {
+    const yes = run(written(), say('saada'), say('jah'))
+    const late = answer(answer(yes, OK), { ok: false, code: 'failed', message: BRIDGE_TIMED_OUT })
+    expect(late.state.mode).toBe('listening')
+    expect(late.state.draft?.to).toBe('Mari')
+    expect(late.state.understood).toBe(
+      'Brauser ei vastanud õigel ajal. Sõnum võis minna või mitte: vaata vestlus üle, enne kui uuesti saadad.',
+    )
+    // Opening the conversation timed out: nothing was typed, so nothing can have gone.
+    const open = answer(yes, { ok: false, code: 'failed', message: BRIDGE_TIMED_OUT })
+    expect(open.state.understood).toBe('Ei saatnud. Brauser ei vastanud õigel ajal. Sõnum on alles.')
+  })
+
+  it('a browser command that timed out says so instead of "did not work"', () => {
+    const { state } = answer(run(ET(), say('ava messenger')), { ok: false, code: 'failed', message: BRIDGE_TIMED_OUT })
+    expect(state.understood).toBe('Brauser ei vastanud õigel ajal.')
+  })
+
+  it('while sending, the line says what is happening until the answer comes', () => {
+    const yes = run(written(), say('saada'), say('jah'))
+    expect(yes.state.understood).toBe('Avan vestluse: Mari.')
+    expect(answer(yes, OK).state.understood).toBe('Kirjutan sõnumi.')
+  })
+
+  it('an utterance while sending waits', () => {
+    const yes = run(written(), say('saada'), say('jah'))
+    const { state, effects } = run(yes.state, say('ava messenger'))
+    expect(effects).toEqual([])
+    expect(state.mode).toBe('sending')
+    expect(state.understood).toBe('Hetk, eelmine on veel pooleli.')
+  })
+
+  it('drop restores the document and its history', () => {
+    const edited = converse(ET(), 'Muuda eelarve tähtaeg reedeks.', {
+      kind: 'propose_edit',
+      summary: 'Eelarve: neljapäeva asemel reede.',
+      ops: [{ op: 'replace_text', blockId: 'b6', find: 'neljapäevaks', replace: 'reedeks' }],
+    })
+    const accepted = run(edited, say('jah')).state
+    const dropped = run(accepted, say('kirjuta sõnum Marile'), say('ma tulen'), say('jah'), say('katkesta sõnum')).state
+    expect(dropped.draft).toBeNull()
+    expect(dropped.doc).toEqual(accepted.doc)
+    expect(dropped.history).toEqual(accepted.history)
+    expect(dropped.log).toEqual(accepted.log)
+    expect(dropped.understood).toBe('Sõnum on katkestatud. Dokument on tagasi.')
+  })
+
+  it('no recipient: sends into the focused message box with insertText only', () => {
+    const s = run(ET(), say('uus sõnum'), say('olen kohe tagasi'), say('jah'), say('saada')).state
+    expect(s.understood).toBe('Avatud sõnumikasti: „Olen kohe tagasi.“ Kas saadan?')
+    const yes = run(s, say('jah'))
+    expect(browserOf(yes.effects)).toEqual([{ kind: 'insertText', text: 'Olen kohe tagasi.', submit: true }])
+    expect(answer(yes, OK).state.draft).toBeNull()
+  })
+
+  it('send while a proposal waits asks for yes or no first', () => {
+    const proposed = run(draft(), say('ma tulen')).state
+    const { state, effects } = run(proposed, say('saada'))
+    expect(effects).toEqual([])
+    expect(state.mode).toBe('confirming')
+    expect(state.understood).toBe('Ütle enne jah või ei.')
+  })
+
+  it('an empty draft is not sent', () => {
+    expect(run(draft(), say('saada')).state.understood).toBe('Sõnum on veel tühi.')
+  })
+
+  it('a second start while a draft is open says so', () => {
+    const s = run(draft(), say('uus sõnum Jaanile')).state
+    expect(s.draft?.to).toBe('Mari')
+    expect(s.understood).toBe('Üks sõnum on juba pooleli. Ütle „saada“ või „katkesta sõnum“.')
+  })
+
+  it('send with no draft says there is none, without the model', () => {
+    const { state, effects } = run(ET(), say('saada'))
+    expect(requestOf(effects)).toBeUndefined()
+    expect(state.understood).toBe('Pooleli sõnumit ei ole.')
+  })
+
+  it('sends a draft of several paragraphs as one line', () => {
+    const two = converse(written(), 'lisa, et ma toon kooki', {
+      kind: 'propose_edit',
+      summary: 'Lisan lause.',
+      ops: [{ op: 'insert_block', afterBlockId: 'b1', blockType: 'p', text: 'Ma toon kooki.' }],
+    })
+    const yes = run(two, say('jah'), say('saada'), say('jah'))
+    const opened = answer(yes, OK)
+    expect(browserOf(opened.effects)).toEqual([{ kind: 'insertText', text: `${TEXT} Ma toon kooki.`, submit: true }])
   })
 })

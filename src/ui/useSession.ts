@@ -2,10 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { fetchStatus, requestIntent } from '../api/interpretClient.ts'
 import type { ServerStatus } from '../api/interpretClient.ts'
-import { SAMPLE_DOC } from '../core/document.ts'
+import { sendCommand } from '../browser/bridge.ts'
+import { installFakeBridge } from '../browser/fakeBridge.ts'
+import { browserIntent } from '../core/browserIntent.ts'
+import { sampleDoc } from '../core/document.ts'
+import { messageCommand } from '../core/message.ts'
 import { localIntent } from '../core/localIntent.ts'
 import { quickReply } from '../core/quickReply.ts'
 import { initialSession, step } from '../core/session.ts'
+import { LANG_TAG, langOfTag } from '../core/strings.ts'
 import type { Effect, Event, Session } from '../core/session.ts'
 import { createLevelMeter } from '../speech/level.ts'
 import { DEMO_SCRIPT } from '../speech/lines.ts'
@@ -36,6 +41,8 @@ export interface SessionApi {
   reset(): void
   mic: Microphone
   status: ServerStatus | null | undefined
+  /** True when the page answers browser commands itself (?bridge=fake). */
+  fakeBridge: boolean
 }
 
 const DEMO_TIMING = { startMs: 1400, wordMs: 190, gapMs: 1500, pauseMs: 700, holdMs: HOLD_MS }
@@ -56,6 +63,11 @@ function remember(key: string, value: string): void {
   }
 }
 
+/** True when the page was opened with ?bridge=fake. */
+export function isFakeBridge(): boolean {
+  return new URLSearchParams(window.location.search).get('bridge') === 'fake'
+}
+
 /** True when the page was opened with ?voice=demo. */
 export function isDemo(): boolean {
   return new URLSearchParams(window.location.search).get('voice') === 'demo'
@@ -67,12 +79,16 @@ export function isDemo(): boolean {
  * network, the microphone, the loudspeaker and React.
  */
 export function useSession(paused: boolean): SessionApi {
-  const [session, setSession] = useState<Session>(() => initialSession(SAMPLE_DOC))
+  // Estonian first: a fresh profile listens, shows and answers in Estonian.
+  const [lang, setLangState] = useState(() => remembered('utle.lang') ?? LANG_TAG.et)
+  const [session, setSession] = useState<Session>(() => initialSession(sampleDoc(langOfTag(lang)), langOfTag(lang)))
   const current = useRef(session)
   const dispatchRef = useRef<(event: Event) => void>(() => {})
-  const [lang, setLangState] = useState(() => remembered('utle.lang') ?? 'en-US')
   const langRef = useRef(lang)
   const [demo] = useState(isDemo)
+  const [fakeBridge] = useState(isFakeBridge)
+
+  useEffect(() => (fakeBridge ? installFakeBridge(window) : undefined), [fakeBridge])
 
   const run = useCallback((effect: Effect): void => {
     switch (effect.type) {
@@ -92,6 +108,11 @@ export function useSession(paused: boolean): SessionApi {
         break
       case 'hush':
         hush()
+        break
+      case 'browser':
+        void sendCommand(effect.command).then((result) =>
+          dispatchRef.current({ type: 'browserResult', seq: effect.seq, command: effect.command, result }),
+        )
         break
     }
   }, [])
@@ -113,7 +134,8 @@ export function useSession(paused: boolean): SessionApi {
   const reset = useCallback((): void => {
     hush()
     // A bumped seq makes any answer still in flight stale.
-    const next = { ...initialSession(SAMPLE_DOC), seq: current.current.seq + 1 }
+    const language = current.current.lang
+    const next = { ...initialSession(sampleDoc(language), language), seq: current.current.seq + 1, bridgeSeq: current.current.bridgeSeq + 1 }
     current.current = next
     setSession(next)
   }, [])
@@ -151,7 +173,10 @@ export function useSession(paused: boolean): SessionApi {
     const isInstant = (text: string): boolean => {
       const now = current.current
       if (quickReply(text, { expectNumber: now.mode === 'choosing' }) !== null) return true
-      return localIntent(text, now.doc, now.focusId) !== null
+      if (localIntent(text, now.doc, now.focusId, now.lang) !== null || browserIntent(text) !== null) return true
+      // A one-breath message is a sentence and may be split by a pause; the rest are short commands.
+      const message = messageCommand(text)
+      return message !== null && !(message.kind === 'start' && message.text !== null)
     }
     const handlers = {
       onUtterance: (text: string) => dispatchRef.current({ type: 'utterance', text, source: 'voice' }),
@@ -225,7 +250,8 @@ export function useSession(paused: boolean): SessionApi {
     setLangState(next)
     remember('utle.lang', next)
     recognizer.current?.setLang(next)
+    dispatchRef.current({ type: 'language', lang: langOfTag(next) })
   }, [])
 
-  return { session, dispatch, reset, mic: { supported, on, interim, error, lang, demo, level, toggle, setLang }, status }
+  return { session, dispatch, reset, mic: { supported, on, interim, error, lang, demo, level, toggle, setLang }, status, fakeBridge }
 }

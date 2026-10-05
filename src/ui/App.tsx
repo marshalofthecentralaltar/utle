@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { STRINGS } from '../core/strings.ts'
 import { LANGUAGES } from '../speech/recognizer.ts'
 import { CaptionStrip } from './CaptionStrip.tsx'
 import { DocumentView } from './DocumentView.tsx'
@@ -20,7 +21,8 @@ function isInteractive(target: EventTarget | null): boolean {
 
 export function App() {
   const [view, setView] = useState<View>(viewFromHash)
-  const { session, dispatch, reset, mic, status } = useSession(view === 'check')
+  const { session, dispatch, reset, mic, status, fakeBridge } = useSession(view === 'check')
+  const t = STRINGS[session.lang].ui
 
   useEffect(() => {
     const onHash = (): void => setView(viewFromHash())
@@ -55,18 +57,19 @@ export function App() {
           : 'listening'
 
   const notices: string[] = []
-  if (mic.demo) notices.push('This is the scripted demo. Nobody is speaking; the lines play by themselves.')
-  if (status?.mode === 'rehearsal') notices.push('Rehearsal: answers come from the demo script, not from a model.')
-  if (status === null) notices.push('The server is not answering. Start it with npm run dev.')
-  if (!mic.supported) notices.push('This browser has no speech recognition. Use Chrome, or type.')
+  if (mic.demo) notices.push(t.noticeDemo)
+  if (fakeBridge) notices.push(t.noticeFakeBridge)
+  if (status?.mode === 'rehearsal') notices.push(t.noticeRehearsal)
+  if (status === null) notices.push(t.noticeServerDown)
+  if (!mic.supported) notices.push(t.noticeNoSpeech)
   if (mic.error !== '') notices.push(mic.error)
 
   const quiet = 'flex h-11 cursor-pointer items-center border-0 bg-transparent px-3 hover:text-ink'
 
   return (
-    <div className="flex min-h-screen flex-col pb-48">
+    <div className="flex min-h-screen flex-col pb-80 min-[1000px]:pb-48">
       <header className="grid min-h-11 grid-cols-[1fr_auto] items-center border-b border-edge px-2 text-[0.8125rem] text-soft min-[700px]:grid-cols-[1fr_auto_1fr]">
-        <div className="flex" role="group" aria-label="Language">
+        <div className="flex" role="group" aria-label={t.language}>
           {LANGUAGES.map((language) => (
             <button
               key={language.tag}
@@ -80,16 +83,16 @@ export function App() {
           ))}
         </div>
 
-        <span className="max-[699px]:hidden">minutes-5-october.docx</span>
+        <span className="max-[699px]:hidden">{session.draft ? t.draftName(session.draft.to) : t.docName}</span>
 
         <nav className="flex justify-self-end" aria-label="Controls">
           {view === 'editor' && !mic.demo && (
             <button type="button" onClick={mic.toggle} disabled={!mic.supported} className={`${quiet} disabled:cursor-default disabled:opacity-50`}>
-              {mic.on ? 'Turn the microphone off' : 'Turn the microphone on'}
+              {mic.on ? t.micTurnOff : t.micTurnOn}
             </button>
           )}
           <a href={view === 'editor' ? '#check' : '#'} className={`${quiet} no-underline`}>
-            {view === 'editor' ? 'Voice check' : 'Back to the document'}
+            {view === 'editor' ? t.voiceCheck : t.backToDocument}
           </a>
         </nav>
       </header>
@@ -112,7 +115,7 @@ export function App() {
             <DocumentView session={session} />
             <Margin session={session} reset={reset} />
           </main>
-          <CaptionStrip session={session} interim={mic.interim} voice={voice} level={mic.level} dispatch={dispatch} />
+          <CaptionStrip session={session} interim={mic.interim} voice={voice} level={mic.level} dispatch={dispatch} mic={mic} />
         </>
       )}
     </div>

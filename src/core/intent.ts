@@ -2,6 +2,7 @@ import * as z from 'zod'
 import type { Candidate } from './candidates.ts'
 import type { Doc } from './document.ts'
 import type { Op } from './ops.ts'
+import type { Lang } from './strings.ts'
 
 export type { Candidate } from './candidates.ts'
 
@@ -32,6 +33,10 @@ export interface InterpretRequest {
   pending: Pending | null
   /** Set when the utterance answers a "which one" question. */
   choice: ChoiceContext | null
+  /** The language to write summaries, questions and messages in. Absent: the language the user spoke. */
+  lang?: Lang
+  /** Set while the document is a message draft (ARCHITECTURE 20.3). to is null when the draft has no recipient. */
+  message?: { to: string | null } | null
 }
 
 const BlockTypeSchema = z.enum(['h1', 'h2', 'p', 'li'])
@@ -71,4 +76,6 @@ export const InterpretRequestSchema = z.object({
       picked: z.number().int().nonnegative().nullable(),
     })
     .nullable(),
+  lang: z.enum(['et', 'en']).optional(),
+  message: z.object({ to: z.string().nullable() }).nullable().optional(),
 }) satisfies z.ZodType<InterpretRequest>

@@ -1,11 +1,11 @@
 import * as z from 'zod'
 import { IntentSchema } from '../core/intent.ts'
 import type { Intent, InterpretRequest } from '../core/intent.ts'
+import { STRINGS } from '../core/strings.ts'
 
 const TIMEOUT_MS = 25_000
-const STILL_WORKS = 'Yes, no and undo still work.'
 
-const ErrorSchema = z.object({ error: z.object({ message: z.string() }) })
+const ErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string() }) })
 const StatusSchema = z.object({ mode: z.enum(['live', 'rehearsal']), model: z.string().nullable() })
 
 export type ServerStatus = z.infer<typeof StatusSchema>
@@ -15,6 +15,8 @@ export type ServerStatus = z.infer<typeof StatusSchema>
  * Rejects with an Error whose message can be shown to the user as it is.
  */
 export async function requestIntent(request: InterpretRequest): Promise<Intent> {
+  const t = STRINGS[request.lang ?? 'en']
+  const STILL_WORKS = t.stillWorks
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
@@ -27,16 +29,24 @@ export async function requestIntent(request: InterpretRequest): Promise<Intent> 
     const body: unknown = await response.json().catch(() => null)
     if (!response.ok) {
       const known = ErrorSchema.safeParse(body)
-      const reason = known.success ? known.data.error.message : 'The assistant failed.'
+      const code = known.success ? known.data.error.code : ''
+      const reason =
+        code === 'timeout'
+          ? t.tooSlow
+          : code === 'upstream_unavailable'
+            ? t.unreachable
+            : code === 'upstream_rejected'
+              ? t.assistantRejected
+              : t.assistantFailed
       throw new Error(`${reason} ${STILL_WORKS}`)
     }
     const intent = IntentSchema.safeParse(body)
-    if (!intent.success) throw new Error(`The assistant sent an answer I could not read. ${STILL_WORKS}`)
+    if (!intent.success) throw new Error(`${t.unreadable} ${STILL_WORKS}`)
     return intent.data
   } catch (error) {
     if (error instanceof Error && error.message.endsWith(STILL_WORKS)) throw error
     const slow = error instanceof DOMException && error.name === 'AbortError'
-    throw new Error(`${slow ? 'The assistant took too long.' : 'The assistant is unreachable.'} ${STILL_WORKS}`, { cause: error })
+    throw new Error(`${slow ? t.tooSlow : t.unreachable} ${STILL_WORKS}`, { cause: error })
   } finally {
     clearTimeout(timer)
   }

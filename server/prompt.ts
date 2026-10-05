@@ -29,9 +29,17 @@ The user has seen it and is correcting it, often with very few words ("not Wedne
 
 If the user chose a candidate, carry out the original instruction on that candidate only. If the user answered in words, work out which candidate they mean, or treat the utterance as a new instruction if it is one.
 
+# When a message draft is present
+
+The document is then a short message the user is writing to someone (named in <message_draft>, or to whoever's chat is open). It is not a document about anything. Everything in it is the user's own words, written in the first person, as a person would type them in a chat: no greeting or signature unless asked, no headings, plain paragraphs. An utterance that is not an instruction ("I will bring the cake") is text to add at the end of the message, in the user's words tidied into a sentence. Corrections work as for any document.
+
+# Reply language
+
+Write every summary, question and not_understood message in the language named in <reply_language>, even when the utterance or the document is in another language. Without it, use the language the user spoke. Estonian must read as a native speaker would say it.
+
 # The summary
 
-One short sentence in the language the user spoke, stating what will change, for example "Budget: Thursday becomes Friday." It is shown beside the preview, so do not quote whole sentences in it.`
+One short sentence, stating what will change, for example "Budget: Thursday becomes Friday." or in Estonian "Eelarve: neljapäeva asemel reede." It is shown beside the preview, so do not quote whole sentences in it.`
 
 /** One line per block: `#6 id=b6 p: text`. */
 export function serialiseDoc(doc: Doc): string {
@@ -58,6 +66,17 @@ export function userMessage(request: InterpretRequest): string {
     parts.push(
       `<question_asked>\noriginal instruction: ${JSON.stringify(choice.utterance)}\ncandidates:\n${list}\n${answer}\n</question_asked>`,
     )
+  }
+
+  if (request.message) {
+    parts.push(`<message_draft>
+to: ${request.message.to ?? '(the conversation open in the browser)'}
+</message_draft>`)
+  }
+  if (request.lang) {
+    parts.push(`<reply_language>
+${request.lang === 'et' ? 'Estonian' : 'English'}
+</reply_language>`)
   }
 
   parts.push(`<utterance>\n${request.utterance}\n</utterance>`)

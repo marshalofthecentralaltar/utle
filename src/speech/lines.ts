@@ -1,11 +1,25 @@
 import type { ScriptLine } from './scripted.ts'
 
 /**
- * The demo, as it is spoken. The first line has a pause in the middle, so the scripted run
- * exercises the same pause-joining a real speaker needs. "Martin" is what a recogniser hears
- * for Marten.
+ * The demo, as it is spoken, in Estonian (docs/ARCHITECTURE.md section 20.3). The first line has
+ * a pause in the middle, so the scripted run exercises the same pause-joining a real speaker
+ * needs. It ends with a message to Mari written, repaired once and sent through the bridge.
  */
 export const DEMO_SCRIPT: readonly ScriptLine[] = [
+  { text: 'Muuda eelarve tähtaeg reedeks.', pauseAfterWord: 2 },
+  { text: 'Jah.' },
+  { text: 'Ava uus vaheleht.' },
+  { text: 'Ava messenger.' },
+  { text: 'Kirjuta Marile, et ma jõuan homme kell kolm.' },
+  { text: 'Mitte kolm, vaid neli.' },
+  { text: 'Jah.' },
+  { text: 'Saada.' },
+  { text: 'Jah.' },
+  { text: 'Ära kuula.' },
+]
+
+/** The English demo of M3, kept for an English audience. */
+export const DEMO_SCRIPT_EN: readonly ScriptLine[] = [
   { text: 'Change the budget deadline to Friday.', pauseAfterWord: 4 },
   { text: 'Yes.' },
   { text: 'Move risks above next steps.' },
