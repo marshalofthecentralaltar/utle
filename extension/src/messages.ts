@@ -49,6 +49,10 @@ export type ToBackground =
   | { type: 'utle-mic-granted' }
   /** From the localhost harness through relay.js (section 20.2). */
   | { type: 'utle-command'; command: BrowserCommand }
+  /** From the strip's "Seaded" control: open the options page (a content script cannot). */
+  | { type: 'utle-open-options' }
+  /** From the strip's "Peida" and "Näita" controls: fold the bar to the pill, or unfold it. */
+  | { type: 'utle-bar'; show: boolean }
 
 /** To the offscreen document. */
 export type ToOffscreen = { target: 'offscreen'; type: 'toggle' } | { target: 'offscreen'; type: 'start' }
@@ -71,6 +75,8 @@ export interface StripMeasure {
   /** The computed font size of the heard words, in px. */
   heardPx: number
   line: string
+  /** The bar is folded to the pill. */
+  hidden: boolean
 }
 
 export type RunAnswer = { result: BrowserResult }

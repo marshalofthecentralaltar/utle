@@ -193,6 +193,39 @@ export interface Strings {
     // The new-tab page (21.3), ext lane.
     newTabTitle: string
     newTabHint: string
+    // The strip's controls and the pill (M7, ui lane).
+    hide: string
+    show: string
+    settings: string
+    thinking: string
+    /** Example phrases, shown three at a time under the new tab's tiles. */
+    examples: readonly string[]
+    examplesLead: string
+    // The options page (M7, ui lane). Estonian first, English as the second line.
+    optionsTitle: string
+    optionsHelp: string
+    optionsHelpEn: string
+    barHeight: string
+    barHeightEn: string
+    barSmall: string
+    barNormal: string
+    barLarge: string
+    micSide: string
+    micSideEn: string
+    micLeft: string
+    micRight: string
+    startHidden: string
+    startHiddenEn: string
+    startShown: string
+    startFolded: string
+    advanced: string
+    advancedEn: string
+    asrUrl: string
+    utleUrl: string
+    save: string
+    saved: string
+    notAnAddress(value: string): string
+    savedReload: string
   }
 }
 
@@ -525,6 +558,36 @@ const ET: Strings = {
     // The new-tab page (21.3), ext lane.
     newTabTitle: 'Uus vaheleht',
     newTabHint: 'Vaata paanile üks sekund, et see avada. Või ütle „näita numbreid“ ja number.',
+    hide: 'Peida',
+    show: 'Näita',
+    settings: 'Seaded',
+    thinking: 'Mõtlen',
+    examples: ['„ava youtube“', '„kirjuta Marile, et jõuan kell viis“', '„näita numbreid“ ja number', '„otsi kassivideod“', '„uus leht“', '„peida riba“'],
+    examplesLead: 'Ütle:',
+    optionsTitle: 'Ütle seaded',
+    optionsHelp: 'Vaata nupule üks sekund või ütle „näita numbreid“ ja siis numbri. Valik salvestub kohe.',
+    optionsHelpEn: 'Rest your eyes on a button for one second, or say “show numbers” and then the number. A choice is saved at once.',
+    barHeight: 'Riba kõrgus',
+    barHeightEn: 'Bar height',
+    barSmall: 'Väike',
+    barNormal: 'Tavaline',
+    barLarge: 'Suur',
+    micSide: 'Mikrofon',
+    micSideEn: 'Microphone side',
+    micLeft: 'Vasakul',
+    micRight: 'Paremal',
+    startHidden: 'Riba alguses',
+    startHiddenEn: 'Bar at start',
+    startShown: 'Nähtav',
+    startFolded: 'Peidetud',
+    advanced: 'Täpsemalt',
+    advancedEn: 'Advanced',
+    asrUrl: 'Kõnemudeli aadress',
+    utleUrl: 'Ütle arenduslehe aadress',
+    save: 'Salvesta',
+    saved: 'Salvestatud.',
+    notAnAddress: (value) => `See ei ole täielik aadress: ${value}`,
+    savedReload: 'Salvestatud. Uus kõnemudeli aadress hakkab kehtima pärast laienduse uuesti laadimist.',
   },
 }
 
@@ -813,6 +876,36 @@ const EN: Strings = {
     // The new-tab page (21.3), ext lane.
     newTabTitle: 'New tab',
     newTabHint: 'Rest your eyes on a tile for one second to open it. Or say “show numbers” and a number.',
+    hide: 'Hide',
+    show: 'Show',
+    settings: 'Settings',
+    thinking: 'Thinking',
+    examples: ['“open youtube”', '“write to Mari that I arrive at five”', '“show numbers” and a number', '“search cat videos”', '“new page”', '“hide the bar”'],
+    examplesLead: 'Say:',
+    optionsTitle: 'Ütle settings',
+    optionsHelp: 'Rest your eyes on a button for one second, or say “show numbers” and then the number. A choice is saved at once.',
+    optionsHelpEn: '',
+    barHeight: 'Bar height',
+    barHeightEn: '',
+    barSmall: 'Small',
+    barNormal: 'Normal',
+    barLarge: 'Large',
+    micSide: 'Microphone',
+    micSideEn: '',
+    micLeft: 'Left',
+    micRight: 'Right',
+    startHidden: 'Bar at start',
+    startHiddenEn: '',
+    startShown: 'Shown',
+    startFolded: 'Folded',
+    advanced: 'Advanced',
+    advancedEn: '',
+    asrUrl: 'Speech model address',
+    utleUrl: 'Address of the Ütle development page',
+    save: 'Save',
+    saved: 'Saved.',
+    notAnAddress: (value) => `Not a full address: ${value}`,
+    savedReload: 'Saved. Reload the extension for a new speech address to take effect.',
   },
 }
 

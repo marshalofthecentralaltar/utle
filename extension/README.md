@@ -37,26 +37,41 @@ From the repository root:
 
 ## Use
 
-- The strip sits at the bottom of every web page. The big square on the left is the microphone:
-  click it, or rest the eye-tracker pointer on it for one second (a yellow fill grows), to turn
-  listening on or off. Green "Kuulan" = listening, hollow "Ei kuula" = off, blue "Puhkan" = resting.
+- The strip sits at the bottom of every web page: near-black, ivory text, 128 px high by default.
+  The big square is the microphone: click it, or rest the eye-tracker pointer on it for one second
+  (an amber fill grows), to turn listening on or off. Green "Kuulan" = listening, hollow "Ei kuula"
+  = off, amber outline "Puhkan" = resting.
+- Right of the words are two small controls, also by click or one-second dwell: **Peida** folds
+  the strip to a round microphone pill in the bottom-right corner (say `peida riba` for the same),
+  **Seaded** opens the settings page. On the pill: click or dwell one second to turn listening on
+  or off; the small **Näita** next to it, resting on the pill for two seconds, or `näita riba`
+  brings the strip back.
 - Open a chat in WhatsApp Web and speak: the words appear in the chat's message box as you say
   them, and are tidied when you stop (capital letter, full stop). Words that may be a command
   ("saa...", "keri...") are not typed; if they turn out not to be one, they appear then.
 - The upper line of the strip always shows the words being heard, and keeps the last ones until you
-  speak again.
-- A new tab is Ütle's own page: the same strip, and big tiles for WhatsApp and the other known
-  sites. Rest the eye-tracker pointer on a tile for one second (or click it) to open the site in
-  that tab, or say `näita numbreid` and the number. Chrome may ask, once, whether to keep this
-  changed new-tab page: choose **Keep it**.
+  speak again. Under it, the amber line says what was understood or done; three pulsing dots and
+  "Mõtlen" appear while the model is asked what you meant, and a thin amber line under that says
+  when the free-form understanding is off (no key, no server).
+- A new tab is Ütle's own page: the same strip, big tiles for WhatsApp and the other known sites,
+  and three example phrases that change every few seconds. Rest the eye-tracker pointer on a tile
+  for one second (or click it) to open the site in that tab, or say `näita numbreid` and the
+  number. Chrome may ask, once, whether to keep this changed new-tab page: choose **Keep it**.
+- Settings (the **Seaded** control, or the extension's options page) are large buttons that a
+  click or a one-second dwell toggles, saved at once: bar height (Väike 96 / Tavaline 128 / Suur
+  192, `barHeight`), microphone side (`micSide`: Vasakul / Paremal), and whether the bar starts
+  folded (`barHiddenDefault`). The speech-model and development-page addresses are under
+  "Täpsemalt". The same strip is mounted there. (Numbering the buttons by voice needs the service
+  worker to treat options.html like newtab.html; see HANDOFF.md.)
 - What to say (the exact phrases come from `src/core/inpage.ts`, the core lane):
   - dictation: anything that is not a command is added to the message box;
   - `saada`: sends what is in the box;
   - corrections: `mitte kolm, vaid neli`, `kustuta viimane sõna`, `kustuta kõik`, `võta tagasi`;
   - browser: `keri alla`, `keri üles`, `järgmine vaheleht`, `eelmine vaheleht`, `näita numbreid`, `vajuta viis`;
+  - the bar: `peida riba`, `näita riba`;
   - `puhka` stops typing, `ärka üles` resumes.
 - The toolbar icon also turns listening on and off.
-- When the speech model is not running, the strip says so in one red line; start `npm run dev` and
+- When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.
 
 ## Test
