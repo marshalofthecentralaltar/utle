@@ -91,8 +91,10 @@ tracker.
 - A Chrome extension draws the bar, listens, and types into the page.
 - Speech is recognised by TalTech's Estonian model (Tanel Alumäe's Laboratory of Language
   Technology, MIT licence) running on the same laptop. No audio leaves the machine.
-- Commands and repairs are understood by rules, with no AI model and no cost per use. A Claude model
-  for freer corrections is planned and not connected.
+- Fixed commands and repairs are understood by rules, with no AI model and no cost per use. What
+  the rules do not recognise is understood by a Claude model, which sees the words and what is on
+  the page (never the audio) and may answer only with one of a fixed set of actions, checked before
+  anything runs. Nothing is typed into a field he did not choose.
 
 ## What makes it different
 

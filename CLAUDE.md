@@ -36,6 +36,7 @@ unpacked.
 - `npx tsx extension/test/run.ts` runs every browser command in Chromium.
 - `UTLE_REAL=1 npx tsx extension/test/voice.ts` (PowerShell: `$env:UTLE_REAL=1; npx tsx extension/test/voice.ts`) runs recorded speech through the real model and the real command logic (without `UTLE_REAL=1` it uses a stand-in); needs `npx vite --port 5193 --strictPort`.
 - `npm run smoke` runs the old demo script through the real model. It spends a few cents.
+- `npx tsx scripts/intent-eval.ts` runs 28 Estonian utterances through `/api/intent`'s model against fake pages (needs `ANTHROPIC_API_KEY`).
 
 ## Not verifiable without a person
 
