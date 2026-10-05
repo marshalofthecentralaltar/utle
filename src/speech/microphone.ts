@@ -5,9 +5,10 @@ const WORKLET_URL = '/asr-worklet.js'
 
 /**
  * The microphone as 16 kHz mono float frames: the AudioContext resamples, and the worklet in
- * public/asr-worklet.js cuts the stream into frames of ASR_FRAME_SAMPLES.
+ * public/asr-worklet.js cuts the stream into frames of ASR_FRAME_SAMPLES. The extension passes its
+ * own copy of the worklet's address.
  */
-export function createMicrophoneFrames(): AudioSource {
+export function createMicrophoneFrames(workletUrl: string = WORKLET_URL): AudioSource {
   let stream: MediaStream | null = null
   let context: AudioContext | null = null
   let wanted = false
@@ -33,7 +34,7 @@ export function createMicrophoneFrames(): AudioSource {
       stream = media
       const ctx = new AudioContext({ sampleRate: ASR_SAMPLE_RATE })
       context = ctx
-      await ctx.audioWorklet.addModule(WORKLET_URL)
+      await ctx.audioWorklet.addModule(workletUrl)
       if (!wanted) return
       const node = new AudioWorkletNode(ctx, 'asr-frames', { processorOptions: { frameSamples: ASR_FRAME_SAMPLES } })
       node.port.onmessage = (event: MessageEvent<Float32Array<ArrayBuffer>>) => {

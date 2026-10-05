@@ -29,3 +29,8 @@ dist-ssr
 
 # Speech models are downloaded, never committed
 models
+
+# The built extension and its test copy
+extension/dist
+extension/test/.standin
+check.log

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WhatsApp</title>
+    <style>
+      /* Reproduces the structure read from WhatsApp Web on 2026-10-05 (see extension/src/sites.ts). */
+      body { margin: 0; font: 15px system-ui, sans-serif; }
+      #app { height: 100vh; display: flex; }
+      #side { width: 340px; display: flex; flex-direction: column; border-right: 1px solid #ddd; }
+      #side input { margin: 10px; padding: 8px; font: inherit; }
+      #pane-side { flex: 1; overflow: auto; }
+      [role="row"] { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; }
+      [role="row"] .last { color: #667; font-size: 13px; }
+      #right { flex: 1; display: flex; }
+      #main { flex: 1; display: flex; flex-direction: column; }
+      #main header { padding: 12px; background: #f0f2f5; }
+      #main .msgs { flex: 1; overflow: auto; padding: 12px; }
+      #main footer { display: flex; gap: 8px; padding: 10px; background: #f0f2f5; }
+      #main footer [role="textbox"] { flex: 1; background: #fff; padding: 8px; min-height: 22px; border-radius: 6px; }
+      #main footer [role="textbox"] p { margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="side">
+        <input role="textbox" type="text" aria-label="Search or start a new chat" placeholder="Search" />
+        <div id="pane-side"><div role="grid" aria-label="Chat list" id="grid"></div></div>
+      </div>
+      <div id="right"><p style="margin: auto">No chat open</p></div>
+    </div>
+    <script type="module">
+      import { createEditor, $getRoot, KEY_ENTER_COMMAND, COMMAND_PRIORITY_HIGH, registerPlainText } from '../vendor/lexical.js'
+      // Kalle Kuusk is not in the visible list: only a search finds him.
+      const people = [['Mari Maasikas', 'Homme sobib.'], ['Jaan Tamm', 'Jah.'], ['Peeter Kask', 'Aitäh!'], ['Kalle Kuusk', 'Tere']]
+      const sent = new Map(people.map(([name]) => [name, []]))
+      window.sentTo = (name) => [...(sent.get(name) ?? [])]
+      const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
+      function rows(filter) {
+        const grid = document.getElementById('grid')
+        grid.innerHTML = ''
+        const shown = filter === '' ? people.slice(0, 3) : people.filter(([name]) => norm(name).includes(norm(filter)))
+        for (const [name, last] of shown) {
+          const row = document.createElement('div')
+          row.setAttribute('role', 'row')
+          row.innerHTML = `<div><span dir="auto" title="${name}">${name}</span></div><div class="last"><span title="${last}">${last}</span></div>`
+          // WhatsApp opens a chat on mouse events; there is no link and the address does not change.
+          row.addEventListener('mousedown', () => open(name))
+          grid.append(row)
+        }
+      }
+      rows('')
+      let timer = null
+      document.querySelector('#side input').addEventListener('input', (e) => {
+        clearTimeout(timer)
+        // Search results arrive a moment later.
+        timer = setTimeout(() => rows(e.target.value.trim()), 300)
+      })
+
+      function open(name) {
+        const right = document.getElementById('right')
+        right.innerHTML = ''
+        setTimeout(() => {
+          right.innerHTML = `<div id="main"><header><span dir="auto" title="${name}">${name}</span></header><ul class="msgs"></ul>
+            <footer><div contenteditable="true" role="textbox" aria-label="Type a message"></div>
+            <button type="button" aria-label="Send"><span data-icon="send">&gt;</span></button></footer></div>`
+          const box = right.querySelector('[role="textbox"]')
+          const editor = createEditor({ namespace: 'wa', onError: (e) => { throw e } })
+          editor.setRootElement(box)
+          registerPlainText(editor)
+          const text = () => editor.getEditorState().read(() => $getRoot().getTextContent())
+          const send = () => {
+            const t = text().trim()
+            if (t === '') return
+            sent.get(name).push(t)
+            const li = document.createElement('li')
+            li.textContent = t
+            right.querySelector('.msgs').append(li)
+            editor.update(() => $getRoot().clear())
+          }
+          // Only a real key press sends; a synthetic Enter falls through to the editor (a new line),
+          // so the extension has to use the send button.
+          editor.registerCommand(KEY_ENTER_COMMAND, (event) => {
+            if (!event || !event.isTrusted || event.shiftKey) return false
+            event.preventDefault()
+            send()
+            return true
+          }, COMMAND_PRIORITY_HIGH)
+          right.querySelector('button').addEventListener('click', send)
+          window.waText = text
+        }, 400)
+      }
+    </script>
+  </body>
+</html>

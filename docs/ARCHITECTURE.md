@@ -701,3 +701,53 @@ An empty box makes the word, sentence and mark repairs say the box is empty.
 **Instant.** `inpageInstant(session, utterance)` is true for everything rules 1 to 7 recognise except the one-breath form, and for everything while asleep (it is ignored, so there is nothing to join). It is false for dictation, for the one-breath form (a sentence a pause may split) and for an empty utterance. A bare number is instant only while labels show.
 
 **Results.** `inpageResult` maps the result code, never the extension's message text. Success: `pressSend` says "Saadetud." and empties `undo`; `setText` says it is done; `openConversation` names the conversation; tab and navigation commands give the tab title (20.3 `browserDone`); `showHints` gives the label count. Failure: the failed command is taken to be the first of the step (only the one-breath form has two, and when `openConversation` fails `setText` never ran); `not_found` names the conversation, the number or the box; `no_target` says no browser window was found; a timed-out `pressSend` says the message may or may not have gone. `undo` stays true to the box: a step whose `setText` text equals the newest `undo` entry was an undo, and that entry is removed when it succeeds; any other step with a `setText` pushed the old text, and that entry is removed when the step fails. A repair that would leave the text as it is emits nothing, so the two cannot be confused.
+
+### 21.2 The extension in in-page mode
+
+The extension is the whole product. Nothing opens a window or a page for him to work in; the one extension page that ever opens is the microphone permission page, once, during setup.
+
+**Parts.** Source is TypeScript in `extension/src/`, bundled by `npm run ext` (esbuild, `scripts/ext.ts`) into `extension/dist/`, which is gitignored; `extension/manifest.json` points at `dist/`. Load the `extension/` folder unpacked after `npm run ext`. `npm run check` typechecks `extension/src` and runs the build.
+
+| File (`extension/src/`) | Runs in | Job |
+|---|---|---|
+| `background.ts` | the service worker | Target tab, tab commands, `runInPage`, the offscreen document, the strip state, the permission page, the relay for the localhost harness. |
+| `offscreen.ts`, `engine.ts` | the offscreen document (`offscreen.html`, reason `USER_MEDIA`) | Microphone, recogniser client (`src/speech/local.ts` with an explicit address), the `InpageSession`, the utterance loop. |
+| `content.ts`, `strip.ts` | every http and https page (content script, top frame only) | The strip, in a closed shadow root, and making room for it. |
+| `page.ts`, `sites.ts` | the page in front, injected on demand | Scroll, numbers, the message box (`readBox`, `setText`, `pressSend`, `insertText`), opening a conversation. |
+| `permission.ts` | `permission.html`, an extension tab | Asks for the microphone, then closes itself. |
+| `options.ts` | the options page | The Ütle harness address and the speech address. |
+
+`extension/relay.js` stays plain JavaScript: it relays the section 20 localhost page's BridgeRequests, which remain a development harness.
+
+**The engine and its message flow.** One offscreen document for the whole browser, created once (when listening is first turned on) and kept; it holds the microphone and the session, so neither is lost when he switches tabs or pages.
+
+1. The strip (or the toolbar button) sends `utle-toggle` to the service worker.
+2. The service worker creates the offscreen document if there is none and forwards `toggle` to it.
+3. The offscreen engine starts or stops `createLocalRecognizer` against `ws://localhost:5173/api/asr` (the stored `asrUrl` overrides; the test uses 5193). `inpageInstant` is its `isInstant`.
+4. Every change (listening, heard words, the line, a problem) goes to the service worker as `utle-state`; it writes `stripState` to `chrome.storage.session` (opened to content scripts), and every strip renders from that key, so the strip of whichever tab is in front shows the same state.
+5. For each utterance the engine has the service worker run `readBox`, calls `inpageStep(session, utterance, box)`, runs the returned commands in order through the service worker's command executor (`utle-run`), stopping at the first failure, calls `inpageResult` with that failure or the last success, and publishes the line. Utterances are handled one at a time, in order.
+6. Commands act on the active tab of the most recently focused ordinary window (section 20.2's rule; the offscreen document has no window of its own).
+
+The engine takes `initialInpage`, `inpageStep`, `inpageResult` and `inpageInstant` as a dependency: `offscreen.ts` passes `src/core/inpage.ts`; the end-to-end test builds `extension/test/standin-offscreen.ts` instead, with a stand-in of the same signatures.
+
+**Failure is said plainly.** When the speech server cannot be reached, the recogniser gives up on the first refused connection (20.1: no retries before the server has ever answered), listening turns off, and the strip shows one Estonian line saying the speech model is not reachable. Turning listening on again tries once more. When the microphone is refused, the strip says so and the permission page opens.
+
+**The permission page.** An offscreen document cannot show a permission prompt. `permission.html` opens in a tab on install, and again whenever turning listening on finds the microphone refused. It calls `getUserMedia`; once granted it stops the stream, tells the service worker (which starts listening if he had asked for it) and closes its own tab. A helper does this once during setup.
+
+**The strip.** A fixed bar across the bottom of the viewport, 128 px high, in a closed shadow root on `<utle-strip>` at the end of `<html>`, with its own opaque dark background and white and yellow text, so it reads the same on light and dark pages. Left: the microphone control, 104 by 104 px, three states (listening: filled, "Kuulan"; not listening: hollow, "Ei kuula"; resting while the session is asleep: "Puhkan"). Click toggles; resting the pointer on it for 1 s toggles too, with a fill growing over that second (`src/ui/dwell.ts`: leaving cancels, no refire until the pointer has left). Pressing it does not take focus from the page's text field. Right: the words heard right now (26 px; after an utterance, the last utterance stays until new speech), and one line (20 px): a problem when there is one, else what was understood or done. Strings are in `src/core/strings.ts` under `strip`.
+
+**Making room.** The strip must never cover the site's composer, which on WhatsApp and Messenger sits at the bottom of a full-height app. Two steps: (1) a page style gives `html` a content-box height of `100% - 128px` and 128 px of bottom padding, which shrinks every layout built on percentage heights and lets a scrolling page scroll its last 128 px out from under the strip; (2) once a second, if the page's message box (the `readBox` order) reaches under the strip, its outermost ancestor that is as tall as the viewport (a `100vh` app) gets an inline height of `calc(100vh - 128px)`. Elements a site fixes to the bottom of the viewport can still be covered.
+
+**The three commands** (page side, `page.ts`). The box is found in the existing order: the focused text field, else the site's composer (`sites.ts`), else the lowest visible textbox, textarea or input.
+
+- `readBox`: `{present, text}` at once, no waiting. Text is the field's value, or a contenteditable's `innerText` without trailing line breaks.
+- `setText`: waits for the box like `insertText`, selects everything inside it (`select()` for a field, a range over its contents in a contenteditable), then types the text through `execCommand('insertText')` line by line. Between lines it dispatches a `beforeinput` of type `insertLineBreak` (what Shift+Enter produces, which Lexical takes), falling back to `execCommand('insertLineBreak')` when no editor handles it; a textarea gets `\n` typed. So a Lexical editor registers every change, and a line break never reaches the Enter handler that sends. Where an editor cancels the native edit and applies it in its own update (Lexical over a selection), the text is checked again 30 ms later before any fallback, so nothing is typed twice. An empty text selects all and deletes. Fallbacks as `insertText` (native value setter; `beforeinput`). Answers with the box read back.
+- `pressSend`: `failed` when the box is empty. Otherwise Enter; if the text is still there after 500 ms, the site's send button; with none, the field's form. Answers `ok` with the box once it is empty (up to 2 s), else `failed`.
+
+**Sites.** `sites.ts` holds one entry per messaging site, each selector on its own line marked verified or unverified. Which entry applies to a page: the stored `siteOverrides` (address prefix to site name; the test maps fixture pages to `whatsapp`), else each entry's `isHere`, else the stored `messagingHome`'s origin (Messenger, as section 20.2's test does).
+
+WhatsApp Web, read from a logged-in page with no chat open (verified): the chat list `#pane-side [role="grid"][aria-label="Chat list"]`, each chat a `[role="row"]` named by the `title` of its first `span[title]`; the search field `#side input[role="textbox"][aria-label="Search or start a new chat"]`; no `#main` and no editable box before a chat is opened. Unverified (no chat was opened): the composer `#main footer div[contenteditable="true"][role="textbox"]` (Lexical), the send button `#main footer button[aria-label="Send"]` or the button around `[data-icon="send"]` / `[data-icon="wa-wds-send"]`, the open chat's name `#main header span[title]`, and whether a synthetic Enter sends.
+
+**openConversation on WhatsApp.** WhatsApp does not change its address when a chat opens, so the page waits instead: it matches the name (section 20.2's score) against the visible rows' names; with no match it types the name into the search field and waits up to 4 s for a matching row; it opens the row with pointer and mouse events, then waits up to 3 s for a composer and for the open chat's name to be the row's name, and answers `settled`, which tells the service worker not to wait for an address change. The messaging home for routing is whichever of WhatsApp or Messenger is already open in the window (WhatsApp first), else the stored `messagingHome`, else `https://web.whatsapp.com/`.
+
+**Removed.** The dock and the companion window. The toolbar button now turns listening on or off (and opens the permission page when the microphone is refused).

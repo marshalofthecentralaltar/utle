@@ -10,10 +10,11 @@
     "lint": "oxlint",
     "test": "vitest run",
     "smoke": "tsx scripts/smoke.ts",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build && npm run ext",
     "preview": "vite preview",
     "rehearse": "vite --mode rehearsal",
-    "model": "tsx scripts/model.ts"
+    "model": "tsx scripts/model.ts",
+    "ext": "tsx scripts/ext.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
@@ -25,11 +26,13 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@types/chrome": "^0.3.4",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
+    "esbuild": "^0.28.2",
     "oxlint": "^1.81.0",
     "playwright": "^1.63.0",
     "tailwindcss": "^4.3.3",

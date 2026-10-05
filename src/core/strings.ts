@@ -165,6 +165,21 @@ export interface Strings {
     reportLine(n: number, expected: string, heard: string, errors: number): string
     noSpeech: string
   }
+
+  // The extension's strip and its permission page (in-page mode, section 21.2).
+  strip: {
+    micLabel: string
+    listening: string
+    notListening: string
+    resting: string
+    sayPrompt: string
+    modelUnreachable: string
+    micBlocked: string
+    permissionTitle: string
+    permissionAsk: string
+    permissionDone: string
+    permissionRetry: string
+  }
 }
 
 /** The address without scheme and www, or the search words of a Google search. */
@@ -416,6 +431,20 @@ const ET: Strings = {
     reportLine: (n, expected, heard, errors) => `${n}. oodatud „${expected}“, kuuldud „${heard}“, vigu ${errors}`,
     noSpeech: 'Selles brauseris pole kõnetuvastust. Kasuta Chrome’i.',
   },
+
+  strip: {
+    micLabel: 'Mikrofon sisse või välja',
+    listening: 'Kuulan',
+    notListening: 'Ei kuula',
+    resting: 'Puhkan',
+    sayPrompt: 'Räägi. Sõnad lähevad sõnumikasti.',
+    modelUnreachable: 'Kõnemudel ei vasta. Käivita see arvutis käsuga npm run dev.',
+    micBlocked: 'Mikrofon on keelatud. Luba see avanenud lehel.',
+    permissionTitle: 'Ütle vajab mikrofoni',
+    permissionAsk: 'Vajuta brauseri küsimuses „Luba“. See leht sulgub ise.',
+    permissionDone: 'Mikrofon on lubatud. Leht sulgub.',
+    permissionRetry: 'Proovi uuesti',
+  },
 }
 
 const EN: Strings = {
@@ -650,6 +679,20 @@ const EN: Strings = {
     report: (language, errors, words, percent) => `Ütle voice check, ${language}: ${errors} of ${words} words wrong (${percent} percent).`,
     reportLine: (n, expected, heard, errors) => `${n}. expected "${expected}" heard "${heard}" errors ${errors}`,
     noSpeech: 'This browser has no speech recognition. Use Chrome.',
+  },
+
+  strip: {
+    micLabel: 'Microphone on or off',
+    listening: 'Listening',
+    notListening: 'Not listening',
+    resting: 'Resting',
+    sayPrompt: 'Speak. The words go into the message box.',
+    modelUnreachable: 'The speech model is not answering. Start it on this computer with npm run dev.',
+    micBlocked: 'The microphone is blocked. Allow it on the page that opened.',
+    permissionTitle: 'Ütle needs the microphone',
+    permissionAsk: 'Press “Allow” in the browser’s question. This page closes itself.',
+    permissionDone: 'The microphone is allowed. This page is closing.',
+    permissionRetry: 'Try again',
   },
 }
 

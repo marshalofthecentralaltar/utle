@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), utleApi()],
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts', 'server/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'server/**/*.test.ts', 'extension/src/**/*.test.ts'],
     passWithNoTests: true,
   },
 })
