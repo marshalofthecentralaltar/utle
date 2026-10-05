@@ -1,65 +1,143 @@
 # Ütle: what the product is
 
-Written 2026-10-05, after the first use on real WhatsApp. This is the page for teammates, the
-pitch and anyone who has not read the code. The technical design is `docs/ARCHITECTURE.md`
-(sections 21 onward describe what is built now; sections 1 to 20 are history).
+For teammates, the pitch, branding, and anyone who has not read the code. Written 5 October 2026.
+The technical design is `docs/ARCHITECTURE.md` (sections 21 onward describe what is built now;
+sections 1 to 20 are history). The current state and known faults are in `HANDOFF.md`, which wins
+wherever this page and it disagree.
 
-## One sentence
+## In one sentence
 
-Ütle lets a person who cannot use their hands write, repair and send messages and move around
-the web by speaking Estonian, inside the sites they already use.
+Ütle lets a person who cannot use their hands write, repair and send messages and move around the
+web by speaking Estonian, inside the sites they already use.
+
+"Ütle" is Estonian for "say". It is pronounced roughly "UET-leh".
 
 ## Who it is for
 
-A man with a motor disability the team spoke to on 5 October 2026. He speaks clear Estonian, types
-very slowly, and points with a Tobii eye tracker. In his words: writing messages is the pain, he
-wants to move around the computer by voice, and eye tracking works badly with forms and PDFs.
+People who cannot type or use a mouse comfortably: cerebral palsy, spinal injury, ALS, a stroke, a
+broken arm. Many of them already use an eye tracker to move a pointer by looking.
 
-More broadly: people in Estonia with a mobility disability that makes typing hard but leaves
-speech usable. About 33,700 people have a registered mobility disability; how many of them fit is
-not known (our guess: a few thousand).
+The product changed direction after the team talked to an eye-tracker user with a motor disability
+on the first day of the hackathon. He said three things, and they are the brief:
+
+1. Typing messages is slow.
+2. He wants to move around the browser by voice.
+3. Estonian, not English.
+
+He also said eye tracking works badly with forms and PDFs.
+
+More broadly: people in Estonia with a mobility disability that makes typing hard but leaves speech
+usable. About 33,700 people have a registered mobility disability; how many of them fit is not known
+(our guess: a few thousand).
 
 ## The problem
 
-No mainstream hands-free tool works in Estonian. Windows Voice Access, Apple Voice Control and
-Dragon do not support it; Windows voice typing dictates Estonian but cannot control anything.
-Eye tracking is language-independent but slow for text.
+Voice tools today either take dictation or take commands, and they are built for English. No
+mainstream hands-free tool works in Estonian: Windows Voice Access, Apple Voice Control and Dragon do
+not support it, and Windows voice typing dictates Estonian but cannot control anything. Eye tracking
+is language-independent but slow for text. Dictation makes mistakes, and fixing a mistake usually
+needs the hands the person does not have. Writing one message to a friend can take minutes and a lot
+of effort.
 
-## What he does with it
+## What Ütle does
 
-1. Opens WhatsApp Web in Chrome. A black bar sits at the bottom of the page with one large button.
-2. Looks at the button for a second. It turns green: Ütle is listening.
-3. Speaks. The bar shows what is heard. His words appear in WhatsApp's own message box.
-4. Repairs by voice: "mitte kolm, vaid neli", "kustuta viimane sõna", "võta tagasi".
-5. Says "saada". WhatsApp sends it.
-6. Says "keri alla", "järgmine vaheleht", "ava gmail", "näita numbreid" and a number to click
-   anything. Says "puhka" to stop it typing what it hears, "ärka üles" to resume.
+**Writes messages where the conversation already is.** He opens WhatsApp Web in Chrome and speaks.
+The words appear in the site's own message box while he talks. He says "saada" (send) and the
+message goes. There is no separate app to write in and nothing to copy across. Messenger is built
+for too, but has never been tried on the real site.
 
-Nothing opens in a separate window. He stays where he is.
+**Repairs mistakes in a few words.** "Mitte kolm, vaid neli" (not three, four) fixes the wrong word.
+"Kustuta viimane sõna" removes the last word. "Võta tagasi" undoes. None of this needs hands, and
+none of it needs the internet.
+
+**Moves around the browser.** "Järgmine vaheleht" (next tab), "keri alla" (scroll down), "ava
+postimees" (open a site), "otsi ..." (search Google). "Näita numbreid" puts a small number on
+everything clickable on the page, and saying a number clicks it. That last one makes any website
+usable, including ones we have never seen.
+
+**Opens a conversation by name.** "Kirjuta Marile" opens the chat with Mari. "Kirjuta Marile, et ma
+jõuan homme kell kolm" opens it and writes the sentence, ready to send. Tested on stand-in pages;
+on real WhatsApp only the chat list has been checked.
+
+**Understands imperfect speech.** If it hears "mina whatsappi" instead of "mine whatsappi", it works
+out what was meant and says what it took it to be. It never guesses on the things that cannot be
+taken back: sending, resting, waking and undoing are only done when said exactly.
+
+**Rests when asked.** "Puhka" makes it stop typing what it hears until "ärka üles" (wake up), so he
+can talk to someone in the room.
+
+**The first version, a document editor,** survives only as a development page at localhost: say
+"change the budget deadline to Friday", see the change marked in the text, say yes or no. Its edits
+need an Anthropic API key, and the key on the build machine is rejected. It is not part of what the
+user is given.
+
+## How it feels to use
+
+Three moves, borrowed from how two people work on a text when only one has the keyboard:
+
+1. **Say it.** Speak naturally, in Estonian (English commands are understood too).
+2. **See what was understood.** The words appear as he speaks. Nothing important happens out of
+   sight.
+3. **Repair it in a word.** A short correction, not a retype.
+
+On screen there is almost nothing: one bar along the bottom of whatever page he is on, and of the
+new-tab page. It holds a large microphone target, the words being heard, and one line saying what
+was just done. The microphone target is big on purpose, so an eye tracker can switch listening on
+and off by resting on it for a second. That is tested in automated tests, not yet with a real eye
+tracker.
 
 ## How it works, in plain words
 
 - A Chrome extension draws the bar, listens, and types into the page.
-- Speech is recognised by TalTech's Estonian model (Tanel Alumäe's lab, MIT licence) running on
-  the same laptop. No audio leaves the machine.
-- Commands and repairs are understood by rules, with no AI model and no cost per use. A Claude
-  model for freer corrections is planned and not connected.
+- Speech is recognised by TalTech's Estonian model (Tanel Alumäe's Laboratory of Language
+  Technology, MIT licence) running on the same laptop. No audio leaves the machine.
+- Commands and repairs are understood by rules, with no AI model and no cost per use. A Claude model
+  for freer corrections is planned and not connected.
+
+## What makes it different
+
+- **Estonian first.** Recognition and every line the bar shows are Estonian.
+- **Speech stays on the computer.** The recognition model runs on the user's own laptop. No audio is
+  sent anywhere. For a tool that hears everything a person says at their desk, this is the point,
+  not a detail.
+- **It works inside the sites people already use.** No new messenger to move friends to.
+- **Mistakes are cheap.** A wrong word costs one short sentence to fix. Nothing is sent until he
+  says so.
+- **Designed for no hands at any step,** including turning the microphone on. Installing it still
+  needs a helper.
+
+## Principles the product will not break
+
+- Nothing leaves the computer without the user asking: a message is sent only on "saada".
+- The user always sees what was understood before it matters.
+- An error never costs more than the sentence that caused it.
+- What the user says and writes is never logged.
 
 ## What is proven and what is not
 
-| Claim | Status on 5 October |
+| Claim | Status on 5 October 2026 |
 |---|---|
-| Dictating and sending in real WhatsApp Web | Done once by a team member with a normal voice |
-| Scrolling and switching tabs by voice | Done by recorded voice in automated tests |
-| Works with his voice | Not tried |
-| Works with a real Tobii | Not tried |
+| Dictating and sending in real WhatsApp Web | Done with the first version by the developer and one team member, both with ordinary voices |
+| Words typed while speaking, and the new-tab page | Done by recorded speech in automated tests in Chromium; not yet on real WhatsApp or in Google Chrome |
+| Scrolling and switching tabs by voice | Done by recorded speech in automated tests |
+| Works with the voice of the person it is for | Not tried |
+| Works with a real eye tracker | Not tried |
 | Faster for him than typing | Not measured |
 | Messenger | Built against a stand-in page, never tried on the real site |
 
 ## What it is not, yet
 
-It does not control anything outside web pages, does not work on Chrome's own settings pages, and
-needs a developer to install it (a local server and an unpacked extension).
+It does not control anything outside web pages, does not work on Chrome's own pages (settings,
+extensions, the Web Store), works only in Google Chrome on a computer, and needs a developer to
+install it: a local speech server and an unpacked extension. It cannot go on the Chrome Web Store
+while it needs that local server (see `docs/PUBLISHING.md`).
+
+## Where it could go
+
+- An installable program that works across the whole computer, not only the browser.
+- More sites handled by name (email, online banking, e-services such as eesti.ee).
+- Other small languages that the big voice tools serve badly.
+- Use by anyone whose hands are busy or tired, not only people with a disability.
 
 ## Why this could last (the pitch's moat)
 
@@ -69,15 +147,59 @@ needs a developer to install it (a local server and an unpacked extension).
 4. Estonia is small and reachable: disability organisations, Töötukassa (which funds work-related
    aids, including software), and the TalTech lab are all within reach. Foreign vendors will not
    bother with Estonian procurement.
-5. Estonian speech recognition is NOT ours. It is TalTech's and open to anyone. Do not pitch it as ours.
+5. Estonian speech recognition is NOT ours. It is TalTech's and open to anyone. Do not pitch it as
+   ours.
 
 ## Who pays
 
-Probably not the user. Töötukassa provides work-related aids free of charge and the Social
-Insurance Board reimburses most assistive devices at 90 percent. Price anchors: Voiceitt costs
-600 dollars a year; a Tobii eye tracker costs about 2,000 to 8,000 pounds.
+Probably not the user. Töötukassa provides work-related aids free of charge and the Social Insurance
+Board reimburses most assistive devices at 90 percent. Price anchors: Voiceitt costs 600 dollars a
+year; a Tobii eye tracker costs about 2,000 to 8,000 pounds.
+
+## For branding
+
+**Fixed, please keep:**
+
+- The name Ütle and its meaning.
+- Estonian comes first in every piece of copy; English second.
+- Plain words and sentence case. The product speaks in short, calm sentences ("Saadetud.", "Sain
+  aru: ..."). No exclamation marks, no jargon, no cheerfulness about disability.
+- High contrast and large targets. Anything on screen must be readable by someone with low vision
+  and hittable by an eye tracker.
+
+**What exists now, as a starting point, not a decision:**
+
+- A lowercase wordmark, "ütle", where the two dots of the ü are the listening light: red and solid
+  when listening, hollow when not.
+- The typeface Atkinson Hyperlegible Next, drawn for readers with low vision.
+- In the old document editor: a warm ivory or near-black background, near-black or ivory text, thin
+  lines instead of boxes, and colour only for meaning (red for removed text, blue for added, yellow
+  for "which one").
+- In the browser bar: an opaque dark strip with white and yellow text, so it reads the same on any
+  website.
+
+These two looks do not match each other yet. One visual identity that covers both is the most
+useful thing branding can deliver.
+
+**Open, yours to decide:** logo beyond the wordmark, colour palette, tagline, the tone of the pitch
+deck, a name for the bar itself, how the product is shown in a ten-second demo.
+
+**Words to use and avoid.** Say "people who cannot use their hands" or name the condition. Avoid
+"suffering from", "handicapped" and "normal users". The user is the one in control; Ütle does what
+he says.
+
+## Where to look
+
+| What | Where |
+|---|---|
+| Screenshots of the product on test pages | `docs/proof/` |
+| Every phrase the product understands, in both languages | `docs/ARCHITECTURE.md`, sections 20.3, 21.1 and 21.3, and the table in `README.md` |
+| Every line the product says | `src/core/strings.ts` |
+| How to install and run it | `README.md` |
+| What is not ours, and its licence | `THIRD-PARTY.md` |
 
 ## The event
 
-NewWorkTech Inclusive Digital Innovation Hackathon, TalTech Mektory. Tuesday 6 October: 10:00
-three-minute recap per team, teamwork until 12:30, pitch preparation 13:30, pitch to the jury 14:30.
+NewWorkTech Inclusive Digital Innovation Hackathon, TalTech Mektory, Tallinn. Tuesday 6 October:
+10:00 three-minute recap per team, teamwork until 12:30, pitch preparation 13:30, pitch to the jury
+14:30.
