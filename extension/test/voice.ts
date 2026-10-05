@@ -307,7 +307,10 @@ async function serverDown(extensionDir: string): Promise<void> {
 
 async function main(): Promise<void> {
   await mkdir(join(repoRoot, 'docs/proof'), { recursive: true })
-  const extensionDir = await buildExtension({ outRoot: join(here, '.standin'), offscreenEntry: join(here, 'standin-offscreen.ts') })
+  // UTLE_REAL=1 builds with the real src/core/inpage.ts instead of the stand-in.
+  const real = process.env.UTLE_REAL === '1'
+  const extensionDir = await buildExtension({ outRoot: join(here, '.standin'), ...(real ? {} : { offscreenEntry: join(here, 'standin-offscreen.ts') }) })
+  if (real) console.log('(built with the real src/core/inpage.ts)')
   if (process.argv[2] === 'down') {
     await serverDown(extensionDir)
   } else {
