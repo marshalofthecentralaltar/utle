@@ -25,6 +25,8 @@ export interface LocalOptions {
   /** This machine cannot recognise: the caller switches to another engine. Called at most once per start. */
   onUnavailable(): void
   connect?: (events: SocketEvents) => SocketLike
+  /** The recogniser's websocket address. Default: /api/asr on the page's own host. The extension sets it. */
+  address?: string
   audio: () => AudioSource
 }
 
@@ -34,9 +36,10 @@ const RETRY_MS = 500
 const MAX_RETRIES = 3
 const MIC_BLOCKED = 'The microphone is blocked or missing. Allow it in the address bar, or type instead.'
 
-function browserSocket(events: SocketEvents): SocketLike {
+/** The browser's websocket to the recogniser, at address or at /api/asr on the page's own host. */
+export function browserSocket(events: SocketEvents, address?: string): SocketLike {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${scheme}://${location.host}${ASR_PATH}`)
+  const ws = new WebSocket(address ?? `${scheme}://${location.host}${ASR_PATH}`)
   ws.binaryType = 'arraybuffer'
   ws.onmessage = (event) => events.message(event.data)
   ws.onclose = () => events.close()
@@ -76,7 +79,7 @@ export function createLocalRecognizer(
   options: LocalOptions,
 ): Recognizer {
   const assembler = createAssembler({ holdMs: LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
-  const connect = options.connect ?? browserSocket
+  const connect = options.connect ?? ((events: SocketEvents) => browserSocket(events, options.address))
   let running = false
   let served = false
   let attempts = 0

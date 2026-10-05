@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Vestlus Mariga</title>
+    <style>
+      /* A messaging app built on percentage heights, with the composer at the very bottom of the viewport. */
+      html, body { height: 100%; margin: 0; }
+      body { font: 16px system-ui, sans-serif; display: flex; flex-direction: column; background: #efeae2; color: #111; }
+      header { padding: 14px 16px; background: #075e54; color: #fff; font-weight: 700; }
+      #log { flex: 1; overflow: auto; margin: 0; padding: 16px; }
+      #log li { list-style: none; background: #fff; margin: 6px 0; padding: 8px 12px; border-radius: 8px; max-width: 60%; white-space: pre-wrap; }
+      #log li.mine { background: #d9fdd3; margin-left: auto; }
+      footer { display: flex; gap: 8px; align-items: flex-end; padding: 10px 16px; background: #f0f2f5; border-top: 1px solid #ccc; }
+      #composer { flex: 1; min-height: 24px; max-height: 120px; overflow: auto; border-radius: 8px; padding: 10px 12px; background: #fff; white-space: pre-wrap; outline: 1px solid #bbb; }
+      #composer p { margin: 0; }
+      footer button { font: inherit; padding: 10px 16px; }
+    </style>
+  </head>
+  <body>
+    <header>Mari Maasikas</header>
+    <ul id="log">
+      <li>Tere! Kas homme sobib?</li>
+      <li class="mine">Vaatan ja ütlen.</li>
+    </ul>
+    <footer>
+      <div id="composer" contenteditable="true" role="textbox" aria-label="Sõnum"></div>
+      <button id="send" type="button" aria-label="Send">Saada</button>
+    </footer>
+    <script type="module">
+      import { createEditor, $getRoot, KEY_ENTER_COMMAND, COMMAND_PRIORITY_HIGH, registerPlainText } from '../vendor/lexical.js'
+      const editor = createEditor({ namespace: 'chat', onError: (e) => { throw e } })
+      editor.setRootElement(document.getElementById('composer'))
+      registerPlainText(editor)
+      const sent = []
+      const text = () => editor.getEditorState().read(() => $getRoot().getTextContent())
+      const send = () => {
+        const t = text().trim()
+        if (t === '') return
+        sent.push(t)
+        const li = document.createElement('li')
+        li.className = 'mine'
+        li.textContent = t
+        document.getElementById('log').append(li)
+        editor.update(() => $getRoot().clear())
+      }
+      // Like WhatsApp: Enter sends, Shift+Enter is a new line.
+      editor.registerCommand(KEY_ENTER_COMMAND, (event) => {
+        if (event && event.shiftKey) return false
+        if (event) event.preventDefault()
+        send()
+        return true
+      }, COMMAND_PRIORITY_HIGH)
+      document.getElementById('send').addEventListener('click', send)
+      window.sent = () => [...sent]
+      window.lexicalText = text
+      window.lexicalReady = true
+    </script>
+  </body>
+</html>

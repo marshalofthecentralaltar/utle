@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tume leht</title>
+    <style>
+      /* A dark app built on 100vh (not percentages), with its message box at the bottom. */
+      body { margin: 0; font: 16px system-ui, sans-serif; background: #0b141a; color: #e9edef; }
+      #app { height: 100vh; display: flex; flex-direction: column; }
+      header { padding: 14px 16px; background: #202c33; font-weight: 700; }
+      main { flex: 1; overflow: auto; padding: 16px; }
+      main p { background: #202c33; padding: 8px 12px; border-radius: 8px; max-width: 60%; }
+      footer { padding: 10px 16px; background: #202c33; }
+      textarea { width: 100%; box-sizing: border-box; font: inherit; background: #2a3942; color: #e9edef; border: 0; border-radius: 8px; padding: 10px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header>Jaan Tamm</header>
+      <main><p>Kas sa tuled täna?</p><p>Jah, kell viis.</p></main>
+      <footer><textarea id="box" rows="2" aria-label="Sõnum"></textarea></footer>
+    </div>
+  </body>
+</html>

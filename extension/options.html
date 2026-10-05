@@ -5,16 +5,18 @@
     <title>Ütle extension options</title>
     <style>
       body { font: 16px/1.5 system-ui, sans-serif; margin: 24px; max-width: 520px; }
-      input { font: inherit; width: 100%; padding: 6px; box-sizing: border-box; }
+      input { font: inherit; width: 100%; padding: 6px; box-sizing: border-box; margin-bottom: 12px; }
       button { font: inherit; margin-top: 8px; padding: 6px 14px; }
     </style>
   </head>
   <body>
     <h1>Ütle</h1>
-    <label for="url">Address of the Ütle page</label>
-    <input id="url" type="url" placeholder="http://localhost:5173" />
+    <label for="asrUrl">Speech model address</label>
+    <input id="asrUrl" type="url" placeholder="ws://localhost:5173/api/asr" />
+    <label for="utleUrl">Address of the Ütle development page</label>
+    <input id="utleUrl" type="url" placeholder="http://localhost:5173" />
     <button id="save" type="button">Save</button>
     <p id="status" role="status"></p>
-    <script type="module" src="options.js"></script>
+    <script src="dist/options.js"></script>
   </body>
 </html>

@@ -1,0 +1,55 @@
+// Messages between the extension's parts (docs/ARCHITECTURE.md 21.2) and the strip's state.
+
+import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+
+/** Everything the strip shows. Kept by the service worker in chrome.storage.session under STATE_KEY. */
+export interface StripState {
+  listening: boolean
+  /** The session is asleep ("puhka"): the microphone is on but nothing is typed. */
+  resting: boolean
+  /** The words heard right now, or the last utterance. */
+  heard: string
+  /** What was understood or done. */
+  line: string
+  /** A plain line about something that stops him (the speech model, the microphone), or ''. */
+  problem: string
+  /** Counters for the tests and for debugging. */
+  connects: number
+  micOpens: number
+}
+
+export const STATE_KEY = 'stripState'
+export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
+
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', connects: 0, micOpens: 0 }
+
+/** To the service worker. */
+export type ToBackground =
+  /** From the strip or the toolbar: turn listening on or off. */
+  | { type: 'utle-toggle' }
+  /** From the offscreen engine: part of the strip's state changed. */
+  | { type: 'utle-state'; patch: Partial<StripState> }
+  /** From the offscreen engine: run one command on the page in front. */
+  | { type: 'utle-run'; command: BrowserCommand }
+  /** From the offscreen engine: the microphone was refused; open the permission page. */
+  | { type: 'utle-mic-blocked' }
+  /** From the permission page: the microphone is allowed now. */
+  | { type: 'utle-mic-granted' }
+  /** From the localhost harness through relay.js (section 20.2). */
+  | { type: 'utle-command'; command: BrowserCommand }
+
+/** To the offscreen document. */
+export type ToOffscreen = { target: 'offscreen'; type: 'toggle' } | { target: 'offscreen'; type: 'start' }
+
+/** To the strip (content script), from the service worker. Used by the tests. */
+export type ToStrip = { type: 'utle-strip-measure' }
+
+export interface StripMeasure {
+  strip: { left: number; top: number; width: number; height: number }
+  mic: { left: number; top: number; width: number; height: number }
+  micState: string
+  heard: string
+  line: string
+}
+
+export type RunAnswer = { result: BrowserResult }
