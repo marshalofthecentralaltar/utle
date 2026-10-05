@@ -49,20 +49,31 @@ function errorMessage(body: unknown): string {
   return ''
 }
 
-/** POST /api/intent (M7). no_model: the server has no key; unreachable: no answer; bad: an answer of the wrong shape. */
-export async function askIntent(intentUrl: string, request: IntentRequest): Promise<IntentAnswer | AskFailure> {
+/**
+ * POST /api/intent (M7). no_model: the server has no key; unreachable: no answer; bad: an answer of
+ * the wrong shape. signal (round 3): the engine no longer wants the answer; the fetch ends with it.
+ */
+export async function askIntent(intentUrl: string, request: IntentRequest, signal?: AbortSignal): Promise<IntentAnswer | AskFailure> {
+  const controller = new AbortController()
+  // The engine gives up at ASK_TIMEOUT_MS; the request itself ends a little later, so no fetch dangles.
+  const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS + 1000)
+  const onAbort = (): void => controller.abort()
+  signal?.addEventListener('abort', onAbort)
+  if (signal?.aborted) controller.abort()
+  let body: unknown = null
   let response: Response
   try {
-    // The engine gives up at ASK_TIMEOUT_MS; the request itself ends a little later, so no fetch dangles.
-    response = await fetch(intentUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request), signal: AbortSignal.timeout(ASK_TIMEOUT_MS + 1000) })
+    response = await fetch(intentUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request), signal: controller.signal })
+    try {
+      body = await response.json()
+    } catch {
+      body = null
+    }
   } catch {
     return { error: 'unreachable' }
-  }
-  let body: unknown = null
-  try {
-    body = await response.json()
-  } catch {
-    body = null
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
   }
   if (!response.ok) return response.status === 503 || errorMessage(body) === 'no_key' ? { error: 'no_model' } : { error: 'bad' }
   const parsed = IntentAnswerSchema.safeParse(body)
@@ -127,6 +138,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     lang: 'et',
     run,
     publish,
+    // The handlers go through whole, onLag (round 3) with them: the recogniser reports its lag to the engine, the engine to the strip.
     recognizer: (handlers, isInstant, onUnavailable) =>
       createLocalRecognizer(handlers, isInstant, {
         onUnavailable,
@@ -142,7 +154,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     micBlocked: () => {
       void tell({ type: 'utle-mic-blocked' })
     },
-    ask: (request) => askIntent(intentUrl, request),
+    ask: (request, signal) => askIntent(intentUrl, request, signal),
     tabs: async (): Promise<TabSummary[]> => {
       const answer = (await tell({ type: 'utle-tabs' })) as TabsAnswer | undefined
       return answer?.tabs ?? []

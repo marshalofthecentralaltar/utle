@@ -2,11 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
 import { pageIntentFrom } from '../../src/core/pageIntent.ts'
-import type { RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { ASK_TIMEOUT_MS, INTENT_LOOP_BUDGET_MS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SETTLE_MS, createEngine } from './engine.ts'
+import { ASK_TIMEOUT_MS, INTENT_LOOP_BUDGET_MS, LAG_SHOWN_MS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, createEngine } from './engine.ts'
 import { MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
-import type { AskFailure, InpageLogic } from './engine.ts'
+import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
 
 const logic: InpageLogic = {
@@ -66,8 +65,8 @@ interface Options {
   setTextMs?: number
   /** How long the page takes to answer a goTo. */
   goToMs?: number
-  /** The model's answer. Default: unreachable. */
-  ask?: (request: IntentRequest) => Promise<IntentAnswer | AskFailure>
+  /** The model's answer. Default: unreachable. signal: aborted when the engine gives the question up (round 3). */
+  ask?: (request: IntentRequest, signal: AbortSignal) => Promise<IntentAnswer | AskFailure>
   /** The page's readPage answer. Default: the box, three items, no media. */
   page?: (box: BoxState) => PageContext
   tabs?: TabSummary[]
@@ -88,7 +87,7 @@ const SENTENCE = 'ma jõuan homme kella kolmeks sinna kui buss õigel ajal tuleb
 
 function setup(options: Options = {}) {
   const answers = options.answers ?? (() => ({ ok: true }))
-  let handlers: RecognizerHandlers | null = null
+  let handlers: EngineHandlers | null = null
   let unavailable: (() => void) | null = null
   let instant: ((text: string) => boolean) | null = null
   const ran: BrowserCommand[] = []
@@ -101,6 +100,8 @@ function setup(options: Options = {}) {
   let blocked = 0
   let starts = 0
   const asked: IntentRequest[] = []
+  const signals: AbortSignal[] = []
+  const lags: number[] = []
   const thinking: boolean[] = []
   const modelProblems: string[] = []
   const used = options.logic ?? logic
@@ -108,7 +109,8 @@ function setup(options: Options = {}) {
     logic: {
       ...used,
       inpageStep: (session, utterance, box) => {
-        boxes.push(box)
+        // The engine probes the rules with SEND_PROBE_BOX to tell a plain send: not a box it read.
+        if (box !== SEND_PROBE_BOX) boxes.push(box)
         return used.inpageStep(session, utterance, box)
       },
     },
@@ -136,6 +138,7 @@ function setup(options: Options = {}) {
       if (patch.heard !== undefined) heard.push(patch.heard)
       if (patch.thinking !== undefined) thinking.push(patch.thinking)
       if (patch.modelProblem !== undefined) modelProblems.push(patch.modelProblem)
+      if (patch.lag !== undefined) lags.push(patch.lag)
       Object.assign(state, patch)
     },
     recognizer: (h, isInstant, onUnavailable) => {
@@ -145,15 +148,21 @@ function setup(options: Options = {}) {
       return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined }
     },
     micBlocked: () => blocked++,
-    ask: (request) => {
+    ask: (request, signal) => {
       asked.push(request)
-      return options.ask ? options.ask(request) : Promise.resolve({ error: 'unreachable' })
+      signals.push(signal)
+      return options.ask ? options.ask(request, signal) : Promise.resolve({ error: 'unreachable' })
     },
     tabs: () => Promise.resolve(options.tabs ?? TABS),
     status: () => Promise.resolve(options.status ?? 'live'),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
   const partial = (text: string): void => handlers?.onInterim(text)
+  const lag = (ms: number): void => handlers?.onLag(ms)
+  /** The page changes the box on its own (the site, or a click with the eye tracker). */
+  const edit = (text: string): void => {
+    page = { ...page, text }
+  }
   return {
     engine,
     ran,
@@ -162,6 +171,8 @@ function setup(options: Options = {}) {
     boxes,
     say,
     partial,
+    lag,
+    edit,
     page: () => page,
     maxInFlight: () => maxInFlight,
     unavailable: () => unavailable?.(),
@@ -170,6 +181,8 @@ function setup(options: Options = {}) {
     blocked: () => blocked,
     starts: () => starts,
     asked,
+    signals,
+    lags,
     thinking,
     modelProblems,
   }
@@ -895,5 +908,199 @@ describe('multi-step utterances (M7.2)', () => {
     expect(t.ran.filter((c) => c.kind === 'goTo')).toHaveLength(2)
     expect(t.asked).toHaveLength(2)
     expect(t.state.thinking).toBe(false)
+  })
+})
+
+describe('the queue keeps up (round 3)', () => {
+  const armed: BoxState = { present: true, text: 'Tere.', armed: true }
+  const unarmed: BoxState = { present: false, text: '', armed: false }
+  const goTo = (url: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'goTo', url } })
+  const scroll: IntentAnswer['intent'] = { kind: 'command', command: { kind: 'scroll', direction: 'down' } }
+  const after = (ms: number, a: IntentAnswer | AskFailure) => new Promise<IntentAnswer | AskFailure>((resolve) => setTimeout(() => resolve(a), ms))
+  /** The first question is answered at once, the second never (the engine must give it up itself). */
+  const thenHang = (first: IntentAnswer) => {
+    let n = 0
+    return () => (n++ === 0 ? Promise.resolve(first) : new Promise<IntentAnswer>(() => undefined))
+  }
+
+  it('an utterance that waited longer than STALE_MS gets the rules alone, with the catching-up suffix', async () => {
+    vi.useFakeTimers()
+    // The first typing holds the queue longer than STALE_MS; the second utterance waits behind it.
+    const t = setup({ logic: asking, box: armed, setTextMs: STALE_MS + 500, ask: () => Promise.resolve(answer({ kind: 'dictate', text: 'a' })) })
+    t.engine.start()
+    t.say('a')
+    await vi.advanceTimersByTimeAsync(100)
+    t.say('b')
+    await vi.advanceTimersByTimeAsync(STALE_MS * 3)
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'setText', 'readBox', 'setText'])
+    expect(t.page().text).toBe('Tere.ab')
+    expect(t.asked).toHaveLength(0)
+    expect(t.state.line).toBe(`tehtud ${STRINGS.et.inpage.catchingUp}`)
+    expect(t.thinking).toEqual([])
+  })
+
+  it('a fresh utterance gets no suffix', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve(answer({ kind: 'dictate', text: 'a' })) })
+    t.engine.start()
+    t.say('a')
+    await t.engine.idle()
+    expect(t.state.line).toBe('tehtud')
+  })
+
+  it('barge-in: a new utterance stops a multi-step loop after the command in hand, and aborts the question in flight', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, ask: thenHang(answer(goTo('https://www.youtube.com/'), 'lähen', false)) })
+    t.engine.start()
+    t.say('mine youtube\'i ja otsi kassivideod')
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 100)
+    // The first step ran; the second question is in flight.
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage'])
+    expect(t.signals[1]?.aborted).toBe(false)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(t.signals[1]?.aborted).toBe(true)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage', 'readBox'])
+    expect(t.asked).toHaveLength(2)
+    expect(t.state.line).toBe('midagi')
+    expect(t.state.thinking).toBe(false)
+    await vi.advanceTimersByTimeAsync(ASK_TIMEOUT_MS * 2)
+    expect(t.asked).toHaveLength(2)
+  })
+
+  it('barge-in: a new utterance arriving during a step lets the step finish and asks for no further one', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, goToMs: 1000, ask: () => Promise.resolve(answer(goTo('https://www.youtube.com/'), 'lähen', false)) })
+    t.engine.start()
+    t.say('mine youtube\'i ja otsi kassivideod')
+    await vi.advanceTimersByTimeAsync(100)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readBox'])
+    expect(t.asked).toHaveLength(1)
+  })
+
+  it('barge-in: a question still being asked for the first step is given up, the rules\' step runs, and the newcomer goes on', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: { present: true, text: '', armed: false }, ask: () => new Promise(() => undefined) })
+    t.engine.start()
+    t.say('a')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage'])
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.signals[0]?.aborted).toBe(true)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'setText', 'readBox'])
+    expect(t.state.line).toBe('midagi')
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('two dictations in a row do not wait for each other\'s verification: the second is typed before the first\'s answer', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: armed, ask: () => after(1000, answer({ kind: 'dictate', text: 'x' })) })
+    t.engine.start()
+    t.say('a')
+    await vi.advanceTimersByTimeAsync(10)
+    t.say('b')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(texts(t.ran)).toEqual(['Tere.a', 'readPage', 'Tere.ab', 'readPage'])
+    // The first verification was given up for the newer words; the second runs.
+    expect(t.signals[0]?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(t.asked).toHaveLength(2)
+    expect(t.signals[1]?.aborted).toBe(false)
+    expect(t.page().text).toBe('Tere.ab')
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('a send waits for the verification pending and does not cancel it', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: armed, ask: () => after(1000, answer({ kind: 'dictate', text: 'tulen' })) })
+    t.engine.start()
+    t.say('tulen')
+    await vi.advanceTimersByTimeAsync(10)
+    t.say('saada')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(t.signals[0]?.aborted).toBe(false)
+    expect(texts(t.ran)).toEqual(['Tere.tulen', 'readPage'])
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(texts(t.ran)).toEqual(['Tere.tulen', 'readPage', 'pressSend'])
+    expect(t.boxes.map((b) => b.text)).toEqual(['Tere.', 'Tere.tulen'])
+  })
+
+  it('a send still gives up a multi-step loop', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, ask: thenHang(answer(goTo('https://www.youtube.com/'), 'lähen', false)) })
+    t.engine.start()
+    t.say('mine youtube\'i ja otsi kassivideod')
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 100)
+    t.say('saada')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(t.signals[1]?.aborted).toBe(true)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage', 'readBox', 'pressSend'])
+  })
+
+  it('a command verdict that comes after the box has changed touches nothing and says so', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: armed, ask: () => after(1000, answer(scroll)) })
+    t.engine.start()
+    t.say('keri alla palun')
+    await vi.advanceTimersByTimeAsync(100)
+    t.edit('Tere.keri alla palun ja veel')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'setText', 'readPage', 'readBox'])
+    expect(t.page().text).toBe('Tere.keri alla palun ja veel')
+    expect(t.state.line).toBe(STRINGS.et.inpage.lateCommand('keri alla palun'))
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('a command verdict that comes while the box reads as typed takes the words back and runs', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: armed, ask: () => after(1000, answer(scroll)) })
+    t.engine.start()
+    t.say('keri alla palun')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(texts(t.ran)).toEqual(['Tere.keri alla palun', 'readPage', 'Tere.', 'scroll'])
+    expect(t.page().text).toBe('Tere.')
+    expect(t.state.line).toBe('tehtud')
+  })
+
+  it('a verification whose typing failed still runs the command, without a revert', async () => {
+    const t = setup({ logic: asking, box: armed, answers: (c) => (c.kind === 'setText' ? { ok: false, code: 'not_found', message: 'no box' } : { ok: true }), ask: () => Promise.resolve(answer(scroll)) })
+    t.engine.start()
+    t.say('keri alla palun')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['Tere.keri alla palun', 'readPage', 'scroll'])
+  })
+
+  it('thinking stays on while any question is in flight', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: armed, ask: () => after(1000, answer({ kind: 'dictate', text: 'x' })) })
+    t.engine.start()
+    t.say('a')
+    await vi.advanceTimersByTimeAsync(10)
+    t.say('saada')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.state.thinking).toBe(true)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(t.thinking).toEqual([true, false])
+  })
+
+  it('the loop takes no further step after INTENT_LOOP_BUDGET_MS, now 15 s', () => {
+    expect(INTENT_LOOP_BUDGET_MS).toBe(15_000)
+    expect(STALE_MS).toBe(3000)
+  })
+
+  it('publishes the recogniser\'s lag above LAG_SHOWN_MS and clears it once below', () => {
+    const t = setup()
+    t.lag(500)
+    expect(t.lags).toEqual([])
+    t.lag(LAG_SHOWN_MS + 500)
+    expect(t.lags).toEqual([LAG_SHOWN_MS + 500])
+    t.lag(LAG_SHOWN_MS + 900)
+    t.lag(1000)
+    expect(t.lags).toEqual([LAG_SHOWN_MS + 500, LAG_SHOWN_MS + 900, 0])
+    t.lag(0)
+    expect(t.lags).toEqual([LAG_SHOWN_MS + 500, LAG_SHOWN_MS + 900, 0])
   })
 })
