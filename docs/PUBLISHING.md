@@ -135,13 +135,15 @@ published commits and the old wording of point 1, but the commit-by-commit story
 3. Create the single commit on a new branch and push it as `main`:
 
    ```
-   git checkout --orphan public
+   git checkout --orphan snapshot
    git commit -m "Ütle: hackathon prototype"
    git remote add origin https://github.com/marshalofthecentralaltar/utle.git
-   git push -u origin public:main
+   git push -u origin snapshot:main
+   git checkout main
    ```
 
-   Your local `main` keeps the full history; only the new single commit goes to GitHub.
+   Your local `main` keeps the full history; only the new single commit goes to GitHub. The last
+   line puts you back on your own `main`, so your next work does not land on the snapshot branch.
 4. Steps 1, 3 and 4 of route A apply too (create the empty repository before pushing).
 
 Once it is public, anything pushed is copied by others within minutes and cannot be taken back.

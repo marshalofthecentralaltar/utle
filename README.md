@@ -172,8 +172,9 @@ The full rules are in `docs/ARCHITECTURE.md`, sections 20.3, 21.1 and 21.3.
 
 - Audio never leaves the computer. The extension sends it only to the speech server on the same
   machine (`localhost`).
-- Nothing you say or type is logged. The speech server logs only load times, connection counts and
-  error codes.
+- Nothing you say or type is logged. The speech server prints only how long the model took to load,
+  why it cannot recognise if the model is missing, a line when a connection opens or closes (with the
+  number of open connections and the close code), and "decode failed" if decoding fails.
 - No account and no key are needed for the extension.
 - The development page at `http://localhost:5173` (the original document editor, kept for
   development) is different: if the local model is missing it falls back to Chrome's own speech
@@ -198,14 +199,26 @@ npx tsx extension/test/run.ts
 ```
 
 The voice test plays recorded Estonian through the real speech model, so it needs the model and a
-second dev server on another port:
+second dev server on another port. `UTLE_REAL=1` builds the extension with the real command logic;
+without it the test uses a simplified stand-in and does not test the product. In one terminal:
 
 ```
 npx vite --port 5193 --strictPort
-npx tsx extension/test/voice.ts
 ```
 
-Run the two commands in separate terminals. `extension/README.md` describes the test options.
+In a second terminal, in PowerShell (the usual Windows terminal):
+
+```
+$env:UTLE_REAL=1; npx tsx extension/test/voice.ts
+```
+
+or in bash (macOS, Linux, Git Bash):
+
+```
+UTLE_REAL=1 npx tsx extension/test/voice.ts
+```
+
+`extension/README.md` describes the test options.
 
 ## Licence and credits
 

@@ -34,7 +34,7 @@ unpacked.
 - `npm run ext` bundles `extension/src/` into `extension/dist/`; reload the extension after it.
 - `npm run check` is the gate: typecheck, lint, test, build, extension build.
 - `npx tsx extension/test/run.ts` runs every browser command in Chromium.
-- `npx tsx extension/test/voice.ts` runs recorded speech through the real model; needs `npx vite --port 5193 --strictPort`.
+- `UTLE_REAL=1 npx tsx extension/test/voice.ts` (PowerShell: `$env:UTLE_REAL=1; npx tsx extension/test/voice.ts`) runs recorded speech through the real model and the real command logic (without `UTLE_REAL=1` it uses a stand-in); needs `npx vite --port 5193 --strictPort`.
 - `npm run smoke` runs the old demo script through the real model. It spends a few cents.
 
 ## Not verifiable without a person
