@@ -10,6 +10,7 @@ import { ASR_PATH } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
 import { createAsrSession, samplesFromFrame } from './asrSession.ts'
 import type { OnlineRecognizerLike } from './asrSession.ts'
+import { attachSonioxSession } from './soniox.ts'
 
 export const MODEL_DIR = join('models', 'streaming-zipformer-large.et-en')
 export const MODEL_FILES = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'] as const
@@ -60,6 +61,13 @@ export function loadModel(root: string): ModelLoad {
   }
 }
 
+/** True when this connection should go to Soniox instead of the local model. */
+export function wantsSoniox(url: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.UTLE_ASR === 'soniox') return true
+  const query = url.split('?')[1] ?? ''
+  return new URLSearchParams(query).get('engine') === 'soniox'
+}
+
 const send = (socket: WebSocket, message: AsrServerMessage): void => {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
 }
@@ -91,6 +99,12 @@ export function attachAsr(httpServer: EventEmitter, root: string, load: (root: s
     const path = (req.url ?? '').split('?')[0]
     if (path !== ASR_PATH) return
     sockets.handleUpgrade(req, socket, head, (ws) => {
+      // Soniox (ARCHITECTURE 23.4): `?engine=soniox` on the socket address, or UTLE_ASR=soniox for every
+      // connection, hands the socket to the second recogniser. Everything below is the local model.
+      if (wantsSoniox(req.url ?? '')) {
+        attachSonioxSession(ws, { apiKey: process.env.SONIOX_API_KEY })
+        return
+      }
       const loaded = ensureModel()
       if (!loaded.ok) {
         send(ws, { type: 'unavailable', reason: loaded.reason })

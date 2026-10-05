@@ -1,8 +1,10 @@
+import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { join } from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
 import type { Plugin } from 'vite'
 import { InterpretRequestSchema } from '../src/core/intent.ts'
-import { attachAsr } from './asr.ts'
+import { MODEL_DIR, attachAsr } from './asr.ts'
 import { pageIntent } from './intent.ts'
 import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode, MessagesClient } from './interpret.ts'
@@ -69,7 +71,7 @@ function toKnownError(error: unknown): InterpretError {
  * Hosts the API on the Vite dev server, so `npm run dev` is the whole product.
  *   POST /api/interpret  one utterance in, one Intent out
  *   POST /api/intent     one unrecognised utterance with the page in, one IntentAnswer out (M7)
- *   GET  /api/status     which interpreter is answering, and whether /api/intent has a key
+ *   GET  /api/status     which interpreter is answering, whether /api/intent has a key, which speech engines can run
  *   WS   /api/asr        the local recogniser (ARCHITECTURE 20.1)
  * The Anthropic key is read from the server's environment and never reaches the browser (principle P8).
  * `vite --mode rehearsal` answers from the demo script instead of the model.
@@ -110,7 +112,9 @@ export function utleApi(): Plugin {
           return
         }
         const intent = process.env.ANTHROPIC_API_KEY ? 'live' : 'no_key'
-        send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent } : { mode: 'live', model: model(), intent })
+        // local: the model files are on disk (whether the addon loads is only known at the first connection).
+        const speech = { local: existsSync(join(server.config.root, MODEL_DIR)), soniox: Boolean(process.env.SONIOX_API_KEY) }
+        send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent, speech } : { mode: 'live', model: model(), intent, speech })
       })
 
       server.middlewares.use('/api/intent', (req, res, next) => {
