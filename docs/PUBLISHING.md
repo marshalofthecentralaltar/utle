@@ -36,7 +36,8 @@ Route 1 keeps the product's main privacy promise; route 2 is faster to ship and 
 
 The audit below was run on 5 October 2026 over the whole history, not only the current files (58
 commits on all branches at the time). Nothing in the history has been changed. Ordered by how badly
-each would hurt if published as it is.
+each would hurt if published as it is. Work merged after the audit has not been checked, so the
+secret search and the image check should be run once more on the final `main` before pushing.
 
 - [ ] **1. A real person's disability is described in a way that can identify him.** The man the
   team interviewed is described as "a man with a motor disability the team spoke to on 5 October 2026"
