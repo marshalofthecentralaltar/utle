@@ -751,3 +751,13 @@ WhatsApp Web, read from a logged-in page with no chat open (verified): the chat 
 **openConversation on WhatsApp.** WhatsApp does not change its address when a chat opens, so the page waits instead: it matches the name (section 20.2's score) against the visible rows' names; with no match it types the name into the search field and waits up to 4 s for a matching row; it opens the row with pointer and mouse events, then waits up to 3 s for a composer and for the open chat's name to be the row's name, and answers `settled`, which tells the service worker not to wait for an address change. The messaging home for routing is whichever of WhatsApp or Messenger is already open in the window (WhatsApp first), else the stored `messagingHome`, else `https://web.whatsapp.com/`.
 
 **Removed.** The dock and the companion window. The toolbar button now turns listening on or off (and opens the permission page when the microphone is refused).
+
+### 21.3 After the first real use: live words, one bar everywhere, misheard commands (2026-10-05)
+
+The owner used it on WhatsApp Web. It worked, and he named three faults.
+
+| His words | Cause | Change |
+|---|---|---|
+| "there were delays on the voice and it wasn't very natural how the text appeared" | Dictation reached the box only after the endpoint silence (1 s) plus the hold (0.7 s), and all at once. | Words are typed into the box while he speaks: `inpagePreview` in `src/core/inpage.ts` gives the box text for each partial, and null while the words may still be a command. The hold after a final is short in this mode. |
+| "When you have no tabs open, you can't see the text box anywhere ... There needs a constant bar that can show you the text that is being heard" | Chrome lets no extension draw on its new-tab page, so the strip vanished there. | The extension provides the new-tab page itself, with the same strip and large tiles for the known sites. The strip shows the words being heard at all times while listening. |
+| "I said 'Mine whatsappi' but the thing saw 'Mina whatsappi' so it didn't work" | Commands matched exact words and bare site names. | A short utterance that is one letter away from a command is taken as that command, and site names are understood with their Estonian case endings. The strip says what it took it to be. |

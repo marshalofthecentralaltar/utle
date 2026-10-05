@@ -425,3 +425,17 @@ function joinDictation(old: string, utterance: string): string {
   return base + separator + text
 }
 
+
+/**
+ * Live dictation (section 21.3): the whole text the message box should show while an utterance is
+ * still being spoken, so words appear as he says them. partial is what the recogniser has so far;
+ * box is the message box as it was BEFORE this utterance began. Null while the words may still turn
+ * out to be a command, while asleep, or when there is no box: then nothing is typed and the strip
+ * alone shows the words. The final utterance still goes through inpageStep with that same earlier box.
+ */
+export function inpagePreview(session: InpageSession, partial: string, box: BoxState): string | null {
+  void session
+  void partial
+  void box
+  return null
+}
