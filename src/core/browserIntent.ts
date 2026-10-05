@@ -167,6 +167,47 @@ phrases({ kind: 'media', action: 'exitFullscreen' }, 'välju täisekraanist', 't
 phrases({ kind: 'media', action: 'forward' }, 'keri edasi', 'skip forward')
 phrases({ kind: 'media', action: 'back' }, 'keri tagasi', 'skip back')
 
+// Round 3, the edit lane (docs/ARCHITECTURE.md 21.1 "Editing"): the caret, a selection and the editing
+// keys inside the armed box, as whole phrases. The box-dependent forms ("mine sõna X ette", "vali X",
+// "kustuta kolm tähte", "kirjuta siia vahele X") are patterns in inpage.ts; act there refuses all of
+// these when there is no box in front.
+phrases({ kind: 'caret', to: 'start' }, 'mine algusesse', 'teksti algusesse', 'mine teksti algusesse', 'go to the start', 'go to the beginning', 'start of the text')
+phrases({ kind: 'caret', to: 'end' }, 'mine lõppu', 'teksti lõppu', 'mine teksti lõppu', 'go to the end', 'end of the text')
+phrases({ kind: 'caret', to: 'lineStart' }, 'rea algusesse', 'mine rea algusesse', 'start of the line', 'line start', 'go to the start of the line')
+phrases({ kind: 'caret', to: 'lineEnd' }, 'rea lõppu', 'mine rea lõppu', 'end of the line', 'line end', 'go to the end of the line')
+phrases({ kind: 'caret', to: 'sentenceStart' }, 'lause algusesse', 'mine lause algusesse', 'start of the sentence', 'sentence start', 'go to the start of the sentence')
+phrases({ kind: 'caret', to: 'sentenceEnd' }, 'lause lõppu', 'mine lause lõppu', 'end of the sentence', 'sentence end', 'go to the end of the sentence')
+phrases({ kind: 'caret', to: 'wordBack' }, 'sõna tagasi', 'üks sõna tagasi', 'word back', 'one word back', 'back a word', 'back one word')
+phrases({ kind: 'caret', to: 'wordForward' }, 'sõna edasi', 'üks sõna edasi', 'word forward', 'one word forward', 'forward a word', 'forward one word')
+phrases({ kind: 'select', what: 'all' }, 'vali kõik', 'vali kogu tekst', 'select all', 'select everything')
+phrases({ kind: 'select', what: 'word' }, 'vali see sõna', 'vali sõna', 'select the word', 'select this word')
+phrases({ kind: 'select', what: 'sentence' }, 'vali see lause', 'vali lause', 'select the sentence', 'select this sentence')
+phrases({ kind: 'select', what: 'line' }, 'vali see rida', 'vali rida', 'select the line', 'select this line')
+phrases({ kind: 'select', what: 'lastWord' }, 'vali viimane sõna', 'select the last word', 'select last word')
+phrases({ kind: 'select', what: 'lastSentence' }, 'vali viimane lause', 'select the last sentence', 'select last sentence')
+phrases(
+  { kind: 'pressKey', key: 'Backspace' },
+  'kustuta täht',
+  'kustuta üks täht',
+  'kustuta tagant',
+  'kustuta valitud',
+  'kustuta see',
+  'delete a letter',
+  'delete one letter',
+  'delete the letter',
+  'delete the selection',
+  'delete selection',
+  'delete this',
+  'backspace',
+)
+phrases({ kind: 'pressKey', key: 'Delete' }, 'kustuta ees', 'kustuta eest', 'kustuta järgmine täht', 'delete forward', 'delete the next letter', 'delete next letter')
+phrases({ kind: 'pressKey', key: 'ArrowLeft' }, 'vasakule', 'üks vasakule', 'üks täht vasakule', 'arrow left', 'go left', 'one left', 'one to the left')
+phrases({ kind: 'pressKey', key: 'ArrowRight' }, 'paremale', 'üks paremale', 'üks täht paremale', 'arrow right', 'go right', 'one right', 'one to the right')
+phrases({ kind: 'pressKey', key: 'ArrowUp' }, 'üks rida üles', 'rida üles', 'line up', 'one line up', 'arrow up')
+phrases({ kind: 'pressKey', key: 'ArrowDown' }, 'üks rida alla', 'rida alla', 'line down', 'one line down', 'arrow down')
+phrases({ kind: 'pressKey', key: 'Redo' }, 'tee uuesti', 'redo', 'redo that')
+phrases({ kind: 'pressKey', key: 'Tab' }, 'järgmine väli', 'mine järgmisele väljale', 'next field', 'go to the next field')
+
 const ORDINALS: Record<string, number> = {
   esimene: 1, teine: 2, kolmas: 3, neljas: 4, viies: 5, kuues: 6, seitsmes: 7, kaheksas: 8, üheksas: 9, kümnes: 10,
 }

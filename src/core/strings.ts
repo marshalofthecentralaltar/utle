@@ -94,6 +94,8 @@ export interface Strings {
     replacing(from: string, to: string): string
     deletingWord: string
     deletingSentence: string
+    /** Round 3: "kustuta sõna X" selects the word and deletes it. */
+    deletingNamed(word: string): string
     clearing: string
     newLine: string
     mark(mark: string): string
@@ -501,6 +503,7 @@ const ET: Strings = {
     replacing: (from, to) => `„${from}“ asemel „${to}“.`,
     deletingWord: 'Kustutan viimase sõna.',
     deletingSentence: 'Kustutan viimase lause.',
+    deletingNamed: (word) => `Kustutan sõna „${word}“.`,
     clearing: 'Kustutan kõik.',
     newLine: 'Uus rida.',
     mark: (mark) => ({ '.': 'Punkt.', ',': 'Koma.', '?': 'Küsimärk.', '!': 'Hüüumärk.' })[mark] ?? mark,
@@ -829,6 +832,7 @@ const EN: Strings = {
     replacing: (from, to) => `"${to}" instead of "${from}".`,
     deletingWord: 'Deleting the last word.',
     deletingSentence: 'Deleting the last sentence.',
+    deletingNamed: (word) => `Deleting the word "${word}".`,
     clearing: 'Deleting everything.',
     newLine: 'New line.',
     mark: (mark) => ({ '.': 'Full stop.', ',': 'Comma.', '?': 'Question mark.', '!': 'Exclamation mark.' })[mark] ?? mark,

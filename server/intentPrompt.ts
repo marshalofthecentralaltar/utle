@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk'
-import { MEDIA_ACTIONS } from '../src/core/pageIntent.ts'
+import { MEDIA_ACTIONS, PRESSABLE_KEYS } from '../src/core/pageIntent.ts'
 import type { IntentRequest, IntentStep } from '../src/core/pageIntent.ts'
 
 /**
@@ -42,6 +42,10 @@ The engine runs one action at a time. After done:false it runs the action, reads
 - Media, only when media is present: "mängi" play, "paus" / "peata" pause, "vaigista" mute, "heli peale" unmute, "valjemaks" / "turn it up" volumeUp, "vaiksemaks" volumeDown, "täisekraan" fullscreen, "välja täisekraanist" exitFullscreen, "keri edasi" forward, "keri tagasi" back.
 - Labels: "näita numbreid" showHints; "peida numbrid" / "stopp" while they show: hideHints; a number while they show: clickHint. When nothing on a crowded page matches what he asked for, showHints is a good answer: he then picks by number.
 - The box: "kirjuta siia" arm on; "vabasta" arm off. "tühjenda" / "kustuta kõik": edit clear when the box is armed, else clearField. "kustuta sõna" deleteWord, "kustuta lause" deleteSentence. "X asemel Y" / "mitte X vaid Y": edit replace. "peida riba" / "näita riba": bar. "esc" / "enter": pressKey.
+
+# Editing the text in the box
+
+When the box is armed and he asks to change what is in it, edit in place with the editing commands; never retype the whole box for a small change. caret moves the caret: start, end, lineStart, lineEnd, sentenceStart, sentenceEnd, wordBack, wordForward, or { find: "word", where: "before" | "after" } for the nearest match of a word in the box text (use the word as it stands in the text, not the spoken case ending). select selects: all, word, sentence, line, lastWord, lastSentence, or { find: "word" }; the next typeText or Backspace acts on the selection. typeText { text } types at the caret with the spaces and the capital worked out there. pressKey with Backspace, Delete, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Home, End, Undo, Redo, SelectAll, Tab, and times for a count. One step at a time, done:false until the last: "lisa pärast sõna homme kell viis" is caret { find: "homme", where: "after" } then typeText "kell viis"; "kustuta sõna ilus" is select { find: "ilus" } then pressKey Backspace; "muuda teine lause" is caret find of that sentence's first word then select sentence, and the new words he says next replace it; "mine lause algusesse ja kirjuta ..." is caret sentenceStart then typeText. A single word swap ("ilus asemel kena") is edit replace. "võta tagasi" is edit undo. On Google Docs (docs.google.com) there is no box text: only the keys and typeText work there (pressKey ArrowLeft, Home, Backspace, Undo; typeText), never caret or select by a word.
 
 # Dictation
 
@@ -93,7 +97,17 @@ const COMMAND = {
     kind('focusItem', { id: ID }),
     kind('siteSearch', { query: STRING }),
     kind('media', { action: { type: 'string', enum: [...MEDIA_ACTIONS] } }),
-    kind('pressKey', { key: { type: 'string', enum: ['Escape', 'Enter'] } }),
+    kind('pressKey', { key: { type: 'string', enum: [...PRESSABLE_KEYS] }, times: { anyOf: [{ type: 'integer' }, { type: 'null' }], description: 'How many times, or null for once.' } }),
+    kind('caret', {
+      to: {
+        anyOf: [
+          { type: 'string', enum: ['start', 'end', 'lineStart', 'lineEnd', 'sentenceStart', 'sentenceEnd', 'wordBack', 'wordForward'] },
+          object({ find: { type: 'string', description: 'A word or words as they stand in the box text.' }, where: { type: 'string', enum: ['before', 'after'] } }),
+        ],
+      },
+    }),
+    kind('select', { what: { anyOf: [{ type: 'string', enum: ['all', 'word', 'sentence', 'line', 'lastWord', 'lastSentence'] }, object({ find: STRING })] } }),
+    kind('typeText', { text: { type: 'string', description: 'The words to type at the caret; spacing and the capital are worked out on the page.' } }),
     kind('clearField'),
     kind('arm', { on: BOOLEAN }),
     kind('bar', { show: BOOLEAN }),
