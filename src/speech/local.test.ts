@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS } from './asrProtocol.ts'
-import { createLocalRecognizer } from './local.ts'
+import { MAX_BUFFERED_BYTES, createLocalRecognizer } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
 
 /** Stands in for the browser's WebSocket: records what is sent and lets the test play the server. */
 class FakeSocket implements SocketLike {
   static made: FakeSocket[] = []
   readyState = 0
+  bufferedAmount = 0
   sent: unknown[] = []
   closed = false
   private readonly events: SocketEvents
@@ -15,7 +16,7 @@ class FakeSocket implements SocketLike {
     this.events = events
     FakeSocket.made.push(this)
   }
-  send(data: ArrayBuffer): void {
+  send(data: ArrayBuffer | string): void {
     this.sent.push(data)
   }
   close(): void {
@@ -57,6 +58,7 @@ describe('local recogniser (browser side)', () => {
   let utterances: string[]
   let interims: string[]
   let errors: string[]
+  let lags: number[]
   let unavailable: number
   let failMic: boolean
 
@@ -64,6 +66,7 @@ describe('local recogniser (browser side)', () => {
     onUtterance: (text: string) => utterances.push(text),
     onInterim: (text: string) => interims.push(text),
     onError: (message: string) => errors.push(message),
+    onLag: (ms: number) => lags.push(ms),
   }
   const isInstant = (text: string): boolean => text === 'jah'
   const make = () =>
@@ -89,6 +92,7 @@ describe('local recogniser (browser side)', () => {
     utterances = []
     interims = []
     errors = []
+    lags = []
     unavailable = 0
     failMic = false
   })
@@ -298,5 +302,98 @@ describe('local recogniser (browser side)', () => {
     await vi.waitFor(() => expect(errors).toHaveLength(1))
     expect(socket().closed).toBe(true)
     expect(unavailable).toBe(0)
+  })
+
+  it("passes the server's lag on, and 0 once it has caught up", () => {
+    const r = make()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'lag', ms: 1600 })
+    socket().says({ type: 'lag', ms: 0 })
+    expect(lags).toEqual([1600, 0])
+    expect(utterances).toEqual([])
+  })
+
+  it('drops frames while the socket holds more than 2 s of audio unsent, and reports it as lag', async () => {
+    const r = make()
+    r.start()
+    socket().says({ type: 'ready' })
+    await Promise.resolve()
+    const frame = new Float32Array(1600)
+    // 2.5 s queued in the socket: the frame is dropped, the lag is the queue's length.
+    socket().bufferedAmount = MAX_BUFFERED_BYTES + 32_000
+    FakeAudio.made[0]?.onFrame?.(frame)
+    FakeAudio.made[0]?.onFrame?.(frame)
+    expect(socket().sent).toEqual([])
+    expect(lags).toEqual([2500, 2500])
+    // The network takes it again: the next frame goes, and the lag is over.
+    socket().bufferedAmount = 0
+    FakeAudio.made[0]?.onFrame?.(frame)
+    expect(socket().sent).toEqual([frame.buffer])
+    expect(lags).toEqual([2500, 2500, 0])
+  })
+
+  describe('flush', () => {
+    it('asks the server for the final with a text frame, and the final then goes without the hold', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'kirjuta Marile' })
+      socket().says({ type: 'partial', text: 'et ma' })
+      r.flush?.()
+      expect(socket().sent).toEqual(['{"type":"flush"}'])
+      // The held final waits for the one the server owes, so the two join.
+      expect(utterances).toEqual([])
+      socket().says({ type: 'final', text: 'et ma jõuan' })
+      expect(utterances).toEqual(['kirjuta Marile et ma jõuan'])
+      // The next final is held as usual.
+      socket().says({ type: 'final', text: 'homme' })
+      expect(utterances).toEqual(['kirjuta Marile et ma jõuan'])
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['kirjuta Marile et ma jõuan', 'homme'])
+    })
+
+    it('delivers what is held at once when nothing is in progress', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'ma jõuan homme' })
+      r.flush?.()
+      expect(utterances).toEqual(['ma jõuan homme'])
+      expect(socket().sent).toEqual(['{"type":"flush"}'])
+    })
+
+    it('releases a settling quick reply at once and swallows its final', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'partial', text: 'jah' })
+      vi.advanceTimersByTime(100)
+      r.flush?.()
+      expect(utterances).toEqual(['jah'])
+      expect(interims.at(-1)).toBe('')
+      socket().says({ type: 'final', text: 'Jah.' })
+      vi.advanceTimersByTime(5000)
+      expect(utterances).toEqual(['jah'])
+    })
+
+    it('does not wait for a final that no open socket will send', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'pooleli' })
+      socket().says({ type: 'partial', text: 'ja' })
+      socket().readyState = 0
+      r.flush?.()
+      expect(socket().sent).toEqual([])
+      expect(utterances).toEqual(['pooleli'])
+    })
+
+    it('does nothing when not running', () => {
+      const r = make()
+      r.flush?.()
+      expect(FakeSocket.made).toHaveLength(0)
+      expect(utterances).toEqual([])
+    })
   })
 })
