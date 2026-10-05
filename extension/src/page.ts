@@ -6,7 +6,7 @@
 import type { BoxState, BrowserCommand, BrowserResult, MediaAction, MediaState, PageContext, PageItem } from '../../src/browser/protocol.ts'
 import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
-import { armElement, armedElement, boxState, disarm, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible } from './box.ts'
+import { armElement, armedElement, boxState, disarm, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
 
 /** What background.ts sends: a command plus which messaging site the page is. */
 export type PageCommand = BrowserCommand & { site: SiteName | null }
@@ -1408,6 +1408,8 @@ function onNavigation(): void {
 
 if (!globalThis.__utle) {
   globalThis.__utle = { run }
+  // A field the user really clicks or tabs into is armed for dictation (box.ts).
+  watchTrustedClicks()
   // Same-document navigations do not unload the page, so remove the labels ourselves.
   const nav = (globalThis as { navigation?: EventTarget }).navigation
   nav?.addEventListener('navigate', onNavigation)

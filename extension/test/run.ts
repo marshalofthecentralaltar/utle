@@ -440,6 +440,11 @@ async function main(): Promise<void> {
     line('siteSearch', 'WhatsApp: filters the list to one row and opens it', r !== 'timeout' && r.ok && (await waHeader()) === 'Peeter Kask', `${describe(r)} (${ms} ms) header=${await waHeader()}`)
     r = await send({ kind: 'readBox' })
     check('siteSearch: WhatsApp composer armed afterwards, search box not the box', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer', describe(r))
+    // WhatsApp focuses its chat search by itself: the open chat's composer is still the box.
+    await wa.evaluate(() => document.querySelector<HTMLElement>('#side input')?.focus())
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'WhatsApp: search focused by the page, the composer is still the box', r !== 'timeout' && r.ok && r.box?.kind === 'composer' && r.box.armed === true && r.box.label === 'Type a message', describe(r))
+    await wa.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
     r = await send({ kind: 'readPage' })
     const waOpen = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
     line('readPage', 'WhatsApp: the open chat is an item "[vestlus] Peeter Kask"', r !== 'timeout' && r.ok && waOpen.some((i) => i.role === 'other' && i.text === '[vestlus] Peeter Kask') && r.page?.box.kind === 'composer' && r.page.box.armed === true, `${describe(r)} items=${JSON.stringify(waOpen.map((i) => i.text))}`)
@@ -523,6 +528,13 @@ async function main(): Promise<void> {
     line('arm', 'on arms the focused search box', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'search', describe(r))
     r = await send({ kind: 'arm', on: false })
     line('arm', 'off releases it (still present, not armed)', r !== 'timeout' && r.ok && r.box?.present === true && r.box.armed === false, describe(r))
+    // A real click (trusted, as an eye tracker's dwell sends it) into a field arms it; "ära kirjuta siia" releases it.
+    await video.click('#q')
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'a real click into the search box arms it', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'search' && r.box.label === 'Otsi', describe(r))
+    r = await send({ kind: 'arm', on: false })
+    line('arm', 'off releases the clicked field', r !== 'timeout' && r.ok && r.box?.present === true && r.box.armed === false, describe(r))
+    await video.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
 
     const laterId = items.find((i) => i.text === 'Vaata hiljem')?.id ?? -1
     r = await send({ kind: 'clickItem', id: laterId })

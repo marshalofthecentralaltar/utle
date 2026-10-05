@@ -83,25 +83,82 @@ export function focusedTextField(): HTMLElement | null {
 
 // ---------- the armed box ----------
 
-// The field the user picked through Ütle (a number, an item, a conversation, "kirjuta siia"). It
-// stays armed until the user releases it or the page navigates (page.ts clears it then). A WeakRef,
-// so a page that drops the element does not keep it alive through us.
-let armed: WeakRef<HTMLElement> | null = null
+// The field the user picked through Ütle (a number, an item, a conversation, "kirjuta siia") or
+// by a real click or Tab (watchTrustedClicks). It stays armed until the user releases it, another
+// field is armed, or the page navigates (page.ts clears it then). A WeakRef, so a page that drops
+// the element does not keep it alive through us. The state lives on the isolated world's global:
+// the strip (content script) and page.ts (injected on the first command) are separate bundles
+// of this module and must see the same armed field.
+interface SharedBox {
+  armed: WeakRef<HTMLElement> | null
+  watching: boolean
+}
+
+const shared: SharedBox = ((globalThis as { __utleBox?: SharedBox }).__utleBox ??= { armed: null, watching: false })
 
 export function armElement(el: HTMLElement): void {
-  armed = new WeakRef(el)
+  shared.armed = new WeakRef(el)
 }
 
 export function disarm(): void {
-  armed = null
+  shared.armed = null
 }
 
 /** The element the user armed, while it is still on the page. */
 export function armedElement(): HTMLElement | null {
-  const el = armed?.deref() ?? null
+  const el = shared.armed?.deref() ?? null
   if (el && el.isConnected) return el
-  if (el) armed = null
+  if (el) shared.armed = null
   return null
+}
+
+/** The text field an event target is in: the field itself, or the outermost contenteditable around it. */
+function fieldAround(target: unknown): HTMLElement | null {
+  let node: Node | null = target instanceof Node ? target : null
+  while (node && !(node instanceof HTMLElement && isTextField(node))) {
+    node = node instanceof ShadowRoot ? node.host : node.parentNode
+  }
+  if (!(node instanceof HTMLElement)) return null
+  if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) return node
+  let field: HTMLElement = node
+  while (field.parentElement?.isContentEditable) field = field.parentElement
+  return field
+}
+
+/** How soon after a real Tab the focus must land on a field for that to arm it. */
+const TAB_FOCUS_MS = 50
+
+/**
+ * Arms the field the user really clicks (a trusted pointerdown or mousedown, as a mouse or an eye
+ * tracker's dwell sends) or tabs into (a trusted Tab followed at once by focusin). A focus the
+ * page sets by script arms nothing: focusin from .focus() is trusted too, so it counts only right
+ * after a Tab. Installed once per isolated world; safe to call from the strip and from page.ts.
+ */
+export function watchTrustedClicks(): void {
+  if (shared.watching) return
+  shared.watching = true
+  const armFrom = (event: Event): void => {
+    if (!event.isTrusted) return
+    const field = fieldAround(event.composedPath()[0] ?? event.target)
+    if (field) armElement(field)
+  }
+  document.addEventListener('pointerdown', armFrom, true)
+  document.addEventListener('mousedown', armFrom, true)
+  let tabAt = -Infinity
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.isTrusted && event.key === 'Tab') tabAt = performance.now()
+    },
+    true,
+  )
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      if (performance.now() - tabAt <= TAB_FOCUS_MS) armFrom(event)
+    },
+    true,
+  )
 }
 
 const SEARCH_WORDS = /search|otsi|otsing/i
@@ -180,18 +237,19 @@ function lowestVisible(selector: string): HTMLElement | null {
 
 /**
  * The armed element while it is on screen, else the focused text field, else the site's composer,
- * else the lowest visible textbox, textarea or input.
+ * else the lowest visible textbox, textarea or input. One exception: a focused search field while
+ * the site's composer is visible gives way to the composer (WhatsApp focuses its chat search by
+ * itself after load and navigation; the words still belong in the chat).
  */
 export function findMessageBox(site: Site | null): HTMLElement | null {
   const chosen = armedElement()
   if (chosen && isTextField(chosen) && visible(chosen)) return chosen
   const active = focusedTextField()
+  const composer = site ? lowestVisible(site.composer) : null
+  if (active && !(composer && isSearchField(active))) return active
+  if (composer) return composer
   if (active) return active
   const pick = lowestVisible
-  if (site) {
-    const composer = pick(site.composer)
-    if (composer) return composer
-  }
   return (
     pick('[contenteditable="true"][role="textbox"], [contenteditable=""][role="textbox"], [contenteditable="plaintext-only"][role="textbox"]') ??
     pick('textarea') ??
