@@ -68,7 +68,7 @@ describe('pageIntent', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('asks for one strict answer tool with low effort and a short budget', async () => {
+  it('asks for one answer tool with low effort and a short budget', async () => {
     const { client, calls } = fakeClient(CLICK_LATER)
     await pageIntent(request(), { client, model: 'claude-opus-5-5' })
     const params = calls[0]
@@ -80,7 +80,8 @@ describe('pageIntent', () => {
     expect(tools).toHaveLength(1)
     const tool = tools[0]
     expect(tool && 'name' in tool && tool.name).toBe('answer')
-    expect(tool && 'strict' in tool && tool.strict).toBe(true)
+    // Strict mode is off: the API rejects a strict tool this large ("The compiled grammar is too large").
+    expect(tool && 'strict' in tool ? tool.strict : undefined).toBeFalsy()
   })
 
   it('sends the page as numbered items and the utterance in the user turn', async () => {
@@ -122,7 +123,7 @@ describe('pageIntent', () => {
     expect(String(freshCalls[0]?.messages[0]?.content)).toContain('steps: none')
   })
 
-  it('keeps the answer schema strict with every property required, done among them', async () => {
+  it('keeps the answer schema closed with every property required, done among them', async () => {
     const { client, calls } = fakeClient(CLICK_LATER)
     await pageIntent(request(), { client, model: 'm' })
     const tool = calls[0]?.tools?.[0]

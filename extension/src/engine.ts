@@ -291,7 +291,9 @@ export function createEngine(deps: EngineDeps): Engine {
       const ok = outcome.ok && step.commands.length > 0
       if (!ok) failures += 1
       steps = [...steps, { action: kindSummary(heard.intent), say: heard.say, ok, message: ok ? '' : outcome.line }]
-      if (!heard.more || steps.length >= MAX_INTENT_STEPS || failures >= MAX_STEP_FAILURES) return
+      // A failed step is asked about once more even when the model thought it was done: the
+      // model could not know the click would miss, and the steps now say so.
+      if ((!heard.more && ok) || steps.length >= MAX_INTENT_STEPS || failures >= MAX_STEP_FAILURES) return
       if (Date.now() - arrived > INTENT_LOOP_BUDGET_MS) return
       await settle()
       const next = await askOnce(utterance, box, null, recentBefore, steps)

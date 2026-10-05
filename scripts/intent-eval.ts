@@ -581,8 +581,9 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
     // What the engine would report back: the step as taken, with the simulated outcome.
     const outcome = step.outcome ?? { ok: true, message: '' }
     steps.push({ action: actionOf(answer.intent), say: answer.say, ok: outcome.ok, message: outcome.message })
-    if (answer.done !== false && i < c.steps.length - 1) {
+    if (answer.done !== false && outcome.ok && i < c.steps.length - 1) {
       // The model said it was done but the case expected more: the engine's loop would stop here.
+      // (After a failed step the engine asks once more whatever done said, so that case goes on.)
       console.log(`FAIL             ${''.padEnd(18)} ${c.name}: done=true after step ${i + 1}, the loop stops`)
       passed = false
       break

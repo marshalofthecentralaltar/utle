@@ -120,7 +120,9 @@ const INTENT = {
 export const ANSWER_TOOL: Anthropic.Tool = {
   name: 'answer',
   description: 'The one next action for the utterance on this page, a short line saying what you took it to be, and whether it completes the utterance.',
-  strict: true,
+  // Not strict: with this many command shapes the API answers 400 "The compiled grammar is too large"
+  // (seen 2026-10-05 on every call). The schema stays closed and fully required as guidance, and
+  // pageIntentFrom validates the answer against the page anyway, so a malformed call becomes unclear.
   input_schema: {
     type: 'object',
     properties: {

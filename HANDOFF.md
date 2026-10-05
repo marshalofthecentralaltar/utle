@@ -59,6 +59,23 @@ bar is restyled, can be hidden to a pill, and the options page is usable by voic
 - The default model for `/api/intent` is `claude-opus-5-5` at low effort; `UTLE_MODEL` overrides it
   (`claude-haiku-4-5` if a command feels slow).
 
+## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
+
+- As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
+  schemas or reduce the number of strict tools." The answer tool is no longer strict (the schema is
+  still closed; `pageIntentFrom` validates every answer). Fixed in this branch.
+- Without strict: 61 of 62 pass. Latency on `claude-opus-5-5` at low effort: p50 2.7 s, p95 5.4 s.
+  The one miss ("recovery: click failed, do not repeat it") was the engine's loop stopping after a
+  failed step when the model had said done; the engine now asks once more after a failed step. Fixed.
+- 2.7 s per free-form command is noticeable in a voice UI. `UTLE_MODEL=claude-sonnet-5-5` is the
+  thing to try next, with the eval, before the demo. Dictation is not affected: it is typed first.
+
+**The laptop's `main` has 27 commits (sections 21.4 to 21.7: navigation, settings) that are not on
+GitHub. This branch conflicts with them in 23 files. Ralf asked that the PR not be merged. The
+conflicts cannot be resolved from the cloud until that `main` is pushed; the two sides built the
+same features twice (navigation commands, a settings page), so resolving them is a judgment call
+on which to keep, per file.**
+
 ## 2. What Ralf must do before the demo
 
 1. `git pull`, `npm ci` (zod is already a dependency; nothing new to install), `npm run ext`,

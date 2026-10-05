@@ -811,6 +811,22 @@ describe('multi-step utterances (M7.2)', () => {
     expect(t.state.thinking).toBe(false)
   })
 
+  it('asks once more after a failed step even when the model said it was done', async () => {
+    let clicks = 0
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      answers: (c) => (c.kind === 'clickItem' && clicks++ === 0 ? { ok: false, code: 'not_found', message: 'gone' } : { ok: true }),
+      ask: script(answer(click(1), 'avan koerte video', true), answer({ kind: 'command', command: { kind: 'siteSearch', query: 'koer' } }, 'otsin koer', true)),
+    })
+    t.engine.start()
+    t.say('ava koerte video')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(2)
+    expect(t.asked[1]?.steps).toEqual([{ action: 'command clickItem 1', say: 'avan koerte video', ok: false, message: 'viga: gone' }])
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'clickItem', 'readPage', 'siteSearch'])
+  })
+
   it('a failed step followed by a good one goes on', async () => {
     let clicks = 0
     const t = setup({
