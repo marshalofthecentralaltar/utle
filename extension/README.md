@@ -77,8 +77,11 @@ From the repository root:
 ## Test
 
 - `npx tsx extension/test/run.ts`: every browser command, including `readBox`, `setText`,
-  `pressSend` and a WhatsApp stand-in page. Builds the extension first. Opens Chromium windows on
-  screen for about a minute.
+  `pressSend`, the M7 page commands (`readPage`, `clickItem`, `focusItem`, `siteSearch`, `media`,
+  `pressKey`, `clearField`, `arm`, `bar`) on a YouTube-like stand-in (`fixtures/video.html`) and a
+  WhatsApp stand-in page. Builds the extension first. Opens Chromium windows on screen for about a
+  minute. The Messenger stand-in is served on the IPv6 loopback; where `[::1]` is unreachable (some
+  containers) that part prints SKIP. Without a screen: `xvfb-run -a -s "-screen 0 1600x1000x24" npx tsx extension/test/run.ts`.
 - `npx tsx extension/test/voice.ts`: by voice with no person. Needs `npx vite --port 5193 --strictPort`
   running (another port: `UTLE_PORT=5194` for both). A fake microphone plays Estonian recordings
   (`scripts/fixtures/et-dictate-send-16k.wav`, `et-scroll-tab-16k.wav`, `et-numbers-one-16k.wav`)
@@ -103,6 +106,12 @@ from them. If another extension also replaces the new-tab page, Chrome uses only
   a synthetic Enter sends. Each selector in `extension/src/sites.ts` says VERIFIED or UNVERIFIED;
   to fix one, change it there, `npm run ext`, reload the extension.
 - Messenger: every selector is a best guess; nobody has tried it logged in.
+- YouTube and Google (M7): the search-field selectors in `SEARCH_FIELDS` (`extension/src/sites.ts`)
+  and the player shortcuts `media` sends to `#movie_player` (k, m, f, arrows, j, l) are read from
+  the public pages, not tried by voice; the element API is the fallback either way. `fullscreen`
+  needs a user gesture Chrome may not grant to an injected script; it then answers failed.
+- The unknown-site composer rule (a textarea or contenteditable with a send, post, comment or reply
+  button in its form or within 200 px) is tested on stand-ins only.
 - Whether the strip makes room on the real WhatsApp layout (tested on stand-ins built on `100%`
   and on `100vh` heights).
 - Branded Google Chrome (tested in Playwright's bundled Chromium only), including how it asks about

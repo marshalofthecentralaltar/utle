@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Videod</title>
+    <style>
+      /* A YouTube-like page: a header search that auto-focuses (like Google), a player, a list of
+         videos, a comment box with its button, and a card that is clickable only by its cursor. */
+      body { margin: 0; font: 16px system-ui, sans-serif; }
+      header { display: flex; gap: 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #ddd; }
+      header form { display: flex; gap: 8px; }
+      header input { width: 320px; padding: 6px; font: inherit; }
+      main { display: grid; grid-template-columns: 640px 300px; gap: 24px; padding: 16px; }
+      video { width: 640px; height: 360px; background: #000; display: block; }
+      .actions { display: flex; gap: 12px; margin: 12px 0; }
+      .comment textarea { width: 600px; height: 56px; display: block; font: inherit; padding: 6px; }
+      .comment button { margin-top: 8px; }
+      .list a { display: block; padding: 10px; border-bottom: 1px solid #eee; color: #06c; text-decoration: none; }
+      .card { cursor: pointer; padding: 10px; background: #f0f0f0; margin-top: 12px; width: 220px; border-radius: 6px; }
+      #comments li { margin: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a id="logo" href="#avaleht">Videod</a>
+      <form id="search-form">
+        <input type="search" name="q" id="q" placeholder="Otsi" autofocus />
+        <button type="submit">Otsi</button>
+      </form>
+    </header>
+    <main>
+      <section>
+        <video id="v" controls muted autoplay loop playsinline></video>
+        <h1 id="title">Kevad Mektorys</h1>
+        <div class="actions">
+          <button id="like" type="button">Meeldib</button>
+          <button id="later" type="button">Vaata hiljem</button>
+          <button id="share" type="button">Jaga</button>
+        </div>
+        <div class="comment">
+          <textarea id="comment" placeholder="Lisa kommentaar"></textarea>
+          <button id="post" type="button">Kommenteeri</button>
+        </div>
+        <ul id="comments"></ul>
+      </section>
+      <aside>
+        <nav class="list">
+          <a href="#video=1">Esimene video</a>
+          <a href="#video=2">Teine video</a>
+          <a href="#video=3">Kolmas video</a>
+        </nav>
+        <div class="card" id="playlist"><strong>Esitusloend</strong></div>
+      </aside>
+    </main>
+    <script>
+      window.clicks = []
+      // A blob is seekable whatever the server does with Range requests (the test server does nothing).
+      fetch('video.webm')
+        .then((r) => r.blob())
+        .then((blob) => {
+          document.getElementById('v').src = URL.createObjectURL(blob)
+        })
+      // Enter in the search field does nothing by itself (a synthetic Enter never submits a form);
+      // the extension falls back to requestSubmit, and the submit changes the address.
+      document.getElementById('search-form').addEventListener('submit', (e) => {
+        e.preventDefault()
+        location.hash = 'otsing=' + encodeURIComponent(document.getElementById('q').value)
+      })
+      document.getElementById('later').addEventListener('click', (e) => {
+        e.target.textContent = 'Lisatud'
+        window.clicks.push('later')
+      })
+      document.getElementById('playlist').addEventListener('click', () => window.clicks.push('playlist'))
+      const post = () => {
+        const area = document.getElementById('comment')
+        const text = area.value.trim()
+        if (text === '') return
+        const li = document.createElement('li')
+        li.textContent = text
+        document.getElementById('comments').append(li)
+        area.value = ''
+      }
+      document.getElementById('post').addEventListener('click', post)
+      document.getElementById('comment').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          post()
+        }
+      })
+    </script>
+  </body>
+</html>
