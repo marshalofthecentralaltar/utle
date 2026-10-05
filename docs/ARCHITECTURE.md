@@ -849,3 +849,43 @@ The plan is `docs/plans/2026-10-05-m7-understanding.md`; the contract is `src/br
 The reply's `answer` call has its `null`s dropped and goes through `pageIntentFrom(intent, request)`; `done` passes through as given, absent meaning true. `null` from that, a text-only reply, a refusal or `max_tokens` all answer `200 { intent: { kind: 'unclear', say: STRINGS[lang].inpage.notUnderstood }, say: '' }`: the model never gets a second try, a voice command answers at once. Errors use the `InterpretError` codes and statuses of `/api/interpret`; a `401` or `403` from the API, or no `ANTHROPIC_API_KEY` at all, is `502 { error: { code: 'upstream_rejected', message: 'no_key' } }`. `GET /api/status` adds `intent: 'live' | 'no_key'` (`no_key` when the environment has no key) so the strip can say in one line that free-form understanding is off. Every `/api/*` answer carries `Access-Control-Allow-Origin: *` and answers `OPTIONS` with 204, because the extension's offscreen document calls from a `chrome-extension://` origin.
 
 The log line is `[intent] kind=<kind> done=<bool> ms=<n>` or `[intent] error=<code> ms=<n>`, never the utterance or the page. `server/intent.test.ts` covers it with a fake client (`done` passes through, the steps appear in the user turn, the schema stays strict with every property required). `npx tsx scripts/intent-eval.ts` runs about 60 cases, Estonian with a few English, against fake YouTube (watch, home, results), WhatsApp (list, armed chat), Google, Gmail (inbox, compose), a news site with a cookie dialog, a Facebook feed, an e-service form and a new tab, through the real model and the real `pageIntent`. Multi-step cases simulate the engine's loop (each step its own page, the earlier steps sent back, a step reportable as failed); a case may accept either of two answers. It prints pass or fail with the latency per ask, then p50/p95 latency and the pass rate; `UTLE_MODEL` picks the model, `UTLE_EVAL_ONLY=<text>` filters by name, utterance or site, `UTLE_EVAL_JSON=<path>` writes every result (needs a key).
+## 23. Round 3 (2026-10-05, night)
+
+### 23.4 A second recogniser: Soniox
+
+TalTech's model mishears often enough that the owner asked for Soniox, a hosted real-time
+speech-to-text service that lists Estonian among its languages. It sits behind the same wire as the
+local model (section 20.1): the browser speaks the Ütle protocol and never sees Soniox; the key
+stays on the dev server. `server/soniox.ts` carries, in its first comment, every Soniox field name
+it relies on with the date and sources, so a difference from Soniox's real API is fixed in one place.
+
+**Choosing it.** A connection to `/api/asr?engine=soniox` goes to Soniox; so does every connection
+when the dev server runs with `UTLE_ASR=soniox`. Everything else is the local model, unchanged. The
+key is `SONIOX_API_KEY` in the server's environment (never in a file in the repository). `GET
+/api/status` reports `speech: { local, soniox }`: `local` when the model directory is on disk,
+`soniox` when the key is set.
+
+**What the server does per connection** (`attachSonioxSession`). Opens
+`wss://stt-rt.soniox.com/transcribe-websocket`, sends the JSON config as its first frame (`api_key`,
+`model` `stt-rt-v5` or `SONIOX_MODEL`, `audio_format: 'pcm_s16le'`, `sample_rate: 16000`,
+`num_channels: 1`, `language_hints: ['et']`, `enable_endpoint_detection: true`), then answers the
+browser with `ready`. The browser's float32 frames are converted to 16-bit little-endian PCM and
+forwarded; frames that arrive before Soniox is open are buffered in order. Soniox answers with
+tokens: final tokens accumulate, non-final tokens replace the previous non-final ones, and the
+concatenation of both is sent as `partial` whenever it changes. A token whose text is `<end>` (the
+endpoint) closes the utterance: `final` with its text, and the next utterance starts empty. The
+browser's `{"type":"flush"}` becomes Soniox's `{"type":"finalize"}`; the finals Soniox then returns
+(and the `<fin>` marker) produce the `final`. `{"type":"keepalive"}` goes to Soniox every 10 s
+(it wants one within 20 s of silence). When the browser leaves, Soniox gets the empty end frame
+and is closed. A Soniox error (`error_code`, for example 401 for a bad key), a socket error, or
+Soniox closing first all become `unavailable` with reason `load_failed` and a 1011 close, after
+which `src/speech/pick.ts` falls back to Chrome's recogniser as for the local model. No key at all
+is `unavailable` at once, with a warning on the server that names `SONIOX_API_KEY`.
+
+**Logged.** `[soniox] connecting`, `session open`, `browser closed, code N`, `error N`, `closed by
+Soniox, code N`. Never audio, never text.
+
+**Not verified without a key.** The field names were taken from Soniox's client source and two
+integrations because Soniox's documentation site was not reachable from the machine that wrote
+this; `server/soniox.test.ts` proves the mapping against a scripted Soniox, not against Soniox.
+Audio leaves the laptop on this engine; `THIRD-PARTY.md` says so.
