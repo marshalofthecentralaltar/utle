@@ -210,7 +210,9 @@ const NEWTAB_TIMEOUT_MS = 6000
 
 /** The extension's own new-tab page (21.3). Chrome reports it as chrome://newtab/. */
 function ourNewTab(url: string | undefined): boolean {
-  return url === 'chrome://newtab/' || (url ?? '').startsWith(chrome.runtime.getURL('newtab.html'))
+  const u = url ?? ''
+  // The options page (M7) runs page commands the same way, so its buttons can be numbered by voice.
+  return url === 'chrome://newtab/' || u.startsWith(chrome.runtime.getURL('newtab.html')) || u.startsWith(chrome.runtime.getURL('options.html'))
 }
 
 /** The worker cannot inject into an extension page: the new-tab page runs the command with its own page.js. */
