@@ -3,7 +3,7 @@
 // See docs/ARCHITECTURE.md 20.2 and 21.2, and docs/plans/2026-10-05-m7-understanding.md (M7:
 // readPage, clickItem, focusItem, siteSearch, media, pressKey, clearField, arm, the armed box).
 
-import type { BoxState, BrowserCommand, BrowserResult, MediaAction, MediaState, PageContext, PageItem, PressableKey } from '../../src/browser/protocol.ts'
+import type { BoxState, BrowserCommand, BrowserResult, MediaAction, MediaState, PageContext, PageItem, PressableKey, ScrollMode } from '../../src/browser/protocol.ts'
 import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
 import { armElement, armedElement, boxState, disarm, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
@@ -766,19 +766,104 @@ function scrollables(): Element[] {
   return found
 }
 
-/** Scrolls the first container that moves; failed when none did, so the model can try something else. */
-function scroll(direction: string): BrowserResult {
+// Round 3 (docs/ARCHITECTURE.md 23.2): a page, a little, slowly, and stop.
+/** A page scroll moves this share of the view, a little scroll this. */
+const PAGE_SCROLL_SHARE = 0.8
+const LITTLE_SCROLL_SHARE = 1 / 3
+/** A smooth scroll gets this long to settle before the command answers. */
+const SCROLL_SETTLE_MAX_MS = 600
+/** The settle check looks this often; two unchanged looks after a move count as settled. */
+const SCROLL_SETTLE_POLL_MS = 50
+/** A slow scroll moves at this speed until it is stopped. */
+const SLOW_SCROLL_PX_PER_S = 90
+
+/** The slow scroll under way: its container and its next animation frame. Null when nothing moves. */
+let slowScroll: { el: Element; frame: number } | null = null
+
+/** Ends the slow scroll, if one is under way. Every other scroll, a stop and a navigation call it. */
+function stopSlowScroll(): void {
+  if (slowScroll === null) return
+  cancelAnimationFrame(slowScroll.frame)
+  slowScroll = null
+}
+
+function canScroll(el: Element, direction: string): boolean {
+  if (direction === 'up' || direction === 'top') return el.scrollTop > 0
+  return el.scrollTop < el.scrollHeight - el.clientHeight - 1
+}
+
+function nothingScrolled(direction: string): BrowserResult {
+  return fail('failed', direction === 'down' || direction === 'bottom' ? 'Nothing scrolled: the page is already at the end, or it does not scroll.' : 'Nothing scrolled: the page is already at the top.')
+}
+
+/** Starts a steady scroll on the first container that can move. It ends on stop, on another scroll, on a navigation, or at the end of the container. */
+function startSlowScroll(direction: 'up' | 'down'): BrowserResult {
+  const el = scrollables().find((e) => canScroll(e, direction))
+  if (el === undefined) return nothingScrolled(direction)
+  const sign = direction === 'down' ? 1 : -1
+  let last = performance.now()
+  let owed = 0
+  const step = (now: number): void => {
+    if (slowScroll === null || slowScroll.el !== el) return
+    owed += ((now - last) / 1000) * SLOW_SCROLL_PX_PER_S
+    last = now
+    const whole = Math.floor(owed)
+    if (whole > 0) {
+      owed -= whole
+      const before = el.scrollTop
+      el.scrollBy({ top: sign * whole, behavior: 'instant' })
+      if (el.scrollTop === before) {
+        slowScroll = null
+        return
+      }
+    }
+    slowScroll.frame = requestAnimationFrame(step)
+  }
+  slowScroll = { el, frame: requestAnimationFrame(step) }
+  return ok()
+}
+
+/** Waits for a smooth scroll of el to settle: unchanged for two looks after it moved, or the cap. True when it moved. */
+async function scrollSettled(el: Element, before: number): Promise<boolean> {
+  const started = performance.now()
+  let last = el.scrollTop
+  let still = 0
+  while (performance.now() - started < SCROLL_SETTLE_MAX_MS) {
+    await sleep(SCROLL_SETTLE_POLL_MS)
+    const now = el.scrollTop
+    if (now === last && now !== before) {
+      if (++still >= 2) break
+    } else {
+      still = 0
+      last = now
+    }
+  }
+  return el.scrollTop !== before
+}
+
+/**
+ * Scrolls the first container that can move; failed when none can, so the model can try something
+ * else. page (the default) and little scroll smoothly and answer once the scroll has settled; slow
+ * starts a steady scroll and answers at once; stop ends it (ok even when nothing was moving).
+ */
+async function scroll(direction: string, mode: ScrollMode = 'page'): Promise<BrowserResult> {
+  stopSlowScroll()
+  if (mode === 'stop') return ok()
   if (!['down', 'up', 'top', 'bottom'].includes(direction)) return fail('failed', `Unknown scroll direction "${direction}".`)
+  if (mode === 'slow' && (direction === 'up' || direction === 'down')) return startSlowScroll(direction)
+  const share = mode === 'little' ? LITTLE_SCROLL_SHARE : PAGE_SCROLL_SHARE
   for (const el of scrollables()) {
+    if (!canScroll(el, direction)) continue
     const before = el.scrollTop
-    const page = Math.round(el.clientHeight * 0.8) || Math.round(window.innerHeight * 0.8)
-    if (direction === 'down') el.scrollBy({ top: page, behavior: 'instant' })
-    else if (direction === 'up') el.scrollBy({ top: -page, behavior: 'instant' })
+    const amount = Math.round((el.clientHeight || window.innerHeight) * share)
+    if (direction === 'down') el.scrollBy({ top: amount, behavior: 'smooth' })
+    else if (direction === 'up') el.scrollBy({ top: -amount, behavior: 'smooth' })
     else if (direction === 'top') el.scrollTo({ top: 0, behavior: 'instant' })
     else el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
-    if (el.scrollTop !== before) return ok()
+    const moved = direction === 'top' || direction === 'bottom' ? el.scrollTop !== before : await scrollSettled(el, before)
+    if (moved) return ok()
   }
-  return fail('failed', direction === 'down' || direction === 'bottom' ? 'Nothing scrolled: the page is already at the end, or it does not scroll.' : 'Nothing scrolled: the page is already at the top.')
+  return nothingScrolled(direction)
 }
 
 // ---------- the message box ----------
@@ -1368,7 +1453,7 @@ async function run(command: PageCommand): Promise<PageResult> {
   try {
     switch (command.kind) {
       case 'scroll':
-        return scroll(command.direction)
+        return await scroll(command.direction, command.mode)
       case 'showHints':
         return showHints(site)
       case 'hideHints':
@@ -1417,6 +1502,7 @@ declare global {
 
 /** A navigation: the labels go, the armed field with them, and the items of the last readPage (all belonged to the page before). */
 function onNavigation(): void {
+  stopSlowScroll()
   hideHints()
   disarm()
   pageItems = []

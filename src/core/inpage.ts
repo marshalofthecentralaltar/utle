@@ -2,6 +2,7 @@ import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, PageConte
 import type { PageIntent } from './pageIntent.ts'
 import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
+import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
@@ -430,6 +431,16 @@ function distance(a: string, b: string, cap: number): number {
   return rows[a.length]?.[b.length] ?? cap + 1
 }
 
+/**
+ * Round 3 (23.2): true when heard sounds like target (phonetic.ts) and is not target itself, nor
+ * target plus a verb ending ("sulgen" is a sentence about closing, not a misheard "sulge").
+ */
+function soundsNear(heard: string, target: string): boolean {
+  if (heard.length < 3 || heard === target) return false
+  if (heard.startsWith(target) && VERB_ENDINGS.has(heard.slice(target.length))) return false
+  return soundsLike(heard, target)
+}
+
 /** True when heard is one letter (two from eight letters) away from target and not target plus a verb ending. */
 function nearWord(heard: string, target: string): boolean {
   if (heard.length < 4 || heard === target) return false
@@ -472,6 +483,16 @@ function misheard(session: InpageSession, utterance: string): Classified | null 
         attempt([...words.slice(0, i), target, ...words.slice(i + 2)], distance(joined, target, 2))
       }
     }
+  }
+  // Round 3 (23.2): when no letter-level correction fires, each word of three letters or more is
+  // tried as each vocabulary word that sounds like it ("aga" is "ava", "ala" is "alla"), one word
+  // at a time, under the same rule: the corrections that are commands must all mean one command.
+  if (found.size === 0) {
+    words.forEach((word, i) => {
+      for (const target of VOCABULARY) {
+        if (soundsNear(word, target)) attempt([...words.slice(0, i), target, ...words.slice(i + 1)], 1)
+      }
+    })
   }
   const [only] = found.values()
   return found.size === 1 && only !== undefined ? only.classified : null

@@ -19,6 +19,10 @@ const ROWS: Array<[string, MessageCommand]> = [
   ['tell Mari that I am on my way.', { kind: 'start', to: 'Mari', text: 'I am on my way.' }],
   ['saada', { kind: 'send' }],
   ['Saada ära.', { kind: 'send' }],
+  ['saadake', { kind: 'send' }],
+  ['Saadake.', { kind: 'send' }],
+  ['saadake ära', { kind: 'send' }],
+  ['saadame', { kind: 'send' }],
   ['saada sõnum', { kind: 'send' }],
   ['send', { kind: 'send' }],
   ['send the message', { kind: 'send' }],
@@ -32,7 +36,19 @@ describe('messageCommand', () => {
     expect(messageCommand(text)).toEqual(command)
   })
 
-  it.each(['kirjuta eelarve kohta, et see on hiljaks jäänud', 'muuda eelarve tähtaeg reedeks', 'sõnumid', 'send it to finance by Friday', ''])(
+  it.each([
+    'kirjuta eelarve kohta, et see on hiljaks jäänud',
+    'muuda eelarve tähtaeg reedeks',
+    'sõnumid',
+    'send it to finance by Friday',
+    '',
+    // Send is literal: what only sounds like it, or has it inside a sentence, is not it.
+    'sada',
+    'saadan',
+    'saata',
+    'saada mulle pilt',
+    'saadake talle ka',
+  ])(
     'leaves "%s" alone',
     (text) => {
       expect(messageCommand(text)).toBeNull()

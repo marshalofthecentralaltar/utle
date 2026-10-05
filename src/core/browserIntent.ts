@@ -1,4 +1,5 @@
 import type { BrowserCommand } from '../browser/protocol.ts'
+import { soundsLike } from './phonetic.ts'
 import { spokenNumber } from './quickReply.ts'
 
 /**
@@ -30,6 +31,21 @@ export const SITES: Record<string, string> = {
   // The stem changes before a case ending (postimehesse); section 21.3.
   postimehe: 'https://www.postimees.ee/',
   delfi: 'https://www.delfi.ee/',
+  // Round 3 (23.2): the names as an Estonian ear spells them. Each row is also a phonetic anchor for
+  // what sounds like it ("juutuba" is one edit from "juutuub").
+  juutuub: 'https://www.youtube.com/',
+  juutuba: 'https://www.youtube.com/',
+  jutuub: 'https://www.youtube.com/',
+  uutuub: 'https://www.youtube.com/',
+  guugel: 'https://www.google.com/',
+  gugel: 'https://www.google.com/',
+  gmeil: 'https://mail.google.com/',
+  fäisbuk: 'https://www.facebook.com/',
+  feisbuk: 'https://www.facebook.com/',
+  mesendžer: 'https://www.messenger.com/',
+  messendžer: 'https://www.messenger.com/',
+  postimehes: 'https://www.postimees.ee/',
+  delfis: 'https://www.delfi.ee/',
   err: 'https://www.err.ee/',
   linkedin: 'https://www.linkedin.com/',
   'linked in': 'https://www.linkedin.com/',
@@ -112,6 +128,66 @@ phrases(
 )
 phrases({ kind: 'scroll', direction: 'down' }, 'keri alla', 'keri allapoole', 'scroll down')
 phrases({ kind: 'scroll', direction: 'up' }, 'keri üles', 'keri ülespoole', 'scroll up')
+// Round 3 (23.2): a little, slowly, and stop. "keri edasi" and "keri tagasi" stay the video's.
+phrases(
+  { kind: 'scroll', direction: 'down', mode: 'little' },
+  'keri natuke alla',
+  'keri natuke allapoole',
+  'natuke alla',
+  'natuke allapoole',
+  'keri veidi alla',
+  'veidi alla',
+  'scroll down a little',
+  'scroll down a bit',
+  'a little down',
+)
+phrases(
+  { kind: 'scroll', direction: 'up', mode: 'little' },
+  'keri natuke üles',
+  'keri natuke ülespoole',
+  'natuke üles',
+  'natuke ülespoole',
+  'keri veidi üles',
+  'veidi üles',
+  'scroll up a little',
+  'scroll up a bit',
+  'a little up',
+)
+phrases(
+  { kind: 'scroll', direction: 'down', mode: 'slow' },
+  'keri aeglaselt alla',
+  'keri aeglaselt allapoole',
+  'keri tasa alla',
+  'keri tasa allapoole',
+  'aeglaselt alla',
+  'scroll slowly down',
+  'scroll down slowly',
+  'slowly down',
+)
+phrases(
+  { kind: 'scroll', direction: 'up', mode: 'slow' },
+  'keri aeglaselt üles',
+  'keri aeglaselt ülespoole',
+  'keri tasa üles',
+  'keri tasa ülespoole',
+  'aeglaselt üles',
+  'scroll slowly up',
+  'scroll up slowly',
+  'slowly up',
+)
+// While the labels show, "stopp", "stop" and "lõpeta" hide them instead (inpage.ts, STOP).
+phrases(
+  { kind: 'scroll', direction: 'down', mode: 'stop' },
+  'stopp',
+  'seis',
+  'aitab',
+  'lõpeta',
+  'lõpeta kerimine',
+  'peata kerimine',
+  'kerimine seis',
+  'stop',
+  'stop scrolling',
+)
 phrases({ kind: 'scroll', direction: 'top' }, 'lehe algusesse', 'keri algusesse', 'scroll to the top', 'scroll to top')
 phrases({ kind: 'scroll', direction: 'bottom' }, 'lehe lõppu', 'keri lõppu', 'scroll to the bottom', 'scroll to bottom')
 phrases({ kind: 'showHints' }, 'näita numbreid', 'näita numbrid', 'show numbers', 'show the numbers', 'show hints')
@@ -193,9 +269,29 @@ const ADDRESS = /^(?:www\.)?[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.[a-z]{2,}$/u
 /** Estonian case endings taken off a site name (section 21.3), longest first. */
 const ENDINGS = ['isse', 'sse', 'ile', 'le', 'is', 'it', 'i', 's', 't']
 
+/** The site names of the table without their spaces, for the sound-alike match ("vatsäpp" against "whats app"). */
+const SITE_KEYS: ReadonlyArray<readonly [string, string]> = Object.keys(SITES).map((key) => [key, key.replace(/ /g, '')])
+
+/** The site whose name sounds like the one heard (23.2), or null; one site at most, else null. */
+function siteLike(name: string): string | null {
+  const heard = name.replace(/ /g, '')
+  if (heard.length < 4) return null
+  const urls = new Set<string>()
+  let found: string | null = null
+  for (const [key, bare] of SITE_KEYS) {
+    if (!soundsLike(heard, bare)) continue
+    const url = SITES[key]
+    if (url === undefined) continue
+    urls.add(url)
+    found ??= key
+  }
+  return urls.size === 1 ? found : null
+}
+
 /**
  * The address for a site name or a bare domain, or null. key is the site table's name when an
- * Estonian case ending had to come off first ("whatsappi" is whatsapp), else null.
+ * Estonian case ending had to come off first ("whatsappi" is whatsapp), or the name only sounded
+ * like it ("juutuba" is juutuub, 23.2), else null.
  */
 function siteUrl(name: string): { url: string; key: string | null } | null {
   const known = SITES[name]
@@ -206,7 +302,19 @@ function siteUrl(name: string): { url: string; key: string | null } | null {
     const url = SITES[key]
     if (url) return { url, key }
   }
-  return ADDRESS.test(name) ? { url: `https://${name}`, key: null } : null
+  if (ADDRESS.test(name)) return { url: `https://${name}`, key: null }
+  const like = siteLike(name)
+  if (like !== null) {
+    const url = SITES[like]
+    if (url !== undefined) return { url, key: like }
+  }
+  for (const ending of ENDINGS) {
+    if (name.length - ending.length < 4 || !name.endsWith(ending)) continue
+    const key = siteLike(name.slice(0, -ending.length))
+    const url = key === null ? undefined : SITES[key]
+    if (key !== null && url !== undefined) return { url, key }
+  }
+  return null
 }
 
 function ordinal(word: string): number | null {
