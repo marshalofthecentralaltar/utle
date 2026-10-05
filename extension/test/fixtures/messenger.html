@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Messages</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 20px; display: grid; grid-template-columns: 220px 1fr; gap: 24px; }
+      [role="navigation"] a { display: block; padding: 6px 0; }
+      [role="textbox"] { border: 1px solid #888; min-height: 40px; padding: 6px; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <!-- Stands in for Messenger: the list arrives 1.5 s after load; opening a conversation is a
+         pushState (no load) that removes the old composer and shows the new one 800 ms later. -->
+    <div role="navigation" aria-label="Chats" id="nav"><p>Loading chats…</p></div>
+    <div>
+      <main id="main"></main>
+      <div id="lists"></div>
+    </div>
+    <script>
+      const people = [
+        ['mariann', 'Mariann Kask'],
+        ['mart', 'Märt Tamm'],
+        ['mari', 'Mari Maasikas'],
+        ['jaan', 'Jaan Tamm'],
+        ['peeter', 'Peeter Kask'],
+        ['broken', 'Broken Link'],
+      ]
+      const lists = document.getElementById('lists')
+      for (const [id, name] of people) {
+        const h = document.createElement('h3')
+        h.textContent = `Sent to ${name}`
+        const ul = document.createElement('ul')
+        ul.id = `sent-${id}`
+        lists.append(h, ul)
+      }
+      window.sentTo = (id) => [...document.querySelectorAll(`#sent-${id} li`)].map((li) => li.textContent)
+
+      let generation = 0
+      function open(id) {
+        const main = document.getElementById('main')
+        main.innerHTML = ''
+        const g = ++generation
+        setTimeout(() => {
+          if (g !== generation) return
+          const box = document.createElement('div')
+          box.contentEditable = 'true'
+          box.setAttribute('role', 'textbox')
+          box.setAttribute('aria-label', `Message to ${id}`)
+          box.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return
+            e.preventDefault()
+            const text = box.textContent
+            if (text.trim() !== '') {
+              const li = document.createElement('li')
+              li.textContent = text
+              document.getElementById(`sent-${id}`).append(li)
+            }
+            box.textContent = ''
+          })
+          main.append(box)
+        }, 800)
+      }
+
+      setTimeout(() => {
+        const nav = document.getElementById('nav')
+        nav.innerHTML = ''
+        const grid = document.createElement('div')
+        grid.setAttribute('role', 'grid')
+        for (const [id, name] of people) {
+          const row = document.createElement('div')
+          row.setAttribute('role', 'row')
+          const a = document.createElement('a')
+          a.href = `/fixtures/t/${id}`
+          a.setAttribute('aria-label', name)
+          a.textContent = name
+          a.addEventListener('click', (e) => {
+            e.preventDefault()
+            if (id === 'broken') return // a click the page swallows: the conversation never opens
+            history.pushState({}, '', `/fixtures/t/${id}`)
+            open(id)
+          })
+          row.append(a)
+          grid.append(row)
+        }
+        nav.append(grid)
+      }, 1500)
+    </script>
+  </body>
+</html>

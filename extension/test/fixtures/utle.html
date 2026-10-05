@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="et">
+  <head><meta charset="utf-8" /><title>Fake Ütle</title></head>
+  <body>
+    <h1>Fake Ütle page</h1>
+    <p>Posts BridgeRequests like src/browser/protocol.ts and collects the answers.</p>
+    <script>
+      let next = 1
+      const waiting = new Map()
+      window.responses = []
+      window.addEventListener('message', (event) => {
+        if (event.source !== window || !event.data || event.data.source !== 'utle-extension') return
+        window.responses.push(event.data)
+        const resolve = waiting.get(event.data.id)
+        if (resolve) {
+          waiting.delete(event.data.id)
+          resolve(event.data.result)
+        }
+      })
+      window.bridge = (command, timeoutMs = 15000) =>
+        new Promise((resolve) => {
+          const id = next++
+          waiting.set(id, resolve)
+          setTimeout(() => {
+            if (waiting.delete(id)) resolve('timeout')
+          }, timeoutMs)
+          window.postMessage({ source: 'utle-app', id, command }, window.location.origin)
+        })
+    </script>
+  </body>
+</html>

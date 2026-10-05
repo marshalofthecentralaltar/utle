@@ -1,0 +1,10 @@
+<!doctype html>
+<html><head><meta charset="utf-8" /><title>Some other local page</title></head>
+<body>
+  <p>Not Ütle. Posts a valid BridgeRequest and listens for any answer.</p>
+  <script>
+    window.answers = []
+    window.addEventListener('message', (e) => { if (e.data && e.data.source === 'utle-extension') window.answers.push(e.data) })
+    window.attack = () => window.postMessage({ source: 'utle-app', id: 1, command: { kind: 'ping' } }, window.location.origin)
+  </script>
+</body></html>
