@@ -4,7 +4,8 @@
 
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
-import type { IntentAnswer, IntentRequest, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
+import type { IntentAnswer, IntentRequest, IntentStep, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
+import { MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
@@ -56,11 +57,17 @@ export interface Engine {
 const NO_BOX: BoxState = { present: false, text: '', armed: false }
 
 /** The model is not asked about an utterance this long when the box is armed: a sentence is dictation. */
-export const LONG_UTTERANCE_WORDS = 9
+export const LONG_UTTERANCE_WORDS = 14
 /** The model must answer within this time, or the rules' step stands. */
 export const ASK_TIMEOUT_MS = 7000
 /** How many strip lines the model is told about. */
 const RECENT_LINES = 3
+/** M7.2: a multi-step utterance gets no further step once this long has passed since it arrived. */
+export const INTENT_LOOP_BUDGET_MS = 25_000
+/** M7.2: the loop stops after this many failed steps (one failure is reported back so the model may recover). */
+export const MAX_STEP_FAILURES = 2
+/** M7.2: how long the page gets to render after a step before it is read again (a goTo already waited for the load). */
+export const SETTLE_MS = 300
 
 const wordCount = (utterance: string): number => utterance.trim().split(/\s+/).filter((w) => w !== '').length
 
@@ -155,12 +162,15 @@ export function createEngine(deps: EngineDeps): Engine {
     }
   }
 
-  /** The page in front for the model: readPage, or what is known from the box when the page cannot answer. */
-  const readPage = async (box: BoxState, previewInBox: boolean): Promise<PageContext> => {
+  /**
+   * The page in front for the model: readPage, or what is known from the box when the page cannot
+   * answer. baseText, when given, replaces the box text: the box as it was before the utterance,
+   * never with the utterance's own words in it, so the model judges the words themselves.
+   */
+  const readPage = async (box: BoxState, baseText: string | null): Promise<PageContext> => {
     const read = await runSafe({ kind: 'readPage' })
-    if (!read.ok || !read.page) return { url: '', title: '', box, items: [], media: null, hints: session.hints }
-    // The box as it was before the utterance began, never with its preview in it.
-    return previewInBox ? { ...read.page, box: { ...read.page.box, text: box.text } } : read.page
+    if (!read.ok || !read.page) return { url: '', title: '', box: baseText === null ? box : { ...box, text: baseText }, items: [], media: null, hints: session.hints }
+    return baseText === null ? read.page : { ...read.page, box: { ...read.page.box, text: baseText } }
   }
 
   const askWithTimeout = (request: IntentRequest): Promise<IntentAnswer | AskFailure> =>
@@ -178,29 +188,112 @@ export function createEngine(deps: EngineDeps): Engine {
       )
     })
 
+  /** The model's answer, validated against the page it saw. */
+  interface Heard {
+    intent: PageIntent
+    say: string
+    /** The model says the utterance asks for more after this step. */
+    more: boolean
+    page: PageContext
+  }
+
   /**
-   * M7: the rules took the utterance for dictation. Asks the model what was meant, with the page in
-   * front, and answers its step; the rules' step when the model has no answer.
+   * One question to the model: the page as it is now (with the box as it was before the utterance
+   * when baseText is given), the tabs, the lines before this utterance and the steps already taken
+   * for it. Null when the model gave no answer (the caller keeps what the rules did).
    */
-  const consult = async (utterance: string, box: BoxState, previewInBox: boolean, rules: InpageStep): Promise<InpageStep> => {
-    deps.publish({ thinking: true, line: inpageText.thinking })
-    try {
-      const page = await readPage(box, previewInBox)
-      const tabs = await deps.tabs().catch((): TabSummary[] => [])
-      const answer = await askWithTimeout({ lang: deps.lang, utterance, page, tabs, recent })
-      if ('error' in answer) {
-        if (answer.error === 'no_model') setModelOff(true)
-        return rules
+  const askOnce = async (utterance: string, box: BoxState, baseText: string | null, recentBefore: string[], steps: IntentStep[]): Promise<Heard | null> => {
+    const page = await readPage(box, baseText)
+    const tabs = await deps.tabs().catch((): TabSummary[] => [])
+    const request: IntentRequest = { lang: deps.lang, utterance, page, tabs, recent: recentBefore }
+    if (steps.length > 0) request.steps = steps
+    const answer = await askWithTimeout(request)
+    if ('error' in answer) {
+      if (answer.error === 'no_model') setModelOff(true)
+      return null
+    }
+    setModelOff(false)
+    const intent = deps.logic.pageIntentFrom(answer.intent, { page, tabs }) ?? { kind: 'unclear', say: '' }
+    return { intent, say: answer.say, more: answer.done === false, page }
+  }
+
+  /** How one step went, for the strip and for the model's next look. */
+  interface Outcome {
+    ok: boolean
+    /** The strip's line about it. */
+    line: string
+  }
+
+  /**
+   * Runs one step: its commands in order through the page, stopping at the first failure, and
+   * inpageResult for the line and the session (hints, undo). u: the live utterance whose preview
+   * may still be in the box; a step without a setText puts the base back first.
+   */
+  const perform = async (step: InpageStep, u: Live | null): Promise<Outcome> => {
+    session = step.session
+    say(step.line)
+    // A command, or nothing at all: the preview must not stay in the box.
+    if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
+    if (step.commands.length === 0) return { ok: true, line: step.line }
+    let last: BrowserResult = { ok: true }
+    for (const command of step.commands) {
+      last = await runSafe(command)
+      if (!last.ok) break
+    }
+    const after = deps.logic.inpageResult(session, step.commands, last)
+    session = after.session
+    const line = after.line !== '' ? after.line : step.line
+    say(line)
+    return { ok: last.ok, line }
+  }
+
+  /** The step for the model, e.g. "command goTo", "command clickItem 12", "edit undo", "send". */
+  const kindSummary = (intent: PageIntent): string => {
+    switch (intent.kind) {
+      case 'command': {
+        const c = intent.command
+        const detail = c.kind === 'clickItem' || c.kind === 'focusItem' ? ` ${c.id}` : c.kind === 'clickHint' ? ` ${c.number}` : ''
+        return `command ${c.kind}${detail}`
       }
-      setModelOff(false)
-      const intent = deps.logic.pageIntentFrom(answer.intent, { page, tabs }) ?? { kind: 'unclear', say: '' }
-      return deps.logic.applyIntent(session, intent, page, answer.say)
-    } finally {
-      deps.publish({ thinking: false })
+      case 'edit':
+        return `edit ${intent.edit.kind}`
+      default:
+        return intent.kind
+    }
+  }
+
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
+
+  /**
+   * M7.2: runs the model's step and, while the model says the utterance asks for more, looks at
+   * the page again and asks again with the steps taken so far. Bounded: MAX_INTENT_STEPS steps,
+   * INTENT_LOOP_BUDGET_MS since the utterance arrived, MAX_STEP_FAILURES failed steps, and an
+   * unclear answer stops it. Everything runs through perform, so the session stays true.
+   */
+  const follow = async (utterance: string, box: BoxState, recentBefore: string[], first: Heard, arrived: number, u: Live | null): Promise<void> => {
+    let heard = first
+    let steps: IntentStep[] = []
+    let failures = 0
+    for (;;) {
+      const step = deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
+      const outcome = await perform(step, u)
+      u = null
+      if (heard.intent.kind === 'unclear') return
+      // A step with nothing to run did nothing: the model hears that, not a success.
+      const ok = outcome.ok && step.commands.length > 0
+      if (!ok) failures += 1
+      steps = [...steps, { action: kindSummary(heard.intent), say: heard.say, ok, message: ok ? '' : outcome.line }]
+      if (!heard.more || steps.length >= MAX_INTENT_STEPS || failures >= MAX_STEP_FAILURES) return
+      if (Date.now() - arrived > INTENT_LOOP_BUDGET_MS) return
+      await settle()
+      const next = await askOnce(utterance, box, null, recentBefore, steps)
+      if (next === null) return
+      heard = next
     }
   }
 
   const handle = async (utterance: string, u: Live | null): Promise<void> => {
+    const arrived = Date.now()
     let box: BoxState
     if (u === null) {
       box = await readBox()
@@ -211,23 +304,44 @@ export function createEngine(deps: EngineDeps): Engine {
       // The base, never the box as it reads now: that holds the preview.
       box = u.base ?? NO_BOX
     }
+    const before = session
+    const recentBefore = recent
     const rules = deps.logic.inpageStep(session, utterance, box)
     // Dictation by the rules: a short utterance, or one with no armed box, may mean something else.
     const shouldAsk = rules.ask === true && (!box.armed || wordCount(utterance) < LONG_UTTERANCE_WORDS)
-    const step = shouldAsk ? await consult(utterance, box, u !== null && u.inBox !== null, rules) : rules
-    session = step.session
-    say(step.line)
-    // A command, or nothing at all: the preview must not stay in the box.
-    if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
-    if (step.commands.length === 0) return
-    let last: BrowserResult = { ok: true }
-    for (const command of step.commands) {
-      last = await runSafe(command)
-      if (!last.ok) break
+    if (!shouldAsk) {
+      await perform(rules, u)
+      return
     }
-    const after = deps.logic.inpageResult(session, step.commands, last)
-    session = after.session
-    say(after.line !== '' ? after.line : step.line)
+    if (box.armed) {
+      // Type first, verify after: the words are in the box at once, and the model only takes
+      // them back when it is sure they were something else.
+      const typed = await perform(rules, u)
+      deps.publish({ thinking: true })
+      try {
+        const heard = await askOnce(utterance, box, box.text, recentBefore, [])
+        if (heard === null || heard.intent.kind === 'dictate' || heard.intent.kind === 'unclear') return
+        // The rules' typing is taken back: the session from before it, and the base in the box.
+        session = before
+        if (typed.ok) await runSafe({ kind: 'setText', text: box.text })
+        await follow(utterance, box, recentBefore, heard, arrived, null)
+      } finally {
+        deps.publish({ thinking: false })
+      }
+      return
+    }
+    // Nothing was typed, so there is nothing to show yet: wait for the model.
+    deps.publish({ thinking: true, line: inpageText.thinking })
+    try {
+      const heard = await askOnce(utterance, box, box.text, recentBefore, [])
+      if (heard === null) {
+        await perform(rules, u)
+        return
+      }
+      await follow(utterance, box, recentBefore, heard, arrived, u)
+    } finally {
+      deps.publish({ thinking: false })
+    }
   }
 
   const begin = (): Live => {
