@@ -37,11 +37,23 @@ export type BrowserCommand =
   | { kind: 'openConversation'; name: string }
   /** Types into the focused text field, or the page's message box. submit presses Enter after. */
   | { kind: 'insertText'; text: string; submit: boolean }
+  /** Reads the page's message box (the focused text field, else the site's message box). Answers with box. */
+  | { kind: 'readBox' }
+  /** Replaces everything in the message box with text and leaves the caret at the end. Answers with box. */
+  | { kind: 'setText'; text: string }
+  /** Sends what is in the message box (Enter, else the site's send button). Fails when the box is empty. */
+  | { kind: 'pressSend' }
+
+/** The message box of the page in front. present is false when the page has no text field to write in. */
+export interface BoxState {
+  present: boolean
+  text: string
+}
 
 export type BrowserFailure = 'no_extension' | 'no_target' | 'not_found' | 'not_allowed' | 'failed'
 
 export type BrowserResult =
-  | { ok: true; tab?: { title: string; url: string }; hints?: number }
+  | { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxState }
   | { ok: false; code: BrowserFailure; message: string }
 
 /** Posted by the page with window.postMessage(request, window.location.origin). */

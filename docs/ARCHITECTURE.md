@@ -620,3 +620,28 @@ Undo inside a draft undoes the draft's own edits. Sleep keeps the draft. The tex
 **The dock.** The toolbar button opens Ütle in a popup window, 440 px wide and full height at the left edge of the work area of the display under the current window, and moves the current browser window to fill the rest. A second click finds the existing popup showing the Ütle origin and focuses it. Ütle is a top-level page there, so microphone permission works as in a tab.
 
 **Best effort, and says so.** Everything about Messenger's markup (`sites.js`) is unverified until a logged-in person tries it. Synthetic Enter is not a trusted key press; a site that checks `isTrusted` will not send, which is why the send-button fallback exists. Hit testing cannot see elements inside cross-origin iframes or closed shadow roots, so those get no number.
+
+## 21. In-page mode: writing inside the site itself (2026-10-05, replaces the separate window)
+
+The owner cancelled the shape in section 20 the same day it was built. His words: "The message, corrections, everything should be easily done within the messenger or whatsapp window, the voice control should be able to be used within browser to scroll pages or switch tabs." Section 20's separate Ütle window, the dock and the draft-then-send flow are dropped. What section 20 built underneath is kept: the local recogniser (20.1), the extension's tab, scroll, number and message-box commands (20.2), the Estonian phrases and strings (20.3).
+
+**The picture.** He is on WhatsApp Web (or Messenger, or any page). A strip drawn by the extension sits at the bottom of that page: a large microphone target for the eye tracker, the words being heard, and one line saying what was done. He speaks; the words appear in the site's own message box. He says a correction; the text in the box changes. He says "saada"; the site sends it. He says "keri alla" or "järgmine vaheleht"; the browser does it. Nothing else is on screen.
+
+**Where things run.**
+
+| Part | Where | Why |
+|---|---|---|
+| Microphone, recogniser client, the session | An extension offscreen document | One microphone and one session for the whole browser; they survive switching tabs and pages. A content script would lose both on every navigation. |
+| Speech model | The dev server on this machine, `ws://localhost:5173/api/asr` (20.1) | Unchanged. |
+| The strip | A content script in the page in front, in a closed shadow root | It must be where he is looking. |
+| Reading and changing the message box, tabs, scrolling, numbers | The extension (20.2), extended with `readBox`, `setText`, `pressSend` in `src/browser/protocol.ts` | The page's own box is the editor now. |
+| Deciding what an utterance does | `src/core/inpage.ts`, pure | Same rule as the rest of the core: testable without a browser. |
+
+**Rules.**
+
+- An utterance that is a command acts; anything else is dictation and is added to the message box. A mistaken dictation is visible in the box and "võta tagasi" removes it.
+- Nothing is sent until he says "saada". The box is the preview, so sending needs no second yes.
+- Repairs work without the model: "mitte kolm, vaid neli", "kustuta viimane sõna", "kustuta kõik", "võta tagasi". Model-backed repair of the box text comes after, when a working key exists.
+- "puhka" stops everything being typed; "ärka üles" resumes. The strip shows which.
+- Extension code is TypeScript bundled by `npm run ext` into `extension/dist/`, so it imports `src/core` and `src/speech` instead of copying them.
+- The section 20 page at localhost stays as a development harness and the voice check; it is not part of what he uses.

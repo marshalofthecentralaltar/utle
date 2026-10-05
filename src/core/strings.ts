@@ -235,6 +235,12 @@ const ET: Strings = {
         return `Avan vestluse: ${command.name}.`
       case 'insertText':
         return 'Kirjutan sõnumi.'
+      case 'readBox':
+        return 'Loen sõnumikasti.'
+      case 'setText':
+        return 'Kirjutan.'
+      case 'pressSend':
+        return 'Saadan.'
     }
   },
   browserDone(command, title, hints) {
@@ -442,6 +448,12 @@ const EN: Strings = {
         return `Opening the conversation with ${command.name}.`
       case 'insertText':
         return 'Writing the message.'
+      case 'readBox':
+        return 'Reading the message box.'
+      case 'setText':
+        return 'Writing.'
+      case 'pressSend':
+        return 'Sending.'
     }
   },
   browserDone(command, title, hints) {
