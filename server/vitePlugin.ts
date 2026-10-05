@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import Anthropic from '@anthropic-ai/sdk'
 import type { Plugin } from 'vite'
 import { InterpretRequestSchema } from '../src/core/intent.ts'
+import { attachAsr } from './asr.ts'
 import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode, MessagesClient } from './interpret.ts'
 import { rehearse } from './rehearsal.ts'
@@ -44,6 +45,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * Hosts the API on the Vite dev server, so `npm run dev` is the whole product.
  *   POST /api/interpret  one utterance in, one Intent out
  *   GET  /api/status     which interpreter is answering
+ *   WS   /api/asr        the local recogniser (ARCHITECTURE 20.1)
  * The Anthropic key is read from the server's environment and never reaches the browser (principle P8).
  * `vite --mode rehearsal` answers from the demo script instead of the model.
  */
@@ -73,6 +75,9 @@ export function utleApi(): Plugin {
       rehearsal = config.mode === 'rehearsal'
     },
     configureServer(server) {
+      // The local recogniser rides on the dev server's http server; vitest has none to listen on.
+      if (server.httpServer && !process.env.VITEST) attachAsr(server.httpServer, server.config.root)
+
       server.middlewares.use('/api/status', (req, res, next) => {
         if (req.method !== 'GET') {
           next()

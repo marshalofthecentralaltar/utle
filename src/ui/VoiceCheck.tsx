@@ -44,6 +44,7 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
         setError(message)
         stop()
       },
+      onNotice: setError,
     }
     const created = demo
       ? createScriptedRecognizer(handlers, CHECK_DEMO, { startMs: 500, wordMs: 110, gapMs: 350, pauseMs: 0, holdMs: 500, isInstant: never })

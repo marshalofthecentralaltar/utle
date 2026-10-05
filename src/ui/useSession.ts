@@ -164,6 +164,7 @@ export function useSession(paused: boolean): SessionApi {
         onRef.current = false
         setOn(false)
       },
+      onNotice: setError,
     }
     const created = demo
       ? createScriptedRecognizer(handlers, DEMO_SCRIPT, { ...DEMO_TIMING, isInstant })
