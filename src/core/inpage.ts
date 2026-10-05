@@ -246,8 +246,8 @@ const BACK = new Set(['tagasi', 'back', 'go back'])
 const SOFT_WORDS = new Set([
   'välja', 'siia', 'edasi', 'sulge', 'enter', 'sisesta', 'kinnita', 'paus', 'peata', 'mängi', 'esita',
   'close', 'play', 'pause', 'forward', 'escape',
-  // Round 3: the scroll's stop words are chat replies too ("aitab", "seis").
-  'stopp', 'seis', 'aitab', 'lõpeta', 'stop',
+  // Round 3: "aitab" and "lõpeta" are chat replies too; "stopp", "seis" and "stop" always stop (a slow scroll must be stoppable in one word).
+  'aitab', 'lõpeta',
 ])
 
 /** M7: "stopp" while the labels show hides them. */

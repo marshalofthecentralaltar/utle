@@ -88,7 +88,10 @@ const COMMAND = {
     kind('goTo', { url: { type: 'string', description: 'A full address with the scheme, https://...' } }),
     kind('history', { direction: { type: 'string', enum: ['back', 'forward'] } }),
     kind('reload'),
-    kind('scroll', { direction: { type: 'string', enum: ['up', 'down', 'top', 'bottom'] } }),
+    kind('scroll', {
+      direction: { type: 'string', enum: ['up', 'down', 'top', 'bottom'] },
+      mode: { anyOf: [{ type: 'string', enum: ['page', 'little', 'slow', 'stop'] }, { type: 'null' }], description: 'page (default): most of a screen; little: a third; slow: a steady scroll until stop; stop: end a slow scroll.' },
+    }),
     kind('showHints'),
     kind('hideHints'),
     kind('clickHint', { number: { type: 'integer' } }),
