@@ -7,7 +7,7 @@
 
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
-import { bottomBox } from './box.ts'
+import { bottomBox, watchTrustedClicks } from './box.ts'
 import { INITIAL_STATE, STATE_KEY } from './messages.ts'
 import type { StripMeasure, StripState, ToBackground, ToStrip } from './messages.ts'
 import { SITES, siteOf } from './sites.ts'
@@ -160,6 +160,8 @@ function control(className: string, name: string): HTMLButtonElement {
 }
 
 export function mountStrip(): void {
+  // A real click into a field arms it for dictation from the first page load, before any command injects page.js.
+  watchTrustedClicks()
   for (const old of document.querySelectorAll('utle-strip')) old.remove()
   document.getElementById('utle-room')?.remove()
 
