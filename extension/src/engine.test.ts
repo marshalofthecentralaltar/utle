@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { BoxState, BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
+import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
+import { pageIntentFrom } from '../../src/core/pageIntent.ts'
 import type { RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { createEngine } from './engine.ts'
-import type { InpageLogic } from './engine.ts'
+import { ASK_TIMEOUT_MS, createEngine } from './engine.ts'
+import type { AskFailure, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
 
 const logic: InpageLogic = {
@@ -17,6 +19,31 @@ const logic: InpageLogic = {
   inpageResult: (session, _commands, result) => ({ session, line: result.ok ? 'tehtud' : `viga: ${result.message}` }),
   inpageInstant: (_session, utterance) => utterance === 'saada',
   inpagePreview: () => null,
+  applyIntent: (session, intent, page, say = '') => {
+    const prefix = say === '' ? '' : `${say}: `
+    switch (intent.kind) {
+      case 'dictate':
+        return { session, commands: [{ kind: 'setText', text: `${page.box.text}${intent.text}` }], line: `${prefix}mudel kirjutab` }
+      case 'command':
+        return { session, commands: [intent.command], line: `${prefix}teen` }
+      case 'send':
+        return { session, commands: [{ kind: 'pressSend' }], line: `${prefix}saadan` }
+      case 'unclear':
+        return { session, commands: [], line: intent.say || 'ei saanud aru' }
+      default:
+        return { session, commands: [], line: `${prefix}${intent.kind}` }
+    }
+  },
+  pageIntentFrom,
+}
+
+/** Like the real core: dictation carries ask, so the engine consults the model. */
+const asking: InpageLogic = {
+  ...logic,
+  inpageStep: (session, utterance, box) => {
+    const step = logic.inpageStep(session, utterance, box)
+    return step.commands[0]?.kind === 'setText' && utterance !== 'kaks' ? { ...step, ask: true } : step
+  },
 }
 
 /** Like the stand-in: null while the words may be "saada", else the box text, a space, the partial. */
@@ -36,7 +63,24 @@ interface Options {
   box?: BoxState
   /** How long the page takes to answer a setText. */
   setTextMs?: number
+  /** The model's answer. Default: unreachable. */
+  ask?: (request: IntentRequest) => Promise<IntentAnswer | AskFailure>
+  /** The page's readPage answer. Default: the box, three items, no media. */
+  page?: (box: BoxState) => PageContext
+  tabs?: TabSummary[]
+  status?: 'live' | 'no_key' | 'unreachable'
 }
+
+const ITEMS = [
+  { id: 1, role: 'link', text: 'Avaleht' },
+  { id: 2, role: 'button', text: 'Otsi' },
+  { id: 3, role: 'link', text: 'Vaata hiljem' },
+]
+const TABS: TabSummary[] = [
+  { index: 1, title: 'YouTube', active: true },
+  { index: 2, title: 'WhatsApp', active: false },
+]
+const answer = (intent: IntentAnswer['intent'], say = ''): IntentAnswer => ({ intent, say })
 
 function setup(options: Options = {}) {
   const answers = options.answers ?? (() => ({ ok: true }))
@@ -52,6 +96,9 @@ function setup(options: Options = {}) {
   let maxInFlight = 0
   let blocked = 0
   let starts = 0
+  const asked: IntentRequest[] = []
+  const thinking: boolean[] = []
+  const modelProblems: string[] = []
   const used = options.logic ?? logic
   const engine = createEngine({
     logic: {
@@ -65,6 +112,12 @@ function setup(options: Options = {}) {
     run: async (command) => {
       ran.push(command)
       if (command.kind === 'readBox') return { ok: true, box: { ...page } }
+      if (command.kind === 'readPage') {
+        const told = answers(command)
+        if (!told.ok) return told
+        const built = options.page ? options.page({ ...page }) : { url: 'https://www.youtube.com/', title: 'YouTube', box: { ...page }, items: ITEMS, media: null, hints: false }
+        return { ok: true, page: built }
+      }
       if (command.kind === 'setText') {
         inFlight += 1
         maxInFlight = Math.max(maxInFlight, inFlight)
@@ -76,6 +129,8 @@ function setup(options: Options = {}) {
     },
     publish: (patch) => {
       if (patch.heard !== undefined) heard.push(patch.heard)
+      if (patch.thinking !== undefined) thinking.push(patch.thinking)
+      if (patch.modelProblem !== undefined) modelProblems.push(patch.modelProblem)
       Object.assign(state, patch)
     },
     recognizer: (h, isInstant, onUnavailable) => {
@@ -85,6 +140,12 @@ function setup(options: Options = {}) {
       return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined }
     },
     micBlocked: () => blocked++,
+    ask: (request) => {
+      asked.push(request)
+      return options.ask ? options.ask(request) : Promise.resolve({ error: 'unreachable' })
+    },
+    tabs: () => Promise.resolve(options.tabs ?? TABS),
+    status: () => Promise.resolve(options.status ?? 'live'),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
   const partial = (text: string): void => handlers?.onInterim(text)
@@ -103,6 +164,9 @@ function setup(options: Options = {}) {
     instant: (t: string) => instant?.(t),
     blocked: () => blocked,
     starts: () => starts,
+    asked,
+    thinking,
+    modelProblems,
   }
 }
 
@@ -306,5 +370,181 @@ describe('live dictation (21.3)', () => {
       { present: true, text: '', armed: true },
       { present: true, text: 'üks', armed: true },
     ])
+  })
+})
+
+describe('understanding by meaning (M7)', () => {
+  const armed: BoxState = { present: true, text: 'Tere.', armed: true }
+
+  it('asks the model about a short dictation into an armed box and runs its step', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve(answer({ kind: 'command', command: { kind: 'clickItem', id: 3 } }, 'vaata hiljem')) })
+    t.engine.start()
+    t.say('pane vaata hiljem')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'clickItem'])
+    expect(t.thinking).toEqual([true, false])
+    expect(t.asked).toHaveLength(1)
+    expect(t.asked[0]).toMatchObject({ lang: 'et', utterance: 'pane vaata hiljem', tabs: TABS, recent: [] })
+    expect(t.asked[0]?.page.items).toEqual(ITEMS)
+    expect(t.state.line).toBe('tehtud')
+    expect(t.state.modelProblem).toBe('')
+  })
+
+  it('shows the thinking line while it waits', async () => {
+    let seen = ''
+    const t = setup({
+      logic: asking,
+      box: armed,
+      ask: () => {
+        seen = t.state.line ?? ''
+        return Promise.resolve(answer({ kind: 'unclear', say: 'Mida?' }))
+      },
+    })
+    t.engine.start()
+    t.say('hm')
+    await t.engine.idle()
+    expect(seen).toBe(STRINGS.et.inpage.thinking)
+    expect(t.state.thinking).toBe(false)
+    expect(t.state.line).toBe('Mida?')
+  })
+
+  it('does not ask about a long utterance into an armed box: that is a sentence', async () => {
+    const t = setup({ logic: asking, box: armed })
+    t.engine.start()
+    t.say('ma jõuan homme kella kolmeks sinna kui buss õigel ajal tuleb')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(0)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'setText'])
+    expect(t.thinking).toEqual([])
+  })
+
+  it('asks about a long utterance when the box is not armed', async () => {
+    const t = setup({ logic: asking, box: { present: true, text: '', armed: false }, ask: () => Promise.resolve(answer({ kind: 'command', command: { kind: 'scroll', direction: 'down' } })) })
+    t.engine.start()
+    t.say('ma jõuan homme kella kolmeks sinna kui buss õigel ajal tuleb')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'scroll'])
+  })
+
+  it('does not ask about a command the rules recognised', async () => {
+    const t = setup({ logic: asking, box: armed })
+    t.engine.start()
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(0)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'pressSend'])
+  })
+
+  it('without a model, the rules\' step runs and the strip says the understanding is off, once', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve({ error: 'no_model' }) })
+    t.engine.start()
+    t.say('tere')
+    await t.engine.idle()
+    t.say('tere')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'setText', 'readBox', 'readPage', 'setText'])
+    expect(t.state.modelProblem).toBe(STRINGS.et.inpage.modelOff)
+    expect(t.modelProblems).toEqual(['', STRINGS.et.inpage.modelOff])
+    expect(t.thinking).toEqual([true, false, true, false])
+  })
+
+  it('when the server cannot be reached, the rules\' step runs silently', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve({ error: 'unreachable' }) })
+    t.engine.start()
+    t.say('tere')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'setText'])
+    expect(t.state.line).toBe('tehtud')
+    expect(t.state.modelProblem).toBe('')
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('a bad answer falls back to the rules\' step', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve({ error: 'bad' }) })
+    t.engine.start()
+    t.say('tere')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'setText'])
+  })
+
+  it('an answer about an item the page does not have is not understood', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve(answer({ kind: 'command', command: { kind: 'clickItem', id: 99 } })) })
+    t.engine.start()
+    t.say('vajuta sinna')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage'])
+    expect(t.state.line).toBe('ei saanud aru')
+  })
+
+  it('gives up on the model after the timeout and runs the rules\' step', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: armed, ask: () => new Promise(() => undefined) })
+    t.engine.start()
+    t.say('tere')
+    await vi.advanceTimersByTimeAsync(ASK_TIMEOUT_MS - 1)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage'])
+    await vi.advanceTimersByTimeAsync(2)
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'setText'])
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('takes back the preview typed while he spoke when the model answers a command', async () => {
+    const t = setup({ logic: { ...asking, inpagePreview: previewing.inpagePreview }, box: armed, ask: () => Promise.resolve(answer({ kind: 'command', command: { kind: 'clickItem', id: 2 } })) })
+    t.engine.start()
+    t.partial('vajuta')
+    await t.engine.idle()
+    t.say('vajuta otsi')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['Tere. vajuta', 'readPage', 'Tere.', 'clickItem'])
+    expect(t.page().text).toBe('Tere.')
+    // The model saw the box as it was before the words, not with the preview in it.
+    expect(t.asked[0]?.page.box.text).toBe('Tere.')
+  })
+
+  it('keeps the preview when the model answers dictation', async () => {
+    const t = setup({ logic: { ...asking, inpagePreview: previewing.inpagePreview }, box: armed, ask: () => Promise.resolve(answer({ kind: 'dictate', text: ' tulen' })) })
+    t.engine.start()
+    t.partial('tulen')
+    await t.engine.idle()
+    t.say('tulen')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['Tere. tulen', 'readPage', 'Tere. tulen'])
+  })
+
+  it('tells the model the last three lines', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })) })
+    t.engine.start()
+    for (const word of ['a', 'b', 'c']) {
+      t.say(word)
+      await t.engine.idle()
+    }
+    t.say('d')
+    await t.engine.idle()
+    expect(t.asked.map((r) => r.recent)).toEqual([[], ['ei saanud aru'], ['ei saanud aru', 'ei saanud aru'], ['ei saanud aru', 'ei saanud aru', 'ei saanud aru']])
+  })
+
+  it('builds the page from the box when readPage fails', async () => {
+    const t = setup({
+      logic: asking,
+      box: armed,
+      answers: (c) => (c.kind === 'readPage' ? { ok: false, code: 'failed', message: 'no page' } : { ok: true }),
+      ask: () => Promise.resolve(answer({ kind: 'send' })),
+    })
+    t.engine.start()
+    t.say('saada ära')
+    await t.engine.idle()
+    expect(t.asked[0]?.page).toEqual({ url: '', title: '', box: armed, items: [], media: null, hints: false })
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'pressSend'])
+  })
+
+  it('tells him before he speaks when the server has no key', async () => {
+    const t = setup({ status: 'no_key' })
+    await t.engine.idle()
+    expect(t.state.modelProblem).toBe(STRINGS.et.inpage.modelOff)
+    const live = setup({ status: 'live' })
+    await live.engine.idle()
+    expect(live.state.modelProblem).toBe('')
   })
 })

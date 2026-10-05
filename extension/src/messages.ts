@@ -1,6 +1,7 @@
 // Messages between the extension's parts (docs/ARCHITECTURE.md 21.2) and the strip's state.
 
 import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import type { TabSummary } from '../../src/core/pageIntent.ts'
 import type { PageCommand } from './page.ts'
 
 /** Everything the strip shows. Kept by the service worker in chrome.storage.session under STATE_KEY. */
@@ -42,6 +43,8 @@ export type ToBackground =
   | { type: 'utle-run'; command: BrowserCommand }
   /** From the offscreen engine: the microphone was refused; open the permission page. */
   | { type: 'utle-mic-blocked' }
+  /** From the offscreen engine (M7): the tabs of the window being driven, for the model. Answered with a TabsAnswer. */
+  | { type: 'utle-tabs' }
   /** From the permission page: the microphone is allowed now. */
   | { type: 'utle-mic-granted' }
   /** From the localhost harness through relay.js (section 20.2). */
@@ -71,3 +74,5 @@ export interface StripMeasure {
 }
 
 export type RunAnswer = { result: BrowserResult }
+
+export type TabsAnswer = { tabs: TabSummary[] }

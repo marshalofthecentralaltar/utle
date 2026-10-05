@@ -3,12 +3,14 @@
 // service worker.
 
 import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import { IntentAnswerSchema } from '../../src/core/pageIntent.ts'
+import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
 import { browserSocket, createLocalRecognizer } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { createEngine } from './engine.ts'
-import type { InpageLogic } from './engine.ts'
-import type { RunAnswer, StripState, ToBackground, ToOffscreen } from './messages.ts'
+import type { AskFailure, InpageLogic } from './engine.ts'
+import type { RunAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
 
 export const DEFAULT_ASR_URL = 'ws://localhost:5173/api/asr'
 
@@ -27,8 +29,59 @@ function tell(message: ToBackground): Promise<unknown> {
   return chrome.runtime.sendMessage(message).catch(() => undefined)
 }
 
+/** The dev server's http address for path, from the speech model's address (ws(s)://host/api/asr → http(s)://host/path). */
+export function serverUrl(asrAddress: string, path: string): string {
+  const url = new URL(asrAddress)
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
+  url.pathname = path
+  url.search = ''
+  return url.toString()
+}
+
+function errorMessage(body: unknown): string {
+  if (typeof body !== 'object' || body === null || !('error' in body)) return ''
+  const error = body.error
+  if (typeof error === 'string') return error
+  if (typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string') return error.message
+  return ''
+}
+
+/** POST /api/intent (M7). no_model: the server has no key; unreachable: no answer; bad: an answer of the wrong shape. */
+export async function askIntent(intentUrl: string, request: IntentRequest): Promise<IntentAnswer | AskFailure> {
+  let response: Response
+  try {
+    response = await fetch(intentUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request) })
+  } catch {
+    return { error: 'unreachable' }
+  }
+  let body: unknown = null
+  try {
+    body = await response.json()
+  } catch {
+    body = null
+  }
+  if (!response.ok) return response.status === 503 || errorMessage(body) === 'no_key' ? { error: 'no_model' } : { error: 'bad' }
+  const parsed = IntentAnswerSchema.safeParse(body)
+  return parsed.success ? parsed.data : { error: 'bad' }
+}
+
+/** GET /api/status (M7): whether the server has a model. */
+export async function serverStatus(statusUrl: string): Promise<'live' | 'no_key' | 'unreachable'> {
+  try {
+    const response = await fetch(statusUrl)
+    if (!response.ok) return 'unreachable'
+    const body: unknown = await response.json()
+    const intent = typeof body === 'object' && body !== null && 'intent' in body ? body.intent : undefined
+    return intent === 'no_key' ? 'no_key' : 'live'
+  } catch {
+    return 'unreachable'
+  }
+}
+
 export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {}): void {
   const address = new URLSearchParams(location.search).get('asr') ?? DEFAULT_ASR_URL
+  const intentUrl = serverUrl(address, '/api/intent')
+  const statusUrl = serverUrl(address, '/api/status')
   let connects = 0
   let micOpens = 0
   const publish = (patch: Partial<StripState>): void => {
@@ -72,6 +125,12 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     micBlocked: () => {
       void tell({ type: 'utle-mic-blocked' })
     },
+    ask: (request) => askIntent(intentUrl, request),
+    tabs: async (): Promise<TabSummary[]> => {
+      const answer = (await tell({ type: 'utle-tabs' })) as TabsAnswer | undefined
+      return answer?.tabs ?? []
+    },
+    status: () => serverStatus(statusUrl),
   })
 
   chrome.runtime.onMessage.addListener((message: ToOffscreen) => {

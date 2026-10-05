@@ -1,9 +1,12 @@
 // A stand-in for src/core/inpage.ts with the same signatures, for the extension's end-to-end
 // test before the core lane's implementation is merged. Dictation appends to the box; a few fixed
 // phrases are commands; while numbers show, a number clicks it.
-import type { BoxState, BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
+import type { PageIntent } from '../../src/core/pageIntent.ts'
 import type { Lang } from '../../src/core/strings.ts'
+
+export { pageIntentFrom } from '../../src/core/pageIntent.ts'
 
 const words = (s: string): string =>
   s
@@ -60,4 +63,21 @@ export function inpagePreview(session: InpageSession, partial: string, box: BoxS
   if (heard === '' || hint(session, partial) !== null) return null
   if (Object.keys(COMMANDS).some((phrase) => phrase.startsWith(heard))) return null
   return box.text === '' ? partial.trim() : `${box.text} ${partial.trim()}`
+}
+
+/** M7: the model's intent as a step. The stand-in never sets ask, so this runs only when a test calls it. */
+export function applyIntent(session: InpageSession, intent: PageIntent, page: PageContext, say = ''): InpageStep {
+  const prefix = say === '' ? '' : `Sain aru: „${say}“. `
+  switch (intent.kind) {
+    case 'dictate':
+      return { ...inpageStep(session, intent.text, page.box), line: `${prefix}Kirjutan.` }
+    case 'command':
+      return { session, commands: [intent.command], line: `${prefix}Teen.` }
+    case 'send':
+      return { session, commands: [{ kind: 'pressSend' }], line: `${prefix}Saadan.` }
+    case 'unclear':
+      return { session, commands: [], line: intent.say || 'Ei saanud aru.' }
+    default:
+      return { session, commands: [], line: `${prefix}Tehtud.` }
+  }
 }

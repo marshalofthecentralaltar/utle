@@ -2,8 +2,9 @@
 // the whole browser. No chrome.* here: the offscreen document wires it to the service worker, and
 // the unit test wires it to fakes.
 
-import type { BoxState, BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
+import type { IntentAnswer, IntentRequest, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
@@ -16,7 +17,14 @@ export interface InpageLogic {
   inpageResult(session: InpageSession, commands: readonly BrowserCommand[], result: BrowserResult): { session: InpageSession; line: string }
   inpageInstant(session: InpageSession, utterance: string): boolean
   inpagePreview(session: InpageSession, partial: string, box: BoxState): string | null
+  /** M7: the step for what the model said the utterance meant. */
+  applyIntent(session: InpageSession, intent: PageIntent, page: PageContext, say?: string): InpageStep
+  /** M7: the model's answer checked against the page, or null. */
+  pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'page' | 'tabs'>): PageIntent | null
 }
+
+/** Why the model gave no answer: no key on the server, the server cannot be reached, or an answer of the wrong shape. */
+export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' }
 
 export interface EngineDeps {
   logic: InpageLogic
@@ -28,6 +36,12 @@ export interface EngineDeps {
   recognizer(handlers: RecognizerHandlers, isInstant: (text: string) => boolean, onUnavailable: () => void): Recognizer
   /** The microphone was refused or is missing. */
   micBlocked(): void
+  /** M7: asks the model (POST /api/intent) what an utterance meant on this page. Never rejects. */
+  ask(request: IntentRequest): Promise<IntentAnswer | AskFailure>
+  /** M7: the tabs of the window being driven, left to right. */
+  tabs(): Promise<TabSummary[]>
+  /** M7: whether the server has a model, checked once when the engine starts. */
+  status(): Promise<'live' | 'no_key' | 'unreachable'>
 }
 
 export interface Engine {
@@ -40,6 +54,15 @@ export interface Engine {
 }
 
 const NO_BOX: BoxState = { present: false, text: '', armed: false }
+
+/** The model is not asked about an utterance this long when the box is armed: a sentence is dictation. */
+export const LONG_UTTERANCE_WORDS = 9
+/** The model must answer within this time, or the rules' step stands. */
+export const ASK_TIMEOUT_MS = 7000
+/** How many strip lines the model is told about. */
+const RECENT_LINES = 3
+
+const wordCount = (utterance: string): number => utterance.trim().split(/\s+/).filter((w) => w !== '').length
 
 /** One utterance being spoken: its base (the box before it began) and the preview in the box. */
 interface Live {
@@ -59,10 +82,27 @@ interface Live {
 
 export function createEngine(deps: EngineDeps): Engine {
   const text = STRINGS[deps.lang].strip
+  const inpageText = STRINGS[deps.lang].inpage
   let session = deps.logic.initialInpage(deps.lang)
   let listening = false
   let queue: Promise<void> = Promise.resolve()
   let live: Live | null = null
+  /** The last lines the strip showed about utterances, newest last. */
+  let recent: string[] = []
+  /** The server has said it has no model. A standing state: published on change only. */
+  let modelOff = false
+
+  const setModelOff = (off: boolean): void => {
+    if (off === modelOff) return
+    modelOff = off
+    deps.publish({ modelProblem: off ? inpageText.modelOff : '' })
+  }
+
+  /** Publishes a line about an utterance and remembers it for the model. */
+  const say = (line: string): void => {
+    if (line !== '') recent = [...recent, line].slice(-RECENT_LINES)
+    deps.publish({ line, resting: session.asleep })
+  }
 
   const runSafe = async (command: BrowserCommand): Promise<BrowserResult> => {
     try {
@@ -115,6 +155,51 @@ export function createEngine(deps: EngineDeps): Engine {
     }
   }
 
+  /** The page in front for the model: readPage, or what is known from the box when the page cannot answer. */
+  const readPage = async (box: BoxState, previewInBox: boolean): Promise<PageContext> => {
+    const read = await runSafe({ kind: 'readPage' })
+    if (!read.ok || !read.page) return { url: '', title: '', box, items: [], media: null, hints: session.hints }
+    // The box as it was before the utterance began, never with its preview in it.
+    return previewInBox ? { ...read.page, box: { ...read.page.box, text: box.text } } : read.page
+  }
+
+  const askWithTimeout = (request: IntentRequest): Promise<IntentAnswer | AskFailure> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ error: 'unreachable' }), ASK_TIMEOUT_MS)
+      deps.ask(request).then(
+        (answer) => {
+          clearTimeout(timer)
+          resolve(answer)
+        },
+        () => {
+          clearTimeout(timer)
+          resolve({ error: 'unreachable' })
+        },
+      )
+    })
+
+  /**
+   * M7: the rules took the utterance for dictation. Asks the model what was meant, with the page in
+   * front, and answers its step; the rules' step when the model has no answer.
+   */
+  const consult = async (utterance: string, box: BoxState, previewInBox: boolean, rules: InpageStep): Promise<InpageStep> => {
+    deps.publish({ thinking: true, line: inpageText.thinking })
+    try {
+      const page = await readPage(box, previewInBox)
+      const tabs = await deps.tabs().catch((): TabSummary[] => [])
+      const answer = await askWithTimeout({ lang: deps.lang, utterance, page, tabs, recent })
+      if ('error' in answer) {
+        if (answer.error === 'no_model') setModelOff(true)
+        return rules
+      }
+      setModelOff(false)
+      const intent = deps.logic.pageIntentFrom(answer.intent, { page, tabs }) ?? { kind: 'unclear', say: '' }
+      return deps.logic.applyIntent(session, intent, page, answer.say)
+    } finally {
+      deps.publish({ thinking: false })
+    }
+  }
+
   const handle = async (utterance: string, u: Live | null): Promise<void> => {
     let box: BoxState
     if (u === null) {
@@ -126,9 +211,12 @@ export function createEngine(deps: EngineDeps): Engine {
       // The base, never the box as it reads now: that holds the preview.
       box = u.base ?? NO_BOX
     }
-    const step = deps.logic.inpageStep(session, utterance, box)
+    const rules = deps.logic.inpageStep(session, utterance, box)
+    // Dictation by the rules: a short utterance, or one with no armed box, may mean something else.
+    const shouldAsk = rules.ask === true && (!box.armed || wordCount(utterance) < LONG_UTTERANCE_WORDS)
+    const step = shouldAsk ? await consult(utterance, box, u !== null && u.inBox !== null, rules) : rules
     session = step.session
-    deps.publish({ line: step.line, resting: session.asleep })
+    say(step.line)
     // A command, or nothing at all: the preview must not stay in the box.
     if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
     if (step.commands.length === 0) return
@@ -139,7 +227,7 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     const after = deps.logic.inpageResult(session, step.commands, last)
     session = after.session
-    deps.publish({ line: after.line !== '' ? after.line : step.line, resting: session.asleep })
+    say(after.line !== '' ? after.line : step.line)
   }
 
   const begin = (): Live => {
@@ -186,6 +274,13 @@ export function createEngine(deps: EngineDeps): Engine {
       deps.publish({ listening: false, problem: text.modelUnreachable })
     },
   )
+
+  // Once: the strip tells him before he speaks when the server has no model.
+  queue = queue.then(async () => {
+    const status = await deps.status().catch((): 'unreachable' => 'unreachable')
+    modelOff = status === 'no_key'
+    deps.publish({ modelProblem: modelOff ? inpageText.modelOff : '' })
+  })
 
   const start = (): void => {
     if (listening) return
