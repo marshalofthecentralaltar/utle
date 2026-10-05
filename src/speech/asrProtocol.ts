@@ -12,7 +12,7 @@ export const ASR_MAX_FRAME_BYTES = ASR_SAMPLE_RATE * 4
  * How long a final is held for joining. Shorter than Chrome's: this engine already waits 1 s of
  * silence before it sends a final, so most of a thinking pause has passed by then.
  */
-export const LOCAL_HOLD_MS = 500
+export const LOCAL_HOLD_MS = 700
 /**
  * How long a partial that is a quick reply must stay unchanged before it is released. Longer than
  * the gap between the model's partials (about 620 ms), so "ei, mitte kolm" is never cut at "ei".
