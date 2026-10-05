@@ -1,4 +1,5 @@
-import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult } from '../browser/protocol.ts'
+import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, PageContext } from '../browser/protocol.ts'
+import type { PageIntent } from './pageIntent.ts'
 import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
 import { normalise, quickReply } from './quickReply.ts'
@@ -34,6 +35,12 @@ export interface InpageStep {
   commands: BrowserCommand[]
   /** One short line for the strip, in the session's language: what was understood or done. */
   line: string
+  /**
+   * M7: the rules took the utterance for dictation. An extension with a model asks it what was
+   * meant (readPage, POST /api/intent, applyIntent) and runs that step instead of this one; without
+   * a model, or when the model cannot tell, this step stands.
+   */
+  ask?: boolean
 }
 
 export function initialInpage(lang: Lang): InpageSession {
@@ -47,8 +54,46 @@ export function initialInpage(lang: Lang): InpageSession {
 export function inpageStep(session: InpageSession, utterance: string, box: BoxState): InpageStep {
   const { action, understood } = classify(session, utterance)
   const step = act(session, action, box)
-  if (understood === null) return step
-  return { ...step, line: `${STRINGS[session.lang].inpage.understood(understood)} ${step.line}` }
+  const asked = action.kind === 'dictate' ? { ...step, ask: true } : step
+  if (understood === null) return asked
+  return { ...asked, line: `${STRINGS[session.lang].inpage.understood(understood)} ${asked.line}` }
+}
+
+/**
+ * M7: the step for what the model said an utterance meant (docs/plans/2026-10-05-m7-understanding.md).
+ * The intent has passed pageIntentFrom. It goes through the same act as the rules, so undo, the
+ * labels and the lines behave the same. say is the model's short line about what it took the words
+ * to be; it comes first when it is not empty.
+ */
+export function applyIntent(session: InpageSession, intent: PageIntent, page: PageContext, say = ''): InpageStep {
+  const s = STRINGS[session.lang]
+  const box = page.box
+  const action = intentAction(intent)
+  const step = action === null ? { session, commands: [], line: intent.kind === 'unclear' ? intent.say || s.inpage.notUnderstood : s.inpage.notUnderstood } : act(session, action, box)
+  return say === '' ? step : { ...step, line: `${s.inpage.understood(say)} ${step.line}` }
+}
+
+function intentAction(intent: PageIntent): Action | null {
+  switch (intent.kind) {
+    case 'dictate':
+      return { kind: 'dictate', text: intent.text.trim().replace(/\s+/g, ' ') }
+    case 'command':
+      return { kind: 'browser', command: intent.command }
+    case 'send':
+      return { kind: 'send' }
+    case 'sleep':
+      return { kind: 'sleep' }
+    case 'wake':
+      return { kind: 'wake' }
+    case 'unclear':
+      return null
+    case 'edit': {
+      const e = intent.edit
+      if (e.kind === 'undo') return { kind: 'undo' }
+      if (e.kind === 'replace') return { kind: 'edit', edit: { kind: 'replace', from: e.from, to: e.to, loose: false } }
+      return { kind: 'edit', edit: { kind: e.kind } }
+    }
+  }
 }
 
 /**

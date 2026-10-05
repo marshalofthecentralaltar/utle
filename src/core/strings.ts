@@ -104,6 +104,15 @@ export interface Strings {
     notSent(reason: string): string
     /** Section 21.3: what a misheard or inflected command was taken to be, before the usual line. */
     understood(text: string): string
+    // M7.
+    /** Neither the rules nor the model could tell what was meant. */
+    notUnderstood: string
+    /** The model is being asked. */
+    thinking: string
+    /** The free-form understanding is off (no key, no server). */
+    modelOff: string
+    /** Dictation with no armed box: where the words can go. */
+    noPlaceToWrite: string
   }
 
   // The interpreter.
@@ -424,6 +433,10 @@ const ET: Strings = {
     sent: 'Saadetud.',
     notSent: (reason) => `Ei saatnud. ${reason}`,
     understood: (text) => `Sain aru: „${text}“.`,
+    notUnderstood: 'Ei saanud aru. Ütle teisiti, näiteks „ava youtube“ või „keri alla“.',
+    thinking: 'Mõtlen…',
+    modelOff: 'Vaba kõne mõistmine on väljas: serveril pole Anthropicu võtit. Käsud töötavad.',
+    noPlaceToWrite: 'Siin pole kuhu kirjutada. Ütle „kirjuta siia“ kasti peal, „näita numbreid“ ja number, või ava vestlus.',
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -708,6 +721,10 @@ const EN: Strings = {
     sent: 'Sent.',
     notSent: (reason) => `Not sent. ${reason}`,
     understood: (text) => `Understood: "${text}".`,
+    notUnderstood: 'I did not understand. Say it another way, for example "open youtube" or "scroll down".',
+    thinking: 'Thinking…',
+    modelOff: 'Free-form understanding is off: the server has no Anthropic key. Commands still work.',
+    noPlaceToWrite: 'There is nowhere to write here. Say "write here" on a field, "show numbers" and a number, or open a conversation.',
   },
 
   stillWorks: 'Yes, no and undo still work.',
