@@ -14,7 +14,8 @@ export function onScreenRect(el: Element): DOMRect | null {
   return r
 }
 
-function hitTest(el: Element, r: DOMRect): boolean {
+/** True when a point of the element's box (centre or a corner) hits the element itself or something inside it. */
+export function hitTest(el: Element, r: DOMRect): boolean {
   const left = Math.max(r.left, 0)
   const right = Math.min(r.right, window.innerWidth)
   const top = Math.max(r.top, 0)
