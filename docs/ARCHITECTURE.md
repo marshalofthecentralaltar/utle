@@ -478,3 +478,29 @@ Decided after talking to a user with a motor disability. His words: typing messa
 - `src/browser/protocol.ts` is pure types and constants. `src/core/**` may import it. The extension does not import from `src/`; it follows the file by hand, and a change to the contract changes both in one commit.
 - The local recogniser's server never logs audio or text.
 - Messenger's page is not ours and cannot be tested without a logged-in person. Everything site-specific is best effort and says so when it fails; the numbered labels are the fallback that works on any page.
+
+### 20.1 The local recogniser
+
+TalTech's `streaming-zipformer-large.et-en` runs inside the dev server through `sherpa-onnx-node`. It hears Estonian and English with one model, so `setLang` changes nothing on this engine. No audio leaves the laptop.
+
+**Where the model lives.** `models/streaming-zipformer-large.et-en/` in the repository root: `encoder.int8.onnx` (155 MB), `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`. `models/` is gitignored. `npm run model` downloads the missing files from `https://huggingface.co/TalTechNLP/streaming-zipformer-large.et-en/resolve/main/<file>`. The model is loaded once, when the dev server starts listening, and shared by every connection. The native addon is loaded with `createRequire` from `server/asr*.ts` only, so the browser bundle and `npm run build` never contain it.
+
+**Wire.** A websocket at `/api/asr` on Vite's own http server; only upgrades to that path are taken, so Vite's HMR socket is untouched. Types and constants are in `src/speech/asrProtocol.ts`.
+
+| Direction | Frame | Meaning |
+|---|---|---|
+| browser to server | binary | Mono audio, 16 kHz, 32-bit float little-endian samples, about 100 ms per frame. At most 1 s per frame; anything else is ignored. |
+| server to browser | `{"type":"ready"}` | The model is loaded; send audio. Sent once per connection. |
+| server to browser | `{"type":"unavailable","reason":"model_missing" \| "addon_missing" \| "load_failed"}` | This machine cannot recognise; the server closes the socket. |
+| server to browser | `{"type":"partial","text":"..."}` | What is heard in the current utterance so far. Sent when it changes. |
+| server to browser | `{"type":"final","text":"..."}` | The utterance ended. The stream is reset for the next one. |
+
+**Audio.** The browser opens the microphone with echo cancellation and noise suppression, runs it through an `AudioContext` at 16 kHz (the browser resamples) and an `AudioWorklet` (`public/asr-worklet.js`) that posts 1600-sample frames.
+
+**Endpoint rule.** sherpa's endpoint rules, with modified beam search: an utterance ends after 1.0 s of silence once something was heard (rule 2), after 2.4 s of silence with nothing heard (rule 1, which sends no final), or at 30 s of speech (rule 3). A final then goes through the same assembler as Chrome's (section 11), so a pause to think still joins two finals, but with a hold of 500 ms (`LOCAL_HOLD_MS`) instead of 1200: the endpoint has already waited 1 s of silence. Measured on the fixture sentence, speech end to the app is about 2.1 s (final about 1.6 s, plus the hold).
+
+**Quick replies do not wait for the final.** When nothing is held and a partial is a quick reply (`isInstant`) that stays unchanged for 650 ms (`INSTANT_SETTLE_MS`, chosen to be longer than the roughly 620 ms between the model's partials, so a reply that goes on, such as "ei, mitte kolm, vaid neli", is seen growing before it could be released; a one-word reply therefore acts about 1.4 s after speech ends), the client releases it as the utterance at once. The final for those same words is then swallowed on the client: when the next final's words (lower case, punctuation removed) start with the released words, only the words after them are delivered, and a final that does not start with them is delivered whole. Nothing is sent to the server. A partial that grows past the quick reply before the settle time is not released. Measured on a recorded "Jah.", the first partial reading "jah" arrives about 0.77 s after speech ends, so it is released after about 1.1 s instead of about 2.1 s. The model updates partials only about every 0.62 s, so a reply followed by more words within about 0.6 s can be released before the growth is seen; the words after it then arrive as their own utterance.
+
+**Fallback.** `src/speech/pick.ts` tries the local recogniser first. When the server says `unavailable`, when the socket cannot be opened, or when a lost connection fails to come back after three tries 500 ms apart, it switches to Chrome's recogniser in the current language, keeps the microphone on, and shows one line through `onNotice`: the user does nothing. It does not try the local recogniser again until the page is reloaded.
+
+**What the server logs.** Load time, the reason it is unavailable, connection counts and error codes. Never audio, never text.

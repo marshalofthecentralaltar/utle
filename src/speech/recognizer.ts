@@ -13,8 +13,10 @@ export interface RecognizerHandlers {
   onUtterance(text: string): void
   /** What is being heard right now, for display only. Empty when nothing is in progress. */
   onInterim(text: string): void
-  /** A problem the user should see. */
+  /** A problem the user should see. The microphone has stopped. */
   onError(message: string): void
+  /** A line the user should see that needs no action: the microphone stays on. */
+  onNotice?(message: string): void
 }
 
 export const LANGUAGES = [

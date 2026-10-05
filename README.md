@@ -14,6 +14,13 @@ npm run rehearse   # scripted answers for the demo lines: no key, no network
 npm run dev        # the real thing: needs a working ANTHROPIC_API_KEY in the environment
 ```
 
+To hear Estonian on this computer instead of through Chrome's recognition, fetch TalTech's model once (about 160 MB), then start as usual:
+
+```
+npm run model
+npm run dev
+```
+
 Open the address Vite prints, in Chrome.
 
 | Address | What it does |

@@ -12,12 +12,15 @@
     "smoke": "tsx scripts/smoke.ts",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "preview": "vite preview",
-    "rehearse": "vite --mode rehearsal"
+    "rehearse": "vite --mode rehearsal",
+    "model": "tsx scripts/model.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "sherpa-onnx-node": "^1.13.8",
+    "ws": "^8.22.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -25,6 +28,7 @@
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
     "playwright": "^1.63.0",
