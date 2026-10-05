@@ -3,47 +3,47 @@
 /*
  * A copy desk, operated by voice. See docs/ARCHITECTURE.md section 19.
  *
- * Two sets of tokens. The desk (page ground, controls, margin notes) follows the theme.
- * The paper does not: a sheet stays white with dark ink in the dark theme too, the way a
- * page stays a page on a dark desk. The pencils and the highlighter only ever mark paper.
+ * The document is the screen: text on a warm ivory ground, or obsidian in the dark theme.
+ * Ütle itself is the one bar at the bottom. Hairlines instead of boxes, and colour only
+ * where something needs attention: the pencils, the highlighter and the listening dots.
  */
 :root {
-  --desk: #e4e6ea;
-  --ink: #14161a;
-  --soft: #5b6270;
-  --edge: #c4c9d1;
-  --link: #1f45c4;
-  --signal: #c8281e;
-
-  --paper: #ffffff;
-  --paper-ink: #14161a;
-  --paper-soft: #5b6270;
-  --paper-edge: #c4c9d1;
-  --pencil-red: #c8281e;
-  --pencil-blue: #1f45c4;
+  --desk: #f7f5f0;
+  --ink: #141517;
+  --soft: #5c625f;
+  --edge: #e6e3da;
+  --edge-strong: #c9c5b8;
+  --link: #1a5fb4;
+  --signal: #b3261e;
+  --pencil-red: #b3261e;
+  --pencil-blue: #1a5fb4;
   --mark: #ffe04a;
+  --mark-ink: #141517;
+  --glass: rgba(247, 245, 240, 0.94);
 
-  --strip: #14161a;
-  --strip-ink: #ffffff;
-  --strip-soft: #a9b0bd;
-  --strip-edge: #3a3f48;
+  /* Where the text column starts: the wordmark in the bar sits in this gutter. */
+  --gutter: 4.5rem;
+}
+
+@media (min-width: 1000px) {
+  :root {
+    --gutter: 13.5rem;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --desk: #0e1013;
-    --ink: #eceef2;
-    --soft: #9aa3b2;
-    --edge: #30353d;
-    --link: #94abff;
-    --signal: #ff6e61;
-
-    --paper: #f1f2f4;
-    --paper-edge: #f1f2f4;
-
-    --strip: #000000;
-    --strip-edge: #30353d;
+    --desk: #0e0f11;
+    --ink: #ece9e2;
+    --soft: #a19f97;
+    --edge: #26292e;
+    --edge-strong: #34383f;
+    --link: #6fa8f0;
+    --signal: #f2857c;
+    --pencil-red: #f2857c;
+    --pencil-blue: #6fa8f0;
+    --glass: rgba(14, 15, 17, 0.94);
   }
 }
 
@@ -52,19 +52,14 @@
   --color-ink: var(--ink);
   --color-soft: var(--soft);
   --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
   --color-link: var(--link);
   --color-signal: var(--signal);
-  --color-paper: var(--paper);
-  --color-paper-ink: var(--paper-ink);
-  --color-paper-soft: var(--paper-soft);
-  --color-paper-edge: var(--paper-edge);
   --color-pencil-red: var(--pencil-red);
   --color-pencil-blue: var(--pencil-blue);
   --color-mark: var(--mark);
-  --color-strip: var(--strip);
-  --color-strip-ink: var(--strip-ink);
-  --color-strip-soft: var(--strip-soft);
-  --color-strip-edge: var(--strip-edge);
+  --color-mark-ink: var(--mark-ink);
+  --color-glass: var(--glass);
   --font-sans: 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', Verdana, sans-serif;
 }
 
@@ -87,21 +82,21 @@ body {
 }
 
 :focus-visible {
-  outline: 3px solid var(--link);
-  outline-offset: 2px;
+  outline: 2px solid var(--link);
+  outline-offset: 3px;
 }
 
 /* The copy desk: a red pencil for what goes, a blue pencil for what comes. */
 del {
   color: var(--pencil-red);
   text-decoration: line-through;
-  text-decoration-thickness: 0.09em;
+  text-decoration-thickness: 0.08em;
 }
 
 ins {
   color: var(--pencil-blue);
   text-decoration: underline;
-  text-decoration-thickness: 0.09em;
+  text-decoration-thickness: 0.08em;
   text-underline-offset: 0.18em;
 }
 
@@ -112,8 +107,8 @@ del + ins {
 /* A yellow highlighter for "which of these". */
 .highlight {
   background: var(--mark);
-  color: var(--paper-ink);
-  padding: 0.08em 0.12em;
+  color: var(--mark-ink);
+  padding: 0.06em 0.14em;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -125,8 +120,8 @@ del + ins {
 .wordmark {
   display: inline-block;
   font-weight: 800;
-  font-size: 3rem;
-  line-height: 1;
+  font-size: 1.625rem;
+  line-height: 1.35;
   letter-spacing: -0.03em;
   user-select: none;
 }
@@ -139,7 +134,7 @@ del + ins {
 .wordmark-dots {
   position: absolute;
   inset-inline: 0;
-  top: 0.06em;
+  top: 0.11em;
   display: flex;
   justify-content: center;
   gap: 0.11em;
@@ -156,11 +151,17 @@ del + ins {
 
 .wordmark[data-voice='off'] .wordmark-dots i {
   background: transparent;
-  box-shadow: inset 0 0 0 0.045em var(--soft);
+  box-shadow: inset 0 0 0 0.05em var(--soft);
+}
+
+/* Asleep: the whole mark greys down, and the dots go hollow. */
+.wordmark[data-voice='asleep'] {
+  color: var(--soft);
 }
 
 .wordmark[data-voice='asleep'] .wordmark-dots i {
-  background: var(--soft);
+  background: transparent;
+  box-shadow: inset 0 0 0 0.05em var(--soft);
 }
 
 .wordmark[data-voice='reading'] .wordmark-dots i {

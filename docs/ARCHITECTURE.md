@@ -297,7 +297,11 @@ interim activity restarts the hold. A final that is a quick reply on its own, wi
 held, is released at once so yes and no stay instant. The recogniser restarts itself when
 Chrome ends the session, except after an error the user is shown and must act on (microphone
 blocked or missing, speech service unreachable, language unsupported): then it stops until it is
-turned on again. The interpreter is language-agnostic; only the recogniser has a language.
+turned on again. Chrome runs one recognition session for the whole browser: a second tab that
+starts listening ends the first tab's session with `aborted`. Three sessions aborted in a row
+mean another tab keeps taking the recogniser, so this one stops and says so; the tab that
+asked last keeps the microphone. The interpreter is language-agnostic; only the recogniser
+has a language.
 
 ## 12. Server
 
@@ -337,6 +341,7 @@ summary in the user's language in one short sentence.
 | Request slower than 25 s | client abort | same message |
 | A response arrives after the state moved on | reducer, `seq` | nothing |
 | Microphone denied or unsupported browser | recogniser | typed box stays usable, a line says why |
+| Another tab keeps taking speech recognition | recogniser, three `aborted` sessions in a row | the microphone turns off here, a line says to close the other tab |
 | Empty utterance | reducer | nothing |
 
 ## 14. Testing
@@ -413,40 +418,41 @@ Proof without a person: `speech/scripted.ts` is a recogniser that replays a scri
 
 ## 19. Design
 
-**Subject.** A copy desk, operated by voice. The vernacular is proofreading and captioning: a sheet of paper, a red pencil for what goes, a blue pencil for what comes, a yellow highlighter for "which of these", a change bar in the margin, and captions for what was heard.
+**Subject.** A copy desk, operated by voice. The vernacular is proofreading and captioning: a red pencil for what goes, a blue pencil for what comes, a yellow highlighter for "which of these", a change bar in the gutter, and captions for what was heard.
 
-**The one bold thing.** The two dots of the ü are the listening light. They are hollow when the microphone is off, solid red when listening, and they swell with the voice. Everything else stays quiet.
+**Two parts.** The document is the whole screen: text straight on the ground, no sheet and no box. Ütle itself is one bar fixed to the bottom, holding the wordmark, your words and its answer. The bar is the part that could later float over any program.
 
-**Colour.** Light is the identity; dark follows the same roles.
+**The one bold thing.** The two dots of the ü are the listening light. They are hollow when the microphone is off or Ütle is asleep, solid red when listening, and they swell with the voice. Everything else stays quiet.
+
+**Colour.** The house palette shared with EFS. Colour marks the exception only.
 
 | Role | Light | Dark |
 |---|---|---|
-| Desk | #E4E6EA | #0E1013 |
-| Sheet | #FFFFFF | #1A1D22 |
-| Ink | #14161A | #ECEEF2 |
-| Soft ink | #5B6270 | #9AA3B2 |
-| Edge | #C4C9D1 | #30353D |
-| Red pencil: removed text, the listening dots | #C8281E | #FF6E61 |
-| Blue pencil: added text, focus, links | #1F45C4 | #94ABFF |
-| Highlighter: candidates | #FFE04A | #6E5A00 |
-| Caption strip | #14161A | #000000 |
+| Ground | #F7F5F0 | #0E0F11 |
+| Ink | #141517 | #ECE9E2 |
+| Soft ink | #5C625F | #A19F97 |
+| Hairline | #E6E3DA | #26292E |
+| Strong hairline: the top of the bar, the typed box | #C9C5B8 | #34383F |
+| Red pencil: removed text, the listening dots | #B3261E | #F2857C |
+| Blue pencil: added text, focus, links | #1A5FB4 | #6FA8F0 |
+| Highlighter: candidates, with ink #141517 in both themes | #FFE04A | #FFE04A |
 
-**Type.** Atkinson Hyperlegible Next for everything. It was drawn for the Braille Institute for readers with low vision, which is the reason it is here. Weights 400, 600 and 800. Paragraph numbers use tabular figures. Sizes: 15 interface, 18 document, 22 captions, 40 wordmark. Sentence case everywhere.
+**Type.** Atkinson Hyperlegible Next for everything. It was drawn for the Braille Institute for readers with low vision, which is the reason it is here. Weights 400, 600 and 800. Paragraph numbers use tabular figures. Sizes: 13 controls, 14 margin notes, 18 document, 30 title, 16 heard and 22 answer in the bar, 26 wordmark. Sentence case everywhere.
 
-**Layout.** A desk with one sheet, left-aligned.
+**Layout.** One text column of at most 40rem, left-aligned, with the wordmark in the same gutter as the paragraph numbers.
 
 ```
- ütle        English | Eesti    Microphone on    Voice check
-   +----------------------------------+
- 1 | Minutes: supplier onboarding     |   Changes
- 2 | Attendees: ...                   |   Budget: Thursday becomes Friday
- 6 ▌ ... to finance by Thursday Friday|   3 edits, 54 words, 0 hands
-   +----------------------------------+
- ===============================================================
-  Change the budget deadline to Friday.
-  Budget: Thursday becomes Friday.          Say yes or no   Yes  No
+ English  Eesti          minutes-5-october.docx      Microphone  Voice check
+ ---------------------------------------------------------------------------
+        1   Minutes: supplier onboarding
+        2   Attendees: ...                             Changes
+        6 | ... to finance by Thursday Friday.         Budget: Thursday becomes Friday
+                                                       Say undo to take the last one back.
+ ---------------------------------------------------------------------------
+            Change the budget deadline to Friday
+     ütle   Budget: Thursday becomes Friday. Say yes or no.        Yes  No
 ```
 
-The caption strip is fixed to the bottom and set large, so it reads from a metre away. The typed box lives in the strip; it is the fallback, not the product.
+While you speak, your words stand beside the wordmark; once understood they move to the small line above and the answer takes their place. The margin stays empty until there is a change or help to show. The typed box lives in the bar; it is the fallback, not the product. Mock: `docs/mocks/`.
 
-**Rules.** No cards, no shadows, no rounded panels, no all-caps labels, no monospace labels, no gradient, no icon set. A rule or a fill appears only where it carries a state: the change bar, the highlight, the focus mark.
+**Rules.** No cards, no rounded panels, no all-caps labels, no monospace labels, no gradient, no icon set. A rule or a fill appears only where it carries a state: the change bar, the highlight, the focus mark.

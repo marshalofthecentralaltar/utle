@@ -91,7 +91,7 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
   }
 
   return (
-    <section className="flex max-w-[52rem] flex-col gap-5 border border-paper-edge bg-paper text-paper-ink px-6 py-9 sm:px-12 sm:py-12">
+    <section className="flex max-w-[52rem] flex-col gap-5">
       <div className="flex flex-col gap-2">
         <h1 className="m-0 text-[1.75rem] leading-tight font-extrabold tracking-tight">Voice check, {label}</h1>
         <p className="m-0 max-w-[62ch] text-lg">
@@ -102,23 +102,23 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
 
       <div className="flex flex-wrap items-center gap-3">
         {running ? (
-          <button type="button" onClick={stop} className="cursor-pointer border border-paper-ink bg-paper-ink px-4 py-2 font-semibold text-paper">
+          <button type="button" onClick={stop} className="cursor-pointer border border-ink bg-ink px-4 py-2 font-semibold text-desk">
             Stop
           </button>
         ) : (
           !finished && (
-            <button type="button" onClick={start} className="cursor-pointer border border-paper-ink bg-paper-ink px-4 py-2 font-semibold text-paper">
+            <button type="button" onClick={start} className="cursor-pointer border border-ink bg-ink px-4 py-2 font-semibold text-desk">
               {heard.length === 0 ? 'Start' : 'Continue'}
             </button>
           )
         )}
         {heard.length > 0 && (
-          <button type="button" onClick={restart} className="cursor-pointer border border-paper-ink px-4 py-2 font-semibold">
+          <button type="button" onClick={restart} className="cursor-pointer border border-ink px-4 py-2 font-semibold">
             Start over
           </button>
         )}
         {heard.length > 0 && (
-          <button type="button" onClick={copy} className="cursor-pointer border border-paper-ink px-4 py-2 font-semibold">
+          <button type="button" onClick={copy} className="cursor-pointer border border-ink px-4 py-2 font-semibold">
             {copied ? 'Copied' : 'Copy the result'}
           </button>
         )}
@@ -132,18 +132,18 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
           return (
             <li
               key={line}
-              className={`grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-baseline gap-x-3 border-l-[3px] py-2 ${current ? 'border-paper-ink' : 'border-transparent'}`}
+              className={`grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-baseline gap-x-3 border-l-2 py-2 ${current ? 'border-ink' : 'border-transparent'}`}
             >
-              <span className={`text-right text-[0.8rem] tabular-nums ${current ? 'font-extrabold text-paper-ink' : 'text-paper-soft'}`}>{i + 1}</span>
+              <span className={`text-right text-[0.8rem] tabular-nums ${current ? 'font-extrabold text-ink' : 'text-soft'}`}>{i + 1}</span>
               <span className="flex flex-col">
                 <span className={current ? 'font-semibold' : ''}>{line}</span>
                 {score ? (
-                  <span className={score.errors === 0 ? 'text-paper-soft' : 'text-pencil-red'}>{heard[i]}</span>
+                  <span className={score.errors === 0 ? 'text-soft' : 'text-pencil-red'}>{heard[i]}</span>
                 ) : (
-                  current && <span className="text-paper-soft">{interim === '' ? 'Listening.' : interim}</span>
+                  current && <span className="text-soft">{interim === '' ? 'Listening.' : interim}</span>
                 )}
               </span>
-              <span className="text-[0.95rem] text-paper-soft tabular-nums">
+              <span className="text-[0.95rem] text-soft tabular-nums">
                 {score ? (score.errors === 0 ? 'right' : `${score.errors} wrong`) : ''}
               </span>
             </li>

@@ -90,6 +90,32 @@ describe('Chrome recogniser', () => {
     expect(errors[0]).toMatch(/Google Chrome/)
   })
 
+  it('stops and says so when another tab keeps taking the recogniser', () => {
+    const r = createWebSpeechRecognizer(handlers, 'en-US', never)
+    r.start()
+    for (let i = 0; i < 3; i += 1) {
+      latest().fail('aborted')
+      vi.advanceTimersByTime(250)
+    }
+    vi.advanceTimersByTime(10_000)
+    expect(FakeRecognition.made).toHaveLength(3)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/another tab/i)
+  })
+
+  it('keeps listening when a session is taken once and the next one holds', () => {
+    const r = createWebSpeechRecognizer(handlers, 'en-US', never)
+    r.start()
+    for (let i = 0; i < 5; i += 1) {
+      latest().fail('aborted')
+      vi.advanceTimersByTime(250)
+      latest().onend?.()
+      vi.advanceTimersByTime(250)
+    }
+    expect(FakeRecognition.made).toHaveLength(11)
+    expect(errors).toEqual([])
+  })
+
   it('can be started again after it stopped on an error', () => {
     const r = createWebSpeechRecognizer(handlers, 'en-US', never)
     r.start()

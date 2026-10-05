@@ -27,6 +27,10 @@ type RecognitionConstructor = new () => RecognitionLike
 
 export const HOLD_MS = 1200
 const RESTART_MS = 250
+/** Sessions aborted in a row before giving up: another tab keeps taking the recogniser. */
+const MAX_TAKEOVERS = 3
+const TAKEN =
+  'Another tab or window is using speech recognition. Close it, then turn the microphone on here, or type instead.'
 
 function recognitionConstructor(): RecognitionConstructor | null {
   if (typeof window === 'undefined') return null
@@ -63,6 +67,7 @@ export function createWebSpeechRecognizer(
   let running = false
   let current: RecognitionLike | null = null
   let restart: ReturnType<typeof setTimeout> | null = null
+  let takeovers = 0
 
   const begin = (): void => {
     if (!Recognition || !running) return
@@ -71,6 +76,7 @@ export function createWebSpeechRecognizer(
     recognition.interimResults = true
     recognition.maxAlternatives = 3
     recognition.lang = lang
+    let taken = false
 
     recognition.onresult = (event) => {
       let interim = ''
@@ -90,6 +96,8 @@ export function createWebSpeechRecognizer(
     }
 
     recognition.onerror = (event) => {
+      // Chrome runs one session for the whole browser: another tab starting ends this one.
+      if (event.error === 'aborted') taken = true
       const message = ERRORS[event.error]
       if (FATAL.has(event.error)) running = false
       if (message) handlers.onError(message)
@@ -98,7 +106,14 @@ export function createWebSpeechRecognizer(
     recognition.onend = () => {
       current = null
       handlers.onInterim('')
-      if (running) restart = setTimeout(begin, RESTART_MS)
+      if (!running) return
+      takeovers = taken ? takeovers + 1 : 0
+      if (takeovers >= MAX_TAKEOVERS) {
+        running = false
+        handlers.onError(TAKEN)
+        return
+      }
+      restart = setTimeout(begin, RESTART_MS)
     }
 
     current = recognition
@@ -116,6 +131,7 @@ export function createWebSpeechRecognizer(
     start() {
       if (running || !Recognition) return
       running = true
+      takeovers = 0
       begin()
     },
     stop() {

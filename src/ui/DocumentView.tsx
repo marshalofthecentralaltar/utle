@@ -15,28 +15,39 @@ const BAR: Record<Tone, string> = {
   added: 'border-pencil-blue',
   removed: 'border-pencil-red',
   ask: 'border-mark',
-  focus: 'border-paper-ink',
+  focus: 'border-ink',
 }
 
 const TYPE: Record<BlockType, string> = {
-  h1: 'text-[1.75rem] leading-tight font-extrabold tracking-tight',
-  h2: 'mt-3 text-xl font-semibold',
+  h1: 'text-[1.875rem] leading-[1.2] font-extrabold tracking-[-0.015em]',
+  h2: 'text-[1.1875rem] font-semibold',
   p: '',
-  li: 'pl-5 -indent-5',
+  li: '',
 }
 
 function Row(props: { number: number | null; type: BlockType; tone: Tone; children: ReactNode }) {
   const marked = props.tone !== 'plain' && props.tone !== 'removed'
+  const strong = props.tone === 'focus' || props.tone === 'changed' || props.tone === 'added'
   return (
-    <div data-marked={marked ? 'true' : undefined} className="grid scroll-mt-8 scroll-mb-48 grid-cols-[2.25rem_minmax(0,1fr)] items-baseline gap-x-3">
+    <div
+      data-marked={marked ? 'true' : undefined}
+      className={`grid scroll-mt-8 scroll-mb-48 grid-cols-[1.75rem_minmax(0,40rem)] items-baseline gap-x-6 pr-5 pl-[calc(var(--gutter)-3.25rem)] ${props.type === 'h2' ? 'mt-[1.125rem]' : ''}`}
+    >
       <span
-        className={`text-right text-[0.8rem] tabular-nums ${props.tone === 'focus' ? 'font-extrabold text-paper-ink' : 'text-paper-soft'} ${props.tone === 'removed' ? 'line-through' : ''}`}
+        className={`text-right text-[0.8125rem] tabular-nums ${strong ? 'font-extrabold text-ink' : 'text-soft'} ${props.tone === 'removed' ? 'line-through' : ''}`}
       >
         {props.number ?? ''}
       </span>
-      <div className={`border-l-[3px] pl-3 ${BAR[props.tone]} ${TYPE[props.type]}`}>
-        {props.type === 'li' && <span className="mr-2 text-paper-soft">•</span>}
-        {props.children}
+      {/* The change bar hangs in the gutter, so marked text does not move. */}
+      <div className={`-ml-3.5 border-l-2 pl-3 ${BAR[props.tone]} ${TYPE[props.type]}`}>
+        {props.type === 'li' ? (
+          <span className="block pl-[1.375rem] -indent-[1.375rem]">
+            <span className="inline-block w-[1.375rem] indent-0 text-soft">•</span>
+            {props.children}
+          </span>
+        ) : (
+          props.children
+        )}
       </div>
     </div>
   )
@@ -79,7 +90,7 @@ function previewRow(row: PreviewRow, key: string): ReactNode {
   }
 }
 
-/** The sheet: the document with a numbered margin, showing a proposal, the candidates or the focus. */
+/** The document, straight on the ground, with a numbered gutter: showing a proposal, the candidates or the focus. */
 export function DocumentView({ session }: { session: Session }) {
   const sheet = useRef<HTMLDivElement>(null)
   const { doc, mode, pending, choice, focusId } = session
@@ -103,7 +114,7 @@ export function DocumentView({ session }: { session: Session }) {
             ? parts.map((part, i) => (
                 <span key={i} className={part.highlight ? 'highlight' : undefined}>
                   {part.badges.map((n) => (
-                    <b key={n} className="mr-1.5 inline-block min-w-[1.4em] bg-paper-ink px-1 text-center text-[0.82em] font-extrabold text-paper">
+                    <b key={n} className="mr-[0.3em] inline-block min-w-[1.4em] bg-mark-ink px-[0.25em] text-center text-[0.8em] font-extrabold text-mark">
                       {n}
                     </b>
                   ))}
@@ -120,7 +131,7 @@ export function DocumentView({ session }: { session: Session }) {
     <div
       ref={sheet}
       aria-label="Document"
-      className="flex flex-col gap-2.5 border border-paper-edge bg-paper text-paper-ink py-9 pr-6 pl-3 text-lg leading-[1.6] sm:py-12 sm:pr-12 sm:pl-5"
+      className="flex min-w-0 flex-col gap-3 text-lg leading-[1.65]"
     >
       {rows}
     </div>

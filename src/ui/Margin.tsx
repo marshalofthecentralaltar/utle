@@ -10,56 +10,46 @@ const SAY: ReadonlyArray<[string, string]> = [
   ['To be left alone', 'Stop listening. Wake up.'],
 ]
 
-function Count({ value, label }: { value: number; label: string }) {
-  return (
-    <p className="m-0">
-      <b className="text-xl font-semibold tabular-nums">{value}</b> {label}
-    </p>
-  )
-}
-
-/** Beside the sheet: the accepted changes as margin notes, the three measurements, and help when asked. */
+/** Beside the text: the accepted changes as margin notes, and help when asked. Empty until there is something to say. */
 export function Margin({ session, reset }: { session: Session; reset(): void }) {
+  const changed = session.log.length > 0
+  if (!changed && !session.help) return null
+
   return (
-    <aside className="flex flex-col gap-7">
+    <aside className="flex flex-col gap-7 pr-5 pl-[var(--gutter)] text-sm text-soft min-[1000px]:w-64 min-[1000px]:shrink-0 min-[1000px]:p-0 min-[1000px]:pt-1.5">
       {session.help && (
-        <section className="flex flex-col gap-2">
-          <h2 className="m-0 text-base font-extrabold">You can say</h2>
-          <dl className="m-0 flex flex-col gap-2">
+        <section>
+          <h2 className="m-0 mb-2 text-sm font-semibold text-ink">You can say</h2>
+          <dl className="m-0">
             {SAY.map(([what, example]) => (
-              <div key={what}>
-                <dt className="text-soft">{what}</dt>
-                <dd className="m-0 font-semibold">{example}</dd>
+              <div key={what} className="border-t border-edge py-2">
+                <dt>{what}</dt>
+                <dd className="m-0 text-ink">{example}</dd>
               </div>
             ))}
           </dl>
         </section>
       )}
 
-      <section className="flex flex-col gap-2">
-        <h2 className="m-0 text-base font-extrabold">Changes</h2>
-        {session.log.length === 0 ? (
-          <p className="m-0 text-soft">None yet. Every accepted edit is listed here.</p>
-        ) : (
-          <ol className="m-0 flex list-none flex-col gap-2 p-0">
+      {changed && (
+        <section>
+          <h2 className="m-0 mb-2 text-sm font-semibold text-ink">Changes</h2>
+          <ol className="m-0 list-none p-0">
             {session.log.map((line, i) => (
-              <li key={i} className="border-l-[3px] border-link pl-2.5">
+              <li key={i} className="border-t border-edge py-2 text-ink">
                 {line}
               </li>
             ))}
           </ol>
-        )}
-      </section>
+          <p className="m-0 border-t border-edge pt-2">Say undo to take the last one back.</p>
+        </section>
+      )}
 
-      <section className="flex flex-col gap-0.5">
-        <Count value={session.history.length} label="edits finished" />
-        <Count value={session.words} label="words spoken" />
-        <Count value={session.hands} label="times a hand was used" />
-      </section>
-
-      <button type="button" onClick={reset} className="cursor-pointer self-start border-0 bg-transparent p-0 text-link underline">
-        Start again with the sample document
-      </button>
+      {changed && (
+        <button type="button" onClick={reset} className="cursor-pointer self-start border-0 bg-transparent p-0 text-soft underline underline-offset-[0.2em] hover:text-ink">
+          Start again with the sample document
+        </button>
+      )}
     </aside>
   )
 }

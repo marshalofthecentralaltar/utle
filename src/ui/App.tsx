@@ -4,7 +4,6 @@ import { CaptionStrip } from './CaptionStrip.tsx'
 import { DocumentView } from './DocumentView.tsx'
 import { Margin } from './Margin.tsx'
 import { VoiceCheck } from './VoiceCheck.tsx'
-import { Wordmark } from './Wordmark.tsx'
 import type { VoiceState } from './Wordmark.tsx'
 import { useSession } from './useSession.ts'
 
@@ -62,45 +61,41 @@ export function App() {
   if (!mic.supported) notices.push('This browser has no speech recognition. Use Chrome, or type.')
   if (mic.error !== '') notices.push(mic.error)
 
+  const quiet = 'flex h-11 cursor-pointer items-center border-0 bg-transparent px-3 hover:text-ink'
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-[76rem] flex-col gap-6 px-5 pt-6 pb-48">
-      <header className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
-        <Wordmark voice={view === 'editor' ? voice : 'off'} level={mic.level} />
-
-        <nav className="flex flex-wrap items-center gap-x-6 gap-y-3" aria-label="Controls">
-          <div className="flex" role="group" aria-label="Language">
-            {LANGUAGES.map((language) => (
-              <button
-                key={language.tag}
-                type="button"
-                aria-pressed={mic.lang === language.tag}
-                onClick={() => mic.setLang(language.tag)}
-                className={`-ml-px cursor-pointer border border-ink px-3 py-1.5 first:ml-0 ${mic.lang === language.tag ? 'bg-ink font-semibold text-desk' : 'bg-transparent'}`}
-              >
-                {language.label}
-              </button>
-            ))}
-          </div>
-
-          {view === 'editor' && !mic.demo && (
+    <div className="flex min-h-screen flex-col pb-48">
+      <header className="grid min-h-11 grid-cols-[1fr_auto] items-center border-b border-edge px-2 text-[0.8125rem] text-soft min-[700px]:grid-cols-[1fr_auto_1fr]">
+        <div className="flex" role="group" aria-label="Language">
+          {LANGUAGES.map((language) => (
             <button
+              key={language.tag}
               type="button"
-              onClick={mic.toggle}
-              disabled={!mic.supported}
-              className="cursor-pointer border border-ink px-3 py-1.5 font-semibold disabled:cursor-default disabled:opacity-50"
+              aria-pressed={mic.lang === language.tag}
+              onClick={() => mic.setLang(language.tag)}
+              className={`${quiet} ${mic.lang === language.tag ? 'font-semibold text-ink' : ''}`}
             >
+              {language.label}
+            </button>
+          ))}
+        </div>
+
+        <span className="max-[699px]:hidden">minutes-5-october.docx</span>
+
+        <nav className="flex justify-self-end" aria-label="Controls">
+          {view === 'editor' && !mic.demo && (
+            <button type="button" onClick={mic.toggle} disabled={!mic.supported} className={`${quiet} disabled:cursor-default disabled:opacity-50`}>
               {mic.on ? 'Turn the microphone off' : 'Turn the microphone on'}
             </button>
           )}
-
-          <a href={view === 'editor' ? '#check' : '#'} className="text-link underline">
+          <a href={view === 'editor' ? '#check' : '#'} className={`${quiet} no-underline`}>
             {view === 'editor' ? 'Voice check' : 'Back to the document'}
           </a>
         </nav>
       </header>
 
       {notices.length > 0 && (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0 text-soft">
+        <ul className="m-0 flex list-none flex-col gap-1 pt-4 pr-5 pl-[var(--gutter)] text-sm text-soft">
           {notices.map((notice) => (
             <li key={notice}>{notice}</li>
           ))}
@@ -108,22 +103,16 @@ export function App() {
       )}
 
       {view === 'check' ? (
-        <VoiceCheck key={mic.lang} lang={mic.lang} demo={mic.demo} />
+        <div className="mx-auto w-full max-w-[80rem] pt-10 pr-5 pl-[calc(var(--gutter)-3.25rem)]">
+          <VoiceCheck key={mic.lang} lang={mic.lang} demo={mic.demo} />
+        </div>
       ) : (
         <>
-          <main className="grid grid-cols-1 items-start gap-x-10 gap-y-8 min-[1000px]:grid-cols-[minmax(0,48rem)_minmax(14rem,1fr)]">
-            <div className="flex flex-col gap-2">
-              <p className="m-0 flex justify-between gap-4 text-soft">
-                <span>minutes-5-october.docx</span>
-                <span>Every change is tracked</span>
-              </p>
-              <DocumentView session={session} />
-            </div>
-            <div className="min-[1000px]:pt-9">
-              <Margin session={session} reset={reset} />
-            </div>
+          <main className="mx-auto flex w-full max-w-[80rem] flex-col gap-10 pt-12 min-[1000px]:flex-row min-[1000px]:gap-8">
+            <DocumentView session={session} />
+            <Margin session={session} reset={reset} />
           </main>
-          <CaptionStrip session={session} interim={mic.interim} dispatch={dispatch} />
+          <CaptionStrip session={session} interim={mic.interim} voice={voice} level={mic.level} dispatch={dispatch} />
         </>
       )}
     </div>
