@@ -10,7 +10,14 @@ export type MessageCommand =
   | { kind: 'send' }
   | { kind: 'drop' }
 
-const SEND = new Set(['saada', 'saada ära', 'saada sõnum', 'saada see', 'send', 'send it', 'send the message', 'send message'])
+/**
+ * Send is never reached by a correction (21.3), so every form the recogniser writes is here as
+ * heard: the polite plural "saadake" and the "we" form "saadame" (round 3, 23.2).
+ */
+const SEND = new Set([
+  'saada', 'saada ära', 'saada sõnum', 'saada see', 'saadake', 'saadake ära', 'saadake sõnum', 'saadame', 'saadame ära',
+  'send', 'send it', 'send the message', 'send message',
+])
 const DROP = new Set([
   'katkesta sõnum',
   'loobu sõnumist',

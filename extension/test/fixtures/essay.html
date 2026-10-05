@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Essay page</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 20px; }
+      #essay { border: 1px solid #888; width: 520px; min-height: 120px; padding: 8px; }
+      #essay-area { width: 520px; height: 140px; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Kirjand</h1>
+    <!-- A plain contenteditable with one div per paragraph, as a browser makes them on Enter. -->
+    <div id="essay" contenteditable="true" role="textbox" aria-label="Kirjand"><div>Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju. Lapsed ujuvad järves.</div><div>Sügis toob vihma. Lehed langevad puudelt ja õhtud lähevad pimedaks. Koolid alustavad septembris.</div><div>Talv on pikk ja pime. Lumi katab maa ja järved jäätuvad.</div></div>
+    <div><textarea id="essay-area" aria-label="Kirjand tekstina">Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju. Lapsed ujuvad järves.
+Sügis toob vihma. Lehed langevad puudelt ja õhtud lähevad pimedaks. Koolid alustavad septembris.
+Talv on pikk ja pime. Lumi katab maa ja järved jäätuvad.</textarea></div>
+    <div><button id="save" type="button">Salvesta</button></div>
+    <script>
+      // The selection of a field as text, for the test: a textarea's range, or the editor's selection string.
+      window.selectedText = (id) => {
+        const el = document.getElementById(id)
+        if (el instanceof HTMLTextAreaElement) return el.value.slice(el.selectionStart, el.selectionEnd)
+        const s = window.getSelection()
+        return s && s.rangeCount > 0 && el.contains(s.anchorNode) ? s.toString() : null
+      }
+      window.caretAt = (id) => {
+        const el = document.getElementById(id)
+        if (el instanceof HTMLTextAreaElement) return el.selectionStart === el.selectionEnd ? el.selectionStart : -1
+        const s = window.getSelection()
+        if (!s || s.rangeCount === 0 || !el.contains(s.anchorNode) || !s.isCollapsed) return -1
+        const r = document.createRange()
+        r.setStart(el, 0)
+        r.setEnd(s.anchorNode, s.anchorOffset)
+        // Count the paragraph breaks before the caret as one character each, like the textarea's newlines.
+        const before = r.cloneContents()
+        return r.toString().length + Math.max(0, before.querySelectorAll('div').length - 1)
+      }
+      window.textOf = (id) => {
+        const el = document.getElementById(id)
+        return el instanceof HTMLTextAreaElement ? el.value : el.innerText.replace(/\n+$/, '')
+      }
+    </script>
+  </body>
+</html>

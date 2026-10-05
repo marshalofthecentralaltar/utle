@@ -1,4 +1,4 @@
-import type { BrowserCommand, BrowserFailure } from '../browser/protocol.ts'
+import type { BrowserCommand, BrowserFailure, MediaAction, PressableKey } from '../browser/protocol.ts'
 
 /**
  * Every line a person can read in Ütle, in one table keyed by language, so a native speaker
@@ -94,6 +94,8 @@ export interface Strings {
     replacing(from: string, to: string): string
     deletingWord: string
     deletingSentence: string
+    /** Round 3: "kustuta sõna X" selects the word and deletes it. */
+    deletingNamed(word: string): string
     clearing: string
     newLine: string
     mark(mark: string): string
@@ -104,6 +106,20 @@ export interface Strings {
     notSent(reason: string): string
     /** Section 21.3: what a misheard or inflected command was taken to be, before the usual line. */
     understood(text: string): string
+    // M7.
+    /** Neither the rules nor the model could tell what was meant. */
+    notUnderstood: string
+    /** The model is being asked. */
+    thinking: string
+    /** The free-form understanding is off (no key, no server). */
+    modelOff: string
+    /** Dictation with no armed box: where the words can go. */
+    noPlaceToWrite: string
+    // Round 3.
+    /** Suffix on the line of an utterance that waited too long in the queue and got the rules alone. */
+    catchingUp: string
+    /** A verification came back as a command after the box had changed: nothing was touched. */
+    lateCommand(say: string): string
   }
 
   // The interpreter.
@@ -184,6 +200,64 @@ export interface Strings {
     // The new-tab page (21.3), ext lane.
     newTabTitle: string
     newTabHint: string
+    // The strip's controls and the pill (M7, ui lane).
+    hide: string
+    show: string
+    settings: string
+    thinking: string
+    /** Example phrases, shown three at a time under the new tab's tiles. */
+    examples: readonly string[]
+    examplesLead: string
+    // The options page (M7, ui lane). Estonian first, English as the second line.
+    optionsTitle: string
+    optionsHelp: string
+    optionsHelpEn: string
+    barHeight: string
+    barHeightEn: string
+    barSmall: string
+    barNormal: string
+    barLarge: string
+    micSide: string
+    micSideEn: string
+    micLeft: string
+    micRight: string
+    startHidden: string
+    startHiddenEn: string
+    startShown: string
+    startFolded: string
+    advanced: string
+    advancedEn: string
+    asrUrl: string
+    utleUrl: string
+    save: string
+    saved: string
+    notAnAddress(value: string): string
+    savedReload: string
+    // Push-to-talk by looking (round 3, ptt lane).
+    /** The microphone's label in gaze mode while it is off. */
+    gazeOff: string
+    /** The thin line under the done line when the speech server is behind by this many seconds. */
+    lagLine(seconds: number): string
+    listenMode: string
+    listenModeEn: string
+    listenToggle: string
+    listenToggleEn: string
+    listenGaze: string
+    listenGazeEn: string
+    gazeTarget: string
+    gazeTargetEn: string
+    gazeMic: string
+    gazeMicEn: string
+    gazeBar: string
+    gazeBarEn: string
+    speechEngine: string
+    speechEngineEn: string
+    engineLocal: string
+    engineLocalEn: string
+    engineSoniox: string
+    engineSonioxEn: string
+    engineNote: string
+    engineNoteEn: string
   }
 }
 
@@ -201,6 +275,68 @@ function placeOf(url: string): { search: string | null; host: string } {
   }
   const host = /^[a-z]+:\/\/(?:www\.)?([^/?#]+)/i.exec(url)?.[1] ?? url
   return { search: null, host }
+}
+
+const KEY_ET: Record<PressableKey, string> = {
+  Escape: 'Sulgen.',
+  Enter: 'Kinnitan.',
+  Tab: 'Järgmine väli.',
+  Backspace: 'Kustutan tagant.',
+  Delete: 'Kustutan eest.',
+  ArrowLeft: 'Vasakule.',
+  ArrowRight: 'Paremale.',
+  ArrowUp: 'Üles.',
+  ArrowDown: 'Alla.',
+  Home: 'Rea algusesse.',
+  End: 'Rea lõppu.',
+  Undo: 'Võtan tagasi.',
+  Redo: 'Teen uuesti.',
+  SelectAll: 'Valin kõik.',
+}
+
+const KEY_EN: Record<PressableKey, string> = {
+  Escape: 'Closing.',
+  Enter: 'Confirming.',
+  Tab: 'Next field.',
+  Backspace: 'Deleting backwards.',
+  Delete: 'Deleting forwards.',
+  ArrowLeft: 'Left.',
+  ArrowRight: 'Right.',
+  ArrowUp: 'Up.',
+  ArrowDown: 'Down.',
+  Home: 'Start of the line.',
+  End: 'End of the line.',
+  Undo: 'Undoing.',
+  Redo: 'Redoing.',
+  SelectAll: 'Selecting everything.',
+}
+
+const MEDIA_ET: Record<MediaAction, string> = {
+  play: 'Mängin.',
+  pause: 'Paus.',
+  toggle: 'Mängin või peatan.',
+  mute: 'Vaigistan.',
+  unmute: 'Heli tagasi.',
+  volumeUp: 'Heli valjemaks.',
+  volumeDown: 'Heli vaiksemaks.',
+  fullscreen: 'Täisekraan.',
+  exitFullscreen: 'Täisekraanist välja.',
+  forward: 'Edasi kümme sekundit.',
+  back: 'Tagasi kümme sekundit.',
+}
+
+const MEDIA_EN: Record<MediaAction, string> = {
+  play: 'Playing.',
+  pause: 'Paused.',
+  toggle: 'Play or pause.',
+  mute: 'Muted.',
+  unmute: 'Sound back on.',
+  volumeUp: 'Louder.',
+  volumeDown: 'Quieter.',
+  fullscreen: 'Full screen.',
+  exitFullscreen: 'Leaving full screen.',
+  forward: 'Forward ten seconds.',
+  back: 'Back ten seconds.',
 }
 
 const ET: Strings = {
@@ -267,6 +403,8 @@ const ET: Strings = {
       case 'reload':
         return 'Laadin lehe uuesti.'
       case 'scroll':
+        if (command.mode === 'stop') return 'Kerimine seis.'
+        if (command.mode === 'slow') return command.direction === 'up' ? 'Kerin aeglaselt üles.' : 'Kerin aeglaselt alla.'
         return { down: 'Kerin alla.', up: 'Kerin üles.', top: 'Lehe algusesse.', bottom: 'Lehe lõppu.' }[command.direction]
       case 'showHints':
         return 'Näitan numbreid.'
@@ -284,6 +422,30 @@ const ET: Strings = {
         return 'Kirjutan.'
       case 'pressSend':
         return 'Saadan.'
+      case 'readPage':
+        return 'Vaatan lehte.'
+      case 'clickItem':
+        return 'Vajutan.'
+      case 'focusItem':
+        return 'Valin kasti.'
+      case 'siteSearch':
+        return `Otsin siit: ${command.query}`
+      case 'media':
+        return MEDIA_ET[command.action]
+      case 'pressKey':
+        return KEY_ET[command.key]
+      case 'caret':
+        return 'Liigutan kursorit.'
+      case 'select':
+        return 'Valin teksti.'
+      case 'typeText':
+        return 'Kirjutan siia.'
+      case 'clearField':
+        return 'Tühjendan kasti.'
+      case 'arm':
+        return command.on ? 'Kirjutan siia.' : 'Siia enam ei kirjuta.'
+      case 'bar':
+        return command.show ? 'Näitan riba.' : 'Peidan riba.'
     }
   },
   browserDone(command, title, hints) {
@@ -306,6 +468,15 @@ const ET: Strings = {
         return 'Numbrid on peidetud.'
       case 'clickHint':
         return `Vajutasin ${command.number}.`
+      case 'clickItem':
+        return 'Vajutatud.'
+      case 'focusItem':
+      case 'arm':
+        return command.kind === 'arm' && !command.on ? 'Siia enam ei kirjuta.' : 'Kast on valitud. Räägi.'
+      case 'siteSearch':
+        return `Otsisin: ${command.query}`
+      case 'clearField':
+        return 'Kast on tühi.'
       default:
         return ET.browserDoing(command)
     }
@@ -321,6 +492,12 @@ const ET: Strings = {
         if (command.kind === 'switchTab') return 'Sellist vahelehte ei ole.'
         if (command.kind === 'openConversation') return `Vestlust „${command.name}“ ei leitud.`
         if (command.kind === 'insertText') return 'Sõnumikasti ei leitud.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'Seda ei ole enam lehel. Ütle uuesti.'
+        if (command.kind === 'siteSearch') return 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.'
+        if (command.kind === 'media') return 'Siin ei ole videot.'
+        if (command.kind === 'clearField' || command.kind === 'arm') return 'Ühtegi kasti ei ole valitud. Ütle „näita numbreid“ ja number.'
+        if (command.kind === 'caret' || command.kind === 'select') return 'Seda teksti kastis ei ole.'
+        if (command.kind === 'typeText') return 'Ühtegi kasti ei ole valitud, kuhu kirjutada.'
         return 'Seda ei leitud.'
       case 'not_allowed':
         return 'Seda lehte ei saa Ütle juhtida.'
@@ -356,6 +533,7 @@ const ET: Strings = {
     replacing: (from, to) => `„${from}“ asemel „${to}“.`,
     deletingWord: 'Kustutan viimase sõna.',
     deletingSentence: 'Kustutan viimase lause.',
+    deletingNamed: (word) => `Kustutan sõna „${word}“.`,
     clearing: 'Kustutan kõik.',
     newLine: 'Uus rida.',
     mark: (mark) => ({ '.': 'Punkt.', ',': 'Koma.', '?': 'Küsimärk.', '!': 'Hüüumärk.' })[mark] ?? mark,
@@ -365,6 +543,12 @@ const ET: Strings = {
     sent: 'Saadetud.',
     notSent: (reason) => `Ei saatnud. ${reason}`,
     understood: (text) => `Sain aru: „${text}“.`,
+    notUnderstood: 'Ei saanud aru. Ütle teisiti, näiteks „ava youtube“ või „keri alla“.',
+    thinking: 'Mõtlen…',
+    modelOff: 'Vaba kõne mõistmine on väljas: serveril pole Anthropicu võtit. Käsud töötavad.',
+    noPlaceToWrite: 'Siin pole kuhu kirjutada. Ütle „kirjuta siia“ kasti peal, „näita numbreid“ ja number, või ava vestlus.',
+    catchingUp: 'Jõuan järele…',
+    lateCommand: (say) => `Hiljem: see oli käsk „${say}“, teksti ei muutnud.`,
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -453,6 +637,58 @@ const ET: Strings = {
     // The new-tab page (21.3), ext lane.
     newTabTitle: 'Uus vaheleht',
     newTabHint: 'Vaata paanile üks sekund, et see avada. Või ütle „näita numbreid“ ja number.',
+    hide: 'Peida',
+    show: 'Näita',
+    settings: 'Seaded',
+    thinking: 'Mõtlen',
+    examples: ['„ava youtube“', '„kirjuta Marile, et jõuan kell viis“', '„näita numbreid“ ja number', '„otsi kassivideod“', '„uus leht“', '„peida riba“'],
+    examplesLead: 'Ütle:',
+    optionsTitle: 'Ütle seaded',
+    optionsHelp: 'Vaata nupule üks sekund või ütle „näita numbreid“ ja siis numbri. Valik salvestub kohe.',
+    optionsHelpEn: 'Rest your eyes on a button for one second, or say “show numbers” and then the number. A choice is saved at once.',
+    barHeight: 'Riba kõrgus',
+    barHeightEn: 'Bar height',
+    barSmall: 'Väike',
+    barNormal: 'Tavaline',
+    barLarge: 'Suur',
+    micSide: 'Mikrofon',
+    micSideEn: 'Microphone side',
+    micLeft: 'Vasakul',
+    micRight: 'Paremal',
+    startHidden: 'Riba alguses',
+    startHiddenEn: 'Bar at start',
+    startShown: 'Nähtav',
+    startFolded: 'Peidetud',
+    advanced: 'Täpsemalt',
+    advancedEn: 'Advanced',
+    asrUrl: 'Kõnemudeli aadress',
+    utleUrl: 'Ütle arenduslehe aadress',
+    save: 'Salvesta',
+    saved: 'Salvestatud.',
+    notAnAddress: (value) => `See ei ole täielik aadress: ${value}`,
+    savedReload: 'Salvestatud. Uus kõnemudeli aadress hakkab kehtima pärast laienduse uuesti laadimist.',
+    gazeOff: 'Vaata siia ja räägi',
+    lagLine: (seconds) => `Kõne jääb maha ${seconds} s`,
+    listenMode: 'Kuulamine',
+    listenModeEn: 'Listening',
+    listenToggle: 'Lülitiga',
+    listenToggleEn: 'Toggle: a click or a one-second look turns it on and off',
+    listenGaze: 'Vaatamisega',
+    listenGazeEn: 'By looking: it listens while you look at the microphone',
+    gazeTarget: 'Vaatamise sihtmärk',
+    gazeTargetEn: 'Gaze target',
+    gazeMic: 'Mikrofon',
+    gazeMicEn: 'The microphone square',
+    gazeBar: 'Kogu riba',
+    gazeBarEn: 'The whole bar',
+    speechEngine: 'Kõnemudel',
+    speechEngineEn: 'Speech model',
+    engineLocal: 'Arvutis (TalTech)',
+    engineLocalEn: 'On this computer (TalTech)',
+    engineSoniox: 'Soniox (pilves)',
+    engineSonioxEn: 'Soniox (in the cloud)',
+    engineNote: 'Soniox vajab võtit arendusserveris (SONIOX_API_KEY). Valik hakkab kehtima järgmisel sisselülitamisel.',
+    engineNoteEn: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
   },
 }
 
@@ -520,6 +756,8 @@ const EN: Strings = {
       case 'reload':
         return 'Reloading the page.'
       case 'scroll':
+        if (command.mode === 'stop') return 'Scrolling stopped.'
+        if (command.mode === 'slow') return command.direction === 'up' ? 'Scrolling slowly up.' : 'Scrolling slowly down.'
         return { down: 'Scrolling down.', up: 'Scrolling up.', top: 'To the top of the page.', bottom: 'To the end of the page.' }[command.direction]
       case 'showHints':
         return 'Showing numbers.'
@@ -537,6 +775,30 @@ const EN: Strings = {
         return 'Writing.'
       case 'pressSend':
         return 'Sending.'
+      case 'readPage':
+        return 'Looking at the page.'
+      case 'clickItem':
+        return 'Clicking.'
+      case 'focusItem':
+        return 'Picking the field.'
+      case 'siteSearch':
+        return `Searching here: ${command.query}`
+      case 'media':
+        return MEDIA_EN[command.action]
+      case 'pressKey':
+        return KEY_EN[command.key]
+      case 'caret':
+        return 'Moving the caret.'
+      case 'select':
+        return 'Selecting text.'
+      case 'typeText':
+        return 'Typing here.'
+      case 'clearField':
+        return 'Clearing the field.'
+      case 'arm':
+        return command.on ? 'Writing here.' : 'Not writing here any more.'
+      case 'bar':
+        return command.show ? 'Showing the bar.' : 'Hiding the bar.'
     }
   },
   browserDone(command, title, hints) {
@@ -559,6 +821,15 @@ const EN: Strings = {
         return 'Numbers hidden.'
       case 'clickHint':
         return `Clicked ${command.number}.`
+      case 'clickItem':
+        return 'Clicked.'
+      case 'focusItem':
+      case 'arm':
+        return command.kind === 'arm' && !command.on ? 'Not writing here any more.' : 'Field picked. Speak.'
+      case 'siteSearch':
+        return `Searched: ${command.query}`
+      case 'clearField':
+        return 'The field is empty.'
       default:
         return EN.browserDoing(command)
     }
@@ -574,6 +845,12 @@ const EN: Strings = {
         if (command.kind === 'switchTab') return 'There is no such tab.'
         if (command.kind === 'openConversation') return `No conversation with ${command.name} was found.`
         if (command.kind === 'insertText') return 'No message box was found.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'That is no longer on the page. Say it again.'
+        if (command.kind === 'siteSearch') return 'This page has no search. Say "search google for".'
+        if (command.kind === 'media') return 'There is no video here.'
+        if (command.kind === 'clearField' || command.kind === 'arm') return 'No field is picked. Say "show numbers" and a number.'
+        if (command.kind === 'caret' || command.kind === 'select') return 'That text is not in the field.'
+        if (command.kind === 'typeText') return 'No field is picked to write in.'
         return 'That was not found.'
       case 'not_allowed':
         return 'Ütle cannot control this page.'
@@ -609,6 +886,7 @@ const EN: Strings = {
     replacing: (from, to) => `"${to}" instead of "${from}".`,
     deletingWord: 'Deleting the last word.',
     deletingSentence: 'Deleting the last sentence.',
+    deletingNamed: (word) => `Deleting the word "${word}".`,
     clearing: 'Deleting everything.',
     newLine: 'New line.',
     mark: (mark) => ({ '.': 'Full stop.', ',': 'Comma.', '?': 'Question mark.', '!': 'Exclamation mark.' })[mark] ?? mark,
@@ -618,6 +896,12 @@ const EN: Strings = {
     sent: 'Sent.',
     notSent: (reason) => `Not sent. ${reason}`,
     understood: (text) => `Understood: "${text}".`,
+    notUnderstood: 'I did not understand. Say it another way, for example "open youtube" or "scroll down".',
+    thinking: 'Thinking…',
+    modelOff: 'Free-form understanding is off: the server has no Anthropic key. Commands still work.',
+    noPlaceToWrite: 'There is nowhere to write here. Say "write here" on a field, "show numbers" and a number, or open a conversation.',
+    catchingUp: 'Catching up…',
+    lateCommand: (say) => `Later: "${say}" was a command, text left as is.`,
   },
 
   stillWorks: 'Yes, no and undo still work.',
@@ -706,6 +990,58 @@ const EN: Strings = {
     // The new-tab page (21.3), ext lane.
     newTabTitle: 'New tab',
     newTabHint: 'Rest your eyes on a tile for one second to open it. Or say “show numbers” and a number.',
+    hide: 'Hide',
+    show: 'Show',
+    settings: 'Settings',
+    thinking: 'Thinking',
+    examples: ['“open youtube”', '“write to Mari that I arrive at five”', '“show numbers” and a number', '“search cat videos”', '“new page”', '“hide the bar”'],
+    examplesLead: 'Say:',
+    optionsTitle: 'Ütle settings',
+    optionsHelp: 'Rest your eyes on a button for one second, or say “show numbers” and then the number. A choice is saved at once.',
+    optionsHelpEn: '',
+    barHeight: 'Bar height',
+    barHeightEn: '',
+    barSmall: 'Small',
+    barNormal: 'Normal',
+    barLarge: 'Large',
+    micSide: 'Microphone',
+    micSideEn: '',
+    micLeft: 'Left',
+    micRight: 'Right',
+    startHidden: 'Bar at start',
+    startHiddenEn: '',
+    startShown: 'Shown',
+    startFolded: 'Folded',
+    advanced: 'Advanced',
+    advancedEn: '',
+    asrUrl: 'Speech model address',
+    utleUrl: 'Address of the Ütle development page',
+    save: 'Save',
+    saved: 'Saved.',
+    notAnAddress: (value) => `Not a full address: ${value}`,
+    savedReload: 'Saved. Reload the extension for a new speech address to take effect.',
+    gazeOff: 'Look here and speak',
+    lagLine: (seconds) => `Speech is ${seconds} s behind`,
+    listenMode: 'Listening',
+    listenModeEn: '',
+    listenToggle: 'Toggle',
+    listenToggleEn: 'A click or a one-second look turns it on and off',
+    listenGaze: 'By looking',
+    listenGazeEn: 'It listens while you look at the microphone',
+    gazeTarget: 'Gaze target',
+    gazeTargetEn: '',
+    gazeMic: 'Microphone',
+    gazeMicEn: 'The microphone square',
+    gazeBar: 'The whole bar',
+    gazeBarEn: 'The whole bar',
+    speechEngine: 'Speech model',
+    speechEngineEn: '',
+    engineLocal: 'On this computer (TalTech)',
+    engineLocalEn: 'On this computer (TalTech)',
+    engineSoniox: 'Soniox (in the cloud)',
+    engineSonioxEn: 'Soniox (in the cloud)',
+    engineNote: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
+    engineNoteEn: '',
   },
 }
 

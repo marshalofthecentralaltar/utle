@@ -1,11 +1,12 @@
 // Injected into the page in front (isolated world) by background.ts. Defines globalThis.__utle
 // once; background.ts then calls __utle.run(command) and gets a BrowserResult back.
-// See docs/ARCHITECTURE.md 20.2 and 21.2.
+// See docs/ARCHITECTURE.md 20.2 and 21.2, and docs/plans/2026-10-05-m7-understanding.md (M7:
+// readPage, clickItem, focusItem, siteSearch, media, pressKey, clearField, arm, the armed box).
 
-import type { BoxState, BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
-import { SITES } from './sites.ts'
+import type { BoxState, BrowserCommand, BrowserResult, CaretTarget, MediaAction, MediaState, PageContext, PageItem, PressableKey, ScrollMode, SelectTarget } from '../../src/browser/protocol.ts'
+import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
-import { findMessageBox, isTextField, readText, visible } from './box.ts'
+import { armElement, armedElement, boxState, disarm, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
 
 /** What background.ts sends: a command plus which messaging site the page is. */
 export type PageCommand = BrowserCommand & { site: SiteName | null }
@@ -20,12 +21,34 @@ const ENTER_GRACE_MS = 500
 const SEND_TIMEOUT_MS = 2000
 /** On a site whose address does not change, how long a conversation may take to open. */
 const OPEN_TIMEOUT_MS = 3000
+/** clickItem on a chat row: how long the row itself gets to open the chat before its name is clicked. */
+const ROW_REACT_MS = 800
+/** siteSearch: how long a search field may take to appear. */
+const SEARCH_FIELD_MS = 1000
+/** siteSearch: how long Enter gets to navigate before the form is submitted. */
+const ENTER_NAVIGATE_MS = 600
+/** siteSearch on a chat list: how long the filtered list gets to settle on one row. */
+const FILTER_MS = 1500
+/** media on YouTube: how long a keyboard shortcut gets to change the player's state. */
+const SHORTCUT_MS = 250
+/** readPage lists at most this many items. */
+const MAX_ITEMS = 120
+/** Of them, at most this many below the fold. */
+const NEAR_MAX = 30
+/** How long a click gets to show a reaction before the next way of clicking is tried. */
+const REACT_MS = 400
+/** A clicked item below the fold is scrolled into view and gets this long to settle first. */
+const SCROLL_SETTLE_MS = 200
+/** A mutation burst of this many nodes counts as the page reacting to a click. */
+const BURST_NODES = 20
+/** readPage looks at this many elements at most for a pointer cursor. */
+const POINTER_SCAN = 2000
 /** How often the searches look again. */
 const POLL_MS = 150
 
 type PageResult = BrowserResult | { ok: true; href: string; settled?: boolean }
 
-const ok = (extra: { box?: BoxState; hints?: number } = {}): BrowserResult => ({ ok: true, ...extra })
+const ok = (extra: { box?: BoxState; hints?: number; page?: PageContext } = {}): BrowserResult => ({ ok: true, ...extra })
 const fail = (code: 'not_found' | 'failed', message: string): BrowserResult => ({ ok: false, code, message })
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -33,7 +56,7 @@ function siteOf(name: SiteName | null): Site | null {
   return name === null ? null : SITES[name]
 }
 
-// ---------- numbered labels ----------
+// ---------- the actionable elements (numbers and readPage) ----------
 
 const ACTIONABLE = [
   'a[href]',
@@ -51,17 +74,63 @@ const ACTIONABLE = [
   '[role="option"]',
   '[role="checkbox"]',
   '[role="textbox"]',
+  '[role="row"]',
+  '[role="listitem"]',
+  '[role="gridcell"]',
+  'summary',
+  'video',
+  '[tabindex="0"]',
   '[onclick]',
 ].join(', ')
 
+/** An open dialog: its items come first in readPage, marked "[dialog]". */
+const DIALOG = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]'
+/** A cookie banner is a dialog too: a fixed or absolute layer over a fifth of the viewport that says so. */
+const COOKIE_WORDS = /cookie|küpsis|nõustu|accept|consent/i
+/** A link to a video (YouTube's watch and shorts pages). */
+const VIDEO_HREF = /\/watch\?(.*&)?v=|\/shorts\//
+/** Where the page's own content is, against its header, sidebars and footer. */
+const MAIN = 'main, [role="main"], #content, #primary, article'
+const EDGES = 'header, nav, aside, footer, [role="banner"], [role="navigation"], [role="complementary"], [role="contentinfo"]'
+/** The headings and title-like elements an anchor without text takes its name from. */
+const TITLES = 'h1, h2, h3, h4, h5, h6, [id*="title" i], [class*="title" i]'
+/** An item's text is at most this long. */
+const NAME_MAX = 60
+/** The text of readPage's items below the fold begins with this. */
+const NEAR_PREFIX = '[allpool] '
+/** The text of readPage's items inside an open dialog begins with this. */
+const DIALOG_PREFIX = '[dialog] '
+
 let hintLayer: HTMLElement | null = null
+/** The visible elements of the last showHints, by number (1-based). */
 let hinted: HTMLElement[] = []
+/**
+ * The elements of the last readPage, by id (1-based). The visible ones first, in the order the
+ * numbers would have, then the ones within a viewport below the fold, then the page's markers
+ * (its heading, the open chat).
+ */
+let pageItems: HTMLElement[] = []
+/** The elements of pageItems that are below the fold: clickItem scrolls to them first. */
+let nearItems = new Set<HTMLElement>()
 
 interface Box {
   left: number
   top: number
   right: number
   bottom: number
+}
+
+/** One actionable element as the collector sees it. */
+interface Candidate {
+  el: HTMLElement
+  /** Its box; for a card merged from several links, the box of its topmost part. */
+  rect: DOMRect
+  /** Below the fold, within one viewport: present and not hidden, but not on screen. */
+  near: boolean
+  /** Inside an open dialog or a cookie banner. */
+  dialog: boolean
+  role: string
+  text: string
 }
 
 function sameBox(a: DOMRect, b: DOMRect): boolean {
@@ -72,21 +141,308 @@ function isDisabled(el: HTMLElement): boolean {
   return ('disabled' in el && (el as HTMLButtonElement).disabled === true) || el.getAttribute('aria-disabled') === 'true'
 }
 
-function collectActionable(): HTMLElement[] {
+function isOurs(el: Element): boolean {
+  return el.localName.startsWith('utle-')
+}
+
+function area(r: DOMRect): number {
+  return Math.max(r.width, 0) * Math.max(r.height, 0)
+}
+
+/** The element's box when it is within one viewport below the fold and not hidden by style, else null. */
+function nearRect(el: Element): DOMRect | null {
+  const r = el.getBoundingClientRect()
+  if (r.width < 1 || r.height < 1) return null
+  if (r.top < window.innerHeight || r.top >= window.innerHeight * 2) return null
+  if (r.right <= 0 || r.left >= window.innerWidth) return null
+  if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return null
+  return r
+}
+
+function roleOf(el: HTMLElement): string {
+  const role = el.getAttribute('role')
+  if (el instanceof HTMLMediaElement) return 'video'
+  if (el instanceof HTMLAnchorElement && (VIDEO_HREF.test(el.href) || el.querySelector('video') !== null)) return 'video'
+  if (el instanceof HTMLInputElement) return ['button', 'submit', 'reset', 'image', 'checkbox', 'radio'].includes(el.type) ? 'button' : 'field'
+  // A plain boolean: the type guard would otherwise narrow el to never below.
+  const typeable: boolean = isTextField(el)
+  if (typeable || el instanceof HTMLSelectElement || role === 'textbox') return 'field'
+  if (el instanceof HTMLAnchorElement || role === 'link') return 'link'
+  if (el instanceof HTMLButtonElement || role === 'button' || role === 'checkbox' || el.localName === 'summary') return 'button'
+  if (role === 'tab') return 'tab'
+  if (role === 'option' || role === 'menuitem') return 'option'
+  if (role === 'row' || role === 'listitem' || role === 'gridcell') return 'row'
+  return 'other'
+}
+
+// ----- accessible names -----
+
+/** Whitespace collapsed, trimmed. */
+function clean(text: string | null | undefined): string {
+  return String(text ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function cut(text: string): string {
+  return text.length > NAME_MAX ? text.slice(0, NAME_MAX).trimEnd() : text
+}
+
+function firstLine(text: string): string {
+  return clean(text.split('\n').find((line) => line.trim() !== '') ?? '')
+}
+
+/** The text of the elements aria-labelledby points to, joined. */
+function labelledBy(el: HTMLElement): string {
+  const ids = el.getAttribute('aria-labelledby')
+  if (!ids) return ''
+  return clean(
+    ids
+      .split(/\s+/)
+      .map((id) => (id === '' ? '' : document.getElementById(id)?.textContent ?? ''))
+      .join(' '),
+  )
+}
+
+/** A field's <label for> or wrapping <label>. */
+function labelOf(el: HTMLElement): string {
+  const own = 'labels' in el ? (el as HTMLInputElement).labels : null
+  if (own && own.length > 0) return clean([...own].map((label) => label.textContent).join(' '))
+  if (el.id !== '') {
+    const byFor = document.querySelector(`label[for="${CSS.escape(el.id)}"]`)
+    if (byFor) return clean(byFor.textContent)
+  }
+  const wrapping = el.closest('label')
+  return wrapping ? clean(wrapping.textContent) : ''
+}
+
+function isFieldLike(el: HTMLElement): boolean {
+  if (el instanceof HTMLInputElement) return !['button', 'submit', 'reset', 'image'].includes(el.type)
+  const typeable: boolean = isTextField(el)
+  return typeable || el instanceof HTMLSelectElement || el.getAttribute('role') === 'textbox'
+}
+
+/** An image's alt or an svg's title inside the element. */
+function pictureName(el: HTMLElement): string {
+  const alt = clean(el.querySelector('img[alt]')?.getAttribute('alt'))
+  if (alt) return alt
+  return clean(el.querySelector('svg title')?.textContent)
+}
+
+/** For a link without text: the heading or title in the card around it (a YouTube thumbnail's #video-title). */
+function cardTitle(el: HTMLElement): string {
+  let node = el.parentElement
+  for (let depth = 0; node && node !== document.body && depth < 6; depth++, node = node.parentElement) {
+    const titles = node.querySelectorAll<HTMLElement>(TITLES)
+    // Many titles means the ancestor is a list of cards, not the card.
+    if (titles.length === 0 || titles.length > 4) continue
+    for (const title of titles) {
+      const text = firstLine(title.innerText || title.textContent || '')
+      if (text) return text
+    }
+  }
+  return ''
+}
+
+/**
+ * The element's name the way an accessibility tree computes it: aria-labelledby, aria-label, a
+ * field's label, placeholder and title, an image's alt, the first line of visible text, title, an
+ * inner image's alt or svg title, and for a link without text the title of its card. On a
+ * messaging site a chat row's name is its title span (sites.ts).
+ */
+function nameOfItem(el: HTMLElement, site: Site | null): string {
+  if (site?.rowName && site.conversationRows && el.matches(site.conversationRows)) {
+    const titled = clean(el.querySelector(site.rowName)?.getAttribute('title'))
+    if (titled) return cut(titled)
+  }
+  const by = labelledBy(el)
+  if (by) return cut(by)
+  const own = el instanceof HTMLInputElement ? '' : firstLine(el.innerText || '')
+  const label = clean(el.getAttribute('aria-label'))
+  // A label that spells out the visible text ("Title by Channel 3 weeks ago 10 minutes"): the visible text.
+  if (label) return cut(own !== '' && label.startsWith(own) ? own : label)
+  if (isFieldLike(el)) {
+    const field = labelOf(el) || clean(el.getAttribute('placeholder')) || clean(el.getAttribute('title'))
+    if (field) return cut(field)
+  }
+  if (el instanceof HTMLImageElement) {
+    const alt = clean(el.alt)
+    if (alt) return cut(alt)
+  }
+  if (own) return cut(own)
+  if (el instanceof HTMLInputElement && clean(el.value)) return cut(el.value)
+  const title = clean(el.getAttribute('title'))
+  if (title) return cut(title)
+  const picture = pictureName(el)
+  if (picture) return cut(picture)
+  if (el instanceof HTMLAnchorElement || el.getAttribute('role') === 'link') {
+    const card = cardTitle(el)
+    if (card) return cut(card)
+  }
+  return cut(clean(el.getAttribute('placeholder')))
+}
+
+// ----- which elements -----
+
+/** Elements that only their pointer cursor marks as clickable: short text, no actionable element around or inside. */
+function pointerTargets(): HTMLElement[] {
   const found: HTMLElement[] = []
-  for (const el of document.querySelectorAll<HTMLElement>(ACTIONABLE)) {
-    if (isDisabled(el)) continue
+  const taken = new Set<HTMLElement>()
+  let scanned = 0
+  for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
+    if (++scanned > POINTER_SCAN) break
+    if (isOurs(el) || el.closest(ACTIONABLE) !== null) continue
+    const parent = el.parentElement
+    if (parent && taken.has(parent)) continue
+    if (getComputedStyle(el).cursor !== 'pointer') continue
+    const text = (el.innerText || '').trim()
+    if (text === '' || text.length > 60 || text.split('\n').length > 2) continue
+    if (el.querySelector(ACTIONABLE) !== null) continue
     if (!visible(el)) continue
     found.push(el)
+    taken.add(el)
   }
-  // A nested element with nearly the same box as an actionable ancestor is the same target.
-  return found.filter((el) => {
-    const box = el.getBoundingClientRect()
-    for (const other of found) {
-      if (other !== el && other.contains(el) && sameBox(other.getBoundingClientRect(), box)) return false
+  return found
+}
+
+/** True when the element is a cookie banner: fixed or absolute, layered, over a fifth of the viewport, and says so. */
+function isCookieBanner(el: Element): boolean {
+  const s = getComputedStyle(el)
+  if (s.position !== 'fixed' && s.position !== 'absolute') return false
+  if (s.position === 'absolute' && s.zIndex === 'auto') return false
+  const r = el.getBoundingClientRect()
+  if (r.height > window.innerHeight * 1.5) return false
+  if (area(r) < window.innerWidth * window.innerHeight * 0.2) return false
+  const text = el.textContent ?? ''
+  return text.length < 3000 && COOKIE_WORDS.test(text)
+}
+
+/** Whether the element is inside an open dialog or a cookie banner; memo is per collection. */
+function inDialog(el: Element, memo: Map<Element, boolean>): boolean {
+  const known = memo.get(el)
+  if (known !== undefined) return known
+  let result = false
+  if (el !== document.body && el !== document.documentElement) {
+    result = el.matches(DIALOG) || isCookieBanner(el) || (el.parentElement !== null && inDialog(el.parentElement, memo))
+  }
+  memo.set(el, result)
+  return result
+}
+
+/**
+ * The address a link goes to, for merging a card's links into one item: without the hash, and for
+ * a YouTube watch page just the video. A small container with a link inside shares the link's key.
+ */
+function hrefKey(el: HTMLElement, rect: DOMRect): string {
+  let a: HTMLAnchorElement | null = el instanceof HTMLAnchorElement ? el : null
+  if (!a && area(rect) < window.innerWidth * window.innerHeight * 0.25) a = el.querySelector('a[href]')
+  if (!a) return ''
+  const raw = a.getAttribute('href') ?? ''
+  if (raw === '' || raw.startsWith('#') || /^javascript:/i.test(raw)) return ''
+  try {
+    const u = new URL(a.href)
+    u.hash = ''
+    const v = u.searchParams.get('v')
+    if (u.pathname === '/watch' && v) return `${u.origin}/watch?v=${v}`
+    return u.href
+  } catch {
+    return ''
+  }
+}
+
+/** Items with text, in the main content, and larger come first when there are too many. */
+function rank(c: Candidate): number {
+  const inMain = c.el.closest(MAIN) !== null
+  const atEdge = c.el.closest(EDGES) !== null
+  return (c.text !== '' ? 4 : 0) + (inMain ? 2 : 0) + (atEdge ? 0 : 1) + Math.min(area(c.rect) / (window.innerWidth * window.innerHeight), 0.5)
+}
+
+/** Top to bottom in bands of 12 px, then left to right. */
+function byPosition(a: Candidate, b: Candidate): number {
+  const band = (r: DOMRect): number => Math.round(r.top / 12)
+  return band(a.rect) - band(b.rect) || a.rect.left - b.rect.left
+}
+
+/** The main video, when it is on screen: listed even under the player's overlays. */
+function mainVideo(): HTMLVideoElement | null {
+  const el = mediaElement()
+  return el instanceof HTMLVideoElement && onScreenRect(el) !== null ? el : null
+}
+
+/**
+ * Every actionable element: the visible ones (the numbers), and the ones within a viewport below
+ * the fold. Both lists are in reading order, with an open dialog's items first; links to the same
+ * address are one item (a video card's thumbnail, title and duration), named by the best of them.
+ */
+function collect(site: Site | null): { visible: Candidate[]; near: Candidate[] } {
+  const video = mainVideo()
+  const raw: Array<{ el: HTMLElement; rect: DOMRect; near: boolean }> = []
+  for (const el of document.querySelectorAll<HTMLElement>(ACTIONABLE)) {
+    if (isOurs(el) || isDisabled(el)) continue
+    const on = onScreenRect(el)
+    if (on && (el === video || hitTest(el, on))) raw.push({ el, rect: on, near: false })
+    else if (!on) {
+      const below = nearRect(el)
+      if (below) raw.push({ el, rect: below, near: true })
+    }
+  }
+  for (const el of pointerTargets()) raw.push({ el, rect: el.getBoundingClientRect(), near: false })
+  // A nested element with nearly the same box as an actionable ancestor is the same target; a cell
+  // or a plain element inside a listed row is part of the row.
+  const kept = raw.filter((c) => {
+    const role = roleOf(c.el)
+    for (const other of raw) {
+      if (other === c || !other.el.contains(c.el)) continue
+      if (sameBox(other.rect, c.rect)) return false
+      if (role === 'row' || role === 'other') return false
     }
     return true
   })
+  const memo = new Map<Element, boolean>()
+  const named: Candidate[] = kept.map((c) => ({
+    el: c.el,
+    rect: c.rect,
+    near: c.near,
+    dialog: inDialog(c.el, memo),
+    role: roleOf(c.el),
+    text: c.el === video ? 'praegune video' : nameOfItem(c.el, site),
+  }))
+  // One item per address: the member with the longest name, placed where the topmost member is.
+  const byHref = new Map<string, Candidate>()
+  const merged: Candidate[] = []
+  for (const c of named) {
+    const key = hrefKey(c.el, c.rect)
+    if (key === '') {
+      merged.push(c)
+      continue
+    }
+    const first = byHref.get(key)
+    if (!first) {
+      byHref.set(key, c)
+      merged.push(c)
+      continue
+    }
+    const better = (!c.near && first.near) || (c.near === first.near && c.text.length > first.text.length)
+    if (better) {
+      first.el = c.el
+      first.text = c.text
+      first.role = first.role === 'video' || c.role === 'video' ? 'video' : c.role
+      first.near = c.near
+    }
+    if (c.rect.top < first.rect.top) first.rect = c.rect
+  }
+  let visible = merged.filter((c) => !c.near)
+  if (visible.length > MAX_ITEMS) {
+    const dialogs = visible.filter((c) => c.dialog)
+    const rest = visible.filter((c) => !c.dialog).sort((a, b) => rank(b) - rank(a))
+    visible = [...dialogs, ...rest.slice(0, Math.max(MAX_ITEMS - dialogs.length, 0))]
+  }
+  visible.sort((a, b) => Number(b.dialog) - Number(a.dialog) || byPosition(a, b))
+  const near = merged
+    .filter((c) => c.near)
+    .sort(byPosition)
+    .slice(0, Math.max(Math.min(NEAR_MAX, MAX_ITEMS - visible.length), 0))
+  return { visible, near }
 }
 
 function hideHints(): void {
@@ -95,9 +451,9 @@ function hideHints(): void {
   hinted = []
 }
 
-function showHints(): BrowserResult {
+function showHints(site: Site | null): BrowserResult {
   hideHints()
-  const elements = collectActionable()
+  const elements = collect(site).visible.map((c) => c.el)
   const host = document.createElement('utle-hints')
   host.style.cssText = 'all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none;'
   const root = host.attachShadow({ mode: 'closed' })
@@ -186,6 +542,13 @@ function caretToEnd(el: HTMLElement): void {
   selection.addRange(range)
 }
 
+/** Focuses a text field the user picked and makes it the dictation target. */
+function pick(el: HTMLElement): void {
+  caretToEnd(el)
+  armElement(el)
+}
+
+/** The pointer sequence and a click, as a mouse would send them. */
 function activate(el: HTMLElement): void {
   const r = el.getBoundingClientRect()
   const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 }
@@ -196,46 +559,314 @@ function activate(el: HTMLElement): void {
   el.click()
 }
 
-function clickHint(number: number): BrowserResult {
+function keyOn(el: Element, key: string): void {
+  const code = key === ' ' ? 'Space' : key
+  const keyCode = key === 'Enter' ? 13 : key === ' ' ? 32 : key === 'Escape' ? 27 : 0
+  const init = { key, code, keyCode, which: keyCode, charCode: 0, bubbles: true, cancelable: true, composed: true }
+  el.dispatchEvent(new KeyboardEvent('keydown', init))
+  if (key === 'Enter') el.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: 13 }))
+  el.dispatchEvent(new KeyboardEvent('keyup', init))
+}
+
+const STATE_ATTRIBUTES = ['aria-pressed', 'aria-expanded', 'aria-selected', 'aria-checked', 'class']
+
+/**
+ * Watches for any sign that the page reacted to an activation of el: the address or the title
+ * changed, the focus moved, a dialog opened or closed, the element's state attributes changed,
+ * the element or its surroundings mutated, a burst of nodes changed, or the element went away.
+ */
+function watchReaction(el: HTMLElement): { seen(): boolean; stop(): void } {
+  const url = location.href
+  const title = document.title
+  const focus = document.activeElement
+  const dialogs = document.querySelectorAll(DIALOG).length
+  const states = STATE_ATTRIBUTES.map((name) => el.getAttribute(name))
+  const above = new Set<Node>()
+  for (let node = el.parentElement, depth = 0; node && depth < 3; node = node.parentElement, depth++) above.add(node)
+  let burst = 0
+  let touched = false
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      burst += record.addedNodes.length + record.removedNodes.length
+      if (!touched && (record.target === el || el.contains(record.target) || above.has(record.target))) touched = true
+    }
+  })
+  observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true })
+  return {
+    seen: () =>
+      leaving ||
+      touched ||
+      burst >= BURST_NODES ||
+      !el.isConnected ||
+      location.href !== url ||
+      document.title !== title ||
+      document.activeElement !== focus ||
+      document.querySelectorAll(DIALOG).length !== dialogs ||
+      STATE_ATTRIBUTES.some((name, i) => el.getAttribute(name) !== states[i]),
+    stop: () => observer.disconnect(),
+  }
+}
+
+/**
+ * Clicks el and makes sure something happened: the pointer sequence and click first; when the page
+ * shows no reaction within REACT_MS, focus and Enter, then Space (elements that listen to keys
+ * only); when still nothing and el is a link, the address itself.
+ */
+async function press(el: HTMLElement): Promise<void> {
+  const reacted = async (act: () => void): Promise<boolean> => {
+    const watch = watchReaction(el)
+    act()
+    const seen = await waitFor(() => (watch.seen() ? true : null), REACT_MS)
+    watch.stop()
+    return seen === true || !el.isConnected
+  }
+  if (await reacted(() => activate(el))) return
+  el.focus()
+  if (await reacted(() => keyOn(el, 'Enter'))) return
+  if (await reacted(() => keyOn(el, ' '))) return
+  if (!(el instanceof HTMLAnchorElement)) return
+  const raw = el.getAttribute('href') ?? ''
+  if (raw === '' || raw.startsWith('#') || /^javascript:/i.test(raw)) return
+  if (el.target !== '' && el.target !== '_self') return
+  location.assign(el.href)
+}
+
+async function clickHint(number: number): Promise<BrowserResult> {
   const el = hinted[number - 1]
   if (!el) {
     return fail('not_found', hinted.length === 0 ? 'No numbers are showing. Say "numbers" first.' : `There is no number ${number}. The numbers go up to ${hinted.length}.`)
   }
   hideHints()
   if (!el.isConnected) return fail('not_found', `Number ${number} is no longer on the page.`)
-  if (isTextField(el)) caretToEnd(el)
-  else activate(el)
+  if (isTextField(el)) pick(el)
+  else await press(el)
   return ok()
+}
+
+// ---------- readPage, clickItem, focusItem ----------
+
+/** The largest video on screen, else a playing audio, else any audio. */
+function mediaElement(): HTMLMediaElement | null {
+  let best: HTMLMediaElement | null = null
+  let bestArea = 0
+  for (const video of document.querySelectorAll<HTMLVideoElement>('video')) {
+    const r = onScreenRect(video)
+    if (!r) continue
+    const area = (Math.min(r.right, window.innerWidth) - Math.max(r.left, 0)) * (Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0))
+    if (area > bestArea) {
+      best = video
+      bestArea = area
+    }
+  }
+  if (best) return best
+  const audios = [...document.querySelectorAll<HTMLAudioElement>('audio')]
+  return audios.find((a) => !a.paused) ?? audios[0] ?? null
+}
+
+function mediaState(el: HTMLMediaElement | null): MediaState | null {
+  if (!el) return null
+  return { playing: !el.paused, muted: el.muted || el.volume === 0, volume: el.volume, fullscreen: document.fullscreenElement !== null }
+}
+
+/** The page's own markers for the model: its heading, and on a messaging site the open chat's name. */
+function markers(site: Site | null): Array<{ el: HTMLElement; text: string }> {
+  const found: Array<{ el: HTMLElement; text: string }> = []
+  for (const h1 of document.querySelectorAll<HTMLElement>('h1')) {
+    if (isOurs(h1)) continue
+    const text = firstLine(h1.innerText || h1.textContent || '')
+    if (text === '' || text.length > 100) continue
+    found.push({ el: h1, text: `[pealkiri] ${cut(text)}` })
+    break
+  }
+  if (site?.openChatName) {
+    const header = document.querySelector<HTMLElement>(site.openChatName)
+    const name = header ? clean(header.getAttribute('title') || header.textContent) : ''
+    if (header && name !== '' && onScreenRect(header) !== null) found.push({ el: header, text: `[vestlus] ${cut(name)}` })
+  }
+  return found
+}
+
+function readPage(site: Site | null): BrowserResult {
+  const { visible, near } = collect(site)
+  const extra = markers(site)
+  pageItems = [...visible.map((c) => c.el), ...near.map((c) => c.el), ...extra.map((m) => m.el)]
+  nearItems = new Set(near.map((c) => c.el))
+  const items: PageItem[] = []
+  for (const [i, c] of [...visible, ...near].entries()) {
+    if (c.text === '' && c.role !== 'field' && c.role !== 'video') continue
+    const text = c.near ? `${NEAR_PREFIX}${c.text}` : c.dialog ? `${DIALOG_PREFIX}${c.text}` : c.text
+    items.push({ id: i + 1, role: c.role, text })
+  }
+  for (const [i, m] of extra.entries()) items.push({ id: visible.length + near.length + i + 1, role: 'other', text: m.text })
+  const page: PageContext = {
+    url: location.href,
+    title: document.title,
+    box: boxState(findMessageBox(site), site),
+    items,
+    media: mediaState(mediaElement()),
+    hints: hintLayer !== null,
+  }
+  return ok({ page })
+}
+
+function itemOf(id: number): HTMLElement | BrowserResult {
+  const el = pageItems[id - 1]
+  if (!el) return fail('not_found', pageItems.length === 0 ? 'The page has not been read yet.' : `There is no item ${id}. The items go up to ${pageItems.length}.`)
+  if (!el.isConnected) return fail('not_found', `Item ${id} is no longer on the page.`)
+  return el
+}
+
+/** An item below the fold is scrolled to the middle of the screen before it is used. */
+async function bringIntoView(el: HTMLElement): Promise<void> {
+  if (!nearItems.has(el) && onScreenRect(el) !== null) return
+  el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
+  await sleep(SCROLL_SETTLE_MS)
+}
+
+async function clickItem(id: number, site: Site | null): Promise<PageResult> {
+  const el = itemOf(id)
+  if (!(el instanceof HTMLElement)) return el
+  hideHints()
+  await bringIntoView(el)
+  const typeable: boolean = isTextField(el)
+  if (typeable) {
+    pick(el)
+    return ok({ box: boxState(el, site) })
+  }
+  if (site?.conversationRows && el.matches(site.conversationRows)) return clickRow(el, site)
+  await press(el)
+  return ok()
+}
+
+async function focusItem(id: number, site: Site | null): Promise<BrowserResult> {
+  const el = itemOf(id)
+  if (!(el instanceof HTMLElement)) return el
+  const typeable: boolean = isTextField(el)
+  const field = typeable ? el : [...el.querySelectorAll<HTMLElement>('input, textarea, [contenteditable], [role="textbox"]')].find((x) => isTextField(x)) ?? null
+  if (!field) return fail('not_found', `Item ${id} is not a text field.`)
+  hideHints()
+  await bringIntoView(field)
+  pick(field)
+  return ok({ box: boxState(field, site) })
 }
 
 // ---------- scroll ----------
 
-function scrollTarget(): Element {
+/** The scrollable containers under the middle of the screen, largest first, then the document. */
+function scrollables(): Element[] {
+  const found: Element[] = []
   let el = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
   while (el && el !== document.body && el !== document.documentElement) {
     const s = getComputedStyle(el)
-    if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 4) return el
+    if ((s.overflowY === 'auto' || s.overflowY === 'scroll' || s.overflowY === 'overlay') && el.scrollHeight > el.clientHeight + 4) found.push(el)
     el = el.parentElement
   }
-  return document.scrollingElement ?? document.documentElement
+  found.sort((a, b) => area(b.getBoundingClientRect()) - area(a.getBoundingClientRect()))
+  found.push(document.scrollingElement ?? document.documentElement)
+  return found
 }
 
-function scroll(direction: string): BrowserResult {
-  const el = scrollTarget()
-  const page = Math.round(el.clientHeight * 0.8) || Math.round(window.innerHeight * 0.8)
-  if (direction === 'down') el.scrollBy({ top: page, behavior: 'instant' })
-  else if (direction === 'up') el.scrollBy({ top: -page, behavior: 'instant' })
-  else if (direction === 'top') el.scrollTo({ top: 0, behavior: 'instant' })
-  else if (direction === 'bottom') el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
-  else return fail('failed', `Unknown scroll direction "${direction}".`)
+// Round 3 (docs/ARCHITECTURE.md 23.2): a page, a little, slowly, and stop.
+/** A page scroll moves this share of the view, a little scroll this. */
+const PAGE_SCROLL_SHARE = 0.8
+const LITTLE_SCROLL_SHARE = 1 / 3
+/** A smooth scroll gets this long to settle before the command answers. */
+const SCROLL_SETTLE_MAX_MS = 600
+/** The settle check looks this often; two unchanged looks after a move count as settled. */
+const SCROLL_SETTLE_POLL_MS = 50
+/** A slow scroll moves at this speed until it is stopped. */
+const SLOW_SCROLL_PX_PER_S = 90
+
+/** The slow scroll under way: its container and its next animation frame. Null when nothing moves. */
+let slowScroll: { el: Element; frame: number } | null = null
+
+/** Ends the slow scroll, if one is under way. Every other scroll, a stop and a navigation call it. */
+function stopSlowScroll(): void {
+  if (slowScroll === null) return
+  cancelAnimationFrame(slowScroll.frame)
+  slowScroll = null
+}
+
+function canScroll(el: Element, direction: string): boolean {
+  if (direction === 'up' || direction === 'top') return el.scrollTop > 0
+  return el.scrollTop < el.scrollHeight - el.clientHeight - 1
+}
+
+function nothingScrolled(direction: string): BrowserResult {
+  return fail('failed', direction === 'down' || direction === 'bottom' ? 'Nothing scrolled: the page is already at the end, or it does not scroll.' : 'Nothing scrolled: the page is already at the top.')
+}
+
+/** Starts a steady scroll on the first container that can move. It ends on stop, on another scroll, on a navigation, or at the end of the container. */
+function startSlowScroll(direction: 'up' | 'down'): BrowserResult {
+  const el = scrollables().find((e) => canScroll(e, direction))
+  if (el === undefined) return nothingScrolled(direction)
+  const sign = direction === 'down' ? 1 : -1
+  let last = performance.now()
+  let owed = 0
+  const step = (now: number): void => {
+    if (slowScroll === null || slowScroll.el !== el) return
+    owed += ((now - last) / 1000) * SLOW_SCROLL_PX_PER_S
+    last = now
+    const whole = Math.floor(owed)
+    if (whole > 0) {
+      owed -= whole
+      const before = el.scrollTop
+      el.scrollBy({ top: sign * whole, behavior: 'instant' })
+      if (el.scrollTop === before) {
+        slowScroll = null
+        return
+      }
+    }
+    slowScroll.frame = requestAnimationFrame(step)
+  }
+  slowScroll = { el, frame: requestAnimationFrame(step) }
   return ok()
 }
 
-// ---------- the message box ----------
-
-function boxState(el: HTMLElement | null): BoxState {
-  return el === null ? { present: false, text: '' } : { present: true, text: readText(el) }
+/** Waits for a smooth scroll of el to settle: unchanged for two looks after it moved, or the cap. True when it moved. */
+async function scrollSettled(el: Element, before: number): Promise<boolean> {
+  const started = performance.now()
+  let last = el.scrollTop
+  let still = 0
+  while (performance.now() - started < SCROLL_SETTLE_MAX_MS) {
+    await sleep(SCROLL_SETTLE_POLL_MS)
+    const now = el.scrollTop
+    if (now === last && now !== before) {
+      if (++still >= 2) break
+    } else {
+      still = 0
+      last = now
+    }
+  }
+  return el.scrollTop !== before
 }
+
+/**
+ * Scrolls the first container that can move; failed when none can, so the model can try something
+ * else. page (the default) and little scroll smoothly and answer once the scroll has settled; slow
+ * starts a steady scroll and answers at once; stop ends it (ok even when nothing was moving).
+ */
+async function scroll(direction: string, mode: ScrollMode = 'page'): Promise<BrowserResult> {
+  stopSlowScroll()
+  if (mode === 'stop') return ok()
+  if (!['down', 'up', 'top', 'bottom'].includes(direction)) return fail('failed', `Unknown scroll direction "${direction}".`)
+  if (mode === 'slow' && (direction === 'up' || direction === 'down')) return startSlowScroll(direction)
+  const share = mode === 'little' ? LITTLE_SCROLL_SHARE : PAGE_SCROLL_SHARE
+  for (const el of scrollables()) {
+    if (!canScroll(el, direction)) continue
+    const before = el.scrollTop
+    const amount = Math.round((el.clientHeight || window.innerHeight) * share)
+    if (direction === 'down') el.scrollBy({ top: amount, behavior: 'smooth' })
+    else if (direction === 'up') el.scrollBy({ top: -amount, behavior: 'smooth' })
+    else if (direction === 'top') el.scrollTo({ top: 0, behavior: 'instant' })
+    else el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })
+    const moved = direction === 'top' || direction === 'bottom' ? el.scrollTop !== before : await scrollSettled(el, before)
+    if (moved) return ok()
+  }
+  return nothingScrolled(direction)
+}
+
+// ---------- the message box ----------
 
 function nativeSetValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const proto = el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype
@@ -320,6 +951,23 @@ async function selectAllIn(el: HTMLElement): Promise<void> {
   await sleep(30)
 }
 
+/** Selects everything in the field and deletes it, with fallbacks for editors that refuse execCommand. */
+async function emptyField(el: HTMLElement): Promise<void> {
+  await selectAllIn(el)
+  if (readText(el) === '') return
+  const deleted = exec('delete')
+  if (deleted && readText(el) !== '') await sleep(30)
+  if (!deleted || readText(el) !== '') {
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      nativeSetValue(el, '')
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }))
+    } else {
+      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: 'deleteContentBackward' }))
+    }
+  }
+  await sleep(30)
+}
+
 /** Puts the caret at the very end of el. True when it had to move (an editor needs a moment to see that). */
 function caretAtEnd(el: HTMLElement): boolean {
   el.focus()
@@ -359,22 +1007,9 @@ async function setText(text: string, site: Site | null): Promise<BrowserResult> 
     if (caretAtEnd(el)) await sleep(30)
     if (tail !== '') await typeAtSelection(el, tail)
     await sleep(30)
-    if (readText(el) === text) return ok({ box: boxState(el) })
+    if (readText(el) === text) return ok({ box: boxState(el, site) })
   }
-  await selectAllIn(el)
-  if (readText(el) !== '') {
-    const deleted = exec('delete')
-    if (deleted && readText(el) !== '') await sleep(30)
-    if (!deleted || readText(el) !== '') {
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        nativeSetValue(el, '')
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }))
-      } else {
-        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: 'deleteContentBackward' }))
-      }
-    }
-    await sleep(30)
-  }
+  await emptyField(el)
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   for (const [i, line] of lines.entries()) {
     const target = el.isConnected ? el : findMessageBox(site) ?? el
@@ -383,7 +1018,7 @@ async function setText(text: string, site: Site | null): Promise<BrowserResult> 
   }
   // Let the page's editor commit its state before reading it back.
   await sleep(60)
-  return ok({ box: boxState(el.isConnected ? el : findMessageBox(site)) })
+  return ok({ box: boxState(el.isConnected ? el : findMessageBox(site), site) })
 }
 
 function pressEnter(el: HTMLElement): void {
@@ -442,8 +1077,849 @@ async function pressSend(site: Site | null): Promise<BrowserResult> {
   if (!el) return fail('not_found', 'There is no message box on this page.')
   const text = readText(el)
   if (text.trim() === '') return fail('failed', 'The message box is empty.')
-  if (await send(el, text, site)) return ok({ box: boxState(el.isConnected ? el : findMessageBox(site)) })
+  if (await send(el, text, site)) return ok({ box: boxState(el.isConnected ? el : findMessageBox(site), site) })
   return fail('failed', 'The text is still in the box: it was not sent.')
+}
+
+// ---------- clearField, arm, pressKey ----------
+
+/** The user's armed field, else the focused text field, else the site's composer. */
+function fieldToClear(site: Site | null): HTMLElement | null {
+  const chosen = armedElement()
+  if (chosen && isTextField(chosen)) return chosen
+  const active = focusedTextField()
+  if (active) return active
+  const box = findMessageBox(site)
+  return box && boxState(box, site).armed ? box : null
+}
+
+async function clearField(site: Site | null): Promise<BrowserResult> {
+  const el = fieldToClear(site)
+  if (!el) return fail('not_found', 'There is no field to clear.')
+  await emptyField(el)
+  await sleep(60)
+  return ok({ box: boxState(el, site) })
+}
+
+function arm(on: boolean, site: Site | null): BrowserResult {
+  if (!on) {
+    disarm()
+    return ok({ box: boxState(findMessageBox(site), site) })
+  }
+  const el = focusedTextField()
+  if (!el) return fail('not_found', 'Nothing that takes text is focused. Say "numbers" and pick a field.')
+  armElement(el)
+  return ok({ box: boxState(el, site) })
+}
+
+const KEY_CODES: Record<PressableKey, number> = {
+  Escape: 27, Enter: 13, Tab: 9, Backspace: 8, Delete: 46, ArrowLeft: 37, ArrowRight: 39, ArrowUp: 38, ArrowDown: 40, Home: 36, End: 35, Undo: 90, Redo: 89, SelectAll: 65,
+}
+
+/** Keys that leave the field: a dialog closes, a form submits, the focus moves. The rest edit inside it. */
+const LEAVING_KEYS = new Set<PressableKey>(['Escape', 'Enter', 'Tab'])
+
+/** A key event as the page sees it. ctrl, shift: the modifiers (Undo is Ctrl+Z, a word step is Ctrl+Arrow). */
+function dispatchKey(target: Element, key: PressableKey | string, modifiers: { ctrl?: boolean; shift?: boolean } = {}): void {
+  const named = key === 'Undo' ? 'z' : key === 'Redo' ? 'y' : key === 'SelectAll' ? 'a' : key
+  const code = KEY_CODES[key as PressableKey] ?? (named.length === 1 ? named.toUpperCase().charCodeAt(0) : 0)
+  const ctrl = modifiers.ctrl === true || key === 'Undo' || key === 'Redo' || key === 'SelectAll'
+  const codeName = named.length === 1 ? (named === ' ' ? 'Space' : `Key${named.toUpperCase()}`) : named
+  const init = { key: named, code: codeName, keyCode: code, which: code, charCode: 0, ctrlKey: ctrl, shiftKey: modifiers.shift === true, bubbles: true, cancelable: true, composed: true }
+  target.dispatchEvent(new KeyboardEvent('keydown', init))
+  if (key === 'Enter') target.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: 13 }))
+  target.dispatchEvent(new KeyboardEvent('keyup', init))
+}
+
+function deepActive(): Element {
+  let target: Element = document.activeElement ?? document.body
+  while (target.shadowRoot?.activeElement) target = target.shadowRoot.activeElement
+  return target
+}
+
+/**
+ * A key on the focused element, times times (round 3, the edit lane). Inside a text field the editing
+ * keys act through the field's text (the arrows, Home and End move the caret; Backspace and Delete,
+ * Undo, Redo and SelectAll go through execCommand with fallbacks), because a synthetic key event
+ * moves nothing by itself. Escape, Enter and Tab are sent as keys (Tab moves the focus ourselves).
+ * On Google Docs every key goes to the editor's own keyboard target. Answers with the box where known.
+ */
+async function pressKey(key: PressableKey, times = 1, site: Site | null): Promise<BrowserResult> {
+  const count = Math.max(1, Math.min(times, 50))
+  const docs = docsEditor()
+  if (docs === 'missing') return fail('failed', DOCS_MISSING)
+  let target: Element = docs ?? deepActive()
+  if (docs === null && !LEAVING_KEYS.has(key) && !isTextField(target)) {
+    const field = editTarget(site)
+    if (field) {
+      field.focus()
+      target = field
+    }
+  }
+  for (let i = 0; i < count; i++) {
+    if (docs !== null) {
+      dispatchKey(target, key)
+      continue
+    }
+    if (target instanceof HTMLElement && isTextField(target) && !LEAVING_KEYS.has(key)) {
+      await editKey(target, key)
+      continue
+    }
+    if (key === 'Tab') {
+      target = focusNext(target) ?? target
+      continue
+    }
+    dispatchKey(target, key)
+  }
+  if (key === 'Escape' && target instanceof HTMLElement && isTextField(target)) target.blur()
+  await sleep(30)
+  if (docs !== null) return ok()
+  const box = key === 'Tab' ? focusedTextField() : editTarget(site)
+  return ok({ box: boxState(box ?? findMessageBox(site), site) })
+}
+
+/** One editing key inside a text field. */
+async function editKey(el: HTMLElement, key: PressableKey): Promise<void> {
+  switch (key) {
+    case 'ArrowLeft':
+    case 'ArrowRight':
+    case 'ArrowUp':
+    case 'ArrowDown':
+    case 'Home':
+    case 'End': {
+      const model = modelOf(el)
+      const span = spanOf(el, model)
+      const pos = moveBy(model.text, span, key)
+      await setSpan(el, model, { start: pos, end: pos })
+      return
+    }
+    case 'SelectAll':
+      await selectAllIn(el)
+      return
+    case 'Backspace':
+    case 'Delete':
+      await deleteAt(el, key === 'Backspace')
+      return
+    case 'Undo':
+    case 'Redo': {
+      const command = key === 'Undo' ? 'undo' : 'redo'
+      const before = readText(el)
+      if (exec(command)) {
+        await sleep(30)
+        if (readText(el) !== before) return
+      }
+      dispatchKey(el, key)
+      await sleep(30)
+      return
+    }
+    default:
+      dispatchKey(el, key)
+  }
+}
+
+/** Backspace or Delete: the selection, else one character, through execCommand, else through the text itself. */
+async function deleteAt(el: HTMLElement, backward: boolean): Promise<void> {
+  const before = readText(el)
+  if (before === '') return
+  const model = modelOf(el)
+  const span = spanOf(el, model)
+  if (span.start === span.end && (backward ? span.start === 0 : span.end >= model.text.length)) return
+  if (exec(backward ? 'delete' : 'forwardDelete')) {
+    await sleep(20)
+    if (readText(el) !== before) return
+  }
+  const cut: Span = span.start !== span.end ? span : backward ? { start: span.start - 1, end: span.end } : { start: span.start, end: span.end + 1 }
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    nativeSetValue(el, el.value.slice(0, cut.start) + el.value.slice(cut.end))
+    el.setSelectionRange(cut.start, cut.start)
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: backward ? 'deleteContentBackward' : 'deleteContentForward' }))
+    return
+  }
+  // Rich editors (Lexical, Draft) take the beforeinput a key would produce; a plain contenteditable gets the range cut.
+  await setSpan(el, model, cut)
+  const event = new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: backward ? 'deleteContentBackward' : 'deleteContentForward' })
+  if (el.dispatchEvent(event)) {
+    const selection = window.getSelection()
+    if (selection && selection.rangeCount > 0) selection.getRangeAt(0).deleteContents()
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: backward ? 'deleteContentBackward' : 'deleteContentForward' }))
+  }
+  await sleep(30)
+}
+
+const FOCUSABLE = 'a[href], button, input, textarea, select, [tabindex], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"]'
+
+/** Tab: the next focusable element in page order (a synthetic Tab moves nothing). A text field reached this way is armed, as a real Tab arms it. */
+function focusNext(from: Element): Element | null {
+  const all = [...document.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (el) => !isOurs(el) && el.tabIndex >= 0 && !isDisabled(el) && onScreenRect(el) !== null && el.closest('utle-strip, utle-hints') === null,
+  )
+  if (all.length === 0) return null
+  const at = all.indexOf(from as HTMLElement)
+  const next = all[(at + 1) % all.length]
+  if (!next) return null
+  next.focus()
+  if (isTextField(next)) {
+    caretToEnd(next)
+    armElement(next)
+  }
+  return next
+}
+
+// ---------- editing inside the field (round 3, the edit lane) ----------
+//
+// Every editing command works on one text model of the field: a value for input and textarea, and for
+// a contenteditable the text of its text nodes in order with a line break for <br> and between blocks.
+// Character offsets in that text map to DOM positions and back, so the caret, a selection and typing
+// at the caret behave the same in both kinds of field. Google Docs has no text we can read (its editor
+// is a canvas); there the keys and typing go to its keyboard target, and the rest answers failed.
+
+/** Character offsets in the field's text: start <= end. */
+interface Span {
+  start: number
+  end: number
+}
+
+interface TextModel {
+  text: string
+  /** Contenteditable only: the text nodes in order, each with its offset in text. */
+  segments: { node: Text; start: number }[]
+}
+
+const BLOCK_TAGS = new Set(['DIV', 'P', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'TR', 'SECTION', 'ARTICLE', 'DD', 'DT'])
+
+function modelOf(el: HTMLElement): TextModel {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return { text: el.value, segments: [] }
+  const segments: TextModel['segments'] = []
+  let text = ''
+  const walk = (node: Node): void => {
+    if (node instanceof Text) {
+      segments.push({ node, start: text.length })
+      text += node.data
+      return
+    }
+    if (!(node instanceof Element)) return
+    if (node instanceof HTMLBRElement) {
+      text += '\n'
+      return
+    }
+    const block = BLOCK_TAGS.has(node.tagName)
+    if (block && text !== '' && !text.endsWith('\n')) text += '\n'
+    for (const child of node.childNodes) walk(child)
+    if (block && text !== '' && !text.endsWith('\n')) text += '\n'
+  }
+  for (const child of el.childNodes) walk(child)
+  // Trailing breaks (an editor's final <br>) are not positions he can mean.
+  return { text: text.replace(/\n+$/, ''), segments }
+}
+
+/** The DOM position of a character offset: inside the text node that holds it, else the start of the next one. */
+function domPosition(el: HTMLElement, model: TextModel, offset: number): { node: Node; offset: number } {
+  for (const seg of model.segments) {
+    const end = seg.start + seg.node.data.length
+    if (offset >= seg.start && offset <= end) return { node: seg.node, offset: offset - seg.start }
+  }
+  const next = model.segments.find((seg) => seg.start >= offset)
+  if (next) return { node: next.node, offset: 0 }
+  const last = model.segments.at(-1)
+  if (last) return { node: last.node, offset: last.node.data.length }
+  return { node: el, offset: 0 }
+}
+
+/** The character offset of a DOM position: in its text node, else the first text node after it. */
+function offsetOf(model: TextModel, node: Node, offset: number): number {
+  for (const seg of model.segments) if (seg.node === node) return seg.start + offset
+  try {
+    const point = document.createRange()
+    point.setStart(node, offset)
+    point.collapse(true)
+    for (const seg of model.segments) if (point.comparePoint(seg.node, 0) === 1) return seg.start
+  } catch {
+    // a node outside the document: the end
+  }
+  return model.text.length
+}
+
+/** The field's selection as offsets; the end of the text when the selection is elsewhere. */
+function spanOf(el: HTMLElement, model: TextModel): Span {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const start = el.selectionStart ?? model.text.length
+    const end = el.selectionEnd ?? start
+    return { start: Math.min(start, end), end: Math.max(start, end) }
+  }
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || !selection.anchorNode || !selection.focusNode || !el.contains(selection.anchorNode) || !el.contains(selection.focusNode)) {
+    return { start: model.text.length, end: model.text.length }
+  }
+  const a = offsetOf(model, selection.anchorNode, selection.anchorOffset)
+  const b = offsetOf(model, selection.focusNode, selection.focusOffset)
+  return { start: Math.min(a, b), end: Math.max(a, b) }
+}
+
+/** Selects the offsets in the field (a collapsed span is the caret). Editors read the selection on a task, so a moment is given. */
+async function setSpan(el: HTMLElement, model: TextModel, span: Span): Promise<void> {
+  el.focus()
+  const start = Math.max(0, Math.min(span.start, model.text.length))
+  const end = Math.max(start, Math.min(span.end, model.text.length))
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    try {
+      el.setSelectionRange(start, end)
+    } catch {
+      // number and email inputs have no selection range
+    }
+    return
+  }
+  const selection = window.getSelection()
+  if (!selection) return
+  const range = document.createRange()
+  const from = domPosition(el, model, start)
+  const to = domPosition(el, model, end)
+  range.setStart(from.node, from.offset)
+  range.setEnd(to.node, to.offset)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  await sleep(30)
+}
+
+// The text rules: pure functions of the text and an offset.
+
+const WORD_CHAR = /[\p{L}\p{N}'’-]/u
+const isWordChar = (ch: string | undefined): boolean => ch !== undefined && WORD_CHAR.test(ch)
+const isSpace = (ch: string | undefined): boolean => ch === ' ' || ch === '\t'
+const SENTENCE_MARK = /[.!?…]/u
+
+function lineStartOf(text: string, pos: number): number {
+  return text.lastIndexOf('\n', pos - 1) + 1
+}
+
+function lineEndOf(text: string, pos: number): number {
+  const i = text.indexOf('\n', pos)
+  return i < 0 ? text.length : i
+}
+
+/** The start of the sentence the caret is in; from a sentence's very start, the one before. */
+function sentenceStartOf(text: string, pos: number): number {
+  let i = pos
+  while (i > 0 && /[\s.!?…]/u.test(text.charAt(i - 1))) i--
+  while (i > 0 && !/[.!?…\n]/u.test(text.charAt(i - 1))) i--
+  while (i < pos && isSpace(text.charAt(i))) i++
+  return i
+}
+
+/** Just after the sentence's closing mark (or marks), or at the line break or the end. */
+function sentenceEndOf(text: string, pos: number): number {
+  let i = pos
+  while (i < text.length && !SENTENCE_MARK.test(text.charAt(i)) && text.charAt(i) !== '\n') i++
+  while (i < text.length && SENTENCE_MARK.test(text.charAt(i))) i++
+  return i
+}
+
+function wordBackOf(text: string, pos: number): number {
+  let i = pos
+  while (i > 0 && !isWordChar(text.charAt(i - 1))) i--
+  while (i > 0 && isWordChar(text.charAt(i - 1))) i--
+  return i
+}
+
+function wordForwardOf(text: string, pos: number): number {
+  let i = pos
+  while (i < text.length && !isWordChar(text.charAt(i))) i++
+  while (i < text.length && isWordChar(text.charAt(i))) i++
+  return i
+}
+
+/** The span plus the spaces after it, or, when none follow, the spaces before: deleting it leaves no double space. */
+function withSpace(text: string, span: Span): Span {
+  let end = span.end
+  while (isSpace(text.charAt(end))) end++
+  if (end > span.end) return { start: span.start, end }
+  let start = span.start
+  while (start > 0 && isSpace(text.charAt(start - 1))) start--
+  return { start, end }
+}
+
+/** The word at the caret, else the word before it. */
+function wordAt(text: string, pos: number): Span {
+  let start = pos
+  let end = pos
+  while (start > 0 && isWordChar(text.charAt(start - 1))) start--
+  while (end < text.length && isWordChar(text.charAt(end))) end++
+  if (start === end) {
+    end = wordBackOf(text, pos)
+    start = end
+    while (end < text.length && isWordChar(text.charAt(end))) end++
+  }
+  return withSpace(text, { start, end })
+}
+
+function sentenceAt(text: string, pos: number): Span {
+  return withSpace(text, { start: sentenceStartOf(text, pos), end: sentenceEndOf(text, pos) })
+}
+
+/** The last word with its attached punctuation and the spaces before it (what "kustuta viimane sõna" takes). */
+function lastWordOf(text: string): Span {
+  const m = /[ \t]*\S+[ \t]*$/u.exec(text)
+  return m ? { start: m.index, end: text.length } : { start: text.length, end: text.length }
+}
+
+/** Everything after the sentence end before the final one (what "kustuta viimane lause" takes). */
+function lastSentenceOf(text: string): Span {
+  const body = text.replace(/[\s.!?…]+$/u, '')
+  const end = Math.max(...['.', '!', '?', '…', '\n'].map((mark) => body.lastIndexOf(mark)))
+  return { start: end < 0 ? 0 : end + 1, end: text.length }
+}
+
+/** The caret after one arrow, Home or End: lines by the text's line breaks, keeping the column. */
+function moveBy(text: string, span: Span, key: PressableKey): number {
+  const collapsed = span.start === span.end
+  switch (key) {
+    case 'ArrowLeft':
+      return collapsed ? Math.max(0, span.start - 1) : span.start
+    case 'ArrowRight':
+      return collapsed ? Math.min(text.length, span.end + 1) : span.end
+    case 'Home':
+      return lineStartOf(text, span.start)
+    case 'End':
+      return lineEndOf(text, span.end)
+    case 'ArrowUp': {
+      const start = lineStartOf(text, span.start)
+      if (start === 0) return 0
+      const above = lineStartOf(text, start - 1)
+      return Math.min(above + (span.start - start), start - 1)
+    }
+    case 'ArrowDown': {
+      const end = lineEndOf(text, span.end)
+      if (end >= text.length) return text.length
+      const below = end + 1
+      return Math.min(below + (span.end - lineStartOf(text, span.end)), lineEndOf(text, below))
+    }
+    default:
+      return span.end
+  }
+}
+
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * The nearest match of the spoken words: the last one before the caret, else the first after it.
+ * Whole words first (case-insensitive, any spaces between words), then for one word the word in the
+ * text that it extends, or that extends it, by one or two letters (the genitive: "kooli" finds "kool",
+ * and "Koolid"), then a substring.
+ */
+function findSpan(text: string, pos: number, spoken: string): Span | null {
+  const needle = spoken.trim()
+  if (needle === '') return null
+  const body = needle.split(/\s+/).map(escapeForRegExp).join('\\s+')
+  let found = [...text.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'giu'))].map((m) => ({ start: m.index, end: m.index + m[0].length }))
+  if (found.length === 0 && !/\s/u.test(needle)) {
+    const lower = needle.toLocaleLowerCase()
+    found = [...text.matchAll(/[\p{L}\p{N}]+/gu)]
+      .filter((m) => {
+        const word = m[0].toLocaleLowerCase()
+        const extra = lower.length - word.length
+        return (word.length >= 3 && extra >= 1 && extra <= 2 && lower.startsWith(word)) || (lower.length >= 3 && extra <= -1 && extra >= -2 && word.startsWith(lower))
+      })
+      .map((m) => ({ start: m.index, end: m.index + m[0].length }))
+  }
+  if (found.length === 0) found = [...text.matchAll(new RegExp(body, 'giu'))].map((m) => ({ start: m.index, end: m.index + m[0].length }))
+  if (found.length === 0) return null
+  const before = found.filter((f) => f.start < pos)
+  return before.at(-1) ?? found[0] ?? null
+}
+
+/** True when offset starts a sentence: the start of the text, or after . ! ? … or a line break (spaces between). */
+function startsSentence(text: string, offset: number): boolean {
+  const before = text.slice(0, offset).replace(/[ \t]+$/u, '')
+  return before === '' || /[.!?…\n]$/u.test(before)
+}
+
+/** The spoken text as it goes in at the caret: a space before and after where letters meet, a capital at a sentence start, else a small first letter. */
+function joinAtCaret(text: string, span: Span, spoken: string): string {
+  const before = text.slice(0, span.start)
+  const after = text.slice(span.end)
+  const prev = before.at(-1)
+  const next = after.charAt(0)
+  const startsWithMark = /^[.,!?;:…)»”“]/u.test(spoken)
+  const spaceBefore = prev !== undefined && !/\s/u.test(prev) && !startsWithMark
+  const spaceAfter = next !== '' && /[\p{L}\p{N}(«„"']/u.test(next) && !/\s$/u.test(spoken)
+  const first = spoken.charAt(0)
+  const keeps = /\p{Lu}/u.test(spoken.slice(1).split(/\s/)[0] ?? '') || /^I(?:['’]|\s|$)/u.test(spoken)
+  const body = startsSentence(text, span.start) ? first.toLocaleUpperCase() + spoken.slice(1) : keeps ? spoken : first.toLocaleLowerCase() + spoken.slice(1)
+  return `${spaceBefore ? ' ' : ''}${body}${spaceAfter ? ' ' : ''}`
+}
+
+/** The field the editing commands act on: the armed one, else the focused one, else the box in front. */
+function editTarget(site: Site | null): HTMLElement | null {
+  return fieldToClear(site) ?? findMessageBox(site)
+}
+
+const DOCS_MISSING = 'The Google Docs editor was not found. Click into the document first.'
+const DOCS_NO_TEXT = 'Google Docs has no text Ütle can read. Say the keys instead: "sõna tagasi", "rea algusesse", "kustuta täht", "võta tagasi".'
+
+/**
+ * Google Docs draws its page on a canvas; its keyboard target is a contenteditable inside the
+ * `.docs-texteventtarget-iframe` document. null off Docs; 'missing' on Docs when it is not there.
+ */
+function docsEditor(): HTMLElement | null | 'missing' {
+  if (location.hostname !== 'docs.google.com') return null
+  try {
+    const frame = document.querySelector<HTMLIFrameElement>('iframe.docs-texteventtarget-iframe')
+    const doc = frame?.contentDocument ?? null
+    const el = doc?.querySelector<HTMLElement>('[contenteditable="true"], [contenteditable]') ?? doc?.body ?? null
+    return el ?? 'missing'
+  } catch {
+    return 'missing'
+  }
+}
+
+/** Types into Docs' keyboard target one character at a time, as Docs reads keypress events. */
+function docsType(el: HTMLElement, text: string): void {
+  el.focus()
+  for (const ch of text) {
+    if (ch === '\n') {
+      dispatchKey(el, 'Enter')
+      continue
+    }
+    const code = ch.codePointAt(0) ?? 0
+    const init = { key: ch, code: '', keyCode: code, which: code, charCode: code, bubbles: true, cancelable: true, composed: true }
+    el.dispatchEvent(new KeyboardEvent('keydown', { ...init, charCode: 0 }))
+    el.dispatchEvent(new KeyboardEvent('keypress', init))
+    el.dispatchEvent(new KeyboardEvent('keyup', { ...init, charCode: 0 }))
+  }
+}
+
+/** On Docs the caret moves by keys: start and end of the text (Ctrl+Home/End), of the line (Home/End), a word (Ctrl+Arrow). */
+function docsCaret(el: HTMLElement, to: CaretTarget): BrowserResult {
+  if (typeof to === 'object' || to === 'sentenceStart' || to === 'sentenceEnd') return fail('failed', DOCS_NO_TEXT)
+  const keys: Record<Exclude<CaretTarget, object | 'sentenceStart' | 'sentenceEnd'>, [string, boolean]> = {
+    start: ['Home', true], end: ['End', true], lineStart: ['Home', false], lineEnd: ['End', false], wordBack: ['ArrowLeft', true], wordForward: ['ArrowRight', true],
+  }
+  const [key, ctrl] = keys[to]
+  el.focus()
+  dispatchKey(el, key, { ctrl })
+  return ok()
+}
+
+function docsSelect(el: HTMLElement, what: SelectTarget): BrowserResult {
+  el.focus()
+  if (what === 'all') {
+    dispatchKey(el, 'SelectAll')
+    return ok()
+  }
+  if (what === 'word') {
+    dispatchKey(el, 'ArrowLeft', { ctrl: true })
+    dispatchKey(el, 'ArrowRight', { ctrl: true, shift: true })
+    return ok()
+  }
+  if (what === 'lastWord') {
+    dispatchKey(el, 'ArrowLeft', { ctrl: true, shift: true })
+    return ok()
+  }
+  if (what === 'line') {
+    dispatchKey(el, 'Home')
+    dispatchKey(el, 'End', { shift: true })
+    return ok()
+  }
+  return fail('failed', DOCS_NO_TEXT)
+}
+
+async function caret(to: CaretTarget, site: Site | null): Promise<BrowserResult> {
+  const docs = docsEditor()
+  if (docs === 'missing') return fail('failed', DOCS_MISSING)
+  if (docs !== null) return docsCaret(docs, to)
+  const el = editTarget(site)
+  if (!el) return fail('not_found', 'No field is picked to write in.')
+  const model = modelOf(el)
+  const { text } = model
+  const span = spanOf(el, model)
+  let pos: number
+  if (typeof to === 'object') {
+    const found = findSpan(text, span.start, to.find)
+    if (!found) return fail('not_found', 'That text is not in the field.')
+    pos = to.where === 'before' ? found.start : found.end
+  } else {
+    switch (to) {
+      case 'start':
+        pos = 0
+        break
+      case 'end':
+        pos = text.length
+        break
+      case 'lineStart':
+        pos = lineStartOf(text, span.start)
+        break
+      case 'lineEnd':
+        pos = lineEndOf(text, span.end)
+        break
+      case 'sentenceStart':
+        pos = sentenceStartOf(text, span.start)
+        break
+      case 'sentenceEnd':
+        pos = sentenceEndOf(text, span.end)
+        break
+      case 'wordBack':
+        pos = wordBackOf(text, span.start)
+        break
+      case 'wordForward':
+        pos = wordForwardOf(text, span.end)
+        break
+    }
+  }
+  await setSpan(el, model, { start: pos, end: pos })
+  return ok({ box: boxState(el, site) })
+}
+
+async function select(what: SelectTarget, site: Site | null): Promise<BrowserResult> {
+  const docs = docsEditor()
+  if (docs === 'missing') return fail('failed', DOCS_MISSING)
+  if (docs !== null) return docsSelect(docs, what)
+  const el = editTarget(site)
+  if (!el) return fail('not_found', 'No field is picked to write in.')
+  const model = modelOf(el)
+  const { text } = model
+  const span = spanOf(el, model)
+  let chosen: Span | null
+  if (typeof what === 'object') {
+    chosen = findSpan(text, span.start, what.find)
+    if (!chosen) return fail('not_found', 'That text is not in the field.')
+  } else {
+    switch (what) {
+      case 'all':
+        chosen = { start: 0, end: text.length }
+        break
+      case 'word':
+        chosen = wordAt(text, span.start)
+        break
+      case 'sentence':
+        chosen = sentenceAt(text, span.start)
+        break
+      case 'line':
+        chosen = { start: lineStartOf(text, span.start), end: lineEndOf(text, span.end) }
+        break
+      case 'lastWord':
+        chosen = lastWordOf(text)
+        break
+      case 'lastSentence':
+        chosen = lastSentenceOf(text)
+        break
+    }
+  }
+  await setSpan(el, model, chosen)
+  return ok({ box: boxState(el, site) })
+}
+
+/**
+ * Google Docs as a box (round 3). Docs has no text Ütle can read, so the box reports what Ütle itself
+ * typed since the last utterance ended: the core joins its dictation onto that, and setText types only
+ * the new tail (or erases with Backspace when the text shrinks, as a preview turning into a command does).
+ * The hidden editor must exist and be focused; otherwise the page has no box at all.
+ */
+let docsTyped = ''
+let docsTypedAt = 0
+const DOCS_TYPED_RESET_MS = 4000
+
+function docsBox(): BoxState | null {
+  const docs = docsEditor()
+  if (docs === null || docs === 'missing') return null
+  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
+  return { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' }
+}
+
+function docsSetText(text: string): BrowserResult {
+  const docs = docsEditor()
+  if (docs === null || docs === 'missing') return fail('not_found', DOCS_MISSING)
+  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
+  let common = 0
+  while (common < docsTyped.length && common < text.length && docsTyped[common] === text[common]) common += 1
+  const erase = docsTyped.length - common
+  if (erase > 0) {
+    const init = { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true, composed: true }
+    for (let i = 0; i < erase; i++) {
+      docs.dispatchEvent(new KeyboardEvent('keydown', init))
+      docs.dispatchEvent(new KeyboardEvent('keyup', init))
+    }
+  }
+  const tail = text.slice(common)
+  if (tail !== '') docsType(docs, tail)
+  docsTyped = text
+  docsTypedAt = Date.now()
+  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' } })
+}
+
+/** Types at the caret, replacing a selection, through the same typing path as setText, with the join rules of joinAtCaret. */
+async function typeText(text: string, site: Site | null): Promise<BrowserResult> {
+  const docs = docsEditor()
+  if (docs === 'missing') return fail('failed', DOCS_MISSING)
+  if (docs !== null) {
+    docsType(docs, text)
+    return ok()
+  }
+  const el = editTarget(site)
+  if (!el) return fail('not_found', 'No field is picked to write in.')
+  const model = modelOf(el)
+  const span = spanOf(el, model)
+  // A selection elsewhere on the page means the caret is nowhere in the field: the end.
+  await setSpan(el, model, span)
+  await typeAtSelection(el, joinAtCaret(model.text, span, text.trim()))
+  await sleep(60)
+  return ok({ box: boxState(el, site) })
+}
+
+// ---------- siteSearch ----------
+
+const GENERIC_SEARCH_FIELDS = [
+  'input[type="search"]',
+  '[role="searchbox"]',
+  'input[name="q"]',
+  'textarea[name="q"]',
+  'input#search',
+  'input[name="search_query"]',
+  'input[placeholder*="otsi" i]',
+  'input[placeholder*="search" i]',
+]
+
+function searchField(site: Site | null): HTMLElement | null {
+  const selectors = [searchFieldFor(location.hostname), site?.searchField ?? null, ...GENERIC_SEARCH_FIELDS]
+  for (const selector of selectors) {
+    if (!selector) continue
+    for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+      if (isTextField(el) && visible(el)) return el
+    }
+  }
+  return null
+}
+
+/** True once the page has started leaving (the answer may then never arrive; background.ts waits for the load). */
+let leaving = false
+
+async function siteSearch(query: string, site: Site | null): Promise<PageResult> {
+  const text = query.trim()
+  if (text === '') return fail('not_found', 'Nothing to search for.')
+  const field = await waitFor(() => searchField(site), SEARCH_FIELD_MS)
+  if (!field) return fail('not_found', 'This page has no search field.')
+  await emptyField(field)
+  await typeAtSelection(field, text)
+  await sleep(60)
+  const rows = site?.conversationRows
+  if (site && rows) {
+    // A chat list: the search filters it. One row left is the one meant.
+    const single = await waitFor(() => {
+      const shown = [...document.querySelectorAll<HTMLElement>(rows)].filter((row) => visible(row))
+      return shown.length === 1 ? shown[0] ?? null : null
+    }, FILTER_MS)
+    if (single) return openRow(single, site)
+    return ok()
+  }
+  const before = location.href
+  pressEnter(field)
+  const form = field.closest('form')
+  if (form) {
+    const navigated = await waitFor(() => (leaving || location.href !== before ? true : null), ENTER_NAVIGATE_MS)
+    if (!navigated) form.requestSubmit()
+  }
+  return ok()
+}
+
+// ---------- media ----------
+
+type Check = (el: HTMLMediaElement) => boolean
+
+/** The YouTube shortcut for an action, and how to tell it worked. null: no shortcut (exitFullscreen). */
+function shortcutFor(action: MediaAction, el: HTMLMediaElement): { key: string; done: Check } | null {
+  const volume = el.volume
+  const time = el.currentTime
+  switch (action) {
+    case 'play':
+      return el.paused ? { key: 'k', done: (m) => !m.paused } : { key: '', done: () => true }
+    case 'pause':
+      return el.paused ? { key: '', done: () => true } : { key: 'k', done: (m) => m.paused }
+    case 'toggle':
+      return { key: 'k', done: (m) => m.paused !== el.paused }
+    case 'mute':
+      return el.muted ? { key: '', done: () => true } : { key: 'm', done: (m) => m.muted }
+    case 'unmute':
+      return el.muted ? { key: 'm', done: (m) => !m.muted } : { key: '', done: () => true }
+    case 'volumeUp':
+      return { key: 'ArrowUp', done: (m) => !m.muted && (m.volume > volume || volume >= 1) }
+    case 'volumeDown':
+      return { key: 'ArrowDown', done: (m) => m.volume < volume || volume <= 0 }
+    case 'fullscreen':
+      return { key: 'f', done: () => document.fullscreenElement !== null }
+    case 'exitFullscreen':
+      return null
+    case 'forward':
+      return { key: 'l', done: (m) => m.currentTime > time + 5 || m.ended }
+    case 'back':
+      return { key: 'j', done: (m) => m.currentTime < time - 5 || time < 10 }
+  }
+}
+
+/** On YouTube, the player's own keyboard shortcut; true when the element shows it worked. */
+async function youtubeShortcut(player: HTMLElement, el: HTMLMediaElement, action: MediaAction): Promise<boolean> {
+  const shortcut = shortcutFor(action, el)
+  if (!shortcut) return false
+  if (shortcut.key === '') return true
+  const key = shortcut.key
+  const code = key.length === 1 ? `Key${key.toUpperCase()}` : key
+  const init = { key, code, bubbles: true, cancelable: true, composed: true }
+  player.focus()
+  player.dispatchEvent(new KeyboardEvent('keydown', init))
+  player.dispatchEvent(new KeyboardEvent('keyup', init))
+  await sleep(SHORTCUT_MS)
+  return shortcut.done(el)
+}
+
+async function media(action: MediaAction): Promise<BrowserResult> {
+  const el = mediaElement()
+  if (!el) return fail('not_found', 'There is no video or audio on this page.')
+  if (action === 'exitFullscreen') {
+    if (document.fullscreenElement) await document.exitFullscreen()
+    return ok()
+  }
+  const player = document.querySelector<HTMLElement>('#movie_player')
+  if (player && player.contains(el) && (await youtubeShortcut(player, el, action))) return ok()
+  try {
+    switch (action) {
+      case 'play':
+        await el.play()
+        break
+      case 'pause':
+        el.pause()
+        break
+      case 'toggle':
+        if (el.paused) await el.play()
+        else el.pause()
+        break
+      case 'mute':
+        el.muted = true
+        break
+      case 'unmute':
+        el.muted = false
+        if (el.volume === 0) el.volume = 0.2
+        break
+      case 'volumeUp':
+        el.volume = Math.min(1, Math.round((el.volume + 0.2) * 10) / 10)
+        el.muted = false
+        break
+      case 'volumeDown':
+        el.volume = Math.max(0, Math.round((el.volume - 0.2) * 10) / 10)
+        break
+      case 'fullscreen':
+        await (player ?? el.closest<HTMLElement>('.html5-video-player') ?? el).requestFullscreen()
+        break
+      case 'forward':
+        el.currentTime = Number.isFinite(el.duration) ? Math.min(el.duration, el.currentTime + 10) : el.currentTime + 10
+        break
+      case 'back':
+        el.currentTime = Math.max(0, el.currentTime - 10)
+        break
+    }
+  } catch (error) {
+    return fail('failed', `The video did not take "${action}": ${error instanceof Error ? error.message : String(error)}`)
+  }
+  await sleep(60)
+  return ok()
 }
 
 // ---------- open a conversation ----------
@@ -554,25 +2030,46 @@ async function openConversation(name: string, site: Site | null): Promise<PageRe
   return { ok: true, href }
 }
 
+/** True once the conversation called wanted is open: its composer is visible and its header says the name. */
+function conversationOpen(site: Site, wanted: string): true | null {
+  const composer = document.querySelector<HTMLElement>(site.composer)
+  if (!composer || !visible(composer)) return null
+  if (!site.openChatName) return true
+  const header = document.querySelector(site.openChatName)
+  // When the header is not found (an unverified selector), the composer alone is taken as proof.
+  if (!header) return true
+  return normalize(header.getAttribute('title') ?? header.textContent) === wanted ? true : null
+}
+
+/** The chat is open: the next words belong in its composer, which is armed. */
+function settleInComposer(site: Site): PageResult {
+  const composer = document.querySelector<HTMLElement>(site.composer)
+  if (composer) pick(composer)
+  return { ok: true, href: '', settled: true }
+}
+
 /** A chat row that opens without changing the address: wait here for its composer and its name. */
 async function openRow(row: HTMLElement, site: Site): Promise<PageResult> {
   const wanted = normalize(nameOf(row, site))
   const target = row.querySelector<HTMLElement>(site.rowName ?? 'span[title]') ?? row
   activate(target)
-  const opened = await waitFor(() => {
-    const composer = document.querySelector<HTMLElement>(site.composer)
-    if (!composer || !visible(composer)) return null
-    if (!site.openChatName) return true
-    const header = document.querySelector(site.openChatName)
-    // When the header is not found (an unverified selector), the composer alone is taken as proof.
-    if (!header) return true
-    return normalize(header.getAttribute('title') ?? header.textContent) === wanted ? true : null
-  }, OPEN_TIMEOUT_MS)
+  const opened = await waitFor(() => conversationOpen(site, wanted), OPEN_TIMEOUT_MS)
   if (!opened) return fail('failed', 'The conversation did not open, so nothing will be typed. Try again or use the numbers.')
-  // The search field may still have focus; the next words belong in the composer.
-  const composer = document.querySelector<HTMLElement>(site.composer)
-  if (composer) caretToEnd(composer)
-  return { ok: true, href: '', settled: true }
+  return settleInComposer(site)
+}
+
+/** clickItem on a chat row: the row itself first; when the chat does not open, the name inside it. */
+async function clickRow(row: HTMLElement, site: Site): Promise<PageResult> {
+  const wanted = normalize(nameOf(row, site))
+  activate(row)
+  let opened = await waitFor(() => conversationOpen(site, wanted), ROW_REACT_MS)
+  if (!opened) {
+    const name = row.querySelector<HTMLElement>(site.rowName ?? 'span[title]')
+    if (name) activate(name)
+    opened = await waitFor(() => conversationOpen(site, wanted), OPEN_TIMEOUT_MS)
+  }
+  if (!opened) return fail('failed', 'The conversation did not open. Try again or use the numbers.')
+  return settleInComposer(site)
 }
 
 // ---------- entry ----------
@@ -582,24 +2079,48 @@ async function run(command: PageCommand): Promise<PageResult> {
   try {
     switch (command.kind) {
       case 'scroll':
-        return scroll(command.direction)
+        return await scroll(command.direction, command.mode)
       case 'showHints':
-        return showHints()
+        return showHints(site)
       case 'hideHints':
         hideHints()
         return ok()
       case 'clickHint':
-        return clickHint(command.number)
+        return await clickHint(command.number)
       case 'insertText':
         return await insertText(String(command.text), command.submit === true, site)
       case 'openConversation':
         return await openConversation(command.name, site)
       case 'readBox':
-        return ok({ box: boxState(findMessageBox(site)) })
+        return ok({ box: docsBox() ?? boxState(findMessageBox(site), site) })
       case 'setText':
-        return await setText(String(command.text), site)
+        return docsBox() ? docsSetText(String(command.text)) : await setText(String(command.text), site)
       case 'pressSend':
-        return await pressSend(site)
+        // Docs is a box the dictation types into, not one that sends: a "saada" there must never press
+        // Enter into the document, nor into the title or search input the generic composer rule would find.
+        return docsBox() ? fail('failed', 'Google Docs has nothing to send: the words are in the document.') : await pressSend(site)
+      case 'readPage':
+        return readPage(site)
+      case 'clickItem':
+        return await clickItem(Number(command.id), site)
+      case 'focusItem':
+        return await focusItem(Number(command.id), site)
+      case 'siteSearch':
+        return await siteSearch(String(command.query), site)
+      case 'media':
+        return await media(command.action)
+      case 'pressKey':
+        return await pressKey(command.key, command.times, site)
+      case 'caret':
+        return await caret(command.to, site)
+      case 'select':
+        return await select(command.what, site)
+      case 'typeText':
+        return await typeText(String(command.text), site)
+      case 'clearField':
+        return await clearField(site)
+      case 'arm':
+        return arm(command.on === true, site)
       default:
         return fail('failed', `The page does not know the command "${command.kind}".`)
     }
@@ -613,12 +2134,25 @@ declare global {
   var __utle: { run(command: PageCommand): Promise<PageResult> } | undefined
 }
 
+/** A navigation: the labels go, the armed field with them, and the items of the last readPage (all belonged to the page before). */
+function onNavigation(): void {
+  stopSlowScroll()
+  hideHints()
+  disarm()
+  pageItems = []
+}
+
 if (!globalThis.__utle) {
   globalThis.__utle = { run }
+  // A field the user really clicks or tabs into is armed for dictation (box.ts).
+  watchTrustedClicks()
   // Same-document navigations do not unload the page, so remove the labels ourselves.
   const nav = (globalThis as { navigation?: EventTarget }).navigation
-  nav?.addEventListener('navigate', hideHints)
-  window.addEventListener('popstate', hideHints)
-  window.addEventListener('hashchange', hideHints)
-  window.addEventListener('pagehide', hideHints)
+  nav?.addEventListener('navigate', onNavigation)
+  window.addEventListener('popstate', onNavigation)
+  window.addEventListener('hashchange', onNavigation)
+  window.addEventListener('pagehide', onNavigation)
+  window.addEventListener('beforeunload', () => {
+    leaving = true
+  })
 }

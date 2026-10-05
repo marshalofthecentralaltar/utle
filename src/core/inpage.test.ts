@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { BoxState, BrowserCommand, BrowserResult } from '../browser/protocol.ts'
-import { initialInpage, inpageInstant, inpageResult, inpageStep } from './inpage.ts'
+import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../browser/protocol.ts'
+import { applyIntent, initialInpage, inpageInstant, inpageResult, inpageStep } from './inpage.ts'
+import type { PageIntent } from './pageIntent.ts'
 import type { InpageSession } from './inpage.ts'
 import { inpagePreview } from './inpage.ts'
 import { browserIntent } from './browserIntent.ts'
@@ -14,10 +15,17 @@ function session(over: Partial<InpageSession> = {}): InpageSession {
   return deepFreeze({ ...initialInpage('et'), ...over })
 }
 function box(text: string): BoxState {
-  return { present: true, text }
+  return { present: true, text, armed: true }
 }
-const NO_BOX: BoxState = { present: false, text: '' }
+const NO_BOX: BoxState = { present: false, text: '', armed: false }
 const EMPTY: BoxState = box('')
+/** A field the page focused by itself (a search bar): present, not armed. */
+function unarmed(text: string): BoxState {
+  return { present: true, text, armed: false, kind: 'search', label: 'Search' }
+}
+function page(b: BoxState, over: Partial<PageContext> = {}): PageContext {
+  return { url: 'https://www.youtube.com/', title: 'YouTube', box: b, items: [], media: null, hints: false, ...over }
+}
 
 function only(command: BrowserCommand): BrowserCommand[] {
   return [command]
@@ -130,7 +138,8 @@ describe('rule 3: browser commands', () => {
     ['ava uus vaheleht', { kind: 'newTab' }],
     ['sulge vaheleht', { kind: 'closeTab' }],
     ['ava messenger', { kind: 'goTo', url: 'https://www.messenger.com/' }],
-    ['otsi ilm tallinnas', { kind: 'goTo', url: 'https://www.google.com/search?q=ilm%20tallinnas' }],
+    ['otsi ilm tallinnas', { kind: 'siteSearch', query: 'ilm tallinnas' }],
+    ['otsi googlest ilm tallinnas', { kind: 'goTo', url: 'https://www.google.com/search?q=ilm%20tallinnas' }],
     ['keri alla', { kind: 'scroll', direction: 'down' }],
     ['Keri üles.', { kind: 'scroll', direction: 'up' }],
     ['laadi uuesti', { kind: 'reload' }],
@@ -156,7 +165,8 @@ describe('rule 3: browser commands', () => {
     ['next', { kind: 'switchTab', to: 'next' }],
     ['previous', { kind: 'switchTab', to: 'previous' }],
   ])('bare "%s" is the browser in this mode', (u, command) => {
-    expect(inpageStep(session(), u, box('Tere')).commands).toEqual(only(command))
+    // An empty armed box: with words in it "tagasi" is undo and "edasi" a word of the message (section 22).
+    expect(inpageStep(session(), u, box('')).commands).toEqual(only(command))
   })
 
   it('a page change empties undo, because the old texts belong to another box', () => {
@@ -507,6 +517,7 @@ const COMMAND_PHRASES = [
   'järgmine vaheleht', 'eelmine vaheleht', 'kolmas vaheleht', 'ava uus vaheleht', 'sulge vaheleht', 'ava messenger',
   'otsi ilm', 'keri alla', 'keri üles', 'laadi uuesti', 'tagasi', 'edasi', 'järgmine', 'eelmine', 'back', 'go back',
   'forward', 'next', 'previous', 'next tab', 'scroll down',
+  'keri natuke alla', 'natuke üles', 'keri aeglaselt alla', 'keri tasa alla', 'stopp', 'seis', 'aitab', 'lõpeta', 'saadake', 'saadame',
   'ava vestlus Mariga', 'ava Mari vestlus', 'kirjuta Marile', 'sõnum Marile', 'open chat with Mari', 'message Mari',
   'uus sõnum',
   'saada', 'saada ära', 'saada sõnum', 'send', 'send it',
@@ -515,7 +526,27 @@ const COMMAND_PHRASES = [
   'kustuta viimane sõna', 'kustuta viimane lause', 'kustuta kõik', 'tühjenda', 'alusta uuesti', 'delete the last word',
   'delete the last sentence', 'delete everything', 'clear',
   'võta tagasi', 'undo', 'uus rida', 'new line', 'punkt', 'koma', 'küsimärk', 'hüüumärk', 'full stop', 'comma', 'question mark',
+  // M7 (section 22).
+  'uus leht', 'ava uus leht', 'uus aken', 'ava uus aken', 'new page', 'new window', 'open a new page',
+  'sulge', 'close', 'peida riba', 'peida ütle', 'hide the bar', 'näita riba', 'show the bar',
+  'kirjuta siia', 'siia', 'write here', 'type here', 'ära kirjuta siia', 'do not write here',
+  'tühjenda otsing', 'kustuta otsing', 'tühjenda kast', 'clear the search', 'clear the field',
+  'sulge aken', 'pane kinni', 'välja', 'escape', 'close this', 'enter', 'sisesta', 'kinnita',
+  'otsi googlest ilm', 'guugelda ilm', 'google weather', "otsi youtube'ist kassid", 'otsi youtubest kassid', 'search youtube for cats',
+  'mängi', 'esita', 'play', 'paus', 'peata', 'pause', 'stop the video', 'vaigista', 'heli maha', 'mute', 'heli tagasi', 'heli peale',
+  'unmute', 'heli valjemaks', 'valjemaks', 'kõvemaks', 'louder', 'volume up', 'heli vaiksemaks', 'vaiksemaks', 'quieter', 'volume down',
+  'pane heli vaiksemaks', 'täisekraan', 'full screen', 'välju täisekraanist', 'exit full screen', 'keri edasi', 'keri tagasi',
+  // Round 3 (editing): the fixed phrases and the counted ones; the ones with a word need that word in the box (below).
+  'mine algusesse', 'teksti lõppu', 'rea algusesse', 'rea lõppu', 'lause algusesse', 'lause lõppu', 'sõna tagasi', 'sõna edasi',
+  'go to the start', 'go to the end', 'word back', 'vali kõik', 'vali see sõna', 'vali see lause', 'vali viimane sõna', 'vali viimane lause',
+  'select all', 'select the word', 'kustuta täht', 'kustuta üks täht', 'kustuta kolm tähte', 'kustuta valitud', 'kustuta see', 'kustuta ees',
+  'delete a letter', 'delete three letters', 'vasakule', 'paremale', 'vasakule kolm korda', 'kolm paremale', 'üks rida üles', 'üks rida alla',
+  'kaks rida alla', 'line up', 'tee uuesti', 'redo', 'järgmine väli', 'next field', 'kolm sõna tagasi', 'two words forward',
+  'kirjuta siia vahele homme', 'lisa siia homme', 'sisesta homme', 'insert homme',
 ]
+
+/** One-word fixed phrases that are ordinary words of a message: commands only with an empty or unarmed box (section 22). */
+const SOFT_WORDS = ['välja', 'siia', 'edasi', 'sulge', 'enter', 'sisesta', 'kinnita', 'paus', 'peata', 'mängi', 'esita', 'close', 'play', 'pause', 'forward', 'escape', 'aitab', 'lõpeta']
 
 const DICTATION = [
   'Ma jõuan homme kell kolm',
@@ -533,7 +564,8 @@ const DICTATION = [
 describe('inpageInstant agrees with inpageStep', () => {
   it.each(COMMAND_PHRASES)('"%s" is instant and not dictation', (u) => {
     expect(inpageInstant(session(), u)).toBe(true)
-    const step = inpageStep(session(), u, box('kolm kolm. Tere'))
+    // The soft one-word phrases are dictation while the armed box holds words (section 22): an empty box here.
+    const step = inpageStep(session(), u, box(SOFT_WORDS.includes(u) ? '' : 'kolm kolm. Tere'))
     const dictated = step.commands.length === 1 && step.commands[0]?.kind === 'setText' && step.commands[0].text.endsWith(u)
     expect(dictated).toBe(false)
   })
@@ -579,7 +611,7 @@ describe('properties', () => {
   })
 
   it.each(COMMAND_PHRASES)('command "%s" never types its own words', (u) => {
-    const step = inpageStep(session({ hints: true }), u, box('kolm kolm. Tere'))
+    const step = inpageStep(session({ hints: true }), u, box(SOFT_WORDS.includes(u) ? '' : 'kolm kolm. Tere'))
     for (const c of step.commands) {
       if (c.kind === 'setText') expect(c.text.toLowerCase()).not.toContain(u.toLowerCase())
       if (c.kind === 'insertText') throw new Error('in-page mode never uses insertText')
@@ -684,7 +716,8 @@ describe('inpagePreview: a sentence that starts like a command previews once it 
     ['Saada mulle palun aadress', 2],
     ['Mine sa homme poodi', 4],
     ['Ava uks kui tuled', 4],
-    ['Kustuta see pilt ära palun', 2],
+    // Round 3: "kustuta see" is a command (Backspace on the selection), so the words show from the third.
+    ['Kustuta see pilt ära palun', 3],
     ['Tagasi tulen kell viis', 2],
     ['Järgmine nädal sobib', 2],
     ['Kirjuta mulle kui jõuad', 2],
@@ -812,6 +845,8 @@ const SHORT_ET = [
   'Kirjutan hiljem', 'Sulle ka', 'Lähen koju', 'Mine magama', 'Ava aken', 'Pole viga', 'Kõik hästi', 'Armastan sind',
   'Uus aasta', 'Järgmine kord', 'Helista mulle', 'Vasta palun', 'Ootan sind', 'Mina sinna', 'Lahe uudis', 'Kama on otsas',
   'Selge pilt', 'Kirjutas Marile', 'Otsid mind', 'Sulgen akna',
+  // Round 3 (23.2): near the sound-alike rule and not commands.
+  'Sul on õigus', 'Tere kass', 'Kass magab', 'Aita mind', 'Kass on kadunud', 'Saada mulle pilt', 'Sada eurot', 'Ala on suur',
 ]
 const SHORT_EN = ['See you soon', 'Thank you', 'On my way', 'Love you too', 'Call me later', 'Next time maybe', 'I am back home', 'Sounds good', 'Text me', 'Clean the room']
 
@@ -836,7 +871,757 @@ describe('send, sleep, wake and undo are never corrected', () => {
     expect(inpageInstant(session(), u)).toBe(false)
   })
 
+  it.each(['ei lõpeta', 'lõpeta ja', 'ma lõpeta', 'teeb kolm', 'kolm teeb', 'ta teeb kolm'])('round 3 review: "%s" is dictation, not a sound-alike command', (u) => {
+    const step = inpageStep(session(), u, box('Tere.'))
+    expect(step.commands).toHaveLength(1)
+    expect(step.commands[0]?.kind).toBe('setText')
+  })
+
   it('asleep, a phrase one letter from the wake phrase stays ignored', () => {
     expect(inpageStep(session({ asleep: true }), 'ärkan üles', box('Tere')).session.asleep).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Section 22 (M7): the armed box, "tagasi" as undo, the new phrases, numbers, applyIntent.
+
+describe('M7 the armed box: words go only where he asked', () => {
+  it.each(['Ma jõuan homme', 'tere', 'kassid', 'I will be late'])('dictation "%s" into a field the page focused is refused', (u) => {
+    const s = session({ undo: ['a'] })
+    const step = inpageStep(s, u, unarmed(''))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.noPlaceToWrite)
+    expect(step.ask).toBe(true)
+    expect(step.session).toEqual(s)
+  })
+
+  it('the line is in the session language, and pickField stays for no box at all', () => {
+    expect(inpageStep(session({ lang: 'en' }), 'hello there', unarmed('')).line).toBe(EN.inpage.noPlaceToWrite)
+    expect(inpageStep(session(), 'hello there', NO_BOX).line).toBe(ET.inpage.pickField)
+    expect(inpageStep(session(), 'hello there', NO_BOX).ask).toBe(true)
+  })
+
+  it.each(['kustuta viimane sõna', 'mitte kolm vaid neli', 'punkt', 'uus rida', 'võta tagasi', 'undo'])('repair "%s" needs an armed box', (u) => {
+    const step = inpageStep(session({ undo: ['Tere'] }), u, unarmed('Ma tulen kell kolm.'))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.noPlaceToWrite)
+  })
+
+  it('send needs an armed box; an absent box still says there is nothing to send', () => {
+    const step = inpageStep(session(), 'saada', unarmed('Tere'))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.noPlaceToWrite)
+    expect(inpageStep(session(), 'saada', NO_BOX).line).toBe(ET.inpage.nothingToSend)
+  })
+
+  it('the preview never types into an unarmed field', () => {
+    expect(inpagePreview(session(), 'Ma jõuan homme kell', unarmed(''))).toBeNull()
+    expect(inpagePreview(session(), 'Ma jõuan homme kell', box(''))).toBe('Ma jõuan homme kell')
+  })
+
+  it('the armed box takes dictation, repairs, undo and send as before', () => {
+    expect(setTextOf(inpageStep(session(), 'kuidas läheb', box('Tere')).commands)).toBe('Tere kuidas läheb')
+    expect(setTextOf(inpageStep(session(), 'kustuta viimane sõna', box('Tere Mari')).commands)).toBe('Tere')
+    expect(inpageStep(session(), 'saada', box('Tere')).commands).toEqual(only({ kind: 'pressSend' }))
+  })
+
+  it('the one-breath form and opening a conversation do not look at the box', () => {
+    expect(inpageStep(session(), 'kirjuta Marile, et tulen', unarmed('x')).commands).toEqual([
+      { kind: 'openConversation', name: 'Mari' },
+      { kind: 'setText', text: 'Tulen.' },
+    ])
+    expect(inpageStep(session(), 'kirjuta Marile', unarmed('x')).commands).toEqual(only({ kind: 'openConversation', name: 'Mari' }))
+    expect(inpageStep(session(), 'keri alla', unarmed('x')).commands).toEqual(only({ kind: 'scroll', direction: 'down' }))
+  })
+})
+
+describe('M7 "tagasi" takes the words back when there are words to take back', () => {
+  it.each(['tagasi', 'Tagasi.', 'back', 'go back'])('"%s" with text and an undo entry is undo', (u) => {
+    const step = inpageStep(session({ undo: ['a', 'Tere'] }), u, box('Tere kõik'))
+    expect(step.commands).toEqual(only({ kind: 'setText', text: 'Tere' }))
+    expect(step.line).toBe(ET.inpage.undoing)
+    expect(inpageInstant(session({ undo: ['Tere'] }), u)).toBe(true)
+  })
+
+  it.each<[string, BoxState]>([
+    ['an empty box', box('')],
+    ['a box of spaces', box('  ')],
+  ])('with %s and an undo entry it is still undo: the words just cleared come back, the page stays', (_what, b) => {
+    for (const u of ['tagasi', 'back', 'go back']) {
+      const step = inpageStep(session({ undo: ['Tere'] }), u, b)
+      expect(step.commands).toEqual(only({ kind: 'setText', text: 'Tere' }))
+      expect(step.line).toBe(ET.inpage.undoing)
+    }
+  })
+
+  it('with words in the armed box and nothing to undo it says so and never leaves the page', () => {
+    for (const u of ['tagasi', 'back', 'go back']) {
+      const step = inpageStep(session({ undo: [] }), u, box('Tere kõik'))
+      expect(step.commands).toEqual([])
+      expect(step.line).toBe(ET.nothingToUndo)
+    }
+  })
+
+  it.each<[string, BoxState, string[]]>([
+    ['an empty armed box and nothing to undo', box(''), []],
+    ['an unarmed field', unarmed('Tere kõik'), ['Tere']],
+    ['no box', NO_BOX, ['Tere']],
+  ])('with %s it is the page history', (_what, b, undo) => {
+    for (const u of ['tagasi', 'back', 'go back']) {
+      const step = inpageStep(session({ undo }), u, b)
+      expect(step.commands).toEqual(only({ kind: 'history', direction: 'back' }))
+      expect(step.line).toBe(ET.browserDoing({ kind: 'history', direction: 'back' }))
+      expect(step.session.undo).toEqual([])
+    }
+  })
+
+  it('"võta tagasi" stays undo whatever the box, "mine tagasi" stays the page history', () => {
+    expect(inpageStep(session({ undo: ['Tere'] }), 'võta tagasi', box('')).commands).toEqual(only({ kind: 'setText', text: 'Tere' }))
+    expect(inpageStep(session({ undo: ['Tere'] }), 'mine tagasi', box('Tere kõik')).commands).toEqual(only({ kind: 'history', direction: 'back' }))
+  })
+
+  it.each(['go bak', 'tagasy', 'go backk'])('"%s", one letter off, is never an undo: dictation', (u) => {
+    const step = inpageStep(session({ undo: ['Tere'] }), u, box('Tere kõik'))
+    expect(step.line).not.toBe(ET.inpage.undoing)
+    expect(step.commands).not.toEqual(only({ kind: 'history', direction: 'back' }))
+    expect(step.ask).toBe(true)
+  })
+})
+
+describe('M7 soft words: one ordinary word while he is writing is a word of the message', () => {
+  it.each(SOFT_WORDS)('"%s" with words in the armed box is dictation, asked of the model', (u) => {
+    const step = inpageStep(session(), u, box('Tulen'))
+    expect(step.commands).toEqual(only({ kind: 'setText', text: `Tulen ${u}` }))
+    expect(step.ask).toBe(true)
+  })
+
+  it.each(['aitab', 'lõpeta'])('"%s" while writing is a word of the message', (u) => {
+    expect(inpageStep(session(), u, box('Tulen homme')).commands[0]?.kind).toBe('setText')
+  })
+
+  it.each(['stopp', 'seis'])('"%s" always stops a scroll, even while writing; with the labels showing "stopp" hides them', (u) => {
+    expect(inpageStep(session(), u, box('Tulen homme')).commands).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'stop' }))
+    expect(inpageStep(session({ hints: true }), 'stopp', box('Tulen homme')).commands).toEqual(only({ kind: 'hideHints' }))
+  })
+
+  it.each(['välja', 'siia', 'enter', 'sulge', 'edasi'])('"%s" with an empty, unarmed or absent box is the command', (u) => {
+    for (const b of [box(''), box('  '), unarmed('Tere'), NO_BOX]) {
+      const step = inpageStep(session(), u, b)
+      expect(step.commands).toHaveLength(1)
+      expect(step.commands[0]?.kind).not.toBe('setText')
+      expect(step.ask).toBeUndefined()
+    }
+  })
+
+  it('a two-word phrase is a command whatever the box ("pane kinni", "kirjuta siia")', () => {
+    expect(inpageStep(session(), 'pane kinni', box('Tulen')).commands).toEqual(only({ kind: 'pressKey', key: 'Escape' }))
+    expect(inpageStep(session(), 'kirjuta siia', box('Tulen')).commands).toEqual(only({ kind: 'arm', on: true }))
+  })
+})
+
+describe('M7 the new phrases', () => {
+  const YT = (q: string): BrowserCommand => ({ kind: 'goTo', url: `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` })
+  const G = (q: string): BrowserCommand => ({ kind: 'goTo', url: `https://www.google.com/search?q=${encodeURIComponent(q)}` })
+  it.each<[string, BrowserCommand]>([
+    ['uus leht', { kind: 'newTab' }],
+    ['Ava uus leht.', { kind: 'newTab' }],
+    ['uus aken', { kind: 'newTab' }],
+    ['ava uus aken', { kind: 'newTab' }],
+    ['new page', { kind: 'newTab' }],
+    ['new window', { kind: 'newTab' }],
+    ['open a new page', { kind: 'newTab' }],
+    ['open a new window', { kind: 'newTab' }],
+    ['sulge', { kind: 'closeTab' }],
+    ['Sulge.', { kind: 'closeTab' }],
+    ['close', { kind: 'closeTab' }],
+    ['peida riba', { kind: 'bar', show: false }],
+    ['peida ütle', { kind: 'bar', show: false }],
+    ['hide the bar', { kind: 'bar', show: false }],
+    ['näita riba', { kind: 'bar', show: true }],
+    ['show the bar', { kind: 'bar', show: true }],
+    ['kirjuta siia', { kind: 'arm', on: true }],
+    ['Kirjuta siia.', { kind: 'arm', on: true }],
+    ['siia', { kind: 'arm', on: true }],
+    ['write here', { kind: 'arm', on: true }],
+    ['type here', { kind: 'arm', on: true }],
+    ['ära kirjuta siia', { kind: 'arm', on: false }],
+    ['do not write here', { kind: 'arm', on: false }],
+    ["don't write here", { kind: 'arm', on: false }],
+    ['tühjenda otsing', { kind: 'clearField' }],
+    ['kustuta otsing', { kind: 'clearField' }],
+    ['tühjenda kast', { kind: 'clearField' }],
+    ['clear the search', { kind: 'clearField' }],
+    ['clear the field', { kind: 'clearField' }],
+    ['sulge aken', { kind: 'pressKey', key: 'Escape' }],
+    ['pane kinni', { kind: 'pressKey', key: 'Escape' }],
+    ['välja', { kind: 'pressKey', key: 'Escape' }],
+    ['escape', { kind: 'pressKey', key: 'Escape' }],
+    ['close this', { kind: 'pressKey', key: 'Escape' }],
+    ['enter', { kind: 'pressKey', key: 'Enter' }],
+    ['sisesta', { kind: 'pressKey', key: 'Enter' }],
+    ['kinnita', { kind: 'pressKey', key: 'Enter' }],
+    ['otsi kassid', { kind: 'siteSearch', query: 'kassid' }],
+    ['Otsi ilm Tallinnas.', { kind: 'siteSearch', query: 'ilm tallinnas' }],
+    ['search for cats', { kind: 'siteSearch', query: 'cats' }],
+    ['search cats', { kind: 'siteSearch', query: 'cats' }],
+    ['otsi googlest ilm tallinnas', G('ilm tallinnas')],
+    ['otsi google ilm', G('ilm')],
+    ['guugelda ilm tallinnas', G('ilm tallinnas')],
+    ['google ilm tallinnas', G('ilm tallinnas')],
+    ['search google for bus times', G('bus times')],
+    ["otsi youtube'ist kassid", YT('kassid')],
+    ['otsi youtube’ist kassid', YT('kassid')],
+    ['otsi youtubest kassid', YT('kassid')],
+    ['otsi youtubeist kassid', YT('kassid')],
+    ['search youtube for cats', YT('cats')],
+    ['mängi', { kind: 'media', action: 'play' }],
+    ['esita', { kind: 'media', action: 'play' }],
+    ['play', { kind: 'media', action: 'play' }],
+    ['paus', { kind: 'media', action: 'pause' }],
+    ['peata', { kind: 'media', action: 'pause' }],
+    ['pause', { kind: 'media', action: 'pause' }],
+    ['stop the video', { kind: 'media', action: 'pause' }],
+    ['vaigista', { kind: 'media', action: 'mute' }],
+    ['heli maha', { kind: 'media', action: 'mute' }],
+    ['mute', { kind: 'media', action: 'mute' }],
+    ['heli tagasi', { kind: 'media', action: 'unmute' }],
+    ['heli peale', { kind: 'media', action: 'unmute' }],
+    ['unmute', { kind: 'media', action: 'unmute' }],
+    ['heli valjemaks', { kind: 'media', action: 'volumeUp' }],
+    ['valjemaks', { kind: 'media', action: 'volumeUp' }],
+    ['kõvemaks', { kind: 'media', action: 'volumeUp' }],
+    ['louder', { kind: 'media', action: 'volumeUp' }],
+    ['volume up', { kind: 'media', action: 'volumeUp' }],
+    ['heli vaiksemaks', { kind: 'media', action: 'volumeDown' }],
+    ['pane heli vaiksemaks', { kind: 'media', action: 'volumeDown' }],
+    ['vaiksemaks', { kind: 'media', action: 'volumeDown' }],
+    ['quieter', { kind: 'media', action: 'volumeDown' }],
+    ['volume down', { kind: 'media', action: 'volumeDown' }],
+    ['täisekraan', { kind: 'media', action: 'fullscreen' }],
+    ['full screen', { kind: 'media', action: 'fullscreen' }],
+    ['välju täisekraanist', { kind: 'media', action: 'exitFullscreen' }],
+    ['exit full screen', { kind: 'media', action: 'exitFullscreen' }],
+    ['keri edasi', { kind: 'media', action: 'forward' }],
+    ['keri tagasi', { kind: 'media', action: 'back' }],
+  ])('"%s"', (u, command) => {
+    // An empty armed box: with words in it the soft one-word phrases are dictation (below).
+    const step = inpageStep(session({ undo: ['Tere'] }), u, box(''))
+    expect(step.commands).toEqual(only(command))
+    expect(step.line).toBe(ET.browserDoing(command))
+    expect(step.ask).toBeUndefined()
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(inpagePreview(session(), u, box('Tere'))).toBeNull()
+  })
+
+  it('the new phrases work without any box', () => {
+    expect(inpageStep(session(), 'uus leht', NO_BOX).commands).toEqual(only({ kind: 'newTab' }))
+    expect(inpageStep(session(), 'paus', unarmed('')).commands).toEqual(only({ kind: 'media', action: 'pause' }))
+  })
+
+  it('media, bar and arm leave the labels and the undo texts; a search or a key does not', () => {
+    const s = session({ hints: true, undo: ['a'] })
+    for (const u of ['paus', 'heli valjemaks', 'peida riba', 'kirjuta siia', 'tühjenda kast']) {
+      const step = inpageStep(s, u, box(''))
+      expect(step.session.hints, u).toBe(true)
+      expect(step.session.undo, u).toEqual(['a'])
+    }
+    for (const u of ['otsi kassid', 'sulge aken', 'enter', 'sulge']) {
+      const step = inpageStep(s, u, box(''))
+      expect(step.session.hints, u).toBe(false)
+      expect(step.session.undo, u).toEqual([])
+    }
+  })
+
+  it.each(['Ava aken', 'Sulgen akna', 'Mängin homme', 'Selge pilt', 'Sulle ka', 'Tulen siis homme', 'Uus aasta', 'Siia ma ei tule', 'Pane see kinni homme'])(
+    '"%s" is still dictation',
+    (u) => {
+      const step = inpageStep(session(), u, box('Tere.'))
+      expect(step.commands[0]?.kind).toBe('setText')
+      expect(step.ask).toBe(true)
+    },
+  )
+
+  it.each(['kirjuta siis', 'pane kinn'])('"%s" is never corrected into arming or a key', (u) => {
+    const step = inpageStep(session(), u, EMPTY)
+    expect(step.commands.some((c) => c.kind === 'arm' || c.kind === 'pressKey')).toBe(false)
+  })
+
+  it('a misheard new phrase is corrected and named', () => {
+    const step = inpageStep(session(), 'heli valjemas', EMPTY)
+    expect(step.commands).toEqual(only({ kind: 'media', action: 'volumeUp' }))
+    expect(step.line).toBe(`${ET.inpage.understood('heli valjemaks')} ${ET.browserDoing({ kind: 'media', action: 'volumeUp' })}`)
+  })
+})
+
+describe('M7 numbers while labels show', () => {
+  it.each<[string, number]>([
+    ['number viis', 5],
+    ['vajuta viis', 5],
+    ['vajuta number viis', 5],
+    ['ava viis', 5],
+    ['vali viis', 5],
+    ['ava 12', 12],
+    ['Vali 7.', 7],
+    ['12.', 12],
+    ['3,', 3],
+    ['üksteist', 11],
+    ['kaksteist', 12],
+    ['Kolmteist.', 13],
+    ['üheksateist', 19],
+    ['kakskümmend', 20],
+    ['kakskümmend üks', 21],
+    ['kaks kümmend üks', 21],
+    ['kakskümmend üheksa', 29],
+    ['kolmkümmend', 30],
+    ['ava kakskümmend kaks', 22],
+    ['twenty one', 21],
+    ['open five', 5],
+    ['choose 4', 4],
+  ])('"%s" clicks %i', (u, n) => {
+    const step = inpageStep(session({ hints: true }), u, unarmed(''))
+    expect(step.commands).toEqual(only({ kind: 'clickHint', number: n }))
+    expect(step.session.hints).toBe(false)
+    expect(inpageInstant(session({ hints: true }), u)).toBe(true)
+    expect(inpagePreview(session({ hints: true }), u, box('Tere'))).toBeNull()
+  })
+
+  it.each(['ava viis', 'vali viis', 'üksteist', 'kakskümmend üks'])('without labels "%s" is not a click', (u) => {
+    expect(inpageStep(session(), u, box('')).commands.some((c) => c.kind === 'clickHint')).toBe(false)
+  })
+
+  it.each(['stopp', 'stop', 'Stopp.', 'lõpeta'])('"%s" while labels show hides them', (u) => {
+    const step = inpageStep(session({ hints: true }), u, box('Tere'))
+    expect(step.commands).toEqual(only({ kind: 'hideHints' }))
+    expect(step.session.hints).toBe(false)
+    expect(inpageInstant(session({ hints: true }), u)).toBe(true)
+  })
+
+  it.each(['stopp', 'stop', 'lõpeta', 'seis', 'aitab'])('"%s" without labels stops a slow scroll (23.2)', (u) => {
+    const step = inpageStep(session(), u, box(''))
+    expect(step.commands).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'stop' }))
+    expect(step.ask).toBeUndefined()
+  })
+})
+
+describe('M7 applyIntent: the model\'s intent goes through the same act as the rules', () => {
+  const intent = (i: PageIntent): PageIntent => i
+
+  it('dictation into the armed box', () => {
+    const step = applyIntent(session(), intent({ kind: 'dictate', text: ' kuidas  läheb ' }), page(box('Tere')))
+    expect(step.commands).toEqual(only({ kind: 'setText', text: 'Tere kuidas läheb' }))
+    expect(step.session.undo).toEqual(['Tere'])
+    expect(step.line).toBe(ET.browserDoing({ kind: 'setText', text: 'Tere kuidas läheb' }))
+    expect(step.ask).toBeUndefined()
+  })
+
+  it('dictation into an unarmed field is refused', () => {
+    const s = session()
+    const step = applyIntent(s, intent({ kind: 'dictate', text: 'kassid' }), page(unarmed('')))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.noPlaceToWrite)
+    expect(step.session).toEqual(s)
+    expect(applyIntent(s, intent({ kind: 'dictate', text: 'kassid' }), page(NO_BOX)).line).toBe(ET.inpage.pickField)
+  })
+
+  it.each<BrowserCommand>([
+    { kind: 'media', action: 'volumeDown' },
+    { kind: 'clickItem', id: 3 },
+    { kind: 'siteSearch', query: 'kassid' },
+    { kind: 'newTab' },
+    { kind: 'bar', show: false },
+  ])('command %j is one browser command with its line', (command) => {
+    const step = applyIntent(session({ hints: true }), intent({ kind: 'command', command }), page(unarmed('')))
+    expect(step.commands).toEqual(only(command))
+    expect(step.line).toBe(ET.browserDoing(command))
+  })
+
+  it('a command that changes the page clears the labels and the undo texts', () => {
+    const step = applyIntent(session({ hints: true, undo: ['a'] }), intent({ kind: 'command', command: { kind: 'clickItem', id: 3 } }), page(box('b')))
+    expect(step.session.hints).toBe(false)
+    expect(step.session.undo).toEqual([])
+  })
+
+  it('edit: undo and replace', () => {
+    const undo = applyIntent(session({ undo: ['Tere'] }), intent({ kind: 'edit', edit: { kind: 'undo' } }), page(box('Tere kõik')))
+    expect(undo.commands).toEqual(only({ kind: 'setText', text: 'Tere' }))
+    expect(undo.line).toBe(ET.inpage.undoing)
+    const replace = applyIntent(session(), intent({ kind: 'edit', edit: { kind: 'replace', from: 'kolm', to: 'neli' } }), page(box('Kell kolm.')))
+    expect(replace.commands).toEqual(only({ kind: 'setText', text: 'Kell neli.' }))
+    expect(replace.session.undo).toEqual(['Kell kolm.'])
+    const unarmedEdit = applyIntent(session({ undo: ['x'] }), intent({ kind: 'edit', edit: { kind: 'clear' } }), page(unarmed('Tere')))
+    expect(unarmedEdit.commands).toEqual([])
+    expect(unarmedEdit.line).toBe(ET.inpage.noPlaceToWrite)
+  })
+
+  it('send, sleep and wake', () => {
+    expect(applyIntent(session(), intent({ kind: 'send' }), page(box('Tere'))).commands).toEqual(only({ kind: 'pressSend' }))
+    expect(applyIntent(session(), intent({ kind: 'send' }), page(unarmed('Tere'))).line).toBe(ET.inpage.noPlaceToWrite)
+    expect(applyIntent(session(), intent({ kind: 'sleep' }), page(EMPTY)).session.asleep).toBe(true)
+    expect(applyIntent(session({ asleep: true }), intent({ kind: 'wake' }), page(EMPTY)).session.asleep).toBe(false)
+  })
+
+  it('unclear gives its say, or the fixed line when it has none', () => {
+    const s = session({ undo: ['a'] })
+    const step = applyIntent(s, intent({ kind: 'unclear', say: 'Kas sa mõtlesid videot?' }), page(box('Tere')))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe('Kas sa mõtlesid videot?')
+    expect(step.session).toEqual(s)
+    expect(applyIntent(s, intent({ kind: 'unclear', say: '' }), page(box('Tere'))).line).toBe(ET.inpage.notUnderstood)
+    expect(applyIntent(session({ lang: 'en' }), intent({ kind: 'unclear', say: '' }), page(box('Tere'))).line).toBe(EN.inpage.notUnderstood)
+  })
+
+  it('say comes first as "Sain aru: …"', () => {
+    const command: BrowserCommand = { kind: 'newTab' }
+    const step = applyIntent(session(), intent({ kind: 'command', command }), page(EMPTY), 'ava uus leht')
+    expect(step.line).toBe(`${ET.inpage.understood('ava uus leht')} ${ET.browserDoing(command)}`)
+    expect(step.line.startsWith('Sain aru: „ava uus leht“.')).toBe(true)
+    const en = applyIntent(session({ lang: 'en' }), intent({ kind: 'command', command }), page(EMPTY), 'new tab')
+    expect(en.line).toBe(`${EN.inpage.understood('new tab')} ${EN.browserDoing(command)}`)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Round 3 (section 23.2): sound-alike commands.
+
+describe('sound-alike commands (23.2)', () => {
+  it.each<[string, string, BrowserCommand]>([
+    ['aga whatsapp', 'ava whatsapp', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
+    ['Aga WhatsApp.', 'ava whatsapp', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
+    ['keri ala', 'keri alla', { kind: 'scroll', direction: 'down' }],
+    ['keri natuke ala', 'keri natuke alla', { kind: 'scroll', direction: 'down', mode: 'little' }],
+    ['keri aeglaselt ala', 'keri aeglaselt alla', { kind: 'scroll', direction: 'down', mode: 'slow' }],
+    ['geri alla', 'keri alla', { kind: 'scroll', direction: 'down' }],
+    ['näida numbreid', 'näita numbreid', { kind: 'showHints' }],
+    ['mina juutuubi', 'mine juutuubi', { kind: 'goTo', url: 'https://www.youtube.com/' }],
+  ])('"%s" is "%s"', (u, understood, command) => {
+    const step = inpageStep(session(), u, box('Tere'))
+    expect(step.commands).toEqual(only(command))
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(step.line).toBe(`${ET.inpage.understood(understood)} ${ET.browserDoing(command)}`)
+    expect(inpagePreview(session(), u, box('Tere'))).toBeNull()
+  })
+
+  it.each<[string, string]>([
+    ['ava juutuba', 'https://www.youtube.com/'],
+    ['ava jutuub', 'https://www.youtube.com/'],
+    ['mine juutuubi', 'https://www.youtube.com/'],
+    ['ava vatsap', 'https://web.whatsapp.com/'],
+    ['ava gugel', 'https://www.google.com/'],
+    ['ava gmeil', 'https://mail.google.com/'],
+    ['ava fäisbuk', 'https://www.facebook.com/'],
+    ['ava mesendžer', 'https://www.messenger.com/'],
+    ['ava postimehes', 'https://www.postimees.ee/'],
+    ['mine delfis', 'https://www.delfi.ee/'],
+  ])('"%s" opens %s', (u, url) => {
+    expect(inpageStep(session(), u, box('Tere')).commands).toEqual(only({ kind: 'goTo', url }))
+    expect(inpageInstant(session(), u)).toBe(true)
+  })
+
+  it.each(['saadake', 'Saadake.', 'saadake ära', 'saadame', 'saada ära'])('"%s" sends', (u) => {
+    const step = inpageStep(session(), u, box('Tere'))
+    expect(step.commands).toEqual(only({ kind: 'pressSend' }))
+  })
+
+  it.each(['sada', 'saata', 'saadan', 'sada ära', 'saata ära', 'saada mulle pilt', 'Sada eurot', 'kass', 'kass magab', 'tere kass', 'Kass on kadunud', 'kass kast'])(
+    '"%s" is dictation: send is literal, "kass" is never a command',
+    (u) => {
+      const step = inpageStep(session(), u, box('Tere.'))
+      expect(step.commands).toHaveLength(1)
+      expect(step.commands[0]?.kind).toBe('setText')
+      expect(inpageInstant(session(), u)).toBe(false)
+    },
+  )
+
+  it('a single word is never corrected, phonetically either', () => {
+    expect(inpageInstant(session(), 'ala')).toBe(false)
+    expect(inpageInstant(session(), 'juutuba')).toBe(false)
+    expect(inpageInstant(session(), 'aga')).toBe(false)
+  })
+
+  it('two different commands possible: dictation', () => {
+    // "mine" and "mina"; "ala" is "alla", but there is no "mine alla" command, so only "mina alla" could be, which is none.
+    expect(inpageInstant(session(), 'mina ala')).toBe(false)
+  })
+
+  it('"stopp" with the labels showing still hides them; "aitab" scrolls to a stop and keeps them', () => {
+    expect(inpageStep(session({ hints: true }), 'stopp', box('')).commands).toEqual(only({ kind: 'hideHints' }))
+    const step = inpageStep(session({ hints: true }), 'aitab', box(''))
+    expect(step.commands).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'stop' }))
+    expect(step.session.hints).toBe(true)
+  })
+
+  it('numbers spoken as digits with endings still click', () => {
+    expect(inpageStep(session({ hints: true }), 'vajuta 5.', box('')).commands).toEqual(only({ kind: 'clickHint', number: 5 }))
+    expect(inpageStep(session({ hints: true }), 'number viis.', box('')).commands).toEqual(only({ kind: 'clickHint', number: 5 }))
+    expect(inpageStep(session({ hints: true }), '12.', box('')).commands).toEqual(only({ kind: 'clickHint', number: 12 }))
+  })
+})
+
+// Round 3, the edit lane: the caret, a selection, typing at the caret and the editing keys.
+
+describe('Round 3 editing: the fixed phrases', () => {
+  const ESSAY = box('Tere homme. Kõik hästi, kell kolm sobib.')
+  it.each<[string, BrowserCommand]>([
+    ['mine algusesse', { kind: 'caret', to: 'start' }],
+    ['Teksti algusesse.', { kind: 'caret', to: 'start' }],
+    ['go to the start', { kind: 'caret', to: 'start' }],
+    ['mine lõppu', { kind: 'caret', to: 'end' }],
+    ['teksti lõppu', { kind: 'caret', to: 'end' }],
+    ['go to the end', { kind: 'caret', to: 'end' }],
+    ['rea algusesse', { kind: 'caret', to: 'lineStart' }],
+    ['start of the line', { kind: 'caret', to: 'lineStart' }],
+    ['rea lõppu', { kind: 'caret', to: 'lineEnd' }],
+    ['end of the line', { kind: 'caret', to: 'lineEnd' }],
+    ['lause algusesse', { kind: 'caret', to: 'sentenceStart' }],
+    ['mine lause algusesse', { kind: 'caret', to: 'sentenceStart' }],
+    ['start of the sentence', { kind: 'caret', to: 'sentenceStart' }],
+    ['lause lõppu', { kind: 'caret', to: 'sentenceEnd' }],
+    ['end of the sentence', { kind: 'caret', to: 'sentenceEnd' }],
+    ['sõna tagasi', { kind: 'caret', to: 'wordBack' }],
+    ['üks sõna tagasi', { kind: 'caret', to: 'wordBack' }],
+    ['word back', { kind: 'caret', to: 'wordBack' }],
+    ['sõna edasi', { kind: 'caret', to: 'wordForward' }],
+    ['word forward', { kind: 'caret', to: 'wordForward' }],
+    ['vali kõik', { kind: 'select', what: 'all' }],
+    ['select all', { kind: 'select', what: 'all' }],
+    ['vali see sõna', { kind: 'select', what: 'word' }],
+    ['vali sõna', { kind: 'select', what: 'word' }],
+    ['select the word', { kind: 'select', what: 'word' }],
+    ['vali see lause', { kind: 'select', what: 'sentence' }],
+    ['select the sentence', { kind: 'select', what: 'sentence' }],
+    ['vali see rida', { kind: 'select', what: 'line' }],
+    ['select the line', { kind: 'select', what: 'line' }],
+    ['vali viimane sõna', { kind: 'select', what: 'lastWord' }],
+    ['select the last word', { kind: 'select', what: 'lastWord' }],
+    ['vali viimane lause', { kind: 'select', what: 'lastSentence' }],
+    ['select the last sentence', { kind: 'select', what: 'lastSentence' }],
+    ['kustuta täht', { kind: 'pressKey', key: 'Backspace' }],
+    ['Kustuta üks täht.', { kind: 'pressKey', key: 'Backspace' }],
+    ['kustuta valitud', { kind: 'pressKey', key: 'Backspace' }],
+    ['kustuta see', { kind: 'pressKey', key: 'Backspace' }],
+    ['delete a letter', { kind: 'pressKey', key: 'Backspace' }],
+    ['delete the selection', { kind: 'pressKey', key: 'Backspace' }],
+    ['kustuta ees', { kind: 'pressKey', key: 'Delete' }],
+    ['delete forward', { kind: 'pressKey', key: 'Delete' }],
+    ['vasakule', { kind: 'pressKey', key: 'ArrowLeft' }],
+    ['arrow left', { kind: 'pressKey', key: 'ArrowLeft' }],
+    ['paremale', { kind: 'pressKey', key: 'ArrowRight' }],
+    ['arrow right', { kind: 'pressKey', key: 'ArrowRight' }],
+    ['üks rida üles', { kind: 'pressKey', key: 'ArrowUp' }],
+    ['rida üles', { kind: 'pressKey', key: 'ArrowUp' }],
+    ['line up', { kind: 'pressKey', key: 'ArrowUp' }],
+    ['üks rida alla', { kind: 'pressKey', key: 'ArrowDown' }],
+    ['line down', { kind: 'pressKey', key: 'ArrowDown' }],
+    ['tee uuesti', { kind: 'pressKey', key: 'Redo' }],
+    ['redo', { kind: 'pressKey', key: 'Redo' }],
+    ['järgmine väli', { kind: 'pressKey', key: 'Tab' }],
+    ['next field', { kind: 'pressKey', key: 'Tab' }],
+    // Counts.
+    ['kustuta kolm tähte', { kind: 'pressKey', key: 'Backspace', times: 3 }],
+    ['kustuta 3 tähte', { kind: 'pressKey', key: 'Backspace', times: 3 }],
+    ['kustuta kaksteist tähte', { kind: 'pressKey', key: 'Backspace', times: 12 }],
+    ['delete three letters', { kind: 'pressKey', key: 'Backspace', times: 3 }],
+    ['vasakule kolm korda', { kind: 'pressKey', key: 'ArrowLeft', times: 3 }],
+    ['kolm korda vasakule', { kind: 'pressKey', key: 'ArrowLeft', times: 3 }],
+    ['kolm vasakule', { kind: 'pressKey', key: 'ArrowLeft', times: 3 }],
+    ['paremale viis korda', { kind: 'pressKey', key: 'ArrowRight', times: 5 }],
+    ['kaks paremale', { kind: 'pressKey', key: 'ArrowRight', times: 2 }],
+    ['left three times', { kind: 'pressKey', key: 'ArrowLeft', times: 3 }],
+    ['three times right', { kind: 'pressKey', key: 'ArrowRight', times: 3 }],
+    ['kaks rida üles', { kind: 'pressKey', key: 'ArrowUp', times: 2 }],
+    ['kolm rida alla', { kind: 'pressKey', key: 'ArrowDown', times: 3 }],
+    ['two lines down', { kind: 'pressKey', key: 'ArrowDown', times: 2 }],
+    // Typing at the caret: the words as said, without the closing full stop.
+    ['kirjuta siia vahele homme kell viis.', { kind: 'typeText', text: 'homme kell viis' }],
+    ['Kirjuta siia vahele väga.', { kind: 'typeText', text: 'väga' }],
+    ['lisa siia tere', { kind: 'typeText', text: 'tere' }],
+    ['sisesta homme kell viis', { kind: 'typeText', text: 'homme kell viis' }],
+    ['insert hello there', { kind: 'typeText', text: 'hello there' }],
+    ['type here hello', { kind: 'typeText', text: 'hello' }],
+  ])('"%s"', (u, command) => {
+    const step = inpageStep(session({ undo: ['x'] }), u, ESSAY)
+    expect(step.commands).toEqual(only(command))
+    expect(step.line).toBe(ET.browserDoing(command))
+    expect(step.ask).toBeUndefined()
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(inpagePreview(session(), u, ESSAY)).toBeNull()
+  })
+
+  it('"kirjuta siia" alone still arms, "sisesta" alone is still Enter', () => {
+    expect(inpageStep(session(), 'kirjuta siia', EMPTY).commands).toEqual(only({ kind: 'arm', on: true }))
+    expect(inpageStep(session(), 'sisesta', EMPTY).commands).toEqual(only({ kind: 'pressKey', key: 'Enter' }))
+  })
+
+  it('"kolm sõna tagasi" is the caret command three times', () => {
+    const back: BrowserCommand = { kind: 'caret', to: 'wordBack' }
+    const step = inpageStep(session(), 'kolm sõna tagasi', ESSAY)
+    expect(step.commands).toEqual([back, back, back])
+    expect(step.line).toBe(ET.browserDoing(back))
+    const forward: BrowserCommand = { kind: 'caret', to: 'wordForward' }
+    expect(inpageStep(session(), 'two words forward', ESSAY).commands).toEqual([forward, forward])
+    expect(inpageStep(session(), 'kaks sõna edasi', ESSAY).commands).toEqual([forward, forward])
+  })
+
+  it('"mitte X, vaid Y" stays the whole-box replacement', () => {
+    expect(inpageStep(session(), 'mitte kolm, vaid neli', ESSAY).commands).toEqual(only({ kind: 'setText', text: 'Tere homme. Kõik hästi, kell neli sobib.' }))
+  })
+
+  it('English lines in an English session', () => {
+    const step = inpageStep(session({ lang: 'en' }), 'vali kõik', ESSAY)
+    expect(step.line).toBe(EN.browserDoing({ kind: 'select', what: 'all' }))
+  })
+})
+
+describe('Round 3 editing: by a word that is in the box', () => {
+  const ESSAY = box('Tere homme. Kõik hästi, kell kolm sobib. Lähen kooli.')
+  it.each<[string, BrowserCommand]>([
+    ['mine sõna homme ette', { kind: 'caret', to: { find: 'homme', where: 'before' } }],
+    ['Mine sõna homme juurde.', { kind: 'caret', to: { find: 'homme', where: 'before' } }],
+    ['sõna homme ette', { kind: 'caret', to: { find: 'homme', where: 'before' } }],
+    ['enne sõna homme', { kind: 'caret', to: { find: 'homme', where: 'before' } }],
+    ['mine sõna homme taha', { kind: 'caret', to: { find: 'homme', where: 'after' } }],
+    ['mine sõna homme järele', { kind: 'caret', to: { find: 'homme', where: 'after' } }],
+    ['pärast sõna homme', { kind: 'caret', to: { find: 'homme', where: 'after' } }],
+    ['mine homme juurde', { kind: 'caret', to: { find: 'homme', where: 'before' } }],
+    ['mine kell kolm juurde', { kind: 'caret', to: { find: 'kell kolm', where: 'before' } }],
+    ['mine sõna kell kolm taha', { kind: 'caret', to: { find: 'kell kolm', where: 'after' } }],
+    ['mine homme taha', { kind: 'caret', to: { find: 'homme', where: 'after' } }],
+    ['go before homme', { kind: 'caret', to: { find: 'homme', where: 'before' } }],
+    ['go to before the word homme', { kind: 'caret', to: { find: 'homme', where: 'before' } }],
+    ['go after homme', { kind: 'caret', to: { find: 'homme', where: 'after' } }],
+    ['vali sõna homme', { kind: 'select', what: { find: 'homme' } }],
+    ['Vali homme.', { kind: 'select', what: { find: 'homme' } }],
+    ['vali kell kolm', { kind: 'select', what: { find: 'kell kolm' } }],
+    ['select homme', { kind: 'select', what: { find: 'homme' } }],
+    ['select the word homme', { kind: 'select', what: { find: 'homme' } }],
+    // "mine kooli juurde": the genitive extends the word in the box by a letter.
+    ['mine kooli juurde', { kind: 'caret', to: { find: 'kooli', where: 'before' } }],
+    ['vali kooli', { kind: 'select', what: { find: 'kooli' } }],
+  ])('"%s"', (u, command) => {
+    const step = inpageStep(session({ undo: ['x'], hints: true }), u, ESSAY)
+    expect(step.commands).toEqual(only(command))
+    expect(step.line).toBe(ET.browserDoing(command))
+    expect(step.ask).toBeUndefined()
+    expect(step.session.undo).toEqual(['x'])
+    expect(step.session.hints).toBe(true)
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(inpagePreview(session(), u, ESSAY)).toBeNull()
+  })
+
+  it('"kustuta sõna X" selects the word and presses Backspace, with the old text to take back', () => {
+    const step = inpageStep(session(), 'kustuta sõna homme', ESSAY)
+    expect(step.commands).toEqual([{ kind: 'select', what: { find: 'homme' } }, { kind: 'pressKey', key: 'Backspace' }])
+    expect(step.line).toBe(ET.inpage.deletingNamed('homme'))
+    expect(step.session.undo).toEqual([ESSAY.text])
+    expect(inpageStep(session({ lang: 'en' }), 'delete the word homme', ESSAY).line).toBe(EN.inpage.deletingNamed('homme'))
+    expect(inpageInstant(session(), 'kustuta sõna homme')).toBe(true)
+  })
+
+  it.each(['vali Eesti', 'mine kokkuvõtte juurde', 'go before lunch', 'kustuta sõna kass', 'select Estonia'])(
+    '"%s", a word that is not in the box, goes to the model as dictation would',
+    (u) => {
+      const step = inpageStep(session(), u, ESSAY)
+      expect(step.ask).toBe(true)
+      expect(setTextOf(step.commands).startsWith(ESSAY.text)).toBe(true)
+      expect(step.line).toBe(ET.browserDoing(step.commands[0] ?? { kind: 'ping' }))
+      const none = inpageStep(session(), u, NO_BOX)
+      expect(none.ask).toBe(true)
+      expect(none.commands).toEqual([])
+      expect(none.line).toBe(ET.inpage.pickField)
+    },
+  )
+
+  it('a one-letter correction never reaches a word-bound command', () => {
+    const step = inpageStep(session(), 'valy homme', ESSAY)
+    expect(step.commands[0]?.kind).toBe('setText')
+    expect(step.ask).toBe(true)
+  })
+})
+
+describe('Round 3 editing: the box, the undo texts and the labels', () => {
+  it.each(['mine algusesse', 'vali kõik', 'kustuta täht', 'vasakule', 'kirjuta siia vahele tere', 'kolm sõna tagasi', 'tee uuesti'])(
+    '"%s" without any box says to pick a field and emits nothing',
+    (u) => {
+      const s = session({ undo: ['x'] })
+      const step = inpageStep(s, u, NO_BOX)
+      expect(step.commands).toEqual([])
+      expect(step.line).toBe(ET.inpage.pickField)
+      expect(step.session).toEqual(s)
+      expect(step.ask).toBeUndefined()
+    },
+  )
+
+  it('a field the page focused by itself can still be edited (the caret is where he is)', () => {
+    expect(inpageStep(session(), 'mine algusesse', unarmed('abc')).commands).toEqual(only({ kind: 'caret', to: 'start' }))
+  })
+
+  it('typing at the caret and the deleting keys push the old text for "võta tagasi"; moving does not', () => {
+    const b = box('Tere homme')
+    expect(inpageStep(session(), 'kirjuta siia vahele kell viis', b).session.undo).toEqual(['Tere homme'])
+    expect(inpageStep(session(), 'kustuta täht', b).session.undo).toEqual(['Tere homme'])
+    expect(inpageStep(session(), 'kustuta kolm tähte', b).session.undo).toEqual(['Tere homme'])
+    expect(inpageStep(session(), 'kustuta ees', b).session.undo).toEqual(['Tere homme'])
+    for (const u of ['vasakule', 'mine algusesse', 'vali kõik', 'tee uuesti', 'kolm sõna tagasi']) {
+      expect(inpageStep(session(), u, b).session.undo, u).toEqual([])
+    }
+    const typed = inpageStep(session(), 'kirjuta siia vahele kell viis', b)
+    const undone = inpageStep(typed.session, 'võta tagasi', box('Tere kell viis homme'))
+    expect(undone.commands).toEqual(only({ kind: 'setText', text: 'Tere homme' }))
+  })
+
+  it('a failed typeText or deletion drops the entry it pushed; a success keeps it', () => {
+    const b = box('Tere homme')
+    const typed = inpageStep(session(), 'kirjuta siia vahele kell viis', b)
+    const failed = inpageResult(typed.session, typed.commands, { ok: false, code: 'not_found', message: 'x' })
+    expect(failed.session.undo).toEqual([])
+    expect(failed.line).toBe(ET.browserFailed({ kind: 'typeText', text: 'kell viis' }, 'not_found'))
+    const fine = inpageResult(typed.session, typed.commands, { ok: true, box: box('Tere kell viis homme') })
+    expect(fine.session.undo).toEqual(['Tere homme'])
+    expect(fine.line).toBe(ET.browserDone({ kind: 'typeText', text: 'kell viis' }, null, null))
+    const named = inpageStep(session(), 'kustuta sõna homme', b)
+    expect(inpageResult(named.session, named.commands, { ok: false, code: 'not_found', message: 'x' }).session.undo).toEqual([])
+    const moved = inpageStep(session({ undo: ['a'] }), 'vasakule', b)
+    expect(inpageResult(moved.session, moved.commands, { ok: false, code: 'failed', message: 'x' }).session.undo).toEqual(['a'])
+  })
+
+  it('editing keeps the labels and the undo texts; Escape, Enter and Tab do not', () => {
+    const s = session({ hints: true, undo: ['a'] })
+    for (const u of ['mine algusesse', 'vali kõik', 'vasakule', 'tee uuesti', 'sõna tagasi', 'kirjuta siia vahele tere']) {
+      const step = inpageStep(s, u, box('Tere'))
+      expect(step.session.hints, u).toBe(true)
+      expect(step.session.undo[0], u).toBe('a')
+    }
+    for (const u of ['järgmine väli', 'enter', 'pane kinni']) {
+      const step = inpageStep(s, u, box(''))
+      expect(step.session.hints, u).toBe(false)
+      expect(step.session.undo, u).toEqual([])
+    }
+  })
+
+  it('the model may answer with the editing commands; they go through the same refusal', () => {
+    const command: BrowserCommand = { kind: 'select', what: { find: 'homme' } }
+    const step = applyIntent(session(), { kind: 'command', command }, page(box('Tere homme')), 'vali homme')
+    expect(step.commands).toEqual(only(command))
+    expect(applyIntent(session(), { kind: 'command', command }, page(NO_BOX)).line).toBe(ET.inpage.pickField)
+    const typed = applyIntent(session(), { kind: 'command', command: { kind: 'typeText', text: 'kell viis' } }, page(box('Tere homme')))
+    expect(typed.session.undo).toEqual(['Tere homme'])
+  })
+
+  it.each(['mine sõna homme ette', 'kustuta kolm tähte', 'kirjuta siia vahele homme kell viis', 'kolm sõna tagasi', 'vali viimane lause', 'vasakule kolm korda', 'go before homme', 'delete three letters'])(
+    'no prefix of "%s" is ever typed as a preview',
+    (u) => {
+      for (const p of prefixes(u)) expect(preview(p, 'Tere homme'), p).toBeNull()
+    },
+  )
+
+  it.each(['kustuta tähht', 'kolm sõna tagasy'])('"%s", a letter off a key or a count, is not corrected into it', (u) => {
+    const step = inpageStep(session(), u, box('Tere homme'))
+    expect(step.commands.some((c) => c.kind === 'pressKey')).toBe(false)
+  })
+
+  it('a misheard fixed editing phrase is corrected and named', () => {
+    const step = inpageStep(session(), 'mine algusese', box('Tere'))
+    expect(step.commands).toEqual(only({ kind: 'caret', to: 'start' }))
+    expect(step.line).toBe(`${ET.inpage.understood('mine algusesse')} ${ET.browserDoing({ kind: 'caret', to: 'start' })}`)
   })
 })

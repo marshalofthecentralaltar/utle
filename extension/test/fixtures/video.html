@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Videod</title>
+    <style>
+      /* A YouTube-like page: a header search that auto-focuses (like Google), an icon button named
+         by aria-labelledby, a player, a comment box with its button, a sidebar with "Vaata hiljem"
+         and a card that is clickable only by its cursor, ten video cards (thumbnail link, title
+         link and channel link, the first two sharing an address) of which the last ones are below
+         the fold, a tile that reacts to Enter only, and a cookie banner that is there first. */
+      body { margin: 0; font: 16px system-ui, sans-serif; }
+      header { display: flex; gap: 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #ddd; }
+      header form { display: flex; gap: 8px; }
+      header input { width: 320px; padding: 6px; font: inherit; }
+      header button svg { width: 20px; height: 20px; display: block; }
+      .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      main { display: grid; grid-template-columns: 640px 300px; gap: 24px; padding: 16px; }
+      video { width: 640px; height: 360px; background: #000; display: block; }
+      h1 { font-size: 20px; margin: 12px 0 4px; }
+      .actions { display: flex; gap: 12px; margin: 12px 0; }
+      .comment textarea { width: 600px; height: 56px; display: block; font: inherit; padding: 6px; }
+      .comment button { margin-top: 8px; }
+      #comments li { margin: 4px 0; }
+      .card { cursor: pointer; padding: 10px; background: #f0f0f0; margin-top: 12px; width: 220px; border-radius: 6px; }
+      .tile { display: inline-block; padding: 8px 12px; margin-top: 12px; background: #e8e8e8; border-radius: 6px; cursor: pointer; }
+      .videos { margin-top: 16px; }
+      .item { display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid #eee; }
+      .thumb { position: relative; display: block; width: 168px; height: 94px; background: #456; flex: none; }
+      .thumb img { width: 100%; height: 100%; display: block; }
+      .thumb .duration { position: absolute; right: 4px; bottom: 4px; background: #000; color: #fff; font-size: 12px; padding: 1px 4px; }
+      .meta a { display: block; color: #111; text-decoration: none; }
+      .meta .channel { color: #606060; font-size: 14px; margin-top: 4px; }
+      .menu { margin-left: auto; align-self: flex-start; }
+      #cookies { position: fixed; left: 0; right: 0; bottom: 0; height: 45vh; background: #fff; border-top: 2px solid #333;
+                 padding: 24px; box-sizing: border-box; z-index: 10; }
+      #cookies .buttons { display: flex; gap: 12px; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a id="logo" href="#avaleht">Videod</a>
+      <form id="search-form">
+        <input type="search" name="q" id="q" placeholder="Otsi" autofocus />
+        <button type="submit">Otsi</button>
+      </form>
+      <button id="create" type="button" aria-labelledby="create-label">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v14M3 10h14" stroke="#000" stroke-width="2" /></svg>
+      </button>
+      <span id="create-label" class="sr">Loo video</span>
+    </header>
+    <main>
+      <section>
+        <video id="v" controls muted autoplay loop playsinline></video>
+        <h1 id="title">Kevad Mektorys</h1>
+        <div class="actions">
+          <button id="like" type="button">Meeldib</button>
+          <button id="share" type="button">Jaga</button>
+          <div id="subscribe" class="tile" role="button" tabindex="0">Telli</div>
+        </div>
+        <div class="comment">
+          <textarea id="comment" placeholder="Lisa kommentaar"></textarea>
+          <button id="post" type="button">Kommenteeri</button>
+        </div>
+        <ul id="comments"></ul>
+        <div class="videos" id="videos"></div>
+      </section>
+      <aside>
+        <button id="later" type="button">Vaata hiljem</button>
+        <div class="card" id="playlist"><strong>Esitusloend</strong></div>
+      </aside>
+    </main>
+    <div id="cookies">
+      <h2>Enne jätkamist</h2>
+      <p>See sait kasutab küpsiseid, et videod ja soovitused töötaksid. Vali, kas nõustud nendega.</p>
+      <div class="buttons">
+        <button id="cookie-settings" type="button">Seaded</button>
+        <button id="cookie-accept" type="button">Nõustu</button>
+      </div>
+    </div>
+    <script>
+      window.clicks = []
+      // A blob is seekable whatever the server does with Range requests (the test server does nothing).
+      fetch('video.webm')
+        .then((r) => r.blob())
+        .then((blob) => {
+          document.getElementById('v').src = URL.createObjectURL(blob)
+        })
+      // Enter in the search field does nothing by itself (a synthetic Enter never submits a form);
+      // the extension falls back to requestSubmit, and the submit changes the address.
+      document.getElementById('search-form').addEventListener('submit', (e) => {
+        e.preventDefault()
+        location.hash = 'otsing=' + encodeURIComponent(document.getElementById('q').value)
+      })
+      document.getElementById('later').addEventListener('click', (e) => {
+        e.target.textContent = 'Lisatud'
+        window.clicks.push('later')
+      })
+      document.getElementById('playlist').addEventListener('click', () => window.clicks.push('playlist'))
+      document.getElementById('cookie-accept').addEventListener('click', () => {
+        document.getElementById('cookies').remove()
+        window.clicks.push('cookies')
+      })
+      // A tile that listens to the keyboard only (a click does nothing).
+      document.getElementById('subscribe').addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return
+        e.currentTarget.textContent = 'Tellitud'
+        window.clicks.push('subscribe')
+      })
+      const names = ['Esimene video', 'Teine video', 'Kolmas video', 'Neljas video', 'Viies video', 'Kuues video', 'Seitsmes video', 'Kaheksas video', 'Üheksas video', 'Kümnes video']
+      const channels = ['Mektory', 'TalTech', 'Mektory', 'ERR', 'TalTech', 'Mektory', 'ERR', 'TalTech', 'Mektory', 'ERR']
+      const list = document.getElementById('videos')
+      names.forEach((name, i) => {
+        const n = i + 1
+        const item = document.createElement('div')
+        item.className = 'item'
+        // The thumbnail and the title link to the same video; the thumbnail's only text is the duration.
+        item.innerHTML = `<a class="thumb" href="watch?v=${n}"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" /><span class="duration">${n}:3${n % 10}</span></a>
+          <div class="meta"><a id="video-title-${n}" class="title" href="watch?v=${n}">${name}</a><a class="channel" href="channel/${channels[i].toLowerCase()}">${channels[i]}</a></div>
+          <button class="menu" type="button" aria-label="Toimingute menüü">⋮</button>`
+        list.append(item)
+      })
+      // Like YouTube, a click on a video link changes the address in place instead of loading a page.
+      document.addEventListener('click', (e) => {
+        const a = e.target.closest('a[href^="watch"]')
+        if (!a) return
+        e.preventDefault()
+        window.clicks.push(a.getAttribute('href'))
+        history.pushState({}, '', a.getAttribute('href'))
+      })
+      const post = () => {
+        const area = document.getElementById('comment')
+        const text = area.value.trim()
+        if (text === '') return
+        const li = document.createElement('li')
+        li.textContent = text
+        document.getElementById('comments').append(li)
+        area.value = ''
+      }
+      document.getElementById('post').addEventListener('click', post)
+      document.getElementById('comment').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          post()
+        }
+      })
+    </script>
+  </body>
+</html>

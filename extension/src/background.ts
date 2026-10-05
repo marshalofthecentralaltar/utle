@@ -2,6 +2,7 @@
 // strip's state, opens the microphone permission page. See docs/ARCHITECTURE.md 20.2 and 21.2.
 
 import type { BrowserCommand, BrowserFailure, BrowserResult } from '../../src/browser/protocol.ts'
+import type { TabSummary } from '../../src/core/pageIntent.ts'
 import { INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
 import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.ts'
 import type { PageCommand } from './page.ts'
@@ -105,6 +106,15 @@ async function targetTab(senderWindowId: number | undefined): Promise<Tab | null
 
 const NO_TARGET = (): BrowserResult => fail('no_target', 'There is no browser window to act on.')
 
+/** The tabs of the window being driven, left to right, as the model sees them (M7). */
+async function tabSummaries(): Promise<TabSummary[]> {
+  const win = await targetWindow(undefined)
+  if (!win) return []
+  const tabs = await chrome.tabs.query({ windowId: win.id })
+  // IntentRequestSchema takes at most 60 tabs; a request beyond that would be a 400.
+  return tabs.slice(0, 60).map((t, i) => ({ index: i + 1, title: (t.title ?? '').slice(0, 300), active: t.active }))
+}
+
 // ---------- waiting for a page ----------
 
 /** Runs action, then waits until the tab has finished loading (or the timeout). */
@@ -201,7 +211,9 @@ const NEWTAB_TIMEOUT_MS = 6000
 
 /** The extension's own new-tab page (21.3). Chrome reports it as chrome://newtab/. */
 function ourNewTab(url: string | undefined): boolean {
-  return url === 'chrome://newtab/' || (url ?? '').startsWith(chrome.runtime.getURL('newtab.html'))
+  const u = url ?? ''
+  // The options page (M7) runs page commands the same way, so its buttons can be numbered by voice.
+  return url === 'chrome://newtab/' || u.startsWith(chrome.runtime.getURL('newtab.html')) || u.startsWith(chrome.runtime.getURL('options.html'))
 }
 
 /** The worker cannot inject into an extension page: the new-tab page runs the command with its own page.js. */
@@ -245,8 +257,8 @@ async function runInPage(tab: Tab, command: BrowserCommand): Promise<PageAnswer>
 /** A page answer without the page's own fields (href, settled). */
 function clean(answer: PageAnswer): BrowserResult {
   if (!answer.ok) return answer
-  const { tab, hints, box } = answer as Extract<BrowserResult, { ok: true }>
-  return ok({ ...(tab ? { tab } : {}), ...(hints !== undefined ? { hints } : {}), ...(box ? { box } : {}) })
+  const { tab, hints, box, page } = answer as Extract<BrowserResult, { ok: true }>
+  return ok({ ...(tab ? { tab } : {}), ...(hints !== undefined ? { hints } : {}), ...(box ? { box } : {}), ...(page ? { page } : {}) })
 }
 
 // ---------- commands ----------
@@ -331,10 +343,32 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     case 'readBox':
     case 'setText':
     case 'pressSend':
+    case 'readPage':
+    case 'focusItem':
+    case 'media':
+    case 'pressKey':
+    case 'caret':
+    case 'select':
+    case 'typeText':
+    case 'clearField':
+    case 'arm':
       return clean(await runInPage(tab, command))
+    case 'siteSearch': {
+      // The search submits and usually loads a results page.
+      let result: PageAnswer = fail('failed', 'The page did not answer.')
+      await andWaitForLoad(tabId, async () => {
+        result = await runInPage(tab, command)
+      })
+      if (!result.ok) return result
+      return freshTab(tabId)
+    }
+    case 'bar':
+      await patchState({ hidden: !command.show })
+      return ok()
     case 'openConversation':
       return openConversation(tab, command)
-    case 'clickHint': {
+    case 'clickHint':
+    case 'clickItem': {
       let result: PageAnswer = fail('failed', 'The page did not answer.')
       await andWaitForLoad(tabId, async () => {
         result = await runInPage(tab, command)
@@ -429,14 +463,28 @@ function patchState(patch: Partial<StripState>): Promise<void> {
 
 let creating: Promise<void> | null = null
 
+/** The speech engine chosen on the options page (round 3): local (TalTech) or soniox. */
+async function speechEngine(): Promise<'local' | 'soniox'> {
+  const value = await stored('speechEngine')
+  return value === 'soniox' ? 'soniox' : 'local'
+}
+
 async function ensureOffscreen(): Promise<void> {
-  const url = chrome.runtime.getURL('offscreen.html')
+  const base = chrome.runtime.getURL('offscreen.html')
+  // The engine is in the address, so a changed setting makes a new document on the next start.
+  const wanted = `${base}?asr=${encodeURIComponent(await asrUrl())}&engine=${await speechEngine()}`
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
-  if (contexts.some((c) => c.documentUrl?.startsWith(url))) return
+  const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
+  if (existing && existing.documentUrl === wanted) return
   if (creating) return creating
   creating = (async () => {
+    if (existing) {
+      // The old engine dies with its document without a word: what it published is no longer true.
+      await chrome.offscreen.closeDocument().catch(() => undefined)
+      await patchState({ listening: false, thinking: false, lag: 0 })
+    }
     await chrome.offscreen.createDocument({
-      url: `offscreen.html?asr=${encodeURIComponent(await asrUrl())}`,
+      url: wanted,
       reasons: [chrome.offscreen.Reason.USER_MEDIA],
       justification: 'Ütle listens to the microphone for the whole browser.',
     })
@@ -452,9 +500,12 @@ async function ensureOffscreen(): Promise<void> {
   }
 }
 
-async function toOffscreen(type: ToOffscreen['type']): Promise<void> {
+async function toOffscreen(type: 'toggle' | 'start'): Promise<void> {
+  await sendOffscreen({ target: 'offscreen', type })
+}
+
+async function sendOffscreen(message: ToOffscreen): Promise<void> {
   await ensureOffscreen()
-  const message: ToOffscreen = { target: 'offscreen', type }
   await chrome.runtime.sendMessage(message).catch(() => undefined)
 }
 
@@ -487,6 +538,16 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
     case 'utle-state':
       void patchState(message.patch)
       return false
+    case 'utle-bar':
+      void patchState({ hidden: !message.show })
+      return false
+    case 'utle-listen':
+      // From the strip in gaze mode (round 3).
+      void sendOffscreen(message.on ? { target: 'offscreen', type: 'start' } : { target: 'offscreen', type: 'stop', flush: message.flush })
+      return false
+    case 'utle-open-options':
+      void chrome.runtime.openOptionsPage()
+      return false
     case 'utle-mic-blocked':
       void chrome.storage.session.set({ wantListening: true }).then(openPermissionPage)
       return false
@@ -497,6 +558,15 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
         await toOffscreen('start')
       })
       return false
+    case 'utle-tabs': {
+      // From the offscreen engine (M7): the tabs of the window being driven, for the model.
+      if (sender.tab) return false
+      tabSummaries().then(
+        (tabs) => sendResponse({ tabs }),
+        () => sendResponse({ tabs: [] }),
+      )
+      return true
+    }
     case 'utle-run': {
       // From the offscreen engine: it has no tab, so the target is the most recent ordinary window.
       if (sender.tab) return false

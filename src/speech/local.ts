@@ -1,11 +1,14 @@
 import { createAssembler } from './assembler.ts'
-import { ASR_PATH, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, parseAsrMessage } from './asrProtocol.ts'
+import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, parseAsrMessage } from './asrProtocol.ts'
+import type { AsrClientMessage } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
 
 /** The parts of the browser's WebSocket this recogniser uses. */
 export interface SocketLike {
   readonly readyState: number
-  send(data: ArrayBuffer): void
+  /** Bytes queued and not yet handed to the network. */
+  readonly bufferedAmount: number
+  send(data: ArrayBuffer | string): void
   close(): void
 }
 
@@ -37,6 +40,10 @@ const RETRY_MS = 500
 /** Tries to bring back a lost connection before giving up. */
 const MAX_RETRIES = 3
 const MIC_BLOCKED = 'The microphone is blocked or missing. Allow it in the address bar, or type instead.'
+/** Bytes of audio per millisecond on the wire: float32 at 16 kHz. */
+const BYTES_PER_MS = (ASR_SAMPLE_RATE * 4) / 1000
+/** Audio the socket may hold unsent before frames are dropped: 2 s. */
+export const MAX_BUFFERED_BYTES = 2000 * BYTES_PER_MS
 
 /** The browser's websocket to the recogniser, at address or at /api/asr on the page's own host. */
 export function browserSocket(events: SocketEvents, address?: string): SocketLike {
@@ -74,6 +81,11 @@ function words(text: string): string[] {
  * shorter hold. A quick reply does not wait for the final: a partial that is one, with nothing held,
  * is released once it has stayed the same for INSTANT_SETTLE_MS, and the final for those same words
  * is then swallowed on the client (only the words after them are delivered).
+ *
+ * Lag (23.1): a frame is dropped, not queued, while the socket holds more than MAX_BUFFERED_BYTES
+ * unsent, and the server's lag messages and the local drops both reach onLag. A flush asks the
+ * server for the final of the utterance in progress, releases a settling quick reply at once, and
+ * delivers what the assembler holds without the hold (joined with that final when one is coming).
  */
 export function createLocalRecognizer(
   handlers: RecognizerHandlers,
@@ -92,6 +104,12 @@ export function createLocalRecognizer(
   let settling = ''
   /** The words of a quick reply released from a partial, until the server's final for them arrives. */
   let released: string[] | null = null
+  /** The last partial of the utterance in progress; empty after its final. */
+  let current = ''
+  /** A flush was sent while an utterance was in progress: its final is delivered without the hold. */
+  let flushed = false
+  /** Frames not sent because the socket was full; the next sent frame ends the lag. */
+  let dropping = false
 
   const cancelSettle = (): void => {
     if (settle !== null) clearTimeout(settle)
@@ -99,7 +117,16 @@ export function createLocalRecognizer(
     settling = ''
   }
 
+  const releaseInstant = (text: string): void => {
+    released = words(text)
+    handlers.onInterim('')
+    handlers.onUtterance(text)
+  }
+
   const onPartial = (text: string): void => {
+    // A partial after a flush is the flushed utterance still being decoded (the frames queued before
+    // the flush); its final is still the one owed at once.
+    current = text
     if (released !== null) {
       // Still the reply already released: nothing new to show.
       const heard = words(text)
@@ -118,34 +145,36 @@ export function createLocalRecognizer(
       settle = null
       settling = ''
       if (!assembler.idle()) return
-      released = words(text)
-      handlers.onInterim('')
-      handlers.onUtterance(text)
+      releaseInstant(text)
     }, INSTANT_SETTLE_MS)
   }
 
   const onFinal = (text: string): void => {
     cancelSettle()
     handlers.onInterim('')
+    current = ''
+    const atOnce = flushed
+    flushed = false
     const before = released
     released = null
     if (before === null) {
       assembler.final(text)
-      return
+    } else {
+      const heard = words(text)
+      // The final is the same breath heard again. The model often changes its mind by a word
+      // ("saada" becomes "saadake", "keri alla" becomes "keri alla ja"); the command has already
+      // run, so a final no more than one word longer than what was released is that breath and is dropped.
+      if (heard.length > before.length + 1) {
+        const same = before.every((word, i) => heard[i] === word)
+        if (!same) assembler.final(text)
+        else {
+          // Drop the released words; keep the rest as the user said it.
+          const rest = text.trim().split(/\s+/).slice(before.length).join(' ')
+          if (rest !== '') assembler.final(rest)
+        }
+      }
     }
-    const heard = words(text)
-    // The final is the same breath heard again. The model often changes its mind by a word
-    // ("saada" becomes "saadake", "keri alla" becomes "keri alla ja"); the command has already
-    // run, so a final no more than one word longer than what was released is that breath and is dropped.
-    if (heard.length <= before.length + 1) return
-    const same = before.every((word, i) => heard[i] === word)
-    if (!same) {
-      assembler.final(text)
-      return
-    }
-    // Drop the released words; keep the rest as the user said it.
-    const rest = text.trim().split(/\s+/).slice(before.length).join(' ')
-    if (rest !== '') assembler.final(rest)
+    if (atOnce) assembler.releaseNow()
   }
 
   const teardown = (): void => {
@@ -153,6 +182,9 @@ export function createLocalRecognizer(
     retry = null
     cancelSettle()
     released = null
+    current = ''
+    flushed = false
+    dropping = false
     const ws = socket
     socket = null
     ws?.close()
@@ -168,19 +200,30 @@ export function createLocalRecognizer(
     options.onUnavailable()
   }
 
+  const sendFrame = (samples: Float32Array<ArrayBuffer>): void => {
+    if (socket?.readyState !== OPEN) return
+    if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+      // The network is not taking the audio: queuing more would only make the delay longer.
+      dropping = true
+      handlers.onLag?.(Math.round(socket.bufferedAmount / BYTES_PER_MS))
+      return
+    }
+    if (dropping) {
+      dropping = false
+      handlers.onLag?.(0)
+    }
+    socket.send(samples.buffer)
+  }
+
   const listen = (): void => {
     const source = options.audio()
     audio = source
-    source
-      .start((samples) => {
-        if (socket?.readyState === OPEN) socket.send(samples.buffer)
-      })
-      .catch(() => {
-        if (audio !== source || !running) return
-        running = false
-        teardown()
-        handlers.onError(MIC_BLOCKED)
-      })
+    source.start(sendFrame).catch(() => {
+      if (audio !== source || !running) return
+      running = false
+      teardown()
+      handlers.onError(MIC_BLOCKED)
+    })
   }
 
   const open = (): void => {
@@ -204,6 +247,9 @@ export function createLocalRecognizer(
           return
         case 'final':
           onFinal(message.text)
+          return
+        case 'lag':
+          handlers.onLag?.(message.ms)
           return
       }
     }
@@ -232,6 +278,18 @@ export function createLocalRecognizer(
     socket = ws
   }
 
+  /**
+   * Stopped while a flush waits for its final (the gaze left; the server is behind): the words in
+   * progress are delivered as last heard, and whatever is held goes with them, rather than being
+   * dropped with the socket. Without a flush a stop drops the utterance in progress and what is
+   * held, as before (he stopped: those words were not asked for).
+   */
+  const deliverPending = (): void => {
+    if (!flushed) return
+    if (current !== '' && released === null) assembler.final(current)
+    assembler.releaseNow()
+  }
+
   return {
     supported: true,
     start() {
@@ -242,11 +300,28 @@ export function createLocalRecognizer(
       open()
     },
     stop() {
+      if (running) deliverPending()
       running = false
       teardown()
     },
     setLang() {
       // One model hears Estonian and English.
+    },
+    flush() {
+      if (!running) return
+      const asked = socket?.readyState === OPEN
+      if (asked) socket?.send(JSON.stringify({ type: 'flush' } satisfies AsrClientMessage))
+      if (settling !== '') {
+        const text = settling
+        cancelSettle()
+        if (assembler.idle()) releaseInstant(text)
+      }
+      // With words in progress the server's final is moments away: it joins what is held, then all goes at once.
+      if (asked && current !== '' && released === null) {
+        flushed = true
+        return
+      }
+      assembler.releaseNow()
     },
   }
 }

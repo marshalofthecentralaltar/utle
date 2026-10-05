@@ -6,6 +6,8 @@ export interface Recognizer {
   setLang(lang: string): void
   /** False when the browser has no speech recognition. The typed box still works. */
   readonly supported: boolean
+  /** Ends the utterance being spoken now and delivers its words at once (push-to-talk released). Optional. */
+  flush?(): void
 }
 
 export interface RecognizerHandlers {
@@ -17,6 +19,8 @@ export interface RecognizerHandlers {
   onError(message: string): void
   /** A line the user should see that needs no action: the microphone stays on. */
   onNotice?(message: string): void
+  /** The recogniser is this many ms behind the speech (it drops audio to catch up); 0 once caught up. */
+  onLag?(ms: number): void
 }
 
 export const LANGUAGES = [

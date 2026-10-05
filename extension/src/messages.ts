@@ -1,6 +1,7 @@
 // Messages between the extension's parts (docs/ARCHITECTURE.md 21.2) and the strip's state.
 
 import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import type { TabSummary } from '../../src/core/pageIntent.ts'
 import type { PageCommand } from './page.ts'
 
 /** Everything the strip shows. Kept by the service worker in chrome.storage.session under STATE_KEY. */
@@ -14,6 +15,14 @@ export interface StripState {
   line: string
   /** A plain line about something that stops him (the speech model, the microphone), or ''. */
   problem: string
+  /** The strip is folded to a small microphone pill ("peida riba"). */
+  hidden: boolean
+  /** The model is being asked what the last utterance meant (M7). */
+  thinking: boolean
+  /** The free-form understanding is off: no key, or the server has no model. '' when it works. */
+  modelProblem: string
+  /** How far behind the speech server is, in ms (round 3). 0 when caught up. */
+  lag: number
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -24,7 +33,7 @@ export interface StripState {
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, connects: 0, micOpens: 0, micOpenedAt: 0 }
 
 /** To the service worker. */
 export type ToBackground =
@@ -36,13 +45,28 @@ export type ToBackground =
   | { type: 'utle-run'; command: BrowserCommand }
   /** From the offscreen engine: the microphone was refused; open the permission page. */
   | { type: 'utle-mic-blocked' }
+  /** From the offscreen engine (M7): the tabs of the window being driven, for the model. Answered with a TabsAnswer. */
+  | { type: 'utle-tabs' }
   /** From the permission page: the microphone is allowed now. */
   | { type: 'utle-mic-granted' }
   /** From the localhost harness through relay.js (section 20.2). */
   | { type: 'utle-command'; command: BrowserCommand }
+  /** From the strip's "Seaded" control: open the options page (a content script cannot). */
+  | { type: 'utle-open-options' }
+  /** From the strip's "Peida" and "Näita" controls: fold the bar to the pill, or unfold it. */
+  | { type: 'utle-bar'; show: boolean }
+  /**
+   * From the strip in gaze mode (round 3): listen while the pointer rests on the target. on:false
+   * with flush delivers the words said so far before the microphone closes.
+   */
+  | { type: 'utle-listen'; on: boolean; flush?: boolean }
 
-/** To the offscreen document. */
-export type ToOffscreen = { target: 'offscreen'; type: 'toggle' } | { target: 'offscreen'; type: 'start' }
+/** To the offscreen document. stop with flush: deliver the words said so far, then stop. */
+export type ToOffscreen =
+  | { target: 'offscreen'; type: 'toggle' }
+  | { target: 'offscreen'; type: 'start' }
+  | { target: 'offscreen'; type: 'stop'; flush?: boolean }
+  | { target: 'offscreen'; type: 'flush' }
 
 /**
  * To the extension's new-tab page, from the service worker: run one page command there (21.3). The
@@ -62,6 +86,14 @@ export interface StripMeasure {
   /** The computed font size of the heard words, in px. */
   heardPx: number
   line: string
+  /** The bar is folded to the pill. */
+  hidden: boolean
+  /** Gaze mode (round 3): the target's phase ('arming', 'on', 'leaving'), or '' when off or not in gaze mode. */
+  gaze: string
+  /** The lag line's text, or '' when hidden. */
+  lag: string
 }
 
 export type RunAnswer = { result: BrowserResult }
+
+export type TabsAnswer = { tabs: TabSummary[] }

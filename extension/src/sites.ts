@@ -119,3 +119,22 @@ export function siteOf(url: string | undefined, settings: SiteSettings): SiteNam
   }
   return null
 }
+
+/**
+ * The site's own search field, by hostname without a leading "www." (siteSearch, M7). A site
+ * missing here is searched through the generic selectors in page.ts; none at all means Google.
+ */
+export const SEARCH_FIELDS: Record<string, string> = {
+  'youtube.com': 'input[name="search_query"]', // UNVERIFIED: read from the public page, not logged in
+  'm.youtube.com': 'input[name="search_query"]', // UNVERIFIED
+  'google.com': 'textarea[name="q"], input[name="q"]', // UNVERIFIED
+  'google.ee': 'textarea[name="q"], input[name="q"]', // UNVERIFIED
+  'web.whatsapp.com': SITES.whatsapp.searchField ?? '',
+}
+
+/** The SEARCH_FIELDS selector for a hostname, or null. "www.google.com" finds "google.com". */
+export function searchFieldFor(hostname: string): string | null {
+  const host = hostname.toLowerCase()
+  const bare = host.replace(/^www\./, '')
+  return SEARCH_FIELDS[host] ?? SEARCH_FIELDS[bare] ?? null
+}

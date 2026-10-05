@@ -1,121 +1,141 @@
-import { existsSync } from 'node:fs'
 import type { EventEmitter } from 'node:events'
 import type { IncomingMessage } from 'node:http'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { Duplex } from 'node:stream'
 import { WebSocketServer } from 'ws'
 import type { RawData, WebSocket } from 'ws'
 import { ASR_PATH } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
+import { loadModel } from './asrModel.ts'
+import type { ModelLoad } from './asrModel.ts'
 import { createAsrSession, samplesFromFrame } from './asrSession.ts'
-import type { OnlineRecognizerLike } from './asrSession.ts'
+import { hostInThread, startWorkerHost } from './asrWorker.ts'
+import type { DecoderHost, HostStart } from './asrWorker.ts'
+import { attachSonioxSession } from './soniox.ts'
 
-export const MODEL_DIR = join('models', 'streaming-zipformer-large.et-en')
-export const MODEL_FILES = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'] as const
+export { MODEL_DIR, MODEL_FILES, loadModel } from './asrModel.ts'
+export type { ModelLoad } from './asrModel.ts'
 
-export type ModelLoad = { ok: true; recognizer: OnlineRecognizerLike; ms: number } | { ok: false; reason: AsrUnavailableReason }
+/** The decode worker's entry, relative to the project root (the server runs from Vite's bundled config, so import.meta.url is no guide). */
+export const WORKER_ENTRY = join('server', 'asrWorker.ts')
 
-type RecognizerConstructor = new (config: unknown) => OnlineRecognizerLike
-
-/** Loads the native addon and the model. Lazily: nothing here runs in the browser bundle or the build. */
-export function loadModel(root: string): ModelLoad {
-  const dir = join(root, MODEL_DIR)
-  if (!MODEL_FILES.every((file) => existsSync(join(dir, file)))) return { ok: false, reason: 'model_missing' }
-
-  let OnlineRecognizer: RecognizerConstructor
-  try {
-    const addon: unknown = createRequire(join(root, 'package.json'))('sherpa-onnx-node')
-    const found = (addon as { OnlineRecognizer?: unknown }).OnlineRecognizer
-    if (typeof found !== 'function') return { ok: false, reason: 'addon_missing' }
-    OnlineRecognizer = found as RecognizerConstructor
-  } catch {
-    return { ok: false, reason: 'addon_missing' }
-  }
-
-  try {
-    const started = Date.now()
-    const recognizer = new OnlineRecognizer({
-      featConfig: { sampleRate: 16000, featureDim: 80 },
-      modelConfig: {
-        transducer: {
-          encoder: join(dir, 'encoder.int8.onnx'),
-          decoder: join(dir, 'decoder.int8.onnx'),
-          joiner: join(dir, 'joiner.int8.onnx'),
-        },
-        tokens: join(dir, 'tokens.txt'),
-        numThreads: 2,
-        provider: 'cpu',
-        debug: 0,
-      },
-      decodingMethod: 'modified_beam_search',
-      enableEndpoint: true,
-      rule1MinTrailingSilence: 2.4,
-      rule2MinTrailingSilence: 1.0,
-      rule3MinUtteranceLength: 30,
-    })
-    return { ok: true, recognizer, ms: Date.now() - started }
-  } catch {
-    return { ok: false, reason: 'load_failed' }
-  }
+/** True when this connection should go to Soniox instead of the local model. */
+export function wantsSoniox(url: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.UTLE_ASR === 'soniox') return true
+  const query = url.split('?')[1] ?? ''
+  return new URLSearchParams(query).get('engine') === 'soniox'
 }
 
 const send = (socket: WebSocket, message: AsrServerMessage): void => {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
 }
 
+/** One text frame from the browser, or null for anything else. */
+function parseClientFrame(data: RawData): 'flush' | null {
+  let value: unknown
+  try {
+    value = JSON.parse(data.toString())
+  } catch {
+    return null
+  }
+  return typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'flush' ? 'flush' : null
+}
+
+export interface AttachOptions {
+  /** Loads the model on this thread, when the worker cannot. Tests pass a fake. */
+  load?: (root: string) => ModelLoad
+  /** Starts the worker. Tests pass a fake or one that always fails. */
+  startWorker?: (root: string, entry: string) => Promise<HostStart>
+}
+
 /**
  * Serves the local recogniser at /api/asr on the dev server's own http server. Only upgrades to
  * that path are taken, so Vite's HMR socket is untouched. The model loads once, when the server
- * starts listening. Logs counts, durations and reason codes; never audio, never text.
+ * starts listening: on a worker thread when one can start, else on this thread. Logs counts,
+ * durations and reason codes; never audio, never text.
  */
-export function attachAsr(httpServer: EventEmitter, root: string, load: (root: string) => ModelLoad = loadModel): void {
+export function attachAsr(httpServer: EventEmitter, root: string, options: AttachOptions = {}): void {
+  const load = options.load ?? loadModel
+  const startWorker = options.startWorker ?? startWorkerHost
   const sockets = new WebSocketServer({ noServer: true })
-  let model: ModelLoad | null = null
+  let host: Promise<{ ok: true; host: DecoderHost } | { ok: false; reason: AsrUnavailableReason }> | null = null
   let open = 0
 
-  const ensureModel = (): ModelLoad => {
-    if (model) return model
-    model = load(root)
-    if (model.ok) console.info(`[asr] model loaded in ${model.ms} ms`)
-    else console.warn(`[asr] local recogniser unavailable: ${model.reason}`)
-    return model
+  const start = async (): Promise<HostStart> => {
+    const worker = await startWorker(root, join(root, WORKER_ENTRY))
+    if (worker.ok) {
+      console.info(`[asr] model loaded on a worker thread in ${worker.host.ms} ms`)
+      worker.host.onExit((code) => {
+        console.warn(`[asr] decode worker exited with ${code}; the next connection loads the model again`)
+        host = null
+      })
+      return worker
+    }
+    if (worker.reason !== 'load_failed') {
+      console.warn(`[asr] local recogniser unavailable: ${worker.reason}`)
+      return worker
+    }
+    console.warn('[asr] decode worker could not start; decoding on the server thread')
+    const loaded = load(root)
+    if (!loaded.ok) {
+      console.warn(`[asr] local recogniser unavailable: ${loaded.reason}`)
+      return loaded
+    }
+    console.info(`[asr] model loaded on the server thread in ${loaded.ms} ms`)
+    return { ok: true, host: hostInThread(loaded.recognizer, loaded.ms) }
+  }
+
+  const ensureHost = (): Promise<HostStart> => {
+    if (!host) host = start()
+    return host
   }
 
   httpServer.once('listening', () => {
-    // Give Vite a moment to print its address before the load blocks the thread for a few seconds.
-    setTimeout(ensureModel, 200)
+    // Give Vite a moment to print its address first.
+    setTimeout(() => void ensureHost(), 200)
   })
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const path = (req.url ?? '').split('?')[0]
     if (path !== ASR_PATH) return
     sockets.handleUpgrade(req, socket, head, (ws) => {
-      const loaded = ensureModel()
-      if (!loaded.ok) {
-        send(ws, { type: 'unavailable', reason: loaded.reason })
-        ws.close(1011)
+      // Soniox (ARCHITECTURE 23.4): `?engine=soniox` on the socket address, or UTLE_ASR=soniox for every
+      // connection, hands the socket to the second recogniser. Everything below is the local model.
+      if (wantsSoniox(req.url ?? '')) {
+        attachSonioxSession(ws, { apiKey: process.env.SONIOX_API_KEY })
         return
       }
-      open += 1
-      console.info(`[asr] connection opened (${open} open)`)
-      const session = createAsrSession(loaded.recognizer, (message) => send(ws, message))
-      send(ws, { type: 'ready' })
-      ws.on('message', (data: RawData, isBinary: boolean) => {
-        if (!isBinary || !Buffer.isBuffer(data)) return
-        const samples = samplesFromFrame(data)
-        if (!samples) return
-        try {
-          session.audio(samples)
-        } catch {
-          console.warn('[asr] decode failed')
+      void ensureHost().then((loaded) => {
+        if (ws.readyState !== ws.OPEN) return
+        if (!loaded.ok) {
+          send(ws, { type: 'unavailable', reason: loaded.reason })
           ws.close(1011)
+          return
         }
-      })
-      ws.on('close', (code: number) => {
-        session.close()
-        open -= 1
-        console.info(`[asr] connection closed, code ${code} (${open} open)`)
+        open += 1
+        console.info(`[asr] connection opened on the ${loaded.host.where} (${open} open)`)
+        const session = createAsrSession(loaded.host.open(), (message) => send(ws, message), {
+          onError: () => {
+            console.warn('[asr] decode failed')
+            ws.close(1011)
+          },
+        })
+        send(ws, { type: 'ready' })
+        ws.on('message', (data: RawData, isBinary: boolean) => {
+          if (!isBinary) {
+            if (parseClientFrame(data) === 'flush') session.flush()
+            return
+          }
+          if (!Buffer.isBuffer(data)) return
+          const samples = samplesFromFrame(data)
+          if (samples) session.audio(samples)
+        })
+        ws.on('close', (code: number) => {
+          const { receivedMs, droppedMs } = session.stats()
+          session.close()
+          open -= 1
+          console.info(`[asr] connection closed, code ${code}: ${Math.round(receivedMs / 1000)} s received, ${Math.round(droppedMs / 1000)} s dropped (${open} open)`)
+        })
       })
     })
   })

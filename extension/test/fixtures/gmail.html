@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Postkast</title>
+    <style>
+      /* A Gmail-like page: a short inbox (the page does not scroll) and an open compose window, a
+         role=dialog with fields named by <label for>, a rich-text body and a send button beside it. */
+      body { margin: 0; font: 15px system-ui, sans-serif; }
+      header { padding: 12px 16px; border-bottom: 1px solid #ddd; }
+      h1 { font-size: 18px; margin: 0; }
+      .inbox { width: 520px; }
+      .inbox [role="row"] { display: flex; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #eee; cursor: pointer; }
+      .inbox .from { width: 140px; font-weight: 600; }
+      /* Above the Ütle strip (128 px at the bottom); Gmail's own window sits at the very bottom. */
+      #compose { position: fixed; right: 24px; bottom: 0; width: 480px; background: #fff; border: 1px solid #999;
+                 box-shadow: 0 0 8px rgba(0, 0, 0, 0.3); padding: 12px; box-sizing: border-box; }
+      #compose .field { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+      #compose label { width: 60px; color: #555; }
+      #compose input { flex: 1; padding: 4px; font: inherit; border: 0; border-bottom: 1px solid #ddd; }
+      #body { min-height: 120px; border: 1px solid #eee; padding: 6px; margin: 8px 0; outline: none; }
+      #compose .bar { display: flex; gap: 8px; align-items: center; }
+      #send { background: #0b57d0; color: #fff; border: 0; border-radius: 16px; padding: 8px 20px; font: inherit; }
+    </style>
+  </head>
+  <body>
+    <header><h1>Postkast</h1></header>
+    <div class="inbox" role="grid" aria-label="Kirjad">
+      <div role="row" tabindex="0"><span class="from">Mari Maasikas</span><span>Homne koosolek</span></div>
+      <div role="row" tabindex="0"><span class="from">TalTech</span><span>Mektory uudiskiri</span></div>
+      <div role="row" tabindex="0"><span class="from">Jaan Tamm</span><span>Pildid reisilt</span></div>
+    </div>
+    <div id="compose" role="dialog" aria-label="Uus kiri">
+      <div class="field"><label for="to">Saaja</label><input id="to" type="text" /></div>
+      <div class="field"><label for="subject">Teema</label><input id="subject" type="text" /></div>
+      <label for="body">Sõnum</label>
+      <div id="body" contenteditable="true" role="textbox" aria-multiline="true"></div>
+      <div class="bar">
+        <button id="send" type="button">Saada</button>
+        <button id="discard" type="button" title="Loobu"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 6h10l-1 11H6z" fill="#555" /></svg></button>
+      </div>
+    </div>
+    <script>
+      window.sentMails = []
+      document.getElementById('send').addEventListener('click', () => {
+        window.sentMails.push({ to: document.getElementById('to').value, subject: document.getElementById('subject').value, body: document.getElementById('body').innerText })
+        document.getElementById('compose').remove()
+      })
+    </script>
+  </body>
+</html>

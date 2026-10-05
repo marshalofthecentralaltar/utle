@@ -1,117 +1,168 @@
 # Ütle: handoff
 
-Written 2026-10-05 about 15:30 (Tallinn), for a fresh session with no context. The earlier handoff
-(01:30 the same day) is in git history and is obsolete: the product changed shape twice since.
-Read this, then `docs/PRODUCT.md` (what the product is, in plain words), then
-`docs/ARCHITECTURE.md` section 21 onward (what is built). Sections 1 to 20 of the spec are history.
+Written 2026-10-06 about 02:00 (Tallinn), after milestones M7, M7.2 and round 3, for a fresh session with no context.
+Read this, then `docs/PRODUCT.md`, then `docs/ARCHITECTURE.md` section 21 onward (22 is M7).
+The plan for M7 is `docs/plans/2026-10-05-m7-understanding.md`.
 
 Everything stated as fact here was observed in the session that wrote it. What was not is marked.
 
 ## 1. What exists and works
 
-Ütle is now a Chrome extension. The user stays on the site he is writing in (WhatsApp Web first).
-A black bar at the bottom of every page has one large button; while it listens, his Estonian
-speech is typed into the site's own message box as he speaks, repaired by voice, and sent with
-"saada". The same voice moves the browser.
+Ütle is a Chrome extension. A bar at the bottom of every page listens; Estonian speech is typed
+into the site's own message box, repaired and sent by voice, and the same voice moves the browser.
 
-- `main` is at `b2772b9`, clean, gate green (`npm run check`: 1270 tests). Nothing is pushed:
-  the repository has no remote.
-- Speech: TalTech's `streaming-zipformer-large.et-en` runs inside the dev server
-  (`ws://localhost:5173/api/asr`). Model files are in `models/` (gitignored; `npm run model`
-  fetches them).
-- The extension is built into `extension/dist/` by `npm run ext` (gitignored) and loaded unpacked
-  from `extension/`. Ralf has it loaded in his Chrome and has used it on real WhatsApp Web.
-- A dev server is running on port 5173 (started 12:14, not by an agent; probably Ralf's terminal).
-  The extension needs it. Do not stop it; test servers use other ports.
+M7 (this evening) changed two things Ralf named as the brief after a day of real use:
 
-What the last merge added, proven by the automated voice test on `main` with the real logic
-(`UTLE_REAL=1 npx tsx extension/test/voice.ts`, needs `npx vite --port 5193 --strictPort`):
-words appear in the box while he speaks (first words 0.3 s before the sentence ends, final text
-1.5 s after; it was 2.8 s); commands never show in the box; the extension supplies Chrome's
-new-tab page with the same bar and large site tiles; the bar survives navigation.
+1. **It understands what he means, not only fixed phrases.** Rules still come first (instant,
+   offline). What the rules do not recognise goes to Claude on the dev server (`POST /api/intent`)
+   with what is on the page: address, title, the message box, the visible clickable things with their
+   text, the video state, the open tabs. Claude answers one intent from a fixed set, validated in
+   `src/core/pageIntent.ts` before anything runs. So "uus leht", "mine vaata hiljem", "vajuta Mari",
+   "pane vaiksemaks", "kirjuta kommentaar" work without being in any list.
+2. **Nothing is typed where he did not ask.** Dictation goes only to an *armed* box: the site's
+   own composer (WhatsApp, Messenger, or a field with a send button beside it), a conversation he
+   opened, or a field he picked by voice ("kirjuta siia", "näita numbreid" and a number). A page's
+   own search bar never receives dictation; the bar says where the words can go instead.
 
-**Ralf has NOT yet reloaded the extension since that merge.** To update: `npm run ext` is already
-done on `main`; on `chrome://extensions` press the reload arrow on Ütle, reload open tabs, and if
-Chrome asks about the changed new-tab page choose "Keep it".
+M7.2 (later the same evening), after Ralf said it must work for everything and not for scripted paths:
 
-## 2. Not verified by anyone
+- **Type first, verify after.** Dictation into an armed box is typed at once; the model checks
+  afterwards whether the words were a command and, if so, takes them back and runs it. No waiting
+  before words appear, and a "saada" said right after waits for the check (`docs/ARCHITECTURE.md` 22.2).
+- **Compound requests.** "Mine youtube'i ja otsi kassivideod ja mängi esimene" runs as a bounded
+  loop: act, look at the page again, act again, at most 4 steps, 25 s, two failures.
+- **What the model sees is accessibility-tree quality** (`extension/src/page.ts` `readPage`):
+  proper accessible names, one item per video card, dialogs and cookie banners first, items just
+  below the fold, the page's heading and the open chat's name; clicks fall back to Enter, Space and
+  navigation when a synthetic click is ignored; scrolling picks the right pane and reports when
+  nothing moved; the hit test looks through the strip so a site's fixed bottom bar (Gmail's compose)
+  is listed.
+- **A real click arms.** A field he clicks with the eye tracker (a trusted click or Tab) becomes the
+  dictation target; a field the page focused by script never does. WhatsApp's own chat search gives
+  way to the composer of the open chat.
+- The adversarial review's fixes (`docs/REVIEW-M7.md`): "tagasi" after "kustuta kõik" brings the
+  words back instead of leaving the page; one-word commands that are ordinary words (välja, sulge,
+  enter, paus…) are dictation while the box holds words; requests are clipped to the schema so a
+  long line can never turn every model call into a 400; the queue survives a thrown step; fetches
+  time out; the fixed prompt is marked for caching.
 
-- His voice (the man with a motor disability). Only recorded synthetic speech and one team member.
-- A real Tobii eye tracker on the dwell button.
-- The live-typing and new-tab changes on real WhatsApp and in branded Google Chrome (only
-  Playwright's Chromium). The first version did work on real WhatsApp Web, so the WhatsApp
-  selectors in `extension/src/sites.ts` marked unverified (composer, send) are in fact working.
-- Real Messenger: never tried.
-- The extension lane's last two rounds of code were reviewed by re-running tests and reading the
-  engine and message-box files, not by reading all of it (about 2,500 lines).
+Also new in M7: "tagasi" undoes typing when there is text, else goes back; "sulge", "tühjenda otsing",
+"peida riba" / "näita riba", "otsi kassivideod" searches the site in front (Google when it has no
+search), video control ("paus", "vaiksemaks", "täisekraan"), Escape and Enter, numbers to 39. The
+bar is restyled, can be hidden to a pill, and the options page is usable by voice and by dwell
+(bar height, microphone side, hidden at start).
 
-## 3. Known faults
+- Branch `claude/utla-voice-command-access-4ftxk4` on GitHub, gate green (`npm run check`: 2495
+  tests), browser suite green (`xvfb-run -a npx tsx extension/test/run.ts`: every command kind,
+  Messenger stand-in skipped where there is no IPv6).
+- Speech: TalTech's model in the dev server (`ws://localhost:5173/api/asr`), unchanged.
+- The default model for `/api/intent` is `claude-opus-5-5` at low effort; `UTLE_MODEL` overrides it
+  (`claude-haiku-4-5` if a command feels slow).
 
-- The Anthropic key in the environment is rejected (401, confirmed). Nothing in the extension
-  needs it. The old localhost page's document edits do. Ralf said the key waits.
-- If he keeps talking straight after a quick command ("saada ja siis…"), the command word can
-  show in the box for a moment. Fix belongs in `src/speech/local.ts`. Not fixed.
-- The "Sain aru: …" line (shown when a misheard command was corrected) is replaced by the result
-  line a moment later.
-- The model updates its guess about every 0.6 s, so live words arrive in bursts. A model exported
-  with smaller chunks would fix it; ask Tanel Alumäe.
-- Chrome's own pages (settings, web store) cannot show the bar.
-- `README.md` and `CLAUDE.md` still describe the old document editor and "no remote".
-- There are two product descriptions: `docs/PRODUCT.md` (written by this session, committed) and
-  an untracked `PRODUCT.md` in the root (created 14:58 by someone else; not read in full, not
-  touched). Merge them or delete one.
+## 1b. Round 3 (2026-10-05 night): speed, push-to-talk, sound-alikes, editing, Soniox
 
-## 4. What Ralf asked for next (NOT started; he asked that none of it be done in the old chat)
+Ralf's report after real use: much better; but "at the end it reacted to 'open WhatsApp' four or
+five minutes later"; wants push-to-talk by gaze with the whole bar as the button; it mishears a lot
+(try Soniox); proper text editing; slow scrolling; an undo. Built, all green on the gate (2495 tests)
+and the browser suite, none of it tried with a real voice:
 
-In his words: "A settings page to change where the button is, how big it is (the entire bottom
-row can be it) and make the button like a push to talk button, so you look at it and you can type
-meanwhile. The worst part is navigating the page right now, we cant properly search anything, we
-cant open videos on youtube and so on."
+- **It cannot fall minutes behind any more.** The speech server decodes on a worker thread
+  (Node 22.18 or newer; older Node decodes on the server thread with the same bound), keeps at most
+  1.5 s of audio queued and drops the oldest when behind, telling the bar, which shows "Kõne jääb
+  maha N s" from 1 s. The engine runs the rules only for an utterance that waited over 3 s, a new
+  utterance cancels an earlier one's model work, and dictation verification no longer blocks the
+  next utterance (a "saada" still waits for it). The default intent model is `claude-sonnet-5-5`.
+- **Push-to-talk by gaze.** Settings: Kuulamine = Lülitiga (as before) or Vaatamisega; the target is
+  the microphone square or the whole bar; it listens from 250 ms of rest and stops 600 ms after the
+  pointer leaves, delivering the words at once. The pill works the same way when the bar is folded.
+- **Sound-alikes.** "juutuba", "aga whatsapp", "keri ala", "saadake" and the like work (phonetic
+  keys in `src/core/phonetic.ts`); a reviewer's scan over 170 common words found and fixed two false
+  positives; "mina" still sounds like "mine" by design.
+- **Editing in the box.** Caret by sentence, word or to a named word; select; type at the caret;
+  Backspace, Delete, arrows, Home, End, Undo, Redo, Tab, with counts ("kustuta kolm tähte"); on
+  textareas and rich editors. Google Docs: keys and typing only, no reading; "saada" does nothing
+  there. The model knows these commands too.
+- **Scrolling.** "keri natuke", "keri aeglaselt alla" until "stopp"/"seis", smooth page scrolls.
+- **Soniox** as a second recogniser behind `SONIOX_API_KEY` on the dev server and the Kõnemudel
+  setting; built from Soniox's public client code, never run against the real service.
 
-And: "How do I make it public so everyone can download?"
+Known, not fixed (docs/REVIEW-R3.md has the details): a queued utterance that has not started is
+cancelled by a barge-in and typed unverified; a one-word "kustuta see" with nothing selected deletes
+one letter; after 4 s on Google Docs the next sentence is glued to the last; Soniox has no lag path.
 
-The previous session's reading of these, as a starting point and not a ruling:
+## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
-1. Navigation (he called it the worst part):
-   - search on the site in front ("otsi kassivideod" on YouTube searches YouTube; "otsi googlest …",
-     "otsi youtube'ist …" from anywhere);
-   - open by position ("ava esimene video", "ava kolmas tulemus");
-   - click by name ("vajuta logi sisse") without the numbers step;
-   - video control ("mängi", "paus", "täisekraan", "vaigista").
-   This needs new commands in `src/browser/protocol.ts` (suggested: `search`, `clickText`,
-   `clickResult`, `media`), phrases in `src/core/inpage.ts` / `browserIntent.ts`, and the page side
-   in `extension/src/page.ts`. Adding a command kind breaks two exhaustive switches
-   (`browserDoing` in `src/core/strings.ts`, `execute` in `extension/src/background.ts`); add the
-   cases in the same commit.
-2. Settings page: button position and size (up to the whole bottom row), and push-to-talk: it
-   listens only while the pointer rests on the button. Leaving mid-utterance must not lose the
-   words, so the server needs a way to finalise at once (a `flush` message on the `/api/asr` wire).
-3. Making it public. Today "public" can only mean a public source repository: the extension depends
-   on the local speech server, so it cannot go on the Chrome Web Store as it is. Before publishing:
-   add a licence, rewrite `README.md` for the extension (the steps are in `extension/README.md`),
-   fix `CLAUDE.md` ("no remote"). A scan of tracked files for keys found none; no `.env` is tracked.
-   Publishing is Ralf's act or needs his explicit yes.
+- As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
+  schemas or reduce the number of strict tools." The answer tool is no longer strict (the schema is
+  still closed; `pageIntentFrom` validates every answer). Fixed in this branch.
+- Without strict: 61 of 62 pass. Latency on `claude-opus-5-5` at low effort: p50 2.7 s, p95 5.4 s.
+  The one miss ("recovery: click failed, do not repeat it") was the engine's loop stopping after a
+  failed step when the model had said done; the engine now asks once more after a failed step. Fixed.
+- 2.7 s per free-form command is noticeable in a voice UI. `UTLE_MODEL=claude-sonnet-5-5` is the
+  thing to try next, with the eval, before the demo. Dictation is not affected: it is typed first.
 
-Ask him which he wants first, and for the exact things he tried and could not do, before building.
-His standing rule is a mock he approves before anything visible is implemented; the first run of
-the day was cancelled because that was skipped.
+**The laptop's `main` has 27 commits (sections 21.4 to 21.7: navigation, settings) that are not on
+GitHub. This branch conflicts with them in 23 files. Ralf asked that the PR not be merged. The
+conflicts cannot be resolved from the cloud until that `main` is pushed; the two sides built the
+same features twice (navigation commands, a settings page), so resolving them is a judgment call
+on which to keep, per file.**
 
-## 5. How this was built (orchestration state)
+## 2. What Ralf must do before the demo
 
-- Ledger run `2026-10-05-utle-m4`: closed, partial, rated 2 (wrong product shape).
-- Ledger run `2026-10-05-utle-inpage`: closed, shipped. Its monitor's close-out and rating block
-  were requested at close; the rating page is https://claude.ai/artifact/C9xUMRrmT2pSMdno89i4id.
-- No agent is in flight. All lane worktrees are removed; branches `m4-*`, `m5-*`, `m6-*` are merged
-  and can be deleted.
-- A new piece of work is a new run: `run.mjs open`, monitor, lanes, as in the global instructions.
+1. `git pull` on `main`, `npm ci`, `npm run ext`, reload the extension on `chrome://extensions`,
+   reload open tabs. Restart `npm run dev` and look for `[asr] model loaded on a worker thread`.
+2. Put a working Anthropic key in the environment of the terminal that runs `npm run dev`
+   (`ANTHROPIC_API_KEY`). Without it everything in section 1 except the free-form understanding
+   works, and the bar shows one amber line saying so. `curl localhost:5173/api/status` must say
+   `"intent":"live"`.
+3. With the key: `npx tsx scripts/intent-eval.ts` runs 62 Estonian and English utterances, including
+   multi-step ones, against fake YouTube, WhatsApp, Google, Gmail, news, Facebook, form and new-tab
+   pages through the real model and prints pass or fail, the latency per case, and p50/p95.
+   `UTLE_EVAL_JSON=out.json` writes the results; send that file back. This has NOT been run by anyone:
+   this machine had no key. If p50 is above about 2.5 s, start the dev server with
+   `UTLE_MODEL=claude-sonnet-5-5` (or `claude-haiku-4-5`) and run the eval again.
+4. Try the demo path on the real sites and note what misses. Selectors for YouTube and Google
+   (`extension/src/sites.ts`, `SEARCH_FIELDS`) and the player shortcuts are UNVERIFIED.
+
+## 3. Not verified by anyone
+
+- The model's answers on real pages (no key here). The server, the validation, the engine and the
+  page side are each tested with fakes; the join is tested end to end only without a model.
+- His voice, a real eye tracker, real WhatsApp with the M7 build, real YouTube and Google, Messenger.
+- Whether `requestFullscreen` works from an injected script (it may need a user gesture; then the
+  command answers "See ei õnnestunud").
+- Latency of a model answer in his network. The engine waits at most 7 s and shows "Mõtlen…".
+
+## 4. Known faults
+
+- "Kirjuta siis mulle" is taken as opening a conversation with "Siis Mul" (the two-word name rule
+  in `src/core/message.ts` excludes only single-word pronouns). Not fixed.
+- A page that navigates on the search's Enter within 600 ms can lose the page's answer, so the bar
+  says the command did not answer although the search ran.
+- The earlier faults stand: the command word can flash in the box when he keeps talking after a
+  quick command; the "Sain aru" line is replaced by the result line a moment later; live words come
+  in bursts of about 0.6 s; Chrome's own pages (settings, Web Store) cannot show the bar, and no
+  extension can change Chrome's settings. Ütle's own settings page is the answer to that.
+- Push-to-talk (listen only while the pointer rests on the microphone) is not built.
+- A click whose only effect is a network request with no DOM change for 400 ms gets a second
+  activation (Enter) by the click fallback; on an element that handles both it could toggle twice.
+- The cookie-banner rule covers overlays; YouTube's own consent is a separate page (a form), which
+  the model handles as any page with buttons.
+
+## 5. Where things are
+
+| What | Where |
+|---|---|
+| The intent set and its validation | `src/core/pageIntent.ts` |
+| Rules, the armed box, `applyIntent` | `src/core/inpage.ts`, `src/core/browserIntent.ts` |
+| The prompt and the endpoint | `server/intentPrompt.ts`, `server/intent.ts`, `server/vitePlugin.ts` |
+| When the engine asks the model | `extension/src/engine.ts` (`LONG_UTTERANCE_WORDS`, `ASK_TIMEOUT_MS`) |
+| Page commands, the armed element | `extension/src/page.ts`, `extension/src/box.ts` |
+| Strip, pill, settings | `extension/src/strip.ts`, `extension/src/options.ts` |
+| Screenshots | `docs/proof/m7-*.png` |
 
 ## 6. People and time
 
-- Hackathon: NewWorkTech, TalTech Mektory. Tuesday 6 October: 10:00 three-minute recap, teamwork to
-  12:30, pitch preparation 13:30, pitch to the jury 14:30.
-- Three teammates had little to do. Suggested jobs (given to Ralf, not confirmed taken): a tester
-  logging failures on real sites and proofreading the Estonian in `src/core/strings.ts`; an evidence
-  person getting the user with a motor disability and his Tobii in front of it, timing typing against
-  voice, filming, and writing to Tanel Alumäe; a pitch owner.
-- Tanel Alumäe (TalTech, head of the Laboratory of Language Technology) made the speech model; the
-  team was offered a personal introduction.
+Hackathon: NewWorkTech, TalTech Mektory. Tuesday 6 October: 10:00 three-minute recap, teamwork to
+12:30, pitch preparation 13:30, pitch to the jury 14:30. Tanel Alumäe (TalTech) made the speech
+model; it is not ours and must not be pitched as ours.

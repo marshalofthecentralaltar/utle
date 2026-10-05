@@ -29,7 +29,9 @@ const ESTONIAN = 'Tere! Jõuan homme kell kolm.'
 // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
 const headed = true
 
-type Result = { ok: true; tab?: { title: string; url: string }; hints?: number; box?: { present: boolean; text: string } } | { ok: false; code: string; message: string }
+type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string }
+type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean }
+type Result = { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxInfo; page?: PageInfo } | { ok: false; code: string; message: string }
 
 const kindsSeen = new Set<string>()
 let failures = 0
@@ -46,10 +48,11 @@ function check(label: string, pass: boolean, detail = ''): void {
 }
 
 function serve(): Promise<Server> {
-  const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8' }
+  const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webm': 'video/webm' }
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname)
-    const file = resolve(here, `.${path}`)
+    // The video stand-in links its cards to watch?v=N, as YouTube does: the same page answers there.
+    const file = resolve(here, path === '/fixtures/watch' ? './fixtures/video.html' : `.${path}`)
     if (!file.startsWith(here)) {
       res.writeHead(403).end()
       return
@@ -60,6 +63,16 @@ function serve(): Promise<Server> {
     )
   })
   return new Promise((ok) => server.listen(PORT, () => ok(server)))
+}
+
+/** True when the address answers; the IPv6 loopback is missing in some containers. */
+async function reachable(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(1500) })
+    return res.ok
+  } catch {
+    return false
+  }
 }
 
 async function waitUntil(test: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
@@ -73,7 +86,7 @@ async function waitUntil(test: () => Promise<boolean>, timeoutMs: number): Promi
 
 function describe(r: Result | 'timeout'): string {
   if (r === 'timeout') return 'no answer'
-  if (r.ok) return `ok${r.hints !== undefined ? ` hints=${r.hints}` : ''}${r.tab ? ` tab="${r.tab.title}" ${r.tab.url}` : ''}${r.box ? ` box=${JSON.stringify(r.box)}` : ''}`
+  if (r.ok) return `ok${r.hints !== undefined ? ` hints=${r.hints}` : ''}${r.tab ? ` tab="${r.tab.title}" ${r.tab.url}` : ''}${r.box ? ` box=${JSON.stringify(r.box)}` : ''}${r.page ? ` page: ${r.page.items.length} items, box=${JSON.stringify(r.page.box)}, media=${JSON.stringify(r.page.media)}` : ''}`
   return `${r.code}: ${r.message}`
 }
 
@@ -182,7 +195,7 @@ async function main(): Promise<void> {
     line('newTab', 'without url opens an empty tab', r !== 'timeout' && r.ok, describe(r))
     // That tab is the extension's new-tab page (21.3): page commands reach it through a message.
     r = await send({ kind: 'showHints' })
-    line('showHints', 'on the new-tab page numbers the 13 tiles', r !== 'timeout' && r.ok && r.hints === 13, describe(r))
+    line('showHints', 'on the new-tab page numbers the tiles (13, at least 9 on a narrow window)', r !== 'timeout' && r.ok && r.hints !== undefined && r.hints >= 9 && r.hints <= 13, describe(r))
     r = await send({ kind: 'hideHints' })
     line('hideHints', 'on the new-tab page', r !== 'timeout' && r.ok, describe(r))
     r = await send({ kind: 'history', direction: 'back' })
@@ -249,6 +262,10 @@ async function main(): Promise<void> {
     const areaValue = await target.evaluate(() => (document.getElementById('notes') as HTMLTextAreaElement).value)
     line('insertText', 'into the focused textarea', r !== 'timeout' && r.ok && areaValue === ESTONIAN, `${describe(r)} value=${JSON.stringify(areaValue)}`)
 
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'textarea picked by number is armed, kind field', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'field' && r.box.label === 'A textarea', describe(r))
+    r = await send({ kind: 'arm', on: false })
+    line('arm', 'off releases the textarea picked by number', r !== 'timeout' && r.ok && r.box?.present === true && r.box.armed === false, describe(r))
     await target.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
     r = await send({ kind: 'insertText', text: ESTONIAN, submit: true })
     const sent = await target.evaluate(() => [...document.querySelectorAll('#sent li')].map((li) => li.textContent))
@@ -304,9 +321,11 @@ async function main(): Promise<void> {
 
     // ---------- scroll ----------
     const scrollY = async (): Promise<number> => target.evaluate(() => window.scrollY)
+    const viewHeight = await target.evaluate(() => window.innerHeight)
+    await send({ kind: 'scroll', direction: 'top' })
     r = await send({ kind: 'scroll', direction: 'down' })
     const afterDown = await scrollY()
-    line('scroll', 'down', r !== 'timeout' && r.ok && afterDown > 0, `${describe(r)} y=${afterDown}`)
+    line('scroll', 'down: smooth, settled at 80% of the view', r !== 'timeout' && r.ok && Math.abs(afterDown - Math.round(viewHeight * 0.8)) <= 2, `${describe(r)} y=${afterDown} view=${viewHeight}`)
     r = await send({ kind: 'scroll', direction: 'up' })
     line('scroll', 'up', r !== 'timeout' && r.ok && (await scrollY()) < afterDown, `${describe(r)} y=${await scrollY()}`)
     r = await send({ kind: 'scroll', direction: 'bottom' })
@@ -314,6 +333,30 @@ async function main(): Promise<void> {
     line('scroll', 'bottom', r !== 'timeout' && r.ok && atBottom > 2500, `${describe(r)} y=${atBottom}`)
     r = await send({ kind: 'scroll', direction: 'top' })
     line('scroll', 'top', r !== 'timeout' && r.ok && (await scrollY()) === 0, `${describe(r)} y=${await scrollY()}`)
+    // Round 3 (23.2): a little, slowly, stop.
+    r = await send({ kind: 'scroll', direction: 'down', mode: 'little' })
+    const afterLittle = await scrollY()
+    line('scroll', 'little: a third of the view', r !== 'timeout' && r.ok && Math.abs(afterLittle - Math.round(viewHeight / 3)) <= 2, `${describe(r)} y=${afterLittle} view=${viewHeight}`)
+    await send({ kind: 'scroll', direction: 'top' })
+    r = await send({ kind: 'scroll', direction: 'down', mode: 'slow' })
+    await target.waitForTimeout(500)
+    const slowFirst = await scrollY()
+    await target.waitForTimeout(500)
+    const slowSecond = await scrollY()
+    const slowRate = (slowSecond - slowFirst) * 2
+    line('scroll', 'slow: a steady 90 px/s', r !== 'timeout' && r.ok && slowFirst > 0 && slowRate >= 50 && slowRate <= 130, `${describe(r)} y=${slowFirst}->${slowSecond} (${slowRate} px/s)`)
+    r = await send({ kind: 'scroll', direction: 'down', mode: 'stop' })
+    const atStop = await scrollY()
+    await target.waitForTimeout(500)
+    const afterStop = await scrollY()
+    line('scroll', 'stop: the slow scroll ends', r !== 'timeout' && r.ok && afterStop === atStop, `${describe(r)} y=${atStop}->${afterStop}`)
+    r = await send({ kind: 'scroll', direction: 'down', mode: 'stop' })
+    line('scroll', 'stop with nothing moving -> ok', r !== 'timeout' && r.ok, describe(r))
+    r = await send({ kind: 'scroll', direction: 'up', mode: 'slow' })
+    await target.waitForTimeout(300)
+    r = await send({ kind: 'scroll', direction: 'top' })
+    await target.waitForTimeout(300)
+    line('scroll', 'another scroll ends the slow one', r !== 'timeout' && r.ok && (await scrollY()) === 0, `${describe(r)} y=${await scrollY()}`)
 
     // clickHint on a link navigates (last, since it leaves the page)
     await send({ kind: 'showHints' })
@@ -329,45 +372,50 @@ async function main(): Promise<void> {
     const tabCount = async (): Promise<number> => sw.evaluate(async (windowId) => (await chrome.tabs.query({ windowId })).length, targetWindowId)
     let ms = 0
 
-    // A messaging home with no conversation list (a login page).
-    await send({ kind: 'goTo', url: `${T}/page-one.html` })
-    await sw.evaluate((url) => chrome.storage.local.set({ messagingHome: url }), `${M}/login.html`)
-    ;[r, ms] = await timed({ kind: 'openConversation', name: 'mari' })
-    line('openConversation', 'home is a login page -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found' && /logging in/.test(r.message), `${describe(r)} (${ms} ms)`)
+    if (await reachable(`${M}/login.html`)) {
+      // A messaging home with no conversation list (a login page).
+      await send({ kind: 'goTo', url: `${T}/page-one.html` })
+      await sw.evaluate((url) => chrome.storage.local.set({ messagingHome: url }), `${M}/login.html`)
+      ;[r, ms] = await timed({ kind: 'openConversation', name: 'mari' })
+      line('openConversation', 'home is a login page -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found' && /logging in/.test(r.message), `${describe(r)} (${ms} ms)`)
 
-    // Not on the messaging site, no messaging tab: the target tab goes to the home; the list arrives 1.5 s after load.
-    await send({ kind: 'goTo', url: `${T}/page-one.html` })
-    await sw.evaluate((url) => chrome.storage.local.set({ messagingHome: url }), `${M}/messenger.html`)
-    const tabsBefore = await tabCount()
-    ;[r, ms] = await timed({ kind: 'openConversation', name: 'mari' })
-    line('openConversation', 'from page-one -> home, late list, Mari', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mari` && (await tabCount()) === tabsBefore, `${describe(r)} (${ms} ms) tabs ${tabsBefore}->${await tabCount()}`)
-    const messenger = ctx.pages().find((p) => p.url().startsWith(`http://[::1]:${PORT}/`))
-    if (!messenger) throw new Error('messaging page not found')
+      // Not on the messaging site, no messaging tab: the target tab goes to the home; the list arrives 1.5 s after load.
+      await send({ kind: 'goTo', url: `${T}/page-one.html` })
+      await sw.evaluate((url) => chrome.storage.local.set({ messagingHome: url }), `${M}/messenger.html`)
+      const tabsBefore = await tabCount()
+      ;[r, ms] = await timed({ kind: 'openConversation', name: 'mari' })
+      line('openConversation', 'from page-one -> home, late list, Mari', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mari` && (await tabCount()) === tabsBefore, `${describe(r)} (${ms} ms) tabs ${tabsBefore}->${await tabCount()}`)
+      const messenger = ctx.pages().find((p) => p.url().startsWith(`http://[::1]:${PORT}/`))
+      if (!messenger) throw new Error('messaging page not found')
 
-    // A same-document switch: the old composer goes at once, the new one appears 800 ms later.
-    ;[r, ms] = await timed({ kind: 'openConversation', name: 'Märt' })
-    line('openConversation', '"Märt" -> Märt Tamm (pushState)', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mart`, `${describe(r)} (${ms} ms)`)
-    ;[r, ms] = await timed({ kind: 'insertText', text: ESTONIAN, submit: true })
-    const toMart = await messenger.evaluate(() => (window as unknown as { sentTo: (id: string) => string[] }).sentTo('mart'))
-    const toMari = await messenger.evaluate(() => (window as unknown as { sentTo: (id: string) => string[] }).sentTo('mari'))
-    line('insertText', 'lands in Märt list, not in Mari list', r !== 'timeout' && r.ok && toMart.length === 1 && toMart[0] === ESTONIAN && toMari.length === 0, `${describe(r)} (${ms} ms) mart=${JSON.stringify(toMart)} mari=${JSON.stringify(toMari)}`)
-    await messenger.screenshot({ path: join(repoRoot, 'docs/proof/ext-messenger-sent.png') })
+      // A same-document switch: the old composer goes at once, the new one appears 800 ms later.
+      ;[r, ms] = await timed({ kind: 'openConversation', name: 'Märt' })
+      line('openConversation', '"Märt" -> Märt Tamm (pushState)', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mart`, `${describe(r)} (${ms} ms)`)
+      ;[r, ms] = await timed({ kind: 'insertText', text: ESTONIAN, submit: true })
+      const toMart = await messenger.evaluate(() => (window as unknown as { sentTo: (id: string) => string[] }).sentTo('mart'))
+      const toMari = await messenger.evaluate(() => (window as unknown as { sentTo: (id: string) => string[] }).sentTo('mari'))
+      line('insertText', 'lands in Märt list, not in Mari list', r !== 'timeout' && r.ok && toMart.length === 1 && toMart[0] === ESTONIAN && toMari.length === 0, `${describe(r)} (${ms} ms) mart=${JSON.stringify(toMart)} mari=${JSON.stringify(toMari)}`)
+      await messenger.screenshot({ path: join(repoRoot, 'docs/proof/ext-messenger-sent.png') })
 
-    for (const [spoken, id, who] of [['Jaani', 'jaan', 'Jaan Tamm'], ['Märdi', 'mart', 'Märt Tamm'], ['Peetri', 'peeter', 'Peeter Kask'], ['Mari', 'mari', 'Mari Maasikas']] as const) {
-      ;[r, ms] = await timed({ kind: 'openConversation', name: spoken })
-      line('openConversation', `"${spoken}" -> ${who}`, r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/${id}`, `${describe(r)} (${ms} ms)`)
+      for (const [spoken, id, who] of [['Jaani', 'jaan', 'Jaan Tamm'], ['Märdi', 'mart', 'Märt Tamm'], ['Peetri', 'peeter', 'Peeter Kask'], ['Mari', 'mari', 'Mari Maasikas']] as const) {
+        ;[r, ms] = await timed({ kind: 'openConversation', name: spoken })
+        line('openConversation', `"${spoken}" -> ${who}`, r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/${id}`, `${describe(r)} (${ms} ms)`)
+      }
+      ;[r, ms] = await timed({ kind: 'openConversation', name: 'nobody' })
+      line('openConversation', '"nobody" -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', `${describe(r)} (${ms} ms)`)
+      ;[r, ms] = await timed({ kind: 'openConversation', name: 'Broken Link' })
+      line('openConversation', 'click that does not open -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', `${describe(r)} (${ms} ms)`)
+
+      // Not on the messaging site, but a messaging tab is open in the window: switch to it.
+      await send({ kind: 'newTab', url: `${T}/page-one.html` })
+      const tabsWithTwo = await tabCount()
+      ;[r, ms] = await timed({ kind: 'openConversation', name: 'Märt' })
+      const active = await activeTab()
+      line('openConversation', 'messaging tab exists -> it becomes active', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mart` && active?.url === `${M}/t/mart` && (await tabCount()) === tabsWithTwo, `${describe(r)} (${ms} ms) tabs ${tabsWithTwo}->${await tabCount()}`)
+
+    } else {
+      console.log(`SKIP  ${'(messenger)'.padEnd(16)} ${'the IPv6 loopback is unreachable here: the Messenger stand-in is skipped'.padEnd(44)}`)
     }
-    ;[r, ms] = await timed({ kind: 'openConversation', name: 'nobody' })
-    line('openConversation', '"nobody" -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', `${describe(r)} (${ms} ms)`)
-    ;[r, ms] = await timed({ kind: 'openConversation', name: 'Broken Link' })
-    line('openConversation', 'click that does not open -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', `${describe(r)} (${ms} ms)`)
-
-    // Not on the messaging site, but a messaging tab is open in the window: switch to it.
-    await send({ kind: 'newTab', url: `${T}/page-one.html` })
-    const tabsWithTwo = await tabCount()
-    ;[r, ms] = await timed({ kind: 'openConversation', name: 'Märt' })
-    const active = await activeTab()
-    line('openConversation', 'messaging tab exists -> it becomes active', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mart` && active?.url === `${M}/t/mart` && (await tabCount()) === tabsWithTwo, `${describe(r)} (${ms} ms) tabs ${tabsWithTwo}->${await tabCount()}`)
 
     // ---------- WhatsApp stand-in ----------
     await sw.evaluate((prefix) => chrome.storage.local.set({ siteOverrides: { [prefix]: 'whatsapp' } }), WA_PREFIX)
@@ -392,6 +440,319 @@ async function main(): Promise<void> {
     await wa.screenshot({ path: join(repoRoot, 'docs/proof/ext-whatsapp-sent.png') })
     ;[r, ms] = await timed({ kind: 'openConversation', name: 'nobody' })
     line('openConversation', 'WhatsApp: "nobody" -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', `${describe(r)} (${ms} ms)`)
+
+    // ---------- M7 on the WhatsApp stand-in: readPage rows, clickItem on a row, siteSearch ----------
+    // The last search left "nobody" in the search box: empty it the way the page would, so the list is back.
+    await wa.evaluate(() => {
+      const field = document.querySelector<HTMLInputElement>('#side input')
+      if (field) {
+        field.value = ''
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    })
+    await wa.waitForTimeout(500)
+    r = await send({ kind: 'readPage' })
+    const waItems = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const waRows = waItems.filter((i) => i.role === 'row').map((i) => i.text)
+    line('readPage', 'WhatsApp: chat rows as role row with the names', r !== 'timeout' && r.ok && ['Mari Maasikas', 'Jaan Tamm', 'Peeter Kask'].every((n) => waRows.includes(n)), `${describe(r)} rows=${JSON.stringify(waRows)}`)
+    check('readPage: WhatsApp open chat composer is armed', r !== 'timeout' && r.ok && r.page?.box.kind === 'composer' && r.page.box.armed === true, describe(r))
+    const waHeader = async (): Promise<string> => wa.evaluate(() => document.querySelector('#main header span[title]')?.getAttribute('title') ?? '')
+    const jaanId = waItems.find((i) => i.role === 'row' && i.text === 'Jaan Tamm')?.id ?? -1
+    ;[r, ms] = await timed({ kind: 'clickItem', id: jaanId })
+    line('clickItem', 'WhatsApp: the Jaan Tamm row opens the chat', r !== 'timeout' && r.ok && (await waHeader()) === 'Jaan Tamm', `${describe(r)} (${ms} ms) header=${await waHeader()}`)
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'WhatsApp: the opened composer is armed', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer', describe(r))
+    ;[r, ms] = await timed({ kind: 'siteSearch', query: 'Peeter' })
+    line('siteSearch', 'WhatsApp: filters the list to one row and opens it', r !== 'timeout' && r.ok && (await waHeader()) === 'Peeter Kask', `${describe(r)} (${ms} ms) header=${await waHeader()}`)
+    r = await send({ kind: 'readBox' })
+    check('siteSearch: WhatsApp composer armed afterwards, search box not the box', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer', describe(r))
+    // WhatsApp focuses its chat search by itself: the open chat's composer is still the box.
+    await wa.evaluate(() => document.querySelector<HTMLElement>('#side input')?.focus())
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'WhatsApp: search focused by the page, the composer is still the box', r !== 'timeout' && r.ok && r.box?.kind === 'composer' && r.box.armed === true && r.box.label === 'Type a message', describe(r))
+    await wa.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    r = await send({ kind: 'readPage' })
+    const waOpen = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    line('readPage', 'WhatsApp: the open chat is an item "[vestlus] Peeter Kask"', r !== 'timeout' && r.ok && waOpen.some((i) => i.role === 'other' && i.text === '[vestlus] Peeter Kask') && r.page?.box.kind === 'composer' && r.page.box.armed === true, `${describe(r)} items=${JSON.stringify(waOpen.map((i) => i.text))}`)
+
+    // ---------- M7: a video page (YouTube-like stand-in) ----------
+    await send({ kind: 'goTo', url: `${T}/video.html` })
+    const video = pageAt(`${T}/video.html`)
+    if (!video) throw new Error('video page not found')
+    await video.waitForFunction(() => (document.getElementById('v') as HTMLVideoElement).readyState >= 2)
+    // The cookie banner is there first: its items come first, marked [dialog]; accepting it removes it.
+    r = await send({ kind: 'readPage' })
+    const banner = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const dialogItems = banner.filter((i) => i.text.startsWith('[dialog] '))
+    const dialogFirst = banner.every((i, k) => i.text.startsWith('[dialog] ') === k < dialogItems.length)
+    line('readPage', 'cookie banner: its items first, marked [dialog]', r !== 'timeout' && r.ok && dialogItems.length === 2 && dialogFirst && dialogItems.some((i) => i.role === 'button' && i.text === '[dialog] Nõustu'), `${describe(r)} items=${JSON.stringify(banner.map((i) => i.text))}`)
+    check('readPage: nothing under the banner is listed (the comment field is covered)', !banner.some((i) => i.text === 'Lisa kommentaar'))
+    const acceptId = banner.find((i) => i.text === '[dialog] Nõustu')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: acceptId })
+    const bannerGone = await video.evaluate(() => document.getElementById('cookies') === null)
+    line('clickItem', '"[dialog] Nõustu" removes the cookie banner', r !== 'timeout' && r.ok && bannerGone, `${describe(r)} gone=${bannerGone}`)
+
+    r = await send({ kind: 'readPage' })
+    const afterBanner = r
+    const items = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const has = (role: string, text: string): boolean => items.some((i) => i.role === role && i.text === text)
+    line(
+      'readPage',
+      'lists links, buttons, fields, the video and a pointer card',
+      r !== 'timeout' && r.ok && has('video', 'Esimene video') && has('button', 'Vaata hiljem') && has('field', 'Otsi') && has('field', 'Lisa kommentaar') && has('video', 'praegune video') && has('other', 'Esitusloend') && has('link', 'Mektory') && !items.some((i) => i.text.startsWith('[dialog] ')),
+      `${describe(r)} items=${JSON.stringify(items)}`,
+    )
+    check('readPage: one item per video card, named by its title (thumbnail, title and duration merged)', items.filter((i) => i.text === 'Esimene video').length === 1 && !items.some((i) => /^\d+:\d+$/.test(i.text)), JSON.stringify(items.filter((i) => i.role === 'video').map((i) => i.text)))
+    check('readPage: aria-labelledby names the icon button "Loo video"', has('button', 'Loo video'))
+    check('readPage: the page heading is an item "[pealkiri] Kevad Mektorys"', has('other', '[pealkiri] Kevad Mektorys'))
+    const near = items.filter((i) => i.text.startsWith('[allpool] '))
+    const firstNear = near[0]?.id ?? -1
+    check('readPage: items below the fold come after the visible ones, marked [allpool]', near.length > 0 && near.length <= 30 && near.some((i) => i.text === '[allpool] Kümnes video') && items.filter((i) => !i.text.startsWith('[allpool] ') && !i.text.startsWith('[pealkiri] ')).every((i) => i.id < firstNear), `near=${JSON.stringify(near.map((i) => i.text))}`)
+    r = await send({ kind: 'showHints' })
+    line('showHints', 'numbers only the visible items (the [allpool] ids start after them)', r !== 'timeout' && r.ok && r.hints === firstNear - 1, `${describe(r)} first near id=${firstNear}`)
+    await video.screenshot({ path: join(repoRoot, 'docs/proof/ext-video-hints.png') })
+    await send({ kind: 'hideHints' })
+    const tenthId = near.find((i) => i.text === '[allpool] Kümnes video')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: tenthId })
+    const afterNear = await video.evaluate(() => ({ y: window.scrollY, clicks: (window as unknown as { clicks: string[] }).clicks, url: location.href }))
+    line('clickItem', 'an [allpool] item is scrolled to and clicked', r !== 'timeout' && r.ok && afterNear.y > 0 && afterNear.clicks.includes('watch?v=10'), `${describe(r)} ${JSON.stringify(afterNear)}`)
+    await send({ kind: 'scroll', direction: 'top' })
+    r = await send({ kind: 'readPage' })
+    const afterScroll = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const subscribeId = afterScroll.find((i) => i.text === 'Telli')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: subscribeId })
+    const subscribeText = await video.evaluate(() => document.getElementById('subscribe')?.textContent)
+    line('clickItem', 'a tile that reacts to Enter only: the keyboard fallback', r !== 'timeout' && r.ok && subscribeText === 'Tellitud', `${describe(r)} tile=${JSON.stringify(subscribeText)}`)
+    r = await send({ kind: 'readPage' })
+    items.splice(0, items.length, ...(r !== 'timeout' && r.ok ? r.page?.items ?? [] : []))
+    line('readPage', 'auto-focused search box: kind search, not armed', afterBanner !== 'timeout' && afterBanner.ok && afterBanner.page?.box.kind === 'search' && afterBanner.page.box.armed === false && afterBanner.page.box.label === 'Otsi', describe(afterBanner))
+    check('readPage: items ordered top to bottom (search before the comment field)', (items.find((i) => i.text === 'Otsi')?.id ?? 99) < (items.find((i) => i.text === 'Lisa kommentaar')?.id ?? 0))
+    check('readPage: hints false, media present', r !== 'timeout' && r.ok && r.page?.hints === false && r.page.media !== null, describe(r))
+
+    const activeId = async (): Promise<string> => video.evaluate(() => document.activeElement?.id || document.activeElement?.tagName || '')
+    const commentId = items.find((i) => i.text === 'Lisa kommentaar')?.id ?? -1
+    r = await send({ kind: 'focusItem', id: commentId })
+    line('focusItem', 'comment field: focused and armed, kind composer', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer' && (await activeId()) === 'comment', `${describe(r)} focused=${await activeId()}`)
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'the armed comment field is the box', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer' && r.box.label === 'Lisa kommentaar', describe(r))
+    const commentValue = async (): Promise<string> => video.evaluate(() => (document.getElementById('comment') as HTMLTextAreaElement).value)
+    r = await send({ kind: 'setText', text: 'Tore video!' })
+    check('setText: into the armed comment field', r !== 'timeout' && r.ok && (await commentValue()) === 'Tore video!', describe(r))
+    r = await send({ kind: 'clearField' })
+    line('clearField', 'empties the armed comment field', r !== 'timeout' && r.ok && r.box?.text === '' && (await commentValue()) === '', describe(r))
+    await send({ kind: 'setText', text: 'Tore video!' })
+    r = await send({ kind: 'pressKey', key: 'Enter' })
+    const comments = await video.evaluate(() => [...document.querySelectorAll('#comments li')].map((li) => li.textContent))
+    line('pressKey', 'Enter posts the comment', r !== 'timeout' && r.ok && comments.length === 1 && comments[0] === 'Tore video!', `${describe(r)} comments=${JSON.stringify(comments)}`)
+    r = await send({ kind: 'pressKey', key: 'Escape' })
+    line('pressKey', 'Escape blurs the field', r !== 'timeout' && r.ok && (await activeId()) === 'BODY', `${describe(r)} focused=${await activeId()}`)
+
+    r = await send({ kind: 'arm', on: true })
+    line('arm', 'on with nothing focused -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    await video.evaluate(() => document.getElementById('q')?.focus())
+    r = await send({ kind: 'arm', on: true })
+    line('arm', 'on arms the focused search box', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'search', describe(r))
+    r = await send({ kind: 'arm', on: false })
+    line('arm', 'off releases it (still present, not armed)', r !== 'timeout' && r.ok && r.box?.present === true && r.box.armed === false, describe(r))
+    // A real click (trusted, as an eye tracker's dwell sends it) into a field arms it; "ära kirjuta siia" releases it.
+    await video.click('#q')
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'a real click into the search box arms it', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'search' && r.box.label === 'Otsi', describe(r))
+    r = await send({ kind: 'arm', on: false })
+    line('arm', 'off releases the clicked field', r !== 'timeout' && r.ok && r.box?.present === true && r.box.armed === false, describe(r))
+    await video.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+
+    const laterId = items.find((i) => i.text === 'Vaata hiljem')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: laterId })
+    const laterText = await video.evaluate(() => document.getElementById('later')?.textContent)
+    line('clickItem', '"Vaata hiljem" is clicked', r !== 'timeout' && r.ok && laterText === 'Lisatud', `${describe(r)} button=${JSON.stringify(laterText)}`)
+    const cardId = items.find((i) => i.text === 'Esitusloend')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: cardId })
+    const clicks = await video.evaluate(() => (window as unknown as { clicks: string[] }).clicks)
+    line('clickItem', 'the pointer-cursor card is clicked', r !== 'timeout' && r.ok && clicks.includes('playlist'), `${describe(r)} clicks=${JSON.stringify(clicks)}`)
+    r = await send({ kind: 'clickItem', id: 999 })
+    line('clickItem', '999 -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    r = await send({ kind: 'focusItem', id: laterId })
+    line('focusItem', 'a button -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+
+    const vstate = async (): Promise<{ paused: boolean; muted: boolean; volume: number; time: number }> =>
+      video.evaluate(() => {
+        const v = document.getElementById('v') as HTMLVideoElement
+        return { paused: v.paused, muted: v.muted, volume: v.volume, time: v.currentTime }
+      })
+    r = await send({ kind: 'media', action: 'play' })
+    line('media', 'play', r !== 'timeout' && r.ok && !(await vstate()).paused, `${describe(r)} ${JSON.stringify(await vstate())}`)
+    r = await send({ kind: 'media', action: 'pause' })
+    line('media', 'pause', r !== 'timeout' && r.ok && (await vstate()).paused, `${describe(r)} ${JSON.stringify(await vstate())}`)
+    r = await send({ kind: 'media', action: 'toggle' })
+    line('media', 'toggle resumes', r !== 'timeout' && r.ok && !(await vstate()).paused, `${describe(r)} ${JSON.stringify(await vstate())}`)
+    r = await send({ kind: 'media', action: 'unmute' })
+    line('media', 'unmute', r !== 'timeout' && r.ok && !(await vstate()).muted, `${describe(r)} ${JSON.stringify(await vstate())}`)
+    r = await send({ kind: 'media', action: 'mute' })
+    line('media', 'mute', r !== 'timeout' && r.ok && (await vstate()).muted, `${describe(r)} ${JSON.stringify(await vstate())}`)
+    r = await send({ kind: 'media', action: 'volumeDown' })
+    line('media', 'volumeDown: 1 -> 0.8', r !== 'timeout' && r.ok && Math.abs((await vstate()).volume - 0.8) < 0.01, `${describe(r)} ${JSON.stringify(await vstate())}`)
+    r = await send({ kind: 'media', action: 'volumeUp' })
+    line('media', 'volumeUp: back to 1 and unmuted', r !== 'timeout' && r.ok && Math.abs((await vstate()).volume - 1) < 0.01 && !(await vstate()).muted, `${describe(r)} ${JSON.stringify(await vstate())}`)
+    await video.evaluate(() => {
+      ;(document.getElementById('v') as HTMLVideoElement).currentTime = 1
+    })
+    r = await send({ kind: 'media', action: 'forward' })
+    const afterForward = (await vstate()).time
+    line('media', 'forward: +10 s', r !== 'timeout' && r.ok && afterForward >= 10 && afterForward < 15, `${describe(r)} t=${afterForward}`)
+    r = await send({ kind: 'media', action: 'back' })
+    line('media', 'back: -10 s', r !== 'timeout' && r.ok && (await vstate()).time < 5, `${describe(r)} t=${(await vstate()).time}`)
+    r = await send({ kind: 'media', action: 'exitFullscreen' })
+    line('media', 'exitFullscreen when not fullscreen is fine', r !== 'timeout' && r.ok, describe(r))
+    r = await send({ kind: 'readPage' })
+    check('readPage: media state follows the element', r !== 'timeout' && r.ok && r.page?.media?.playing === true && r.page.media.muted === false && Math.abs(r.page.media.volume - 1) < 0.01, describe(r))
+
+    // The search leaves the page (a hash change here): last on this page.
+    ;[r, ms] = await timed({ kind: 'siteSearch', query: 'kassid' })
+    line('siteSearch', 'types into the header search and submits', r !== 'timeout' && r.ok && video.url().endsWith('#otsing=kassid'), `${describe(r)} (${ms} ms) url=${video.url()}`)
+    r = await send({ kind: 'readBox' })
+    check('siteSearch: the search box is present but not armed', r !== 'timeout' && r.ok && r.box?.present === true && r.box.armed === false && r.box.kind === 'search', describe(r))
+    // ---------- M7: a compose window (Gmail-like stand-in) ----------
+    await send({ kind: 'goTo', url: `${T}/gmail.html` })
+    const gmail = pageAt(`${T}/gmail.html`)
+    if (!gmail) throw new Error('gmail page not found')
+    r = await send({ kind: 'readPage' })
+    const mail = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const mailHas = (role: string, text: string): boolean => mail.some((i) => i.role === role && i.text === text)
+    const composeFirst = mail.length > 0 && mail.every((i, k) => i.text.startsWith('[dialog] ') === k < mail.filter((x) => x.text.startsWith('[dialog] ')).length)
+    line(
+      'readPage',
+      'compose dialog first; fields named by <label for>; title names the icon button',
+      r !== 'timeout' && r.ok && composeFirst && mailHas('field', '[dialog] Saaja') && mailHas('field', '[dialog] Teema') && mailHas('field', '[dialog] Sõnum') && mailHas('button', '[dialog] Saada') && mailHas('button', '[dialog] Loobu') && mailHas('row', 'Mari Maasikas') && mailHas('other', '[pealkiri] Postkast'),
+      `${describe(r)} items=${JSON.stringify(mail)}`,
+    )
+    const bodyId = mail.find((i) => i.text === '[dialog] Sõnum')?.id ?? -1
+    r = await send({ kind: 'focusItem', id: bodyId })
+    const gmailFocus = await gmail.evaluate(() => document.activeElement?.id ?? '')
+    line('focusItem', 'the message body: armed, kind composer (a send button beside it)', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer' && gmailFocus === 'body', `${describe(r)} focused=${gmailFocus}`)
+    const toId = mail.find((i) => i.text === '[dialog] Saaja')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: toId })
+    await send({ kind: 'setText', text: 'mari@example.com' })
+    const toValue = await gmail.evaluate(() => (document.getElementById('to') as HTMLInputElement).value)
+    check('clickItem + setText: the To field, by its label', toValue === 'mari@example.com', `to=${JSON.stringify(toValue)}`)
+    r = await send({ kind: 'scroll', direction: 'down' })
+    line('scroll', 'page that does not scroll -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
+
+    await send({ kind: 'goTo', url: `${T}/page-one.html` })
+    r = await send({ kind: 'siteSearch', query: 'kassid' })
+    line('siteSearch', 'page without a search field -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    r = await send({ kind: 'media', action: 'pause' })
+    line('media', 'page without a video -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    r = await send({ kind: 'clearField' })
+    line('clearField', 'nothing armed or focused -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+
+    // ---------- round 3: editing inside the field (essay.html: a contenteditable and a textarea with the same text) ----------
+    await send({ kind: 'goTo', url: `${T}/essay.html` })
+    const essay = pageAt(`${T}/essay.html`)
+    if (!essay) throw new Error('essay page not found')
+    const ORIGINAL = [
+      'Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju. Lapsed ujuvad järves.',
+      'Sügis toob vihma. Lehed langevad puudelt ja õhtud lähevad pimedaks. Koolid alustavad septembris.',
+      'Talv on pikk ja pime. Lumi katab maa ja järved jäätuvad.',
+    ].join('\n')
+    for (const id of ['essay-area', 'essay'] as const) {
+      const kind = id === 'essay' ? 'contenteditable' : 'textarea'
+      const textOf = async (): Promise<string> => essay.evaluate((i) => (window as unknown as { textOf: (id: string) => string }).textOf(i), id)
+      const selected = async (): Promise<string | null> => essay.evaluate((i) => (window as unknown as { selectedText: (id: string) => string | null }).selectedText(i), id)
+      const caretAt = async (): Promise<number> => essay.evaluate((i) => (window as unknown as { caretAt: (id: string) => number }).caretAt(i), id)
+      await essay.evaluate((i) => document.getElementById(i)?.focus(), id)
+      r = await send({ kind: 'arm', on: true })
+      check(`${kind}: armed`, r !== 'timeout' && r.ok && r.box?.armed === true && r.box.text === ORIGINAL, describe(r))
+
+      r = await send({ kind: 'caret', to: { find: 'vihma', where: 'after' } })
+      r = await send({ kind: 'typeText', text: 'ja tuult' })
+      let text = await textOf()
+      line('typeText', `${kind}: after a found word, a space before, none before the full stop`, r !== 'timeout' && r.ok && text.includes('Sügis toob vihma ja tuult. Lehed') && r.box?.text === text, `${describe(r)}`)
+      r = await send({ kind: 'caret', to: { find: 'metsad', where: 'before' } })
+      line('caret', `${kind}: find before`, r !== 'timeout' && r.ok && (await caretAt()) === ORIGINAL.indexOf('metsad'), `${describe(r)} caret=${await caretAt()}`)
+      r = await send({ kind: 'typeText', text: 'Suured' })
+      text = await textOf()
+      line('typeText', `${kind}: mid-sentence, a small first letter, spaces on both sides`, r !== 'timeout' && r.ok && text.includes('ja suured metsad on täis marju.'), describe(r))
+
+      r = await send({ kind: 'caret', to: { find: 'puudelt', where: 'before' } })
+      r = await send({ kind: 'select', what: 'sentence' })
+      line('select', `${kind}: the sentence at the caret with its trailing space`, r !== 'timeout' && r.ok && (await selected()) === 'Lehed langevad puudelt ja õhtud lähevad pimedaks. ', `${describe(r)} selected=${JSON.stringify(await selected())}`)
+      r = await send({ kind: 'pressKey', key: 'Backspace' })
+      text = await textOf()
+      line('pressKey', `${kind}: Backspace removes the selected sentence`, r !== 'timeout' && r.ok && text.includes('Sügis toob vihma ja tuult. Koolid alustavad septembris.'), describe(r))
+
+      r = await send({ kind: 'select', what: 'lastWord' })
+      line('select', `${kind}: the last word with the space before it`, r !== 'timeout' && r.ok && (await selected()) === ' jäätuvad.', `${describe(r)} selected=${JSON.stringify(await selected())}`)
+      await send({ kind: 'pressKey', key: 'Backspace' })
+      text = await textOf()
+      check(`${kind}: Backspace removes the last word`, text.endsWith('Lumi katab maa ja järved'), JSON.stringify(text.slice(-40)))
+
+      r = await send({ kind: 'caret', to: { find: 'paistab', where: 'after' } })
+      r = await send({ kind: 'caret', to: 'sentenceStart' })
+      line('caret', `${kind}: sentenceStart`, r !== 'timeout' && r.ok && (await caretAt()) === ORIGINAL.indexOf('Päike'), `${describe(r)} caret=${await caretAt()}`)
+      r = await send({ kind: 'caret', to: 'sentenceEnd' })
+      line('caret', `${kind}: sentenceEnd is after the full stop`, r !== 'timeout' && r.ok && (await caretAt()) === (await textOf()).indexOf('marju.') + 'marju.'.length, `${describe(r)} caret=${await caretAt()}`)
+      r = await send({ kind: 'caret', to: 'wordBack' })
+      r = await send({ kind: 'caret', to: 'wordBack' })
+      r = await send({ kind: 'caret', to: 'wordBack' })
+      r = await send({ kind: 'typeText', text: 'väga' })
+      text = await textOf()
+      line('caret', `${kind}: wordBack three times, then typing lands before "on"`, r !== 'timeout' && r.ok && text.includes('ja suured metsad väga on täis marju.'), describe(r))
+      r = await send({ kind: 'pressKey', key: 'Undo' })
+      text = await textOf()
+      line('pressKey', `${kind}: Undo takes the typed word back`, r !== 'timeout' && r.ok && text.includes('ja suured metsad on täis marju.') && !text.includes('väga'), `${describe(r)} text=${JSON.stringify(text.slice(0, 120))}`)
+      r = await send({ kind: 'pressKey', key: 'Redo' })
+      text = await textOf()
+      line('pressKey', `${kind}: Redo brings it back`, r !== 'timeout' && r.ok && text.includes('metsad väga on'), describe(r))
+
+      r = await send({ kind: 'caret', to: 'end' })
+      r = await send({ kind: 'pressKey', key: 'Backspace', times: 3 })
+      text = await textOf()
+      line('pressKey', `${kind}: Backspace times 3 deletes three letters`, r !== 'timeout' && r.ok && text.endsWith('ja jär'), `${describe(r)} end=${JSON.stringify(text.slice(-12))}`)
+      r = await send({ kind: 'caret', to: 'lineStart' })
+      r = await send({ kind: 'typeText', text: 'Lõpuks:' })
+      text = await textOf()
+      line('caret', `${kind}: lineStart, typing before the line`, r !== 'timeout' && r.ok && text.includes('\nLõpuks: Talv on pikk'), describe(r))
+      r = await send({ kind: 'caret', to: 'start' })
+      r = await send({ kind: 'pressKey', key: 'ArrowDown' })
+      r = await send({ kind: 'pressKey', key: 'ArrowRight', times: 5 })
+      line('pressKey', `${kind}: ArrowDown then ArrowRight times 5`, r !== 'timeout' && r.ok && (await caretAt()) === (await textOf()).indexOf('\n') + 6, `${describe(r)} caret=${await caretAt()}`)
+      r = await send({ kind: 'pressKey', key: 'End' })
+      r = await send({ kind: 'pressKey', key: 'ArrowUp' })
+      r = await send({ kind: 'pressKey', key: 'Home' })
+      line('pressKey', `${kind}: End, ArrowUp, Home is the start`, r !== 'timeout' && r.ok && (await caretAt()) === 0, `${describe(r)} caret=${await caretAt()}`)
+      r = await send({ kind: 'select', what: { find: 'Talv' } })
+      line('select', `${kind}: find selects the word`, r !== 'timeout' && r.ok && (await selected()) === 'Talv', `${describe(r)} selected=${JSON.stringify(await selected())}`)
+      r = await send({ kind: 'pressKey', key: 'Delete' })
+      text = await textOf()
+      // innerText collapses the two spaces left behind in the contenteditable; the textarea keeps both.
+      line('pressKey', `${kind}: Delete removes the selection`, r !== 'timeout' && r.ok && /Lõpuks:\s{1,2}on pikk/u.test(text), describe(r))
+      r = await send({ kind: 'select', what: { find: 'kooli' } })
+      line('select', `${kind}: "kooli" finds "Koolid" (one word, a case ending)`, r !== 'timeout' && r.ok && (await selected()) === 'Koolid', `${describe(r)} selected=${JSON.stringify(await selected())}`)
+      r = await send({ kind: 'caret', to: { find: 'kartul', where: 'before' } })
+      line('caret', `${kind}: a word that is not there -> not_found`, r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+      r = await send({ kind: 'select', what: 'all' })
+      r = await send({ kind: 'typeText', text: 'kõik uus' })
+      text = await textOf()
+      line('typeText', `${kind}: over select all, capitalised at the start`, r !== 'timeout' && r.ok && text === 'Kõik uus' && r.box?.text === 'Kõik uus', describe(r))
+      await send({ kind: 'arm', on: false })
+    }
+    await essay.evaluate(() => document.getElementById('essay')?.focus())
+    r = await send({ kind: 'pressKey', key: 'Tab' })
+    const tabbedTo = await essay.evaluate(() => document.activeElement?.id ?? '')
+    line('pressKey', 'Tab moves to the next field and arms it', r !== 'timeout' && r.ok && tabbedTo === 'essay-area' && r.box?.armed === true && r.box.label === 'Kirjand tekstina', `${describe(r)} focused=${tabbedTo}`)
+    await send({ kind: 'arm', on: false })
+    await essay.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await send({ kind: 'goTo', url: `${T}/page-one.html` })
+    r = await send({ kind: 'typeText', text: 'tere' })
+    line('typeText', 'page without a field -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+
+    // ---------- bar: handled by the worker, every strip follows the stored state ----------
+    const stripHidden = async (): Promise<boolean> => sw.evaluate(async () => ((await chrome.storage.session.get('stripState')).stripState as { hidden?: boolean } | undefined)?.hidden === true)
+    r = await send({ kind: 'bar', show: false })
+    line('bar', 'show false: stripState.hidden true', r !== 'timeout' && r.ok && (await stripHidden()), describe(r))
+    r = await send({ kind: 'bar', show: true })
+    line('bar', 'show true: stripState.hidden false', r !== 'timeout' && r.ok && !(await stripHidden()), describe(r))
 
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })

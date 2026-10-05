@@ -14,8 +14,8 @@ web by speaking Estonian, inside the sites they already use.
 
 ## Who it is for
 
-People who cannot type or use a mouse comfortably: cerebral palsy, spinal injury, ALS, a stroke, a
-broken arm. Many of them already use an eye tracker to move a pointer by looking.
+People who cannot type or use a mouse comfortably because of a motor disability, an injury, an illness
+or a stroke. Many of them already use an eye tracker to move a pointer by looking.
 
 The product changed direction after the team talked to an eye-tracker user with a motor disability
 on the first day of the hackathon. He said three things, and they are the brief:
@@ -66,6 +66,20 @@ taken back: sending, resting, waking and undoing are only done when said exactly
 **Rests when asked.** "Puhka" makes it stop typing what it hears until "ärka üles" (wake up), so he
 can talk to someone in the room.
 
+**What changed on 5 October, evening and night.** After a day of real use the person it is for asked
+for six things, and they were built in two rounds. It now understands what he means, not only fixed
+phrases: what the rules do not recognise goes to a Claude model with what is on the page, and the
+model may answer only with one of a fixed set of actions, checked before anything runs ("vajuta
+Mari", "pane vaiksemaks", "mine youtube'i ja otsi kassivideod"). Nothing is typed where he did not
+ask: words go only into a box he chose. He can edit inside the text as with a keyboard: move the
+caret between words, sentences and lines, select, insert in the middle, delete letters, redo. For an
+eye tracker there is push-to-talk by looking: it listens while the pointer rests on the microphone,
+or on the whole bar, and delivers the words when the pointer leaves. Commands heard the Estonian way
+("juutuba", "aga whatsapp", "saadake") are understood by sound. Scrolling can be a little, slow, and
+stopped. The speech server can no longer fall minutes behind, and the bar says when it is behind at
+all. And there are two speech backends: TalTech's model on the laptop, or Soniox in the cloud when a
+key is set. None of this has been tried with his voice yet.
+
 **The first version, a document editor,** survives only as a development page at localhost: say
 "change the budget deadline to Friday", see the change marked in the text, say yes or no. Its edits
 need an Anthropic API key, and the key on the build machine is rejected. It is not part of what the
@@ -90,9 +104,13 @@ tracker.
 
 - A Chrome extension draws the bar, listens, and types into the page.
 - Speech is recognised by TalTech's Estonian model (Tanel Alumäe's Laboratory of Language
-  Technology, MIT licence) running on the same laptop. No audio leaves the machine.
-- Commands and repairs are understood by rules, with no AI model and no cost per use. A Claude model
-  for freer corrections is planned and not connected.
+  Technology, MIT licence) running on the same laptop, on its own thread so nothing else slows it.
+  No audio leaves the machine, unless Soniox (a hosted recogniser) is chosen on the settings page
+  with a key on the server; then it does, and the settings page says so.
+- Fixed commands and repairs are understood by rules, with no AI model and no cost per use. What
+  the rules do not recognise is understood by a Claude model, which sees the words and what is on
+  the page (never the audio) and may answer only with one of a fixed set of actions, checked before
+  anything runs. Nothing is typed into a field he did not choose.
 
 ## What makes it different
 
@@ -115,12 +133,18 @@ tracker.
 
 ## What is proven and what is not
 
-| Claim | Status on 5 October 2026 |
+| Claim | Status on 5 October 2026, night |
 |---|---|
 | Dictating and sending in real WhatsApp Web | Done with the first version by the developer and one team member, both with ordinary voices |
 | Words typed while speaking, and the new-tab page | Done by recorded speech in automated tests in Chromium; not yet on real WhatsApp or in Google Chrome |
 | Scrolling and switching tabs by voice | Done by recorded speech in automated tests |
-| Works with the voice of the person it is for | Not tried |
+| Understanding by meaning (the model) | 61 of 62 scripted utterances pass against stand-in pages with the real model, run by the person it is for with his key on the evening of 5 October; the one miss fixed since. Not tried on real sites by voice |
+| Editing inside the text (caret, selection, insert, keys) | Done on a stand-in essay page (a plain editor and a textarea) in automated tests; not with a voice, not on WhatsApp, not on Google Docs itself |
+| Push-to-talk by looking | The timing is unit tested with fake clocks; not tried with a real eye tracker or a real pointer |
+| Sound-alike commands, slow scrolling, stop | Unit tests and automated browser tests on stand-in pages; the misheard forms come from his report, not from recordings |
+| The speech server never falls behind | Tested with a fake slow decoder; the worker thread not run with the model on this machine |
+| Soniox as a second recogniser | Built against Soniox's published client code; never connected, no key |
+| Works with the voice of the person it is for | Not tried for anything built since the first version |
 | Works with a real eye tracker | Not tried |
 | Faster for him than typing | Not measured |
 | Messenger | Built against a stand-in page, never tried on the real site |
@@ -184,7 +208,8 @@ useful thing branding can deliver.
 **Open, yours to decide:** logo beyond the wordmark, colour palette, tagline, the tone of the pitch
 deck, a name for the bar itself, how the product is shown in a ten-second demo.
 
-**Words to use and avoid.** Say "people who cannot use their hands" or name the condition. Avoid
+**Words to use and avoid.** Say "people who cannot use their hands" or "a motor disability"; do not
+name a medical condition. Avoid
 "suffering from", "handicapped" and "normal users". The user is the one in control; Ütle does what
 he says.
 
@@ -193,7 +218,7 @@ he says.
 | What | Where |
 |---|---|
 | Screenshots of the product on test pages | `docs/proof/` |
-| Every phrase the product understands, in both languages | `docs/ARCHITECTURE.md`, sections 20.3, 21.1 and 21.3, and the table in `README.md` |
+| Every phrase the product understands, in both languages | `extension/README.md` ("What to say"); the rules in `docs/ARCHITECTURE.md`, sections 20.3, 21.1, 22 and 23.4; a short table in `README.md` |
 | Every line the product says | `src/core/strings.ts` |
 | How to install and run it | `README.md` |
 | What is not ours, and its licence | `THIRD-PARTY.md` |
