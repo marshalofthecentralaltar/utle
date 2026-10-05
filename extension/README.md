@@ -74,11 +74,49 @@ From the repository root:
 - When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.
 
+## What the page tells the model (`readPage`)
+
+The model only knows what `readPage` reports, so `extension/src/page.ts` reads the page the way an
+accessibility tree would, on any site, without site-specific paths:
+
+- **Names.** Each item's text is, in order: `aria-labelledby`, `aria-label` (when the label only
+  spells out the visible text, the visible text), a field's `<label>` (`for=` or wrapping), its
+  placeholder, its title, an image's alt, the first line of visible text, `title`, an inner image's
+  alt or svg title, and for a link without text the heading or title of its card. Whitespace is
+  collapsed, 60 characters at most. On WhatsApp a chat row's name is its title span.
+- **One item per card.** Links to the same address (a video's thumbnail, title and duration badge)
+  are one item, named by the best of them. Links to `/watch?v=` or `/shorts/`, or holding a
+  `<video>`, have the role `video`; the playing video itself is `video` "praegune video".
+- **Dialogs first.** Inside an open dialog (`role=dialog`, `aria-modal`, `<dialog open>`) or a cookie
+  banner (a fixed or absolute layer over a fifth of the screen whose text says cookie, küpsis,
+  nõustu, accept or consent), items come first and their text begins with `[dialog] `. Elements the
+  layer covers are not listed, so the model sees the banner and little else until it is dismissed.
+- **Below the fold.** Up to 30 items within one screen below the fold follow the visible ones, their
+  text beginning with `[allpool] `. `clickItem` and `focusItem` scroll such an item to the middle
+  of the screen first. The numbers (`showHints`) label only the visible items, and the ids agree:
+  the `[allpool] ` ids continue after the last number.
+- **Markers.** The page's `h1` is an item of role `other`, `[pealkiri] …`; on a messaging site the
+  open chat's name is `[vestlus] …`. Both come last.
+- **Too many.** With more than 120 visible candidates the page keeps dialog items, then prefers
+  items with text, in the main content (`main`, `[role=main]`, `#content`, `#primary`, `article`)
+  over header, sidebar and footer, and larger over smaller; the kept items are then in reading order.
+- **Clicking.** `clickItem` and `clickHint` send the pointer sequence and a click, then watch 400 ms
+  for a reaction (address or title changed, focus moved, a dialog opened or closed, the element's
+  `aria-pressed`, `aria-expanded`, `aria-selected`, `aria-checked` or class changed, the element or
+  its surroundings mutated, or a burst of 20 nodes anywhere). With no reaction they focus the element
+  and send Enter, then Space; a link that still did nothing is followed by its address.
+- **Scrolling.** `scroll` moves the largest scrollable container under the middle of the screen,
+  then the next one, then the document; when nothing moved it answers `failed`, so the model can do
+  something else.
+
 ## Test
 
 - `npx tsx extension/test/run.ts`: every browser command, including `readBox`, `setText`,
   `pressSend`, the M7 page commands (`readPage`, `clickItem`, `focusItem`, `siteSearch`, `media`,
-  `pressKey`, `clearField`, `arm`, `bar`) on a YouTube-like stand-in (`fixtures/video.html`) and a
+  `pressKey`, `clearField`, `arm`, `bar`) on a YouTube-like stand-in (`fixtures/video.html`: a cookie
+  banner, ten video cards with thumbnail, title and channel links, some below the fold, an
+  `aria-labelledby` button, a tile that reacts to Enter only), a Gmail-like compose window
+  (`fixtures/gmail.html`: `role=dialog`, fields named by `<label for>`, a send button) and a
   WhatsApp stand-in page. Builds the extension first. Opens Chromium windows on screen for about a
   minute. The Messenger stand-in is served on the IPv6 loopback; where `[::1]` is unreachable (some
   containers) that part prints SKIP. Without a screen: `xvfb-run -a -s "-screen 0 1600x1000x24" npx tsx extension/test/run.ts`.
@@ -112,6 +150,9 @@ from them. If another extension also replaces the new-tab page, Chrome uses only
   needs a user gesture Chrome may not grant to an injected script; it then answers failed.
 - The unknown-site composer rule (a textarea or contenteditable with a send, post, comment or reply
   button in its form or within 200 px) is tested on stand-ins only.
+- What `readPage` makes of the real YouTube, Gmail and WhatsApp pages (names, one item per card,
+  the cookie banner, the items below the fold, the click fallbacks) is tested on the stand-ins
+  above, built from knowledge of those pages' markup, not on the sites themselves.
 - Whether the strip makes room on the real WhatsApp layout (tested on stand-ins built on `100%`
   and on `100vh` heights).
 - Branded Google Chrome (tested in Playwright's bundled Chromium only), including how it asks about

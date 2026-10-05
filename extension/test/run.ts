@@ -51,7 +51,8 @@ function serve(): Promise<Server> {
   const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.webm': 'video/webm' }
   const server = createServer((req, res) => {
     const path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname)
-    const file = resolve(here, `.${path}`)
+    // The video stand-in links its cards to watch?v=N, as YouTube does: the same page answers there.
+    const file = resolve(here, path === '/fixtures/watch' ? './fixtures/video.html' : `.${path}`)
     if (!file.startsWith(here)) {
       res.writeHead(403).end()
       return
@@ -439,22 +440,61 @@ async function main(): Promise<void> {
     line('siteSearch', 'WhatsApp: filters the list to one row and opens it', r !== 'timeout' && r.ok && (await waHeader()) === 'Peeter Kask', `${describe(r)} (${ms} ms) header=${await waHeader()}`)
     r = await send({ kind: 'readBox' })
     check('siteSearch: WhatsApp composer armed afterwards, search box not the box', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer', describe(r))
+    r = await send({ kind: 'readPage' })
+    const waOpen = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    line('readPage', 'WhatsApp: the open chat is an item "[vestlus] Peeter Kask"', r !== 'timeout' && r.ok && waOpen.some((i) => i.role === 'other' && i.text === '[vestlus] Peeter Kask') && r.page?.box.kind === 'composer' && r.page.box.armed === true, `${describe(r)} items=${JSON.stringify(waOpen.map((i) => i.text))}`)
 
     // ---------- M7: a video page (YouTube-like stand-in) ----------
     await send({ kind: 'goTo', url: `${T}/video.html` })
     const video = pageAt(`${T}/video.html`)
     if (!video) throw new Error('video page not found')
     await video.waitForFunction(() => (document.getElementById('v') as HTMLVideoElement).readyState >= 2)
+    // The cookie banner is there first: its items come first, marked [dialog]; accepting it removes it.
     r = await send({ kind: 'readPage' })
+    const banner = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const dialogItems = banner.filter((i) => i.text.startsWith('[dialog] '))
+    const dialogFirst = banner.every((i, k) => i.text.startsWith('[dialog] ') === k < dialogItems.length)
+    line('readPage', 'cookie banner: its items first, marked [dialog]', r !== 'timeout' && r.ok && dialogItems.length === 2 && dialogFirst && dialogItems.some((i) => i.role === 'button' && i.text === '[dialog] Nõustu'), `${describe(r)} items=${JSON.stringify(banner.map((i) => i.text))}`)
+    check('readPage: nothing under the banner is listed (the comment field is covered)', !banner.some((i) => i.text === 'Lisa kommentaar'))
+    const acceptId = banner.find((i) => i.text === '[dialog] Nõustu')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: acceptId })
+    const bannerGone = await video.evaluate(() => document.getElementById('cookies') === null)
+    line('clickItem', '"[dialog] Nõustu" removes the cookie banner', r !== 'timeout' && r.ok && bannerGone, `${describe(r)} gone=${bannerGone}`)
+
+    r = await send({ kind: 'readPage' })
+    const afterBanner = r
     const items = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
     const has = (role: string, text: string): boolean => items.some((i) => i.role === role && i.text === text)
     line(
       'readPage',
       'lists links, buttons, fields, the video and a pointer card',
-      r !== 'timeout' && r.ok && has('link', 'Esimene video') && has('button', 'Vaata hiljem') && has('field', 'Otsi') && has('field', 'Lisa kommentaar') && items.some((i) => i.role === 'video') && has('other', 'Esitusloend'),
+      r !== 'timeout' && r.ok && has('video', 'Esimene video') && has('button', 'Vaata hiljem') && has('field', 'Otsi') && has('field', 'Lisa kommentaar') && has('video', 'praegune video') && has('other', 'Esitusloend') && has('link', 'Mektory') && !items.some((i) => i.text.startsWith('[dialog] ')),
       `${describe(r)} items=${JSON.stringify(items)}`,
     )
-    line('readPage', 'auto-focused search box: kind search, not armed', r !== 'timeout' && r.ok && r.page?.box.kind === 'search' && r.page.box.armed === false && r.page.box.label === 'Otsi', describe(r))
+    check('readPage: one item per video card, named by its title (thumbnail, title and duration merged)', items.filter((i) => i.text === 'Esimene video').length === 1 && !items.some((i) => /^\d+:\d+$/.test(i.text)), JSON.stringify(items.filter((i) => i.role === 'video').map((i) => i.text)))
+    check('readPage: aria-labelledby names the icon button "Loo video"', has('button', 'Loo video'))
+    check('readPage: the page heading is an item "[pealkiri] Kevad Mektorys"', has('other', '[pealkiri] Kevad Mektorys'))
+    const near = items.filter((i) => i.text.startsWith('[allpool] '))
+    const firstNear = near[0]?.id ?? -1
+    check('readPage: items below the fold come after the visible ones, marked [allpool]', near.length > 0 && near.length <= 30 && near.some((i) => i.text === '[allpool] Kümnes video') && items.filter((i) => !i.text.startsWith('[allpool] ') && !i.text.startsWith('[pealkiri] ')).every((i) => i.id < firstNear), `near=${JSON.stringify(near.map((i) => i.text))}`)
+    r = await send({ kind: 'showHints' })
+    line('showHints', 'numbers only the visible items (the [allpool] ids start after them)', r !== 'timeout' && r.ok && r.hints === firstNear - 1, `${describe(r)} first near id=${firstNear}`)
+    await video.screenshot({ path: join(repoRoot, 'docs/proof/ext-video-hints.png') })
+    await send({ kind: 'hideHints' })
+    const tenthId = near.find((i) => i.text === '[allpool] Kümnes video')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: tenthId })
+    const afterNear = await video.evaluate(() => ({ y: window.scrollY, clicks: (window as unknown as { clicks: string[] }).clicks, url: location.href }))
+    line('clickItem', 'an [allpool] item is scrolled to and clicked', r !== 'timeout' && r.ok && afterNear.y > 0 && afterNear.clicks.includes('watch?v=10'), `${describe(r)} ${JSON.stringify(afterNear)}`)
+    await send({ kind: 'scroll', direction: 'top' })
+    r = await send({ kind: 'readPage' })
+    const afterScroll = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const subscribeId = afterScroll.find((i) => i.text === 'Telli')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: subscribeId })
+    const subscribeText = await video.evaluate(() => document.getElementById('subscribe')?.textContent)
+    line('clickItem', 'a tile that reacts to Enter only: the keyboard fallback', r !== 'timeout' && r.ok && subscribeText === 'Tellitud', `${describe(r)} tile=${JSON.stringify(subscribeText)}`)
+    r = await send({ kind: 'readPage' })
+    items.splice(0, items.length, ...(r !== 'timeout' && r.ok ? r.page?.items ?? [] : []))
+    line('readPage', 'auto-focused search box: kind search, not armed', afterBanner !== 'timeout' && afterBanner.ok && afterBanner.page?.box.kind === 'search' && afterBanner.page.box.armed === false && afterBanner.page.box.label === 'Otsi', describe(afterBanner))
     check('readPage: items ordered top to bottom (search before the comment field)', (items.find((i) => i.text === 'Otsi')?.id ?? 99) < (items.find((i) => i.text === 'Lisa kommentaar')?.id ?? 0))
     check('readPage: hints false, media present', r !== 'timeout' && r.ok && r.page?.hints === false && r.page.media !== null, describe(r))
 
@@ -534,6 +574,32 @@ async function main(): Promise<void> {
     line('siteSearch', 'types into the header search and submits', r !== 'timeout' && r.ok && video.url().endsWith('#otsing=kassid'), `${describe(r)} (${ms} ms) url=${video.url()}`)
     r = await send({ kind: 'readBox' })
     check('siteSearch: the search box is present but not armed', r !== 'timeout' && r.ok && r.box?.present === true && r.box.armed === false && r.box.kind === 'search', describe(r))
+    // ---------- M7: a compose window (Gmail-like stand-in) ----------
+    await send({ kind: 'goTo', url: `${T}/gmail.html` })
+    const gmail = pageAt(`${T}/gmail.html`)
+    if (!gmail) throw new Error('gmail page not found')
+    r = await send({ kind: 'readPage' })
+    const mail = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const mailHas = (role: string, text: string): boolean => mail.some((i) => i.role === role && i.text === text)
+    const composeFirst = mail.length > 0 && mail.every((i, k) => i.text.startsWith('[dialog] ') === k < mail.filter((x) => x.text.startsWith('[dialog] ')).length)
+    line(
+      'readPage',
+      'compose dialog first; fields named by <label for>; title names the icon button',
+      r !== 'timeout' && r.ok && composeFirst && mailHas('field', '[dialog] Saaja') && mailHas('field', '[dialog] Teema') && mailHas('field', '[dialog] Sõnum') && mailHas('button', '[dialog] Saada') && mailHas('button', '[dialog] Loobu') && mailHas('row', 'Mari Maasikas') && mailHas('other', '[pealkiri] Postkast'),
+      `${describe(r)} items=${JSON.stringify(mail)}`,
+    )
+    const bodyId = mail.find((i) => i.text === '[dialog] Sõnum')?.id ?? -1
+    r = await send({ kind: 'focusItem', id: bodyId })
+    const gmailFocus = await gmail.evaluate(() => document.activeElement?.id ?? '')
+    line('focusItem', 'the message body: armed, kind composer (a send button beside it)', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer' && gmailFocus === 'body', `${describe(r)} focused=${gmailFocus}`)
+    const toId = mail.find((i) => i.text === '[dialog] Saaja')?.id ?? -1
+    r = await send({ kind: 'clickItem', id: toId })
+    await send({ kind: 'setText', text: 'mari@example.com' })
+    const toValue = await gmail.evaluate(() => (document.getElementById('to') as HTMLInputElement).value)
+    check('clickItem + setText: the To field, by its label', toValue === 'mari@example.com', `to=${JSON.stringify(toValue)}`)
+    r = await send({ kind: 'scroll', direction: 'down' })
+    line('scroll', 'page that does not scroll -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
+
     await send({ kind: 'goTo', url: `${T}/page-one.html` })
     r = await send({ kind: 'siteSearch', query: 'kassid' })
     line('siteSearch', 'page without a search field -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
