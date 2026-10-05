@@ -81,6 +81,19 @@ From the repository root:
   - dictation: anything that is not a command is added to the message box;
   - `saada`: sends what is in the box;
   - corrections: `mitte kolm, vaid neli`, `kustuta viimane sõna`, `kustuta kõik`, `võta tagasi`;
+  - editing inside the text (round 3; the box in front, armed or focused): the caret with `mine algusesse`,
+    `mine lõppu`, `rea algusesse`, `rea lõppu`, `lause algusesse`, `lause lõppu`, `sõna tagasi`, `kolm sõna edasi`,
+    `mine sõna homme ette`, `mine sõna homme taha`, `pärast sõna homme`, `mine kooli juurde`; a selection with
+    `vali kõik`, `vali see sõna`, `vali see lause`, `vali see rida`, `vali viimane sõna`, `vali viimane lause`,
+    `vali sõna homme`, `vali homme`; typing at the caret with `kirjuta siia vahele kell viis`, `lisa siia kell viis`,
+    `sisesta kell viis` (a space and a capital are added as the place needs); keys with `kustuta täht`,
+    `kustuta kolm tähte`, `kustuta valitud`, `kustuta ees`, `kustuta sõna homme`, `vasakule`, `paremale kolm korda`,
+    `üks rida üles`, `kaks rida alla`, `tee uuesti` (redo), `järgmine väli` (Tab, which arms the field it lands in);
+    English: `go to the start`, `go before homme`, `select the sentence`, `insert hello`, `delete three letters`,
+    `line up`, `redo`, `next field`. A word that is not in the box goes to the model instead (it may be a section of
+    the page). `võta tagasi` stays the whole-box undo. On Google Docs only the keys and typing work (its editor is a
+    canvas with no text to find in): `sõna tagasi`, `rea algusesse`, `kustuta täht`, `tee uuesti`, `kirjuta siia vahele …`;
+    `võta tagasi` there needs the model to answer `pressKey Undo`.
   - browser: `keri alla`, `keri üles`, `järgmine vaheleht`, `eelmine vaheleht`, `näita numbreid`, `vajuta viis`;
   - the bar: `peida riba`, `näita riba`;
   - `puhka` stops typing, `ärka üles` resumes.

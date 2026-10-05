@@ -153,6 +153,23 @@ const ROWS: Array<[string, BrowserCommand]> = [
   ['klõpsa kaks', { kind: 'clickHint', number: 2 }],
   ['click five', { kind: 'clickHint', number: 5 }],
   ['press 7', { kind: 'clickHint', number: 7 }],
+  // Round 3: editing inside the box (the word-bound forms are patterns in inpage.ts).
+  ['mine algusesse', { kind: 'caret', to: 'start' }],
+  ['Teksti lõppu.', { kind: 'caret', to: 'end' }],
+  ['rea algusesse', { kind: 'caret', to: 'lineStart' }],
+  ['lause lõppu', { kind: 'caret', to: 'sentenceEnd' }],
+  ['sõna tagasi', { kind: 'caret', to: 'wordBack' }],
+  ['go to the end', { kind: 'caret', to: 'end' }],
+  ['vali kõik', { kind: 'select', what: 'all' }],
+  ['vali viimane lause', { kind: 'select', what: 'lastSentence' }],
+  ['select the word', { kind: 'select', what: 'word' }],
+  ['kustuta täht', { kind: 'pressKey', key: 'Backspace' }],
+  ['kustuta ees', { kind: 'pressKey', key: 'Delete' }],
+  ['vasakule', { kind: 'pressKey', key: 'ArrowLeft' }],
+  ['üks rida alla', { kind: 'pressKey', key: 'ArrowDown' }],
+  ['tee uuesti', { kind: 'pressKey', key: 'Redo' }],
+  ['järgmine väli', { kind: 'pressKey', key: 'Tab' }],
+  ['next field', { kind: 'pressKey', key: 'Tab' }],
 ]
 
 describe('browserIntent: the phrase table', () => {
@@ -186,6 +203,10 @@ describe('browserIntent: what is not a browser command', () => {
     'vaheleht',
     'scroll',
     '',
+    // Round 3: the word-bound editing forms live in inpage.ts, where the box text is known.
+    'mine sõna homme ette',
+    'vali homme',
+    'kustuta kolm tähte',
   ])('%s', (text) => {
     expect(browserIntent(text)).toBeNull()
   })
