@@ -105,6 +105,12 @@ accessibility tree would, on any site, without site-specific paths:
   `aria-pressed`, `aria-expanded`, `aria-selected`, `aria-checked` or class changed, the element or
   its surroundings mutated, or a burst of 20 nodes anywhere). With no reaction they focus the element
   and send Enter, then Space; a link that still did nothing is followed by its address.
+- **The box.** The armed field wins, then the focused field, then the site's composer, then the
+  lowest text field; except that a focused search field gives way to a visible site composer
+  (WhatsApp focuses its chat search by itself). A field the user really clicks or tabs into
+  (a trusted pointerdown, or a trusted Tab followed by focus) is armed as if by "kirjuta siia"
+  (`watchTrustedClicks` in `box.ts`, called by `page.ts`; the strip should call it too so a click
+  before the first command counts). Focus the page sets by script arms nothing.
 - **Scrolling.** `scroll` moves the largest scrollable container under the middle of the screen,
   then the next one, then the document; when nothing moved it answers `failed`, so the model can do
   something else.
