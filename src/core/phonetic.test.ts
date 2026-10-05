@@ -89,6 +89,9 @@ describe('soundsLike', () => {
     ['', 'ava'],
     ['ava', ''],
     ['uks', 'uus'],
+    ['teeb', 'tab'],
+    ['tiib', 'tab'],
+    ['toob', 'tab'],
   ])('"%s" does not sound like "%s"', (heard, target) => {
     expect(soundsLike(heard, target)).toBe(false)
   })

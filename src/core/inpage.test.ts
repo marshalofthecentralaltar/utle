@@ -871,6 +871,12 @@ describe('send, sleep, wake and undo are never corrected', () => {
     expect(inpageInstant(session(), u)).toBe(false)
   })
 
+  it.each(['ei lõpeta', 'lõpeta ja', 'ma lõpeta', 'teeb kolm', 'kolm teeb', 'ta teeb kolm'])('round 3 review: "%s" is dictation, not a sound-alike command', (u) => {
+    const step = inpageStep(session(), u, box('Tere.'))
+    expect(step.commands).toHaveLength(1)
+    expect(step.commands[0]?.kind).toBe('setText')
+  })
+
   it('asleep, a phrase one letter from the wake phrase stays ignored', () => {
     expect(inpageStep(session({ asleep: true }), 'ärkan üles', box('Tere')).session.asleep).toBe(true)
   })

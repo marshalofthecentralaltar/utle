@@ -59,8 +59,8 @@ const PILL_SIZE = 72
 const SHOW_SIZE = 40
 /** Resting on the pill this long brings the bar back (the mic toggles at the usual 1 s). */
 const PILL_SHOW_MS = 2000
-/** The lag line appears when the speech server is this far behind, and stays until it has caught up (round 3). */
-export const LAG_SHOW_MS = 2000
+/** The lag line appears when the speech server is this far behind, and stays until it has caught up (round 3). Matches the engine's LAG_SHOWN_MS, below the server's 1500 ms backlog. */
+export const LAG_SHOW_MS = 1000
 const text = STRINGS.et.strip
 
 /** Per height: the microphone square, the controls, the type. */
@@ -323,10 +323,12 @@ export function mountStrip(): void {
     // The pointer is already on the new target (the mode changed, the bar unfolded under it).
     if (pointer && inside(el, pointer)) g.enter()
   }
+  // The poll only ever leaves. It never enters: the last position seen is stale once the pointer
+  // has left the window (an eye tracker parks it at the bottom edge, on the bar), and an enter from
+  // it would start the microphone again with nobody looking.
   setInterval(() => {
     if (!gaze || !gazeEl || !pointer) return
-    if (inside(gazeEl, pointer)) gaze.enter()
-    else gaze.leave()
+    if (!inside(gazeEl, pointer)) gaze.leave()
   }, GAZE_POLL_MS)
 
   const applySettings = (): void => {

@@ -78,5 +78,6 @@ export function soundsLike(heard: string, target: string): boolean {
   const stemB = phoneticStem(target)
   if (stemA.length >= STEM_MIN && (stemA === stemB || stemA === b || a === stemB)) return true
   if (a.length >= 4 && b.length >= 4) return keyDistance(a, b, 1) <= 1
-  return a.length === 3 && b.length === 3 && a[0] === b[0] && a[2] === b[2]
+  // Three-letter words only, not longer words whose keys collapse to three letters: "teeb" is not "tab".
+  return a.length === 3 && b.length === 3 && heard.length <= 3 && target.length <= 3 && a[0] === b[0] && a[2] === b[2]
 }

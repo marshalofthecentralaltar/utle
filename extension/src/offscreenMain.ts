@@ -94,8 +94,12 @@ export async function serverStatus(statusUrl: string): Promise<'live' | 'no_key'
   }
 }
 
-/** After a flush, the microphone stays open this long so the final can arrive (round 3). */
-export const FLUSH_STOP_MS = 300
+/**
+ * After a flush, the microphone stays open this long so the final can arrive (round 3). The server
+ * first decodes what it still holds (up to its 1500 ms backlog), and Soniox answers a finalize over
+ * the network; when the final is later than this, the recogniser delivers the words as last heard.
+ */
+export const FLUSH_STOP_MS = 800
 
 /** The speech model's address with the engine chosen on the options page: ?engine=soniox asks the dev server for Soniox (round 3). */
 export function asrAddress(base: string, engine: string | null): string {

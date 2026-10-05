@@ -87,8 +87,12 @@ export const INTENT_LOOP_BUDGET_MS = 15_000
  * with no question to the model: an answer minutes late would act on a page that has changed.
  */
 export const STALE_MS = 3000
-/** Round 3: the recogniser's lag is shown on the strip from this much on, and cleared below it. */
-export const LAG_SHOWN_MS = 2000
+/**
+ * Round 3: the recogniser's lag is shown on the strip from this much on, and cleared below it. Below
+ * the server's MAX_BACKLOG_MS (1500): the server reports the backlog at the moment it drops, which is
+ * never much above that, so a higher threshold would hide every drop.
+ */
+export const LAG_SHOWN_MS = 1000
 /** M7.2: the loop stops after this many failed steps (one failure is reported back so the model may recover). */
 export const MAX_STEP_FAILURES = 2
 /** M7.2: how long the page gets to render after a step before it is read again (a goTo already waited for the load). */
@@ -612,7 +616,11 @@ export function createEngine(deps: EngineDeps): Engine {
       u.over = true
       queue = queue.then(() => takeBack(u))
     }
-    deps.publish({ listening: false })
+    // The server sends no lag of 0 once the socket is gone: the line is cleared here.
+    if (lagShown) {
+      lagShown = false
+      deps.publish({ listening: false, lag: 0 })
+    } else deps.publish({ listening: false })
   }
 
   return {

@@ -1091,6 +1091,23 @@ describe('the queue keeps up (round 3)', () => {
     expect(STALE_MS).toBe(3000)
   })
 
+  it('the lag threshold is below the server\'s 1500 ms backlog, where every drop is reported', () => {
+    expect(LAG_SHOWN_MS).toBeLessThan(1500)
+  })
+
+  it('clears the lag line when listening stops, since the server then sends no lag of 0', () => {
+    const t = setup()
+    t.engine.start()
+    t.lag(LAG_SHOWN_MS + 500)
+    expect(t.lags).toEqual([LAG_SHOWN_MS + 500])
+    t.engine.stop()
+    expect(t.lags).toEqual([LAG_SHOWN_MS + 500, 0])
+    expect(t.state.lag).toBe(0)
+    t.engine.start()
+    t.engine.stop()
+    expect(t.lags).toEqual([LAG_SHOWN_MS + 500, 0])
+  })
+
   it('publishes the recogniser\'s lag above LAG_SHOWN_MS and clears it once below', () => {
     const t = setup()
     t.lag(500)
