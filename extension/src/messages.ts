@@ -1,6 +1,7 @@
 // Messages between the extension's parts (docs/ARCHITECTURE.md 21.2) and the strip's state.
 
 import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import type { PageCommand } from './page.ts'
 
 /** Everything the strip shows. Kept by the service worker in chrome.storage.session under STATE_KEY. */
 export interface StripState {
@@ -16,12 +17,14 @@ export interface StripState {
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
+  /** Date.now() when the microphone last opened, for the tests' timings. */
+  micOpenedAt: number
 }
 
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', connects: 0, micOpens: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
 
 /** To the service worker. */
 export type ToBackground =
@@ -41,6 +44,13 @@ export type ToBackground =
 /** To the offscreen document. */
 export type ToOffscreen = { target: 'offscreen'; type: 'toggle' } | { target: 'offscreen'; type: 'start' }
 
+/**
+ * To the extension's new-tab page, from the service worker: run one page command there (21.3). The
+ * worker cannot inject into an extension page, so the page runs it with its own copy of page.ts.
+ * Only the page whose tab id is tabId answers.
+ */
+export type ToPage = { type: 'utle-page-run'; tabId: number; command: PageCommand }
+
 /** To the strip (content script), from the service worker. Used by the tests. */
 export type ToStrip = { type: 'utle-strip-measure' }
 
@@ -49,6 +59,8 @@ export interface StripMeasure {
   mic: { left: number; top: number; width: number; height: number }
   micState: string
   heard: string
+  /** The computed font size of the heard words, in px. */
+  heardPx: number
   line: string
 }
 

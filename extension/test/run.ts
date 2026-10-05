@@ -87,6 +87,8 @@ async function main(): Promise<void> {
       channel: 'chromium',
       headless: !headed,
       viewport: null,
+      // Playwright turns the back/forward cache off by default; the strip must survive it.
+      ignoreDefaultArgs: ['--disable-back-forward-cache'],
       args: [
         `--disable-extensions-except=${extensionDir}`,
         `--load-extension=${extensionDir}`,
@@ -100,6 +102,45 @@ async function main(): Promise<void> {
     await sw.evaluate((url) => chrome.storage.local.set({ utleUrl: url }), UTLE)
 
     const first = ctx.pages()[0] ?? (await ctx.newPage())
+    await first.goto(`${T}/page-one.html`)
+
+    // ---------- the strip survives navigation (21.3) ----------
+    const hosts = async (): Promise<number> => first.evaluate(() => document.querySelectorAll('utle-strip').length)
+    const showHeard = async (heard: string): Promise<void> => {
+      await sw.evaluate(async (h) => {
+        const now = (await chrome.storage.session.get('stripState')).stripState as Record<string, unknown> | undefined
+        await chrome.storage.session.set({ stripState: { ...now, heard: h } })
+      }, heard)
+    }
+    const stripHeard = async (): Promise<string> =>
+      sw.evaluate(async (url) => {
+        const t = (await chrome.tabs.query({})).find((x) => x.url === url)
+        if (t?.id === undefined) return '(no tab)'
+        const m = (await chrome.tabs.sendMessage(t.id, { type: 'utle-strip-measure' }).catch(() => null)) as { heard: string } | null
+        return m?.heard ?? '(no strip)'
+      }, first.url())
+    await first.addInitScript(() => {
+      window.addEventListener('pageshow', (e) => {
+        ;(window as unknown as { restored: boolean }).restored = e.persisted
+      })
+    })
+    await first.goto(`${T}/page-two.html`)
+    await showHeard('pärast laadimist')
+    await first.waitForTimeout(300)
+    let heardNow = await stripHeard()
+    line('(strip)', 'full navigation: one strip, current state', (await hosts()) === 1 && heardNow === 'pärast laadimist', `hosts=${await hosts()} heard=${JSON.stringify(heardNow)}`)
+    await first.evaluate(() => history.pushState({}, '', '?vestlus=2'))
+    await showHeard('pärast pushState')
+    await first.waitForTimeout(300)
+    heardNow = await stripHeard()
+    line('(strip)', 'pushState navigation: one strip, current state', first.url().endsWith('?vestlus=2') && (await hosts()) === 1 && heardNow === 'pärast pushState', `hosts=${await hosts()} heard=${JSON.stringify(heardNow)} url=${first.url()}`)
+    await first.goto(`${T}/page-three.html`)
+    await showHeard('tagasi tulles')
+    await first.goBack({ waitUntil: 'commit' })
+    await first.waitForTimeout(500)
+    heardNow = await stripHeard()
+    const restored = await first.evaluate(() => (window as unknown as { restored?: boolean }).restored === true)
+    line('(strip)', 'back from the bfcache: one strip, current state', restored && (await hosts()) === 1 && heardNow === 'tagasi tulles', `restored from bfcache=${restored} hosts=${await hosts()} heard=${JSON.stringify(heardNow)}`)
     await first.goto(`${T}/page-one.html`)
 
     // The section 20 page is now only a development harness: open it in a window of its own,
@@ -139,6 +180,11 @@ async function main(): Promise<void> {
 
     r = await send({ kind: 'newTab' })
     line('newTab', 'without url opens an empty tab', r !== 'timeout' && r.ok, describe(r))
+    // That tab is the extension's new-tab page (21.3): page commands reach it through a message.
+    r = await send({ kind: 'showHints' })
+    line('showHints', 'on the new-tab page numbers the 13 tiles', r !== 'timeout' && r.ok && r.hints === 13, describe(r))
+    r = await send({ kind: 'hideHints' })
+    line('hideHints', 'on the new-tab page', r !== 'timeout' && r.ok, describe(r))
     r = await send({ kind: 'history', direction: 'back' })
     line('history', 'back on a fresh tab -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
     r = await send({ kind: 'closeTab' })

@@ -12,11 +12,22 @@ import type { RunAnswer, StripState, ToBackground, ToOffscreen } from './message
 
 export const DEFAULT_ASR_URL = 'ws://localhost:5173/api/asr'
 
+/**
+ * How long a final is held to join the next one in this mode (21.3). Each final can be appended
+ * to the box on its own, so it need not wait LOCAL_HOLD_MS (700 ms) for a following one.
+ */
+export const INPAGE_HOLD_MS = 150
+
+export interface OffscreenOptions {
+  /** The test's baseline build passes LOCAL_HOLD_MS to measure the old delay. Default INPAGE_HOLD_MS. */
+  holdMs?: number
+}
+
 function tell(message: ToBackground): Promise<unknown> {
   return chrome.runtime.sendMessage(message).catch(() => undefined)
 }
 
-export function startOffscreen(logic: InpageLogic): void {
+export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {}): void {
   const address = new URLSearchParams(location.search).get('asr') ?? DEFAULT_ASR_URL
   let connects = 0
   let micOpens = 0
@@ -30,7 +41,7 @@ export function startOffscreen(logic: InpageLogic): void {
       async start(onFrame) {
         await inner.start(onFrame)
         micOpens += 1
-        publish({ micOpens })
+        publish({ micOpens, micOpenedAt: Date.now() })
       },
       stop: () => inner.stop(),
     }
@@ -50,6 +61,7 @@ export function startOffscreen(logic: InpageLogic): void {
       createLocalRecognizer(handlers, isInstant, {
         onUnavailable,
         address,
+        holdMs: options.holdMs ?? INPAGE_HOLD_MS,
         connect: (events) => {
           connects += 1
           publish({ connects })

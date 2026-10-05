@@ -123,6 +123,22 @@ describe('local recogniser (browser side)', () => {
     expect(utterances).toEqual(['ava uus vaheleht'])
   })
 
+  it('holds a final only holdMs when given one (the extension, 21.3)', () => {
+    const r = createLocalRecognizer(handlers, isInstant, {
+      onUnavailable: () => (unavailable += 1),
+      connect: (events) => new FakeSocket(events),
+      audio: () => new FakeAudio(),
+      holdMs: 150,
+    })
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'final', text: 'ma jõuan homme' })
+    vi.advanceTimersByTime(149)
+    expect(utterances).toEqual([])
+    vi.advanceTimersByTime(1)
+    expect(utterances).toEqual(['ma jõuan homme'])
+  })
+
   it('joins two finals across a pause, and releases a quick reply at once', () => {
     const r = make()
     r.start()

@@ -12,7 +12,7 @@ import { build } from 'esbuild'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const extensionDir = join(repoRoot, 'extension')
-const STATIC = ['manifest.json', 'options.html', 'offscreen.html', 'permission.html', 'relay.js']
+const STATIC = ['manifest.json', 'options.html', 'offscreen.html', 'permission.html', 'newtab.html', 'relay.js']
 
 export interface BuildOptions {
   /** Folder that gets manifest.json, the pages and dist/. Default: extension/ itself. */
@@ -35,6 +35,7 @@ export async function buildExtension(options: BuildOptions = {}): Promise<string
       offscreen: options.offscreenEntry ?? join(src, 'offscreen.ts'),
       permission: join(src, 'permission.ts'),
       options: join(src, 'options.ts'),
+      newtab: join(src, 'newtab.ts'),
     },
     outdir,
     bundle: true,
