@@ -12,6 +12,30 @@ import { problemWith } from './interpret.ts'
 const LONG = 'The supplier reported two invoice errors in the first week, which were corrected the same day.'
 const SHORT = 'Two invoice errors in the first week were fixed the same day.'
 const UNKNOWN: Intent = { kind: 'not_understood', message: 'Rehearsal mode only knows the demo script.' }
+const UNKNOWN_ET: Intent = { kind: 'not_understood', message: 'Proovirežiim tunneb ainult demo stsenaariumi.' }
+
+/** The Estonian demo: the deadline edit, and the one repair of the message to Mari. */
+function answerEstonian(request: InterpretRequest): Intent | null {
+  const said = request.utterance.toLowerCase()
+  const pendingInsert = request.pending?.ops[0]
+  if (pendingInsert?.op === 'insert_block' && said.includes('neli') && pendingInsert.text.includes('kolm')) {
+    return {
+      kind: 'propose_edit',
+      summary: 'Kolme asemel neli.',
+      ops: [{ ...pendingInsert, text: pendingInsert.text.replace('kolm', 'neli') }],
+    }
+  }
+  if (said.includes('reede')) {
+    const block = request.doc.find((b) => b.text.includes('neljapäevaks'))
+    if (!block) return null
+    return {
+      kind: 'propose_edit',
+      summary: 'Eelarve: neljapäeva asemel reede.',
+      ops: [{ op: 'replace_text', blockId: block.id, find: 'neljapäevaks', replace: 'reedeks' }],
+    }
+  }
+  return null
+}
 
 function heading(doc: Doc, text: string): number {
   return doc.findIndex((b) => (b.type === 'h1' || b.type === 'h2') && b.text.toLowerCase() === text)
@@ -33,6 +57,7 @@ function sentences(text: string): string[] {
 }
 
 function answer(request: InterpretRequest): Intent {
+  if (request.lang === 'et') return answerEstonian(request) ?? UNKNOWN_ET
   const { doc } = request
   const said = request.utterance.toLowerCase()
 
@@ -106,5 +131,5 @@ function answer(request: InterpretRequest): Intent {
 /** A scripted intent that is checked against the document exactly like a model's answer. */
 export function rehearse(request: InterpretRequest): Intent {
   const intent = answer(request)
-  return problemWith(request.doc, intent) === null ? intent : UNKNOWN
+  return problemWith(request.doc, intent) === null ? intent : request.lang === 'et' ? UNKNOWN_ET : UNKNOWN
 }

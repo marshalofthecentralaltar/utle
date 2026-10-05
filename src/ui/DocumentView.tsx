@@ -5,6 +5,7 @@ import type { BlockType } from '../core/document.ts'
 import { buildPreview } from '../core/preview.ts'
 import type { PreviewRow } from '../core/preview.ts'
 import type { Session } from '../core/session.ts'
+import { STRINGS } from '../core/strings.ts'
 
 /** How a row is marked in the margin. A bar appears only where it carries a state. */
 type Tone = 'plain' | 'changed' | 'removed' | 'added' | 'ask' | 'focus'
@@ -93,7 +94,8 @@ function previewRow(row: PreviewRow, key: string): ReactNode {
 /** The document, straight on the ground, with a numbered gutter: showing a proposal, the candidates or the focus. */
 export function DocumentView({ session }: { session: Session }) {
   const sheet = useRef<HTMLDivElement>(null)
-  const { doc, mode, pending, choice, focusId } = session
+  const { doc, mode, pending, choice, focusId, draft } = session
+  const t = STRINGS[session.lang].ui
 
   // Keep whatever the user has to look at in view: the proposal, the candidates, or the focused block.
   useEffect(() => {
@@ -130,10 +132,19 @@ export function DocumentView({ session }: { session: Session }) {
   return (
     <div
       ref={sheet}
-      aria-label="Document"
+      aria-label={draft ? t.message : t.document}
+      data-draft={draft ? 'true' : undefined}
       className="flex min-w-0 flex-col gap-3 text-lg leading-[1.65]"
     >
+      {draft && (
+        <p className="m-0 pr-5 pb-2 pl-[calc(var(--gutter)-3.25rem+1.75rem+1.5rem)] text-soft">
+          {t.recipient}: <b className="font-semibold text-ink">{draft.to ?? t.noRecipient}</b>
+        </p>
+      )}
       {rows}
+      {draft && doc.length === 0 && mode !== 'confirming' && (
+        <p className="m-0 pr-5 pl-[calc(var(--gutter)-3.25rem+1.75rem+1.5rem)] text-soft">{t.emptyDraft}</p>
+      )}
     </div>
   )
 }

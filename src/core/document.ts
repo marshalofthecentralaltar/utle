@@ -1,3 +1,5 @@
+import type { Lang } from './strings.ts'
+
 export type BlockType = 'h1' | 'h2' | 'p' | 'li'
 
 export interface Block {
@@ -48,3 +50,29 @@ export const SAMPLE_DOC: Doc = [
   { id: 'b9', type: 'h2', text: 'Risks' },
   { id: 'b10', type: 'p', text: 'The second supplier has not confirmed a start date.' },
 ]
+
+/** The same minutes in Estonian, with the same ids, for the Estonian-first profile. */
+export const SAMPLE_DOC_ET: Doc = [
+  { id: 'b1', type: 'h1', text: 'Protokoll: tarnijate liitmise projekt' },
+  { id: 'b2', type: 'p', text: 'Osalejad: Kadri Tamm, Marten Kask, Liis Org' },
+  { id: 'b3', type: 'h2', text: 'Kokkuvõte' },
+  {
+    id: 'b4',
+    type: 'p',
+    text:
+      'Piloot esimese tarnijaga läks käima 28. septembril. ' +
+      'Tarnija teatas esimesel nädalal kahest arvevigast, mis parandati samal päeval. ' +
+      'Meeskond leppis kokku, et tarnijaportaali üleslaadimise juhend peab enne teise tarnija liitumist selgemaks saama.',
+  },
+  { id: 'b5', type: 'h2', text: 'Eelarve' },
+  { id: 'b6', type: 'p', text: 'Kulud on plaani piires. Uuendatud eelarve tuleb saata rahandusosakonnale neljapäevaks.' },
+  { id: 'b7', type: 'h2', text: 'Järgmised sammud' },
+  { id: 'b8', type: 'li', text: 'Liis uuendab üleslaadimise juhendit.' },
+  { id: 'b9', type: 'h2', text: 'Riskid' },
+  { id: 'b10', type: 'p', text: 'Teine tarnija ei ole alguskuupäeva veel kinnitanud.' },
+]
+
+/** The sample document in a language. */
+export function sampleDoc(lang: Lang): Doc {
+  return lang === 'et' ? SAMPLE_DOC_ET : SAMPLE_DOC
+}

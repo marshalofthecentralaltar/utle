@@ -4,6 +4,7 @@ import { numberOf } from '../src/core/document.ts'
 import { InterpretRequestSchema } from '../src/core/intent.ts'
 import type { Intent } from '../src/core/intent.ts'
 import { applyOps } from '../src/core/ops.ts'
+import { STRINGS } from '../src/core/strings.ts'
 import { SYSTEM_PROMPT, userMessage } from './prompt.ts'
 import { TOOLS, intentFromToolCall } from './tools.ts'
 
@@ -96,6 +97,7 @@ export async function interpret(input: unknown, deps: { client: MessagesClient; 
     throw new InterpretError('bad_request', 'The request is malformed.')
   }
   const request = parsed.data
+  const t = STRINGS[request.lang ?? 'en']
   const started = Date.now()
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userMessage(request) }]
 
@@ -125,11 +127,11 @@ export async function interpret(input: unknown, deps: { client: MessagesClient; 
     }
 
     if (reply.stop_reason === 'refusal' || reply.stop_reason === 'max_tokens') {
-      return finish(notUnderstood('I could not work that out. Nothing changed.'), attempt)
+      return finish(notUnderstood(t.couldNotWork), attempt)
     }
     const call = reply.content.find((block) => block.type === 'tool_use')
     if (!call?.id || !call.name) {
-      return finish(notUnderstood('I could not work that out. Nothing changed.'), attempt)
+      return finish(notUnderstood(t.couldNotWork), attempt)
     }
 
     const intent = intentFromToolCall(call.name, call.input)
@@ -154,5 +156,5 @@ export async function interpret(input: unknown, deps: { client: MessagesClient; 
     )
   }
 
-  return finish(notUnderstood('I could not turn that into a safe edit. Nothing changed.'), MAX_ATTEMPTS)
+  return finish(notUnderstood(t.notSafe), MAX_ATTEMPTS)
 }

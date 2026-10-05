@@ -172,8 +172,13 @@ Error codes: `bad_request`, `upstream_unavailable`, `upstream_rejected`, `timeou
 
 ```ts
 // session.ts
-export type Mode = 'listening' | 'thinking' | 'confirming' | 'choosing' | 'asleep';
+export type Mode = 'listening' | 'thinking' | 'confirming' | 'choosing' | 'asleep'
+  | 'confirmingSend' | 'sending';                // a message waiting for yes, and on its way (20.3)
 export interface Session {
+  lang: 'et' | 'en';              // the language of every line shown, and of the interpreter's replies
+  draft: { to: string | null; saved: Saved } | null;   // a message being written; saved is the document it replaced
+  hints: boolean;                 // numbered labels are showing in the browser
+  bridgeSeq: number;              // id of the latest browser command
   doc: Doc;
   history: Doc[];                 // undo stack; history.length is the count of finished edits
   log: string[];                  // one line per finished edit, same length as history
@@ -194,13 +199,19 @@ export type Event =
   | { type: 'utterance'; text: string; source: 'voice' | 'typed' }
   | { type: 'key'; key: 'confirm' | 'reject' }
   | { type: 'intent'; seq: number; intent: Intent }
-  | { type: 'interpretFailed'; seq: number; message: string };
-export type Effect = { type: 'interpret'; seq: number; request: InterpretRequest };
-export function initialSession(doc: Doc): Session;
+  | { type: 'interpretFailed'; seq: number; message: string }
+  | { type: 'speechEnded' }
+  | { type: 'language'; lang: 'et' | 'en' }
+  | { type: 'browserResult'; seq: number; command: BrowserCommand; result: BrowserResult };
+export type Effect =
+  | { type: 'interpret'; seq: number; request: InterpretRequest }
+  | { type: 'speak'; text: string } | { type: 'hush' }
+  | { type: 'browser'; seq: number; command: BrowserCommand };
+export function initialSession(doc: Doc, lang?: 'et' | 'en'): Session;   // lang defaults to 'en' for tests; the page passes 'et'
 export function step(s: Session, e: Event): { state: Session; effects: Effect[] };
 ```
 
-Transition table. "Quick" means the result of `quickReply` on the utterance.
+`prompt` is derived from the mode at the end of every step. The rows below cover the document; browser commands, the hint numbers and the message draft add the rows in section 20.3, and `sending` is treated like `thinking` for utterances. Transition table. "Quick" means the result of `quickReply` on the utterance.
 
 | Mode | Event | Result |
 |---|---|---|
@@ -478,3 +489,80 @@ Decided after talking to a user with a motor disability. His words: typing messa
 - `src/browser/protocol.ts` is pure types and constants. `src/core/**` may import it. The extension does not import from `src/`; it follows the file by hand, and a change to the contract changes both in one commit.
 - The local recogniser's server never logs audio or text.
 - Messenger's page is not ours and cannot be tested without a logged-in person. Everything site-specific is best effort and says so when it fails; the numbered labels are the fallback that works on any page.
+
+### 20.3 Commands, messages and the gaze target
+
+**Language.** A fresh profile is Estonian: recognition `et-EE`, the interface, every line Ütle shows, and the sample document (`sampleDoc('et')`, the same minutes in Estonian with the same ids). The session carries `lang: 'et' | 'en'` and sends it to the interpreter as `lang`, which tells the model which language to write summaries, questions and messages in (prompt section "Reply language"). Every string the user can read lives in one table, `src/core/strings.ts`, keyed by language, so a native speaker proofreads one file. Switching language while the session is untouched (no edits, no draft, listening) also swaps the sample document.
+
+**Order of the tiers** (extends section 18). Each utterance is tried in this order and the first that answers wins:
+
+1. Quick reply (section 9). Exception: while numbered labels are showing in the browser (`hints`), a bare number clicks that label instead of focusing a paragraph, except in `choosing`.
+2. Message commands: start, send, drop.
+3. Local document command (`localIntent`).
+4. Local browser command (`browserIntent`).
+5. Message dictation (an empty draft only) or the interpreter.
+
+**Ambiguity rule.** The document wins: an utterance that is a document command on the current document stays one ("ava eelarve", "järgmine", "eelmine", "go back"). A browser command must name the browser (a tab word, a site from the table or an address, page, search, scroll, numbers) or be a fixed phrase with no document meaning ("mine tagasi", "edasi", "laadi uuesti"). So "järgmine" is the next paragraph and "järgmine vaheleht" the next tab; "ava eelarve" opens the Budget heading and "ava messenger" the site; English "go back" stays the previous paragraph and the browser's back is "page back" or "go back a page". Only whole utterances match, as in section 18.
+
+**Browser phrase table.** Text is lowercased, punctuation dropped except dots inside an address, and "punkt" or "dot" between words becomes a dot.
+
+| Command | Estonian | English |
+|---|---|---|
+| `newTab` | ava uus vaheleht, uus vaheleht, ava vaheleht | new tab, open a new tab |
+| `closeTab` | sulge vaheleht, sulge see vaheleht, pane vaheleht kinni | close tab, close this tab |
+| `switchTab next / previous` | järgmine vaheleht, eelmine vaheleht | next tab, previous tab |
+| `switchTab {index}` | kolmas vaheleht, vaheleht kolm, vaheleht number 3, mine kolmandale vahelehele | tab three, third tab, go to tab 3 |
+| `goTo` | ava X, mine X, mine lehele X, ava leht X | open X, go to X |
+| `goTo` (search) | otsi X | search X, search for X |
+| `history` | mine tagasi, tagasi, eelmine leht; mine edasi, edasi, järgmine leht | page back, go back a page, previous page; go forward, forward, next page |
+| `reload` | laadi uuesti, lae uuesti, värskenda | reload, refresh, reload the page |
+| `scroll` | keri alla, keri üles, lehe algusesse, keri algusesse, lehe lõppu, keri lõppu | scroll down, scroll up, scroll to the top, scroll to the bottom |
+| `showHints` | näita numbreid, näita numbrid | show numbers, show hints |
+| `hideHints` | peida numbrid, peida numbrid ära | hide numbers, hide hints |
+| `clickHint` | vajuta viis, vajuta 5, klõpsa viis; a bare number while labels show | click five, press 5; a bare number while labels show |
+
+X is a site name or an address. Site names: messenger, facebook, gmail, google, youtube, postimees, delfi, err, linkedin, cv.ee, cvkeskus (also "cv keskus"), töötukassa. An address is a word with a dot and a top-level domain ("postimees.ee"), opened as `https://` plus the address. A search opens `https://www.google.com/search?q=` plus the words. Anything else after "ava" or "mine" is not a browser command and goes on to the interpreter.
+
+Browser commands are local, need no yes and leave the document, the proposal and the question as they are. The reducer emits `{ type: 'browser', seq, command }`; the hook sends it through `src/browser/bridge.ts` and dispatches `{ type: 'browserResult', seq, command, result }`, which sets one short line: on success what happened (the tab's title when the extension gives one), on failure a plain reason; `no_extension` says to install the Ütle extension and reload the page. A result whose `seq` is not the latest is ignored. `showHints` that succeeds sets `hints`; `clickHint`, `hideHints` and any command that changes the page clear it.
+
+**Bridge client.** `sendCommand(command)` posts a `BridgeRequest` with a fresh id on the window and resolves the `BridgeResponse` with the same id. Messages from another source, with another id, or malformed, are ignored. No answer within `BRIDGE_TIMEOUT_MS` resolves `{ ok: false, code: 'no_extension' }`. Window and timers are injected, so it is tested without a DOM. `?bridge=fake` installs an in-page fake extension that answers every command with success, for demos without the extension.
+
+**Messages.** A message is a document of its own, the draft.
+
+| Phrase (Estonian / English) | Result |
+|---|---|
+| kirjuta sõnum Marile, uus sõnum Marile, sõnum Marile / message Mari, write a message to Mari, new message to Mari | Start a draft to Mari |
+| uus sõnum, kirjuta sõnum / new message, write a message | Start a draft with no recipient |
+| kirjuta Marile, et ... / write to Mari that ..., tell Mari that ... | Start a draft to Mari with the text after "et" or "that" proposed |
+| saada, saada ära, saada sõnum / send, send it, send the message | Ask to send |
+| katkesta sõnum, loobu sõnumist / cancel the message, drop the message | Drop the draft |
+
+States and transitions while a draft is open (`draft` is set; the modes are those of section 8 plus `confirmingSend` and `sending`):
+
+| From | Event | To |
+|---|---|---|
+| listening, confirming, choosing, no draft | start | The document, its history, its log and focus are saved in the draft; an empty document is shown with the recipient; `listening`. With one-breath text, `confirming` with that text proposed. |
+| any, draft open | start | Message: a message is already open; say send or cancel the message |
+| listening, empty draft | any other utterance that is not a command | `confirming` with the utterance proposed as the draft's text, no model call |
+| listening, draft with text | any other utterance | the interpreter, with `message: { to }` in the request; the prompt says the document is a message being written, and that plain words are text to add |
+| confirming | anything | as section 8: yes applies, no drops, other words repair |
+| confirming | send | Message: say yes or no first |
+| listening, empty draft | send | Message: the message is empty |
+| listening | send | `confirmingSend`: shows who and what, waits |
+| confirmingSend | yes, or key confirm | `sending`, effect `openConversation{name}` (skipped without a recipient), then on success `insertText{text, submit: true}` |
+| confirmingSend | no, or key reject | `listening` with the draft |
+| confirmingSend | any other utterance | stays, asks for yes or no |
+| sending | `insertText` succeeds | The saved document comes back with its history; message: sent |
+| sending | any step fails | `listening` with the draft kept; message: the reason |
+| sending | utterance | Message: one moment |
+| listening, confirming, confirmingSend | drop | The saved document comes back; the draft is gone |
+
+Undo inside a draft undoes the draft's own edits. Sleep keeps the draft. The text sent is the draft's blocks joined with a space, so a line break never presses Enter early.
+
+**What needs yes.** Edits to the document or the draft, and sending. Browser commands and starting or dropping a draft do not.
+
+**The name rule.** Estonian names arrive in the allative ("Marile", "Jaanile", "Märdile"). The page strips a final "-le" from the last word and capitalises the first letter: Marile becomes Mari, Jaanile becomes Jaani, Märdile becomes Märdi. The extension matches the name fuzzily against the conversation list, so Jaani still finds Jaan as a prefix. Known limit: names whose stem changes (Mart, Märdi; Peeter, Peetri) may not match; the extension then answers `not_found`, the draft stays, and the numbered labels are the fallback. English names are sent as heard.
+
+**The gaze target.** A microphone control of at least 96 by 96 pixels sits in the bar, always visible, with `data-listening` true or false and a filled or hollow state. Clicking toggles listening. Resting the pointer on it for `DWELL_MS` (1000 ms) toggles it without a click: a fill grows over that second, leaving cancels it, and after it fires it does not fire again until the pointer has left and come back. A click during the same hover after the dwell fired is ignored, and a click before it cancels the dwell, so a setup that also has dwell-click turned on toggles once, not twice. The Yes and No controls shown in `confirming` and `confirmingSend` have the same size and the same dwell. The logic is one piece, `src/ui/dwell.ts`, tested with fake timers.
+
+**Scripted demo.** `?voice=demo` speaks Estonian: one document edit, a new tab, Messenger, a one-breath message to Mari, one repair, yes, send, yes, sleep. `?voice=demo&bridge=fake` plays it to the end without the extension.
