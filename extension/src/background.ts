@@ -2,6 +2,7 @@
 // strip's state, opens the microphone permission page. See docs/ARCHITECTURE.md 20.2 and 21.2.
 
 import type { BrowserCommand, BrowserFailure, BrowserResult } from '../../src/browser/protocol.ts'
+import type { TabSummary } from '../../src/core/pageIntent.ts'
 import { INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
 import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.ts'
 import type { PageCommand } from './page.ts'
@@ -104,6 +105,14 @@ async function targetTab(senderWindowId: number | undefined): Promise<Tab | null
 }
 
 const NO_TARGET = (): BrowserResult => fail('no_target', 'There is no browser window to act on.')
+
+/** The tabs of the window being driven, left to right, as the model sees them (M7). */
+async function tabSummaries(): Promise<TabSummary[]> {
+  const win = await targetWindow(undefined)
+  if (!win) return []
+  const tabs = await chrome.tabs.query({ windowId: win.id })
+  return tabs.map((t, i) => ({ index: i + 1, title: (t.title ?? '').slice(0, 300), active: t.active }))
+}
 
 // ---------- waiting for a page ----------
 
@@ -516,6 +525,15 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
         await toOffscreen('start')
       })
       return false
+    case 'utle-tabs': {
+      // From the offscreen engine (M7): the tabs of the window being driven, for the model.
+      if (sender.tab) return false
+      tabSummaries().then(
+        (tabs) => sendResponse({ tabs }),
+        () => sendResponse({ tabs: [] }),
+      )
+      return true
+    }
     case 'utle-run': {
       // From the offscreen engine: it has no tab, so the target is the most recent ordinary window.
       if (sender.tab) return false
