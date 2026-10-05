@@ -111,7 +111,8 @@ async function tabSummaries(): Promise<TabSummary[]> {
   const win = await targetWindow(undefined)
   if (!win) return []
   const tabs = await chrome.tabs.query({ windowId: win.id })
-  return tabs.map((t, i) => ({ index: i + 1, title: (t.title ?? '').slice(0, 300), active: t.active }))
+  // IntentRequestSchema takes at most 60 tabs; a request beyond that would be a 400.
+  return tabs.slice(0, 60).map((t, i) => ({ index: i + 1, title: (t.title ?? '').slice(0, 300), active: t.active }))
 }
 
 // ---------- waiting for a page ----------

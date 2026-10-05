@@ -60,7 +60,7 @@ const NO_BOX: BoxState = { present: false, text: '', armed: false }
 export const LONG_UTTERANCE_WORDS = 14
 /** The model must answer within this time, or the rules' step stands. */
 export const ASK_TIMEOUT_MS = 7000
-/** How many strip lines the model is told about. */
+/** How many strip lines the model is told about, and how long each may be (IntentRequestSchema: 200). */
 const RECENT_LINES = 3
 /** M7.2: a multi-step utterance gets no further step once this long has passed since it arrived. */
 export const INTENT_LOOP_BUDGET_MS = 25_000
@@ -68,6 +68,11 @@ export const INTENT_LOOP_BUDGET_MS = 25_000
 export const MAX_STEP_FAILURES = 2
 /** M7.2: how long the page gets to render after a step before it is read again (a goTo already waited for the load). */
 export const SETTLE_MS = 300
+const RECENT_LINE_CHARS = 200
+/** The request's limits in IntentRequestSchema: a page beyond them would be a 400, and the model never asked. */
+const URL_CHARS = 2000
+const TITLE_CHARS = 300
+const BOX_CHARS = 4000
 
 const wordCount = (utterance: string): number => utterance.trim().split(/\s+/).filter((w) => w !== '').length
 
@@ -107,7 +112,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /** Publishes a line about an utterance and remembers it for the model. */
   const say = (line: string): void => {
-    if (line !== '') recent = [...recent, line].slice(-RECENT_LINES)
+    if (line !== '') recent = [...recent, line.slice(0, RECENT_LINE_CHARS)].slice(-RECENT_LINES)
     deps.publish({ line, resting: session.asleep })
   }
 
@@ -169,8 +174,10 @@ export function createEngine(deps: EngineDeps): Engine {
    */
   const readPage = async (box: BoxState, baseText: string | null): Promise<PageContext> => {
     const read = await runSafe({ kind: 'readPage' })
-    if (!read.ok || !read.page) return { url: '', title: '', box: baseText === null ? box : { ...box, text: baseText }, items: [], media: null, hints: session.hints }
-    return baseText === null ? read.page : { ...read.page, box: { ...read.page.box, text: baseText } }
+    const fallback: PageContext = { url: '', title: '', box: baseText === null ? box : { ...box, text: baseText }, items: [], media: null, hints: session.hints }
+    const page = !read.ok || !read.page ? fallback : baseText === null ? read.page : { ...read.page, box: { ...read.page.box, text: baseText } }
+    // Clipped to IntentRequestSchema's limits: a page beyond them would be a 400, and the model never asked.
+    return { ...page, url: page.url.slice(0, URL_CHARS), title: page.title.slice(0, TITLE_CHARS), box: { ...page.box, text: page.box.text.slice(0, BOX_CHARS) } }
   }
 
   const askWithTimeout = (request: IntentRequest): Promise<IntentAnswer | AskFailure> =>
@@ -361,7 +368,8 @@ export function createEngine(deps: EngineDeps): Engine {
         const u = live
         live = null
         if (u !== null) u.over = true
-        queue = queue.then(() => handle(utterance, u))
+        // A step that throws must not stop every utterance after it: the queue stays a resolved promise.
+        queue = queue.then(() => handle(utterance, u)).catch(() => undefined)
       },
       onInterim(interim) {
         // An empty interim keeps the last words on the strip until new speech arrives.

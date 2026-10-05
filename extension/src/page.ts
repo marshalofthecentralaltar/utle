@@ -1030,10 +1030,11 @@ declare global {
   var __utle: { run(command: PageCommand): Promise<PageResult> } | undefined
 }
 
-/** A navigation: the labels go, and the armed field with them (it belonged to the page before). */
+/** A navigation: the labels go, the armed field with them, and the items of the last readPage (all belonged to the page before). */
 function onNavigation(): void {
   hideHints()
   disarm()
+  pageItems = []
 }
 
 if (!globalThis.__utle) {

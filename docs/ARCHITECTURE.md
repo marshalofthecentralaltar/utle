@@ -812,7 +812,7 @@ The plan is `docs/plans/2026-10-05-m7-understanding.md`; the contract is `src/br
 | Phrase | Command |
 |---|---|
 | uus leht, ava uus leht, uus aken, ava uus aken / new page, new window, open a new page | `newTab` |
-| tagasi / back, go back | Undo when the box is armed with words and `undo` has an entry; otherwise `history back`. "Võta tagasi" stays undo, "mine tagasi" stays the page. "back" is never reached by a one-letter correction. |
+| tagasi / back, go back | Undo while he is writing: the box is armed and has words, or `undo` has an entry (the words he just cleared come back). With nothing to take back the line says so; the page history is left alone while words are in the box, because leaving the page loses them. Otherwise `history back`. "Võta tagasi" stays undo, "mine tagasi" stays the page. "back" is never reached by a one-letter correction. |
 | sulge / close | `closeTab` |
 | peida riba, peida ütle / hide the bar; näita riba / show the bar | `bar{show: false / true}` |
 | kirjuta siia, siia / write here, type here; ära kirjuta siia / do not write here | `arm{on: true / false}` |
@@ -823,6 +823,8 @@ The plan is `docs/plans/2026-10-05-m7-understanding.md`; the contract is `src/br
 | otsi googlest X, guugelda X, google X / search google for X | `goTo` the Google search |
 | otsi youtube'ist X, otsi youtubest X / search youtube for X | `goTo https://www.youtube.com/results?search_query=X` |
 | mängi, esita / play; paus, peata / pause, stop the video; vaigista, heli maha / mute; heli tagasi, heli peale / unmute; heli valjemaks, valjemaks, kõvemaks, pane heli valjemaks / louder, volume up; heli vaiksemaks, vaiksemaks, pane heli vaiksemaks / quieter, volume down; täisekraan / full screen; välju täisekraanist / exit full screen; keri edasi; keri tagasi | `media{action}` |
+
+**Soft words.** The one-word fixed phrases that are also ordinary words of a message (välja, siia, edasi, sulge, enter, sisesta, kinnita, paus, peata, mängi, esita / close, play, pause, forward, escape) are the command only when the armed box is empty, unarmed or absent. With words in the armed box they are dictation (and so go to the model like any short dictation): a one-word answer into WhatsApp never presses Escape or Enter in the composer or closes the tab. Phrases of two words or more ("pane kinni", "kirjuta siia") are commands whatever the box.
 
 **Numbers while the labels show.** Besides a bare number and "number N": "vajuta N", "ava N", "vali N", "open N", "choose N", digits with trailing punctuation ("12."), and Estonian number words to the thirties in `spokenNumber` (üksteist ... üheksateist, kakskümmend, kakskümmend üks ..., also heard as "kaks kümmend üks"; English "twenty one" ... "thirty"). Without labels "ava viis" and "üksteist" are dictation.
 

@@ -53,7 +53,13 @@ export function initialInpage(lang: Lang): InpageSession {
  * one the page focused by itself, where nothing is typed, M7).
  */
 export function inpageStep(session: InpageSession, utterance: string, box: BoxState): InpageStep {
-  const { action, understood } = classify(session, utterance)
+  const classified = classify(session, utterance)
+  const { understood } = classified
+  // One ordinary word while he is writing is a word of the message, not a command (section 22, "Soft words").
+  const action: Action =
+    classified.action.kind === 'browser' && SOFT_WORDS.has(normalise(utterance)) && box.present && box.armed && box.text.trim() !== ''
+      ? { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
+      : classified.action
   const step = act(session, action, box)
   const asked = action.kind === 'dictate' ? { ...step, ask: true } : step
   if (understood === null) return asked
@@ -220,8 +226,18 @@ const BARE_BROWSER: Record<string, BrowserCommand> = {
   previous: { kind: 'switchTab', to: 'previous' },
 }
 
-/** M7 (section 22): undo when the armed box has words and undo has an entry, else the page history. */
+/** M7 (section 22): undo while the armed box is being written in, else the page history. */
 const BACK = new Set(['tagasi', 'back', 'go back'])
+
+/**
+ * M7 (section 22): one-word fixed phrases that are also ordinary words of a message ("välja", "siia",
+ * "edasi", "enter"). While the armed box holds words they are dictation, so that a one-word answer
+ * never presses Escape or Enter in the composer; with an empty or unarmed box they are the command.
+ */
+const SOFT_WORDS = new Set([
+  'välja', 'siia', 'edasi', 'sulge', 'enter', 'sisesta', 'kinnita', 'paus', 'peata', 'mängi', 'esita',
+  'close', 'play', 'pause', 'forward', 'escape',
+])
 
 /** M7: "stopp" while the labels show hides them. */
 const STOP = new Set(['stopp', 'stop', 'lõpeta'])
@@ -518,8 +534,9 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
     case 'undo':
       return armed() ?? undo()
     case 'back':
-      // M7: words in the armed box and something to take back: undo; otherwise the page history.
-      return box.present && box.armed && box.text.trim() !== '' && session.undo.length > 0 ? undo() : run({ kind: 'history', direction: 'back' })
+      // M7: an armed box with words in it, or words just taken out of it (undo has an entry): undo, which
+      // says so when there is nothing to take back. The page history only when he is not writing.
+      return box.present && box.armed && (box.text.trim() !== '' || session.undo.length > 0) ? undo() : run({ kind: 'history', direction: 'back' })
     case 'edit': {
       const refused = armed()
       if (refused) return refused
