@@ -478,3 +478,31 @@ Decided after talking to a user with a motor disability. His words: typing messa
 - `src/browser/protocol.ts` is pure types and constants. `src/core/**` may import it. The extension does not import from `src/`; it follows the file by hand, and a change to the contract changes both in one commit.
 - The local recogniser's server never logs audio or text.
 - Messenger's page is not ours and cannot be tested without a logged-in person. Everything site-specific is best effort and says so when it fails; the numbered labels are the fallback that works on any page.
+
+### 20.2 The extension
+
+`extension/` is a Manifest V3 Chrome extension in plain JavaScript with no build step (load it unpacked). It implements the extension side of `src/browser/protocol.ts` and nothing else; it does not import from `src/`.
+
+**Parts.**
+
+| File | Runs in | Job |
+|---|---|---|
+| `relay.js` | the Ütle page (content script on `http://localhost/*` and `http://127.0.0.1/*`) | Relays BridgeRequests to the service worker and posts BridgeResponses back. |
+| `background.js` | the service worker | Finds the target tab, runs tab commands, injects the page script for the rest, docks Ütle. |
+| `page.js` | the target tab (injected on demand) | Scroll, numbered labels, inserting text, opening a conversation. |
+| `sites.js` | the target tab, injected before `page.js` | Every site-specific selector (Messenger) in one object, so a person can adjust it in a minute. |
+| `options.html` | the options page | The Ütle address, default `http://localhost:5173`. |
+
+**The relay.** The content script accepts a window message only when it comes from its own window (`event.source === window`), from its own origin, and its data has `source: 'utle-app'`, a numeric `id` and a `command` with a `kind`. Everything else is ignored, including the extension's own answers. The service worker then checks that the sender's origin is exactly the origin of the configured Ütle address; any other localhost page gets no answer at all, as if no extension were installed. The answer is posted with `source: 'utle-extension'` and the request's `id`, to the page's own origin.
+
+**The target tab.** Commands act on the active tab of the most recently focused ordinary (`normal`) browser window that is not the window the request came from. The service worker keeps a most-recently-focused list of window ids in session storage; when it knows nothing, it takes any ordinary window other than the sender's. Ütle's own window is never a target: when docked it is a popup window, and in any case it is the sender's window. No such window: `no_target`. `newTab` opens in the target window and so becomes the target. Pages an extension may not script (`chrome://`, `chrome-extension://`, `about:`, the Chrome Web Store, and any page where injection fails with an access error) answer `not_allowed` with a plain sentence. `newTab` and `goTo` accept only `http` and `https` addresses. Tab commands that navigate wait for the tab to finish loading (at most eight seconds) and answer with the resulting `tab: {title, url}`.
+
+**Numbered labels.** An element is actionable when it matches one of: `a[href]`, `button`, `input` (not hidden), `textarea`, `select`, a `contenteditable` root, `role` button, link, tab, menuitem, option, checkbox or textbox, or an `onclick` attribute; and is not disabled. It is visible when it has a non-empty box that intersects the viewport, `checkVisibility` (visibility, opacity, content-visibility) passes, and a hit test at its centre (or one of four inner points) lands on the element or inside it, so things under a dialog are skipped. An element nested inside another actionable element with nearly the same box is the same target and gets no second number. Labels are small black-on-yellow numbers in a shadow-DOM layer positioned in document coordinates, so they scroll with the page. They stay until `clickHint`, `hideHints`, a new `showHints`, or a navigation (a real one unloads the page; a same-document one fires the Navigation API's `navigate` event, which removes them). `clickHint` focuses a text field (input, textarea, contenteditable) and puts the caret at the end; anything else gets pointer and mouse down/up events and then `click()`.
+
+**Inserting text.** The box is the focused editable element; else the visible `contenteditable` with `role="textbox"` lowest on the screen (where composers live), else a visible textarea, else a visible text input. The text goes in with `document.execCommand('insertText')`, which fires a real `beforeinput` and `input`, so framework editors (React, Lexical) take it as typing and the text arrives once. If the command is refused, an input or textarea gets its value through the native setter and an `input` event, and a contenteditable gets a dispatched `beforeinput`. `submit` then dispatches `keydown`, `keypress` and `keyup` for Enter; if the box still holds the text after a moment, it clicks the site's send button when `sites.js` names one, or submits the input's form.
+
+**Opening a conversation.** Names are compared lower-cased with diacritics removed (`Märt` matches `mart`). Score: whole name equal 100; every spoken word equal to a word of the name 80; every spoken word a prefix of a word 60; contained anywhere 40. Highest wins, ties go to the shorter name, then the first on screen. On messenger.com and facebook.com/messages the candidates are the conversation links named in `sites.js`; elsewhere every visible link, list item, row or option. Nothing scores: `not_found`.
+
+**The dock.** The toolbar button opens Ütle in a popup window, 440 px wide and full height at the left edge of the work area of the display under the current window, and moves the current browser window to fill the rest. A second click finds the existing popup showing the Ütle origin and focuses it. Ütle is a top-level page there, so microphone permission works as in a tab.
+
+**Best effort, and says so.** Everything about Messenger's markup (`sites.js`) is unverified until a logged-in person tries it. Synthetic Enter is not a trusted key press; a site that checks `isTrusted` will not send, which is why the send-button fallback exists. Hit testing cannot see elements inside cross-origin iframes or closed shadow roots, so those get no number.
