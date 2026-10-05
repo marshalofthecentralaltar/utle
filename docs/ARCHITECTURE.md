@@ -796,3 +796,32 @@ The owner used it on WhatsApp Web. It worked, and he named three faults.
 **The new-tab page.** Chrome lets no extension draw on its own new-tab page, so the extension replaces it (`chrome_url_overrides.newtab` -> `newtab.html`). It shows the same strip (the same `mountStrip`, the same state in `chrome.storage.session`, the same microphone control), and above it a grid of large tiles, one per site in `SITES` of `src/core/browserIntent.ts` (one per address, WhatsApp first), each at least 96 px high with the site's name in large type. Clicking a tile, or resting the pointer on it for 1 s (the strip's dwell), opens the site in this tab. The WhatsApp tile opens the stored `messagingHome` when one is set (the test points it at a fixture). The service worker cannot inject scripts into an extension page, so `newtab.html` loads `dist/page.js` itself, and for a target tab showing the new-tab page the service worker sends page commands (`scroll`, `showHints`, `clickHint`, `readBox`, ...) as a runtime message `utle-page-run` with the tab's id; the page whose `chrome.tabs.getCurrent()` id matches runs it through the same `__utle.run` and answers. Tab commands and `goTo` work on it as on any tab. So "näita numbreid" numbers the tiles and a number opens that tile in the same tab.
 
 **Where nothing can be drawn.** `chrome://` pages other than the new tab (settings, extensions, history), the Chrome Web Store, `view-source:`, the PDF viewer, and other extensions' pages. The extension does not try; the strip comes back on the next ordinary page, and commands there answer `not_allowed` (21.2). They are listed in `extension/README.md`.
+
+## 22. M7: understanding what he means, and never typing where he did not ask (2026-10-05 evening)
+
+The plan is `docs/plans/2026-10-05-m7-understanding.md`; the contract is `src/browser/protocol.ts` (the new commands, `BoxState.armed`), `src/core/pageIntent.ts` (the model's one intent, validated) and `applyIntent` in `src/core/inpage.ts`. This section is what the core decides; the extension, the server and the strip are the other lanes' sections. Where it disagrees with 21.1, this section is what is built.
+
+**The armed box.** `BoxState.armed` is true only where words may go: the site's composer, or a field he picked through Ütle (`clickHint`, `clickItem`, `focusItem`, `openConversation`, `arm`). A field the page focused by itself (YouTube's or Google's search bar, WhatsApp's chat search) is `present` and not armed. In `act`, dictation, the repairs, undo and send require `present && armed`: present and not armed gives no command and the line `inpage.noPlaceToWrite` ("Ütle „kirjuta siia“ ..."); not present keeps `inpage.pickField` (send keeps `nothingToSend`). `inpagePreview` returns null for an unarmed box, so live words never land in a search bar. The one-breath form and opening a conversation never look at the box.
+
+**`ask`.** `inpageStep` sets `ask: true` exactly when the rules took the utterance for dictation (`classify` gave `dictate`), whatever the box. The engine then asks the model (plan, "When the engine asks the model"); without a model the step stands, and with an unarmed box that step is the refusal above.
+
+**`applyIntent(session, intent, page, say)`.** The model's intent goes through the same `act`: `dictate` is the dictation join of 21.1 (armed box only), `command` is one browser command with `browserDoing` as its line, `edit` is the repair or the undo of 21.1, `send`, `sleep` and `wake` as the rules, `unclear` is no command and the model's `say` (or `inpage.notUnderstood` when it has none). A non-empty `say` comes first: `Sain aru: „…“.` `afterCommands` treats `clickItem`, `focusItem`, `siteSearch` and `pressKey` as page changes (labels and undo cleared); `readPage`, `media`, `bar`, `arm` and `clearField` leave both.
+
+**Rules added** (no model; whole utterances, either language). All of them are instant, in the one-letter vocabulary of 21.3 and in the "may still be a command" set of the preview.
+
+| Phrase | Command |
+|---|---|
+| uus leht, ava uus leht, uus aken, ava uus aken / new page, new window, open a new page | `newTab` |
+| tagasi / back, go back | Undo when the box is armed with words and `undo` has an entry; otherwise `history back`. "Võta tagasi" stays undo, "mine tagasi" stays the page. "back" is never reached by a one-letter correction. |
+| sulge / close | `closeTab` |
+| peida riba, peida ütle / hide the bar; näita riba / show the bar | `bar{show: false / true}` |
+| kirjuta siia, siia / write here, type here; ära kirjuta siia / do not write here | `arm{on: true / false}` |
+| stopp, stop, lõpeta, while the labels show | `hideHints` (without labels they are left to dictation, so to the model) |
+| tühjenda otsing, kustuta otsing, tühjenda kast / clear the search, clear the field | `clearField` |
+| sulge aken, pane kinni, välja / escape, close this; enter, sisesta, kinnita | `pressKey{Escape}`; `pressKey{Enter}` |
+| otsi X / search for X | `siteSearch{query: X}` (the extension falls back to Google when the page has no search field). This replaces the Google search of 20.3, in in-page and document mode alike. |
+| otsi googlest X, guugelda X, google X / search google for X | `goTo` the Google search |
+| otsi youtube'ist X, otsi youtubest X / search youtube for X | `goTo https://www.youtube.com/results?search_query=X` |
+| mängi, esita / play; paus, peata / pause, stop the video; vaigista, heli maha / mute; heli tagasi, heli peale / unmute; heli valjemaks, valjemaks, kõvemaks, pane heli valjemaks / louder, volume up; heli vaiksemaks, vaiksemaks, pane heli vaiksemaks / quieter, volume down; täisekraan / full screen; välju täisekraanist / exit full screen; keri edasi; keri tagasi | `media{action}` |
+
+**Numbers while the labels show.** Besides a bare number and "number N": "vajuta N", "ava N", "vali N", "open N", "choose N", digits with trailing punctuation ("12."), and Estonian number words to the thirties in `spokenNumber` (üksteist ... üheksateist, kakskümmend, kakskümmend üks ..., also heard as "kaks kümmend üks"; English "twenty one" ... "thirty"). Without labels "ava viis" and "üksteist" are dictation.

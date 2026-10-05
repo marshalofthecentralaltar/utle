@@ -2,7 +2,7 @@ import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, PageConte
 import type { PageIntent } from './pageIntent.ts'
 import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
-import { normalise, quickReply } from './quickReply.ts'
+import { normalise, quickReply, spokenNumber } from './quickReply.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
 
@@ -49,7 +49,8 @@ export function initialInpage(lang: Lang): InpageSession {
 
 /**
  * What one utterance does. box is the message box of the page in front as it was when the
- * utterance ended (present false when the page has no text field).
+ * utterance ended (present false when the page has no text field; armed false when the field is
+ * one the page focused by itself, where nothing is typed, M7).
  */
 export function inpageStep(session: InpageSession, utterance: string, box: BoxState): InpageStep {
   const { action, understood } = classify(session, utterance)
@@ -162,6 +163,8 @@ type Action =
   | { kind: 'sayWho' }
   | { kind: 'send' }
   | { kind: 'undo' }
+  /** M7: "tagasi" / "back": undo when there are words to take back, else the page history. */
+  | { kind: 'back' }
   | { kind: 'edit'; edit: Edit }
   | { kind: 'dictate'; text: string }
 
@@ -215,9 +218,16 @@ const BARE_BROWSER: Record<string, BrowserCommand> = {
   eelmine: { kind: 'switchTab', to: 'previous' },
   next: { kind: 'switchTab', to: 'next' },
   previous: { kind: 'switchTab', to: 'previous' },
-  back: { kind: 'history', direction: 'back' },
-  'go back': { kind: 'history', direction: 'back' },
 }
+
+/** M7 (section 22): undo when the armed box has words and undo has an entry, else the page history. */
+const BACK = new Set(['tagasi', 'back', 'go back'])
+
+/** M7: "stopp" while the labels show hides them. */
+const STOP = new Set(['stopp', 'stop', 'lõpeta'])
+
+/** M7: while the labels show, "ava viis", "vali 5", "vajuta number viis", "open five" are the number. */
+const HINT_PICK = /^(?:ava|vali|vajuta|klõpsa|kliki|number|open|choose|pick|select|click|press)(?: number)? (.+)$/u
 
 const OPEN_ET_WITH = /^ava vestlus (?:koos )?(\p{L}+(?: \p{L}+)?)$/u
 const OPEN_ET_OF = /^ava (\p{L}+(?: \p{L}+)?) vestlus$/u
@@ -226,8 +236,10 @@ const OPEN_EN = /^(?:open (?:the )?(?:chat|conversation) with|chat with|write to
 /** Allative pronouns after the name rule: "kirjuta mulle" is dictation, not a conversation. */
 const PRONOUNS = new Set(['Mul', 'Sul', 'Tal', 'Mei', 'Tei', 'Nei', 'Enda'])
 
-/** Commands that leave the numbered labels on the page (20.2). */
-const KEEPS_HINTS = new Set<BrowserCommand['kind']>(['showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend'])
+/** Commands that leave the numbered labels on the page (20.2; M7 adds the ones that touch nothing the labels sit on). */
+const KEEPS_HINTS = new Set<BrowserCommand['kind']>([
+  'showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend', 'readPage', 'media', 'bar', 'arm', 'clearField',
+])
 /** Commands that leave the same message box in front, so the undo texts still belong to it. */
 const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints'])
 
@@ -306,6 +318,11 @@ function classify(session: InpageSession, utterance: string): Classified {
   return misheard(session, utterance) ?? exact
 }
 
+function hintPick(clean: string): number | null {
+  const rest = HINT_PICK.exec(clean)?.[1]
+  return rest === undefined ? null : spokenNumber(rest)
+}
+
 function classifyExact(session: InpageSession, utterance: string): Classified {
   const plain = (action: Action): Classified => ({ action, understood: null })
   const quick = quickReply(utterance)
@@ -315,12 +332,15 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
   if (clean === '') return plain({ kind: 'empty' })
   if (quick?.kind === 'sleep') return plain({ kind: 'sleep' })
   if (quick?.kind === 'wake') return plain({ kind: 'wake' })
-  if (session.hints && quick?.kind === 'number') {
-    return plain({ kind: 'browser', command: { kind: 'clickHint', number: quick.n } })
+  if (session.hints) {
+    const number = quick?.kind === 'number' ? quick.n : hintPick(clean)
+    if (number !== null) return plain({ kind: 'browser', command: { kind: 'clickHint', number } })
+    if (STOP.has(clean)) return plain({ kind: 'browser', command: { kind: 'hideHints' } })
   }
 
   if (messageCommand(utterance)?.kind === 'send') return plain({ kind: 'send' })
   if (quick?.kind === 'undo') return plain({ kind: 'undo' })
+  if (BACK.has(clean)) return plain({ kind: 'back' })
 
   const fixed = EDITS[clean]
   if (fixed) return plain({ kind: 'edit', edit: fixed })
@@ -341,8 +361,8 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
 // ---------------------------------------------------------------------------------------------
 // The one-letter rule (section 21.3): a short utterance one letter away from a command is that command.
 
-/** Never reached by a correction: a send, a sleep or a wake, an undo cannot be taken back (21.3). */
-const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'dictate', 'oneBreath', 'empty', 'ignored'])
+/** Never reached by a correction: a send, a sleep or a wake, an undo cannot be taken back (21.3); "back" may be an undo. */
+const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored'])
 
 /** Words left out of the vocabulary: those of NEVER_CORRECTED, and the keywords of free-text patterns. */
 const LEFT_OUT = new Set([
@@ -361,6 +381,7 @@ const PHRASES: readonly (readonly string[])[] = [
   ...BROWSER_PHRASES,
   ...Object.keys(EDITS),
   ...Object.keys(BARE_BROWSER),
+  ...BACK,
   'saada ära', 'saada sõnum', 'saada see', 'send it', 'send the message', 'send message',
   'stop listening', 'go to sleep', 'ära kuula', 'wake up', 'start listening', 'ärka üles', 'võta tagasi', 'undo that',
   'uus sõnum', 'kirjuta sõnum', 'new message', 'write a message to', 'write message to', 'send a message to',
@@ -459,6 +480,14 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
     commands: [command],
     line: s.browserDoing(command),
   })
+  /** The step that refuses to touch the box, or null when words may go there (M7: present and armed). */
+  const armed = (): InpageStep | null => (!box.present ? none(s.inpage.pickField) : !box.armed ? none(s.inpage.noPlaceToWrite) : null)
+  const undo = (): InpageStep => {
+    const previous = session.undo.at(-1)
+    if (previous === undefined) return none(s.nothingToUndo)
+    // The entry leaves undo in inpageResult, once the setText succeeded.
+    return { session, commands: [{ kind: 'setText', text: previous }], line: s.inpage.undoing }
+  }
   switch (action.kind) {
     case 'empty':
       return none('')
@@ -482,24 +511,26 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
     case 'sayWho':
       return none(s.inpage.sayWho)
     case 'send':
-      if (!box.present || box.text.trim() === '') return none(s.inpage.nothingToSend)
+      if (!box.present) return none(s.inpage.nothingToSend)
+      if (!box.armed) return none(s.inpage.noPlaceToWrite)
+      if (box.text.trim() === '') return none(s.inpage.nothingToSend)
       return run({ kind: 'pressSend' })
-    case 'undo': {
-      if (!box.present) return none(s.inpage.pickField)
-      const previous = session.undo.at(-1)
-      if (previous === undefined) return none(s.nothingToUndo)
-      // The entry leaves undo in inpageResult, once the setText succeeded.
-      return { session, commands: [{ kind: 'setText', text: previous }], line: s.inpage.undoing }
-    }
+    case 'undo':
+      return armed() ?? undo()
+    case 'back':
+      // M7: words in the armed box and something to take back: undo; otherwise the page history.
+      return box.present && box.armed && box.text.trim() !== '' && session.undo.length > 0 ? undo() : run({ kind: 'history', direction: 'back' })
     case 'edit': {
-      if (!box.present) return none(s.inpage.pickField)
+      const refused = armed()
+      if (refused) return refused
       const done = applyEdit(s, box.text, action.edit)
       if ('fail' in done) return none(done.fail)
       if (done.text === box.text) return none(done.line)
       return { session: pushUndo(session, box.text), commands: [{ kind: 'setText', text: done.text }], line: done.line }
     }
     case 'dictate': {
-      if (!box.present) return none(s.inpage.pickField)
+      const refused = armed()
+      if (refused) return refused
       const command: BrowserCommand = { kind: 'setText', text: joinDictation(box.text, action.text) }
       return { session: pushUndo(session, box.text), commands: [command], line: s.browserDoing(command) }
     }
@@ -598,11 +629,11 @@ function joinDictation(old: string, utterance: string, stop = true): string {
  * Live dictation (section 21.3): the whole text the message box should show while an utterance is
  * still being spoken, so words appear as he says them. partial is what the recogniser has so far;
  * box is the message box as it was BEFORE this utterance began. Null while the words may still turn
- * out to be a command, while asleep, or when there is no box: then nothing is typed and the strip
+ * out to be a command, while asleep, or when there is no armed box: then nothing is typed and the strip
  * alone shows the words. The final utterance still goes through inpageStep with that same earlier box.
  */
 export function inpagePreview(session: InpageSession, partial: string, box: BoxState): string | null {
-  if (session.asleep || !box.present) return null
+  if (session.asleep || !box.present || !box.armed) return null
   const clean = normalise(partial)
   if (clean === '' || mayBeCommand(session, partial, clean)) return null
   return joinDictation(box.text, partial.trim().replace(/\s+/g, ' '), false)
