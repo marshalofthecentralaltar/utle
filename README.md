@@ -14,14 +14,20 @@ keeles.
 every web page, with one large microphone button. Click it, or rest an eye-tracker pointer on it for
 one second, and Ütle listens. Estonian speech is typed into the site's own message box while you
 speak. You correct it by voice ("mitte kolm, vaid neli", "kustuta viimane sõna", "võta tagasi") and
-send it with "saada". The same voice scrolls the page, switches tabs, opens sites, and clicks
-anything through numbered labels ("näita numbreid", then the number).
+send it with "saada". You can edit inside the text too: move the caret between words, sentences and
+lines, select, insert in the middle, delete letters. The same voice scrolls the page (a page, a
+little, slowly, stop), switches tabs, opens sites, and clicks anything through numbered labels
+("näita numbreid", then the number). What the fixed phrases do not cover is understood by meaning,
+with a Claude model that sees the words and what is on the page (it needs a key on the local server).
+Listening is a toggle, or, for an eye tracker, push-to-talk by looking: it listens while the pointer
+rests on the microphone and delivers the words when it leaves.
 
 Nothing opens in a separate window. Ütle also replaces Chrome's new-tab page with the same bar and
 large tiles for common sites, so the bar is there on an empty tab too.
 
 Speech is recognised by TalTech's Estonian model, running on your own computer through a small local
-server that you start with `npm run dev`.
+server that you start with `npm run dev`. Soniox, a hosted recogniser, can be chosen instead on the
+settings page when a `SONIOX_API_KEY` is set on that server; audio then leaves the computer.
 
 Built at the NewWorkTech Inclusive Digital Innovation Hackathon, TalTech Mektory, Tallinn, 5 and 6
 October 2026.
@@ -37,6 +43,10 @@ This is a hackathon prototype.
   or in Google Chrome.
 - It has not been tried with the voice of the person it is for, or with a real eye tracker.
 - Messenger has never been tried on the real site.
+- Everything from the night of 5 October (editing inside the text, push-to-talk by looking, sound-alike
+  commands, slow scrolling, Soniox, the speech server that never falls behind) is proven with recorded
+  speech, stand-in pages and unit tests only. Google Docs has not been tried on the real site; Soniox
+  has not been tried with a key.
 - Built and tested on Windows 11 only.
 
 Known faults: if you keep talking straight after a short command, the command word can show in the
@@ -46,7 +56,9 @@ cannot show the bar (see below).
 ## Requirements
 
 - Google Chrome on a computer.
-- Node.js 22.12 or newer (Node 22 or 24). The test runner and the build tools need at least 22.12.
+- Node.js 22.18 or newer (Node 22 or 24). The build tools need at least 22.12; from 22.18 the speech
+  server decodes on its own thread (it runs a `.ts` worker file as is). On 22.12 to 22.17 it still
+  works, decoding on the server thread, and logs `decode worker could not start`.
 - Git.
 - About 350 MB of disk space: the speech model is 156 MB, and the installed packages about 190 MB.
   Running the extension tests downloads a test browser on top of that.
@@ -120,44 +132,44 @@ model changes.
 
 Anything that is not a command is typed into the message box. Commands are matched on the whole
 utterance, in Estonian or English, whatever was said before. The bar's own lines are in Estonian.
+What no fixed phrase covers ("uus leht", "vajuta Mari", "pane vaiksemaks") is understood by meaning
+when the local server has an `ANTHROPIC_API_KEY`. The full list, with the English forms, is in
+`extension/README.md` ("What to say"); the rules are `docs/ARCHITECTURE.md` 21.1, 22 and 23.
 
 | Estonian | English | What happens |
 |---|---|---|
 | (anything else) | (anything else) | Typed into the message box. |
-| saada, saada ära | send, send it | Sends what is in the box. |
-| mitte kolm, vaid neli | not three but four | The last "kolm" in the box becomes "neli". |
-| kolme asemel neli | | The same, for one or two words each. |
-| asenda kolm sõnaga neli | replace three with four | The same. |
-| kustuta viimane sõna | delete the last word | Removes the last word. |
-| kustuta viimane lause | delete the last sentence | Removes the last sentence. |
-| kustuta kõik | delete everything | Empties the box. |
-| uus rida | new line | Adds a line break. |
-| punkt, koma, küsimärk, hüüumärk | full stop, comma, question mark, exclamation mark | Said on its own: adds the mark. |
+| saada, saada ära, saadake | send, send it | Sends what is in the box. |
+| mitte kolm, vaid neli; kolme asemel neli | not three but four | The last "kolm" in the box becomes "neli". |
+| kustuta viimane sõna, kustuta viimane lause, kustuta kõik | delete the last word, the last sentence, everything | Removes it. |
+| uus rida; punkt, koma | new line; full stop, comma | Adds a line break or the mark. |
 | võta tagasi | undo | Puts back the text from before the last change. |
+| mine algusesse, lause lõppu, sõna tagasi, kolm sõna edasi, mine sõna homme ette | go to the start, end of the sentence, word back, go before homme | Moves the caret inside the text. |
+| vali kõik, vali see lause, vali homme | select all, select the sentence, select homme | Selects inside the text. |
+| kirjuta siia vahele kell viis | insert at five | Types at the caret. |
+| kustuta täht, kustuta kolm tähte, kustuta sõna homme, vasakule, tee uuesti | delete a letter, delete three letters, delete the word homme, arrow left, redo | The editing keys. |
 | puhka, ära kuula | sleep, stop listening | Stops typing what it hears, until woken. |
 | ärka üles | wake up | Starts again. |
 | kirjuta Marile, ava vestlus Mariga | write to Mari, open chat with Mari | Opens the chat with Mari. |
 | kirjuta Marile, et ma jõuan homme | tell Mari that I will come tomorrow | Opens the chat with Mari and writes the sentence. It does not send. |
-| keri alla, keri üles | scroll down, scroll up | Scrolls the page. |
+| keri alla, keri üles | scroll down, scroll up | Scrolls most of a screen, smoothly. |
+| keri natuke alla, keri aeglaselt alla, stopp | scroll down a little, scroll down slowly, stop | A third of a screen; a steady slow scroll; stop it. |
 | lehe algusesse, lehe lõppu | scroll to the top, scroll to the bottom | Goes to the top or the end of the page. |
-| järgmine vaheleht, eelmine vaheleht | next tab, previous tab | Switches tabs. |
-| kolmas vaheleht | third tab | Goes to the third tab. |
-| ava uus vaheleht | new tab | Opens a new tab. |
-| sulge vaheleht | close tab | Closes the tab. |
-| mine tagasi, mine edasi | page back, go forward | Goes back or forward a page. |
-| laadi uuesti | reload | Reloads the page. |
-| ava whatsapp, mine postimees.ee | open whatsapp, go to postimees.ee | Opens a known site or an address. |
-| otsi ilm tallinnas | search weather in tallinn | Searches Google for the words. |
-| näita numbreid | show numbers | Puts a number on everything clickable. |
-| vajuta viis, or just "viis" while numbers show | click five | Clicks number five. |
-| peida numbrid | hide numbers | Removes the numbers. |
+| järgmine vaheleht, eelmine vaheleht, kolmas vaheleht | next tab, previous tab, third tab | Switches tabs. |
+| uus leht, sulge | new page, close | Opens a new tab; closes this one. |
+| mine tagasi, mine edasi, laadi uuesti | page back, go forward, reload | The page history; reload. |
+| ava whatsapp, mine postimees.ee, ava juutuba | open whatsapp, go to postimees.ee | Opens a known site or an address, also when the name is heard the Estonian way. |
+| otsi kassivideod | search for cat videos | Searches on the site in front, or Google. |
+| näita numbreid; vajuta viis, or just "viis" | show numbers; click five | Puts a number on everything clickable; clicks number five. |
+| kirjuta siia | write here | Makes the focused field the place the words go. |
+| mängi, paus, vaiksemaks, täisekraan | play, pause, volume down, full screen | The video on the page. |
+| peida riba, näita riba | hide the bar, show the bar | Folds the bar to a small pill, and back. |
 
 Known site names: WhatsApp, Messenger, Facebook, Gmail, Google, YouTube, Postimees, Delfi, ERR,
-LinkedIn, CV.ee, CV Keskus, Töötukassa. Estonian case endings are understood ("mine whatsappi"). A
-short command that was misheard by one letter is usually still understood, and the bar says what it
-took it to be. "Saada", "puhka", "ärka üles" and "võta tagasi" are never guessed.
-
-The full rules are in `docs/ARCHITECTURE.md`, sections 20.3, 21.1 and 21.3.
+LinkedIn, CV.ee, CV Keskus, Töötukassa. Estonian case endings are understood ("mine whatsappi"), and
+so are the names as an Estonian ear spells them ("juutuba", "guugel", "vatsap"). A short command that
+was misheard by a letter or by a sound ("aga whatsapp", "keri ala") is usually still understood, and
+the bar says what it took it to be. "Saada", "puhka", "ärka üles" and "võta tagasi" are never guessed.
 
 ## What it does not do
 
@@ -170,8 +182,13 @@ The full rules are in `docs/ARCHITECTURE.md`, sections 20.3, 21.1 and 21.3.
 
 ## Privacy
 
-- Audio never leaves the computer. The extension sends it only to the speech server on the same
-  machine (`localhost`).
+- Audio never leaves the computer with the default speech model. The extension sends it only to the
+  speech server on the same machine (`localhost`). The one exception is chosen on purpose: with
+  Soniox selected on the settings page and a `SONIOX_API_KEY` on that server, the server forwards the
+  audio to Soniox.
+- The free-form understanding sends the words you said and what is on the page (addresses, titles,
+  the visible buttons and links, the message box text) to Anthropic's API when the server has an
+  `ANTHROPIC_API_KEY`; never the audio. Without the key, the fixed phrases still work.
 - Nothing you say or type is logged. The speech server prints only how long the model took to load,
   why it cannot recognise if the model is missing, a line when a connection opens or closes (with the
   number of open connections and the close code), and "decode failed" if decoding fails.
