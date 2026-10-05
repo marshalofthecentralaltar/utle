@@ -47,7 +47,7 @@ function setup(options: Options = {}) {
   const state: Partial<StripState> = {}
   const heard: string[] = []
   const boxes: BoxState[] = []
-  let page: BoxState = options.box ?? { present: true, text: 'x' }
+  let page: BoxState = options.box ?? { present: true, text: 'x', armed: true }
   let inFlight = 0
   let maxInFlight = 0
   let blocked = 0
@@ -70,7 +70,7 @@ function setup(options: Options = {}) {
         maxInFlight = Math.max(maxInFlight, inFlight)
         if (options.setTextMs) await new Promise((resolve) => setTimeout(resolve, options.setTextMs))
         inFlight -= 1
-        page = { present: page.present, text: command.text }
+        page = { present: page.present, text: command.text, armed: page.armed }
       }
       return answers(command)
     },
@@ -178,7 +178,7 @@ describe('the in-page engine', () => {
 
 describe('live dictation (21.3)', () => {
   it('types each preview into the box while he speaks, reading the box once', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.' } })
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
     t.engine.start()
     t.partial('ma')
     await t.engine.idle()
@@ -193,20 +193,20 @@ describe('live dictation (21.3)', () => {
   })
 
   it('gives inpageStep the base, not the box with the preview in it', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.' } })
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
     t.engine.start()
     t.partial('ma')
     t.partial('ma jõuan')
     await t.engine.idle()
     t.say('ma jõuan')
     await t.engine.idle()
-    expect(t.boxes).toEqual([{ present: true, text: 'Tere.' }])
+    expect(t.boxes).toEqual([{ present: true, text: 'Tere.', armed: true }])
     expect(t.ran.filter((c) => c.kind === 'readBox')).toHaveLength(1)
     expect(t.page().text).toBe('Tere.ma jõuan')
   })
 
   it('takes back a preview that turns into a possible command, then runs the command', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.' } })
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
     t.engine.start()
     t.partial('saadan')
     await t.engine.idle()
@@ -218,7 +218,7 @@ describe('live dictation (21.3)', () => {
   })
 
   it('a command final with a preview still in the box puts the base back before the command', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.' } })
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
     t.engine.start()
     t.partial('tere')
     await t.engine.idle()
@@ -228,7 +228,7 @@ describe('live dictation (21.3)', () => {
   })
 
   it('a possible command is never typed', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: '' } })
+    const t = setup({ logic: previewing, box: { present: true, text: '', armed: true } })
     t.engine.start()
     t.partial('s')
     t.partial('saa')
@@ -241,7 +241,7 @@ describe('live dictation (21.3)', () => {
   })
 
   it('stopping in the middle of an utterance puts the base back', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.' } })
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
     t.engine.start()
     t.partial('ma jõu')
     await t.engine.idle()
@@ -253,7 +253,7 @@ describe('live dictation (21.3)', () => {
 
   it('with a slow page, only the newest preview is typed and never two at once', async () => {
     vi.useFakeTimers()
-    const t = setup({ logic: previewing, box: { present: true, text: '' }, setTextMs: 500 })
+    const t = setup({ logic: previewing, box: { present: true, text: '', armed: true }, setTextMs: 500 })
     t.engine.start()
     t.partial('ma')
     await vi.advanceTimersByTimeAsync(100)
@@ -273,7 +273,7 @@ describe('live dictation (21.3)', () => {
 
   it('the final waits for the preview in flight before its own setText', async () => {
     vi.useFakeTimers()
-    const t = setup({ logic: previewing, box: { present: true, text: '' }, setTextMs: 500 })
+    const t = setup({ logic: previewing, box: { present: true, text: '', armed: true }, setTextMs: 500 })
     t.engine.start()
     t.partial('ma jõuan')
     await vi.advanceTimersByTimeAsync(10)
@@ -284,7 +284,7 @@ describe('live dictation (21.3)', () => {
   })
 
   it('types nothing without a box, but the strip shows every partial', async () => {
-    const t = setup({ logic: previewing, box: { present: false, text: '' } })
+    const t = setup({ logic: previewing, box: { present: false, text: '', armed: false } })
     t.engine.start()
     t.partial('tere')
     t.partial('tere mari')
@@ -294,7 +294,7 @@ describe('live dictation (21.3)', () => {
   })
 
   it('the next utterance reads its base after the previous one has been typed', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: '' } })
+    const t = setup({ logic: previewing, box: { present: true, text: '', armed: true } })
     t.engine.start()
     t.partial('üks')
     t.say('üks')
@@ -303,8 +303,8 @@ describe('live dictation (21.3)', () => {
     t.say('kaks')
     await t.engine.idle()
     expect(t.boxes).toEqual([
-      { present: true, text: '' },
-      { present: true, text: 'üks' },
+      { present: true, text: '', armed: true },
+      { present: true, text: 'üks', armed: true },
     ])
   })
 })

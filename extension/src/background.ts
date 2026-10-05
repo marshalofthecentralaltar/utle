@@ -245,8 +245,8 @@ async function runInPage(tab: Tab, command: BrowserCommand): Promise<PageAnswer>
 /** A page answer without the page's own fields (href, settled). */
 function clean(answer: PageAnswer): BrowserResult {
   if (!answer.ok) return answer
-  const { tab, hints, box } = answer as Extract<BrowserResult, { ok: true }>
-  return ok({ ...(tab ? { tab } : {}), ...(hints !== undefined ? { hints } : {}), ...(box ? { box } : {}) })
+  const { tab, hints, box, page } = answer as Extract<BrowserResult, { ok: true }>
+  return ok({ ...(tab ? { tab } : {}), ...(hints !== undefined ? { hints } : {}), ...(box ? { box } : {}), ...(page ? { page } : {}) })
 }
 
 // ---------- commands ----------
@@ -331,10 +331,29 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     case 'readBox':
     case 'setText':
     case 'pressSend':
+    case 'readPage':
+    case 'focusItem':
+    case 'media':
+    case 'pressKey':
+    case 'clearField':
+    case 'arm':
       return clean(await runInPage(tab, command))
+    case 'siteSearch': {
+      // The search submits and usually loads a results page.
+      let result: PageAnswer = fail('failed', 'The page did not answer.')
+      await andWaitForLoad(tabId, async () => {
+        result = await runInPage(tab, command)
+      })
+      if (!result.ok) return result
+      return freshTab(tabId)
+    }
+    case 'bar':
+      await patchState({ hidden: !command.show })
+      return ok()
     case 'openConversation':
       return openConversation(tab, command)
-    case 'clickHint': {
+    case 'clickHint':
+    case 'clickItem': {
       let result: PageAnswer = fail('failed', 'The page did not answer.')
       await andWaitForLoad(tabId, async () => {
         result = await runInPage(tab, command)

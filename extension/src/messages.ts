@@ -14,6 +14,12 @@ export interface StripState {
   line: string
   /** A plain line about something that stops him (the speech model, the microphone), or ''. */
   problem: string
+  /** The strip is folded to a small microphone pill ("peida riba"). */
+  hidden: boolean
+  /** The model is being asked what the last utterance meant (M7). */
+  thinking: boolean
+  /** The free-form understanding is off: no key, or the server has no model. '' when it works. */
+  modelProblem: string
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -24,7 +30,7 @@ export interface StripState {
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
 
 /** To the service worker. */
 export type ToBackground =

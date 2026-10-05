@@ -14,9 +14,9 @@ function session(over: Partial<InpageSession> = {}): InpageSession {
   return deepFreeze({ ...initialInpage('et'), ...over })
 }
 function box(text: string): BoxState {
-  return { present: true, text }
+  return { present: true, text, armed: true }
 }
-const NO_BOX: BoxState = { present: false, text: '' }
+const NO_BOX: BoxState = { present: false, text: '', armed: false }
 const EMPTY: BoxState = box('')
 
 function only(command: BrowserCommand): BrowserCommand[] {

@@ -1,4 +1,4 @@
-import type { BrowserCommand, BrowserFailure } from '../browser/protocol.ts'
+import type { BrowserCommand, BrowserFailure, MediaAction } from '../browser/protocol.ts'
 
 /**
  * Every line a person can read in Ütle, in one table keyed by language, so a native speaker
@@ -203,6 +203,34 @@ function placeOf(url: string): { search: string | null; host: string } {
   return { search: null, host }
 }
 
+const MEDIA_ET: Record<MediaAction, string> = {
+  play: 'Mängin.',
+  pause: 'Paus.',
+  toggle: 'Mängin või peatan.',
+  mute: 'Vaigistan.',
+  unmute: 'Heli tagasi.',
+  volumeUp: 'Heli valjemaks.',
+  volumeDown: 'Heli vaiksemaks.',
+  fullscreen: 'Täisekraan.',
+  exitFullscreen: 'Täisekraanist välja.',
+  forward: 'Edasi kümme sekundit.',
+  back: 'Tagasi kümme sekundit.',
+}
+
+const MEDIA_EN: Record<MediaAction, string> = {
+  play: 'Playing.',
+  pause: 'Paused.',
+  toggle: 'Play or pause.',
+  mute: 'Muted.',
+  unmute: 'Sound back on.',
+  volumeUp: 'Louder.',
+  volumeDown: 'Quieter.',
+  fullscreen: 'Full screen.',
+  exitFullscreen: 'Leaving full screen.',
+  forward: 'Forward ten seconds.',
+  back: 'Back ten seconds.',
+}
+
 const ET: Strings = {
   promptListening: 'Ütle, mida muuta, või lõigu number.',
   promptThinking: 'Hetk.',
@@ -284,6 +312,24 @@ const ET: Strings = {
         return 'Kirjutan.'
       case 'pressSend':
         return 'Saadan.'
+      case 'readPage':
+        return 'Vaatan lehte.'
+      case 'clickItem':
+        return 'Vajutan.'
+      case 'focusItem':
+        return 'Valin kasti.'
+      case 'siteSearch':
+        return `Otsin siit: ${command.query}`
+      case 'media':
+        return MEDIA_ET[command.action]
+      case 'pressKey':
+        return command.key === 'Escape' ? 'Sulgen.' : 'Kinnitan.'
+      case 'clearField':
+        return 'Tühjendan kasti.'
+      case 'arm':
+        return command.on ? 'Kirjutan siia.' : 'Siia enam ei kirjuta.'
+      case 'bar':
+        return command.show ? 'Näitan riba.' : 'Peidan riba.'
     }
   },
   browserDone(command, title, hints) {
@@ -306,6 +352,15 @@ const ET: Strings = {
         return 'Numbrid on peidetud.'
       case 'clickHint':
         return `Vajutasin ${command.number}.`
+      case 'clickItem':
+        return 'Vajutatud.'
+      case 'focusItem':
+      case 'arm':
+        return command.kind === 'arm' && !command.on ? 'Siia enam ei kirjuta.' : 'Kast on valitud. Räägi.'
+      case 'siteSearch':
+        return `Otsisin: ${command.query}`
+      case 'clearField':
+        return 'Kast on tühi.'
       default:
         return ET.browserDoing(command)
     }
@@ -321,6 +376,10 @@ const ET: Strings = {
         if (command.kind === 'switchTab') return 'Sellist vahelehte ei ole.'
         if (command.kind === 'openConversation') return `Vestlust „${command.name}“ ei leitud.`
         if (command.kind === 'insertText') return 'Sõnumikasti ei leitud.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'Seda ei ole enam lehel. Ütle uuesti.'
+        if (command.kind === 'siteSearch') return 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.'
+        if (command.kind === 'media') return 'Siin ei ole videot.'
+        if (command.kind === 'clearField' || command.kind === 'arm') return 'Ühtegi kasti ei ole valitud. Ütle „näita numbreid“ ja number.'
         return 'Seda ei leitud.'
       case 'not_allowed':
         return 'Seda lehte ei saa Ütle juhtida.'
@@ -537,6 +596,24 @@ const EN: Strings = {
         return 'Writing.'
       case 'pressSend':
         return 'Sending.'
+      case 'readPage':
+        return 'Looking at the page.'
+      case 'clickItem':
+        return 'Clicking.'
+      case 'focusItem':
+        return 'Picking the field.'
+      case 'siteSearch':
+        return `Searching here: ${command.query}`
+      case 'media':
+        return MEDIA_EN[command.action]
+      case 'pressKey':
+        return command.key === 'Escape' ? 'Closing.' : 'Confirming.'
+      case 'clearField':
+        return 'Clearing the field.'
+      case 'arm':
+        return command.on ? 'Writing here.' : 'Not writing here any more.'
+      case 'bar':
+        return command.show ? 'Showing the bar.' : 'Hiding the bar.'
     }
   },
   browserDone(command, title, hints) {
@@ -559,6 +636,15 @@ const EN: Strings = {
         return 'Numbers hidden.'
       case 'clickHint':
         return `Clicked ${command.number}.`
+      case 'clickItem':
+        return 'Clicked.'
+      case 'focusItem':
+      case 'arm':
+        return command.kind === 'arm' && !command.on ? 'Not writing here any more.' : 'Field picked. Speak.'
+      case 'siteSearch':
+        return `Searched: ${command.query}`
+      case 'clearField':
+        return 'The field is empty.'
       default:
         return EN.browserDoing(command)
     }
@@ -574,6 +660,10 @@ const EN: Strings = {
         if (command.kind === 'switchTab') return 'There is no such tab.'
         if (command.kind === 'openConversation') return `No conversation with ${command.name} was found.`
         if (command.kind === 'insertText') return 'No message box was found.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'That is no longer on the page. Say it again.'
+        if (command.kind === 'siteSearch') return 'This page has no search. Say "search google for".'
+        if (command.kind === 'media') return 'There is no video here.'
+        if (command.kind === 'clearField' || command.kind === 'arm') return 'No field is picked. Say "show numbers" and a number.'
         return 'That was not found.'
       case 'not_allowed':
         return 'Ütle cannot control this page.'

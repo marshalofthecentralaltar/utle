@@ -39,7 +39,7 @@ export interface Engine {
   idle(): Promise<void>
 }
 
-const NO_BOX: BoxState = { present: false, text: '' }
+const NO_BOX: BoxState = { present: false, text: '', armed: false }
 
 /** One utterance being spoken: its base (the box before it began) and the preview in the box. */
 interface Live {

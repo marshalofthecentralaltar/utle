@@ -234,7 +234,7 @@ function scroll(direction: string): BrowserResult {
 // ---------- the message box ----------
 
 function boxState(el: HTMLElement | null): BoxState {
-  return el === null ? { present: false, text: '' } : { present: true, text: readText(el) }
+  return el === null ? { present: false, text: '', armed: false } : { present: true, text: readText(el), armed: true }
 }
 
 function nativeSetValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
