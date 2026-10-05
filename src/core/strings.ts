@@ -113,6 +113,11 @@ export interface Strings {
     modelOff: string
     /** Dictation with no armed box: where the words can go. */
     noPlaceToWrite: string
+    // Round 3.
+    /** Suffix on the line of an utterance that waited too long in the queue and got the rules alone. */
+    catchingUp: string
+    /** A verification came back as a command after the box had changed: nothing was touched. */
+    lateCommand(say: string): string
   }
 
   // The interpreter.
@@ -514,6 +519,8 @@ const ET: Strings = {
     thinking: 'Mõtlen…',
     modelOff: 'Vaba kõne mõistmine on väljas: serveril pole Anthropicu võtit. Käsud töötavad.',
     noPlaceToWrite: 'Siin pole kuhu kirjutada. Ütle „kirjuta siia“ kasti peal, „näita numbreid“ ja number, või ava vestlus.',
+    catchingUp: 'Jõuan järele…',
+    lateCommand: (say) => `Hiljem: see oli käsk „${say}“, teksti ei muutnud.`,
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -842,6 +849,8 @@ const EN: Strings = {
     thinking: 'Thinking…',
     modelOff: 'Free-form understanding is off: the server has no Anthropic key. Commands still work.',
     noPlaceToWrite: 'There is nowhere to write here. Say "write here" on a field, "show numbers" and a number, or open a conversation.',
+    catchingUp: 'Catching up…',
+    lateCommand: (say) => `Later: "${say}" was a command, text left as is.`,
   },
 
   stillWorks: 'Yes, no and undo still work.',
