@@ -50,6 +50,8 @@ export interface Engine {
   start(): void
   stop(): void
   readonly listening: boolean
+  /** Push-to-talk released: the words spoken so far are delivered now, listening stays as it is. */
+  flush(): void
   /** Resolves when every utterance so far, and every preview being typed, has been handled. For tests. */
   idle(): Promise<void>
 }
@@ -435,6 +437,9 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     start,
     stop,
+    flush() {
+      recognizer.flush?.()
+    },
     get listening() {
       return listening
     },

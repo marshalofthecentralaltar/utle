@@ -30,6 +30,11 @@ export type AsrServerMessage =
   | { type: 'unavailable'; reason: AsrUnavailableReason }
   | { type: 'partial'; text: string }
   | { type: 'final'; text: string }
+  /** The server is this many ms behind the audio it has received (it drops audio to catch up). 0 when caught up. */
+  | { type: 'lag'; ms: number }
+
+/** Text frames the browser sends. flush: end the utterance now and send its final (push-to-talk released). */
+export type AsrClientMessage = { type: 'flush' }
 
 /** Reads one text frame from the server; null for anything that is not a known message. */
 export function parseAsrMessage(raw: string): AsrServerMessage | null {
@@ -44,6 +49,8 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
   switch (record.type) {
     case 'ready':
       return { type: 'ready' }
+    case 'lag':
+      return typeof record.ms === 'number' && record.ms >= 0 ? { type: 'lag', ms: record.ms } : null
     case 'unavailable': {
       const reason = record.reason
       if (reason === 'model_missing' || reason === 'addon_missing' || reason === 'load_failed') return { type: 'unavailable', reason }

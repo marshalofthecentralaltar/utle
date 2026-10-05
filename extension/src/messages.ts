@@ -21,6 +21,8 @@ export interface StripState {
   thinking: boolean
   /** The free-form understanding is off: no key, or the server has no model. '' when it works. */
   modelProblem: string
+  /** How far behind the speech server is, in ms (round 3). 0 when caught up. */
+  lag: number
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -31,7 +33,7 @@ export interface StripState {
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, connects: 0, micOpens: 0, micOpenedAt: 0 }
 
 /** To the service worker. */
 export type ToBackground =

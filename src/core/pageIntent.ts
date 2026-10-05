@@ -79,6 +79,8 @@ const Id = z.number().int().nonnegative()
 const Text = z.string().min(1).max(500)
 const Short = z.string().max(120)
 
+export const PRESSABLE_KEYS = ['Escape', 'Enter', 'Tab', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Undo', 'Redo', 'SelectAll'] as const
+
 export const MEDIA_ACTIONS = ['play', 'pause', 'toggle', 'mute', 'unmute', 'volumeUp', 'volumeDown', 'fullscreen', 'exitFullscreen', 'forward', 'back'] as const
 
 const CommandSchema = z.discriminatedUnion('kind', [
@@ -91,7 +93,7 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('goTo'), url: z.string().url() }),
   z.object({ kind: z.literal('history'), direction: z.enum(['back', 'forward']) }),
   z.object({ kind: z.literal('reload') }),
-  z.object({ kind: z.literal('scroll'), direction: z.enum(['up', 'down', 'top', 'bottom']) }),
+  z.object({ kind: z.literal('scroll'), direction: z.enum(['up', 'down', 'top', 'bottom']), mode: z.enum(['page', 'little', 'slow', 'stop']).optional() }),
   z.object({ kind: z.literal('showHints') }),
   z.object({ kind: z.literal('hideHints') }),
   z.object({ kind: z.literal('clickHint'), number: z.number().int().min(1) }),
@@ -100,7 +102,13 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('focusItem'), id: Id }),
   z.object({ kind: z.literal('siteSearch'), query: Text }),
   z.object({ kind: z.literal('media'), action: z.enum(MEDIA_ACTIONS) }),
-  z.object({ kind: z.literal('pressKey'), key: z.enum(['Escape', 'Enter']) }),
+  z.object({ kind: z.literal('pressKey'), key: z.enum(PRESSABLE_KEYS), times: z.number().int().min(1).max(50).optional() }),
+  z.object({
+    kind: z.literal('caret'),
+    to: z.union([z.enum(['start', 'end', 'lineStart', 'lineEnd', 'sentenceStart', 'sentenceEnd', 'wordBack', 'wordForward']), z.object({ find: Short.min(1), where: z.enum(['before', 'after']) })]),
+  }),
+  z.object({ kind: z.literal('select'), what: z.union([z.enum(['all', 'word', 'sentence', 'line', 'lastWord', 'lastSentence']), z.object({ find: Short.min(1) })]) }),
+  z.object({ kind: z.literal('typeText'), text: Text }),
   z.object({ kind: z.literal('clearField') }),
   z.object({ kind: z.literal('arm'), on: z.boolean() }),
   z.object({ kind: z.literal('bar'), show: z.boolean() }),

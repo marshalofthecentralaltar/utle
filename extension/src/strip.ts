@@ -20,21 +20,37 @@ export type BarHeight = (typeof BAR_HEIGHTS)[number]
 export type MicSide = 'left' | 'right'
 
 /** What the options page stores in chrome.storage.local (M7, ui lane). */
+/** toggle: a click or dwell turns listening on and off. gaze: it listens while the pointer rests on the target (round 3). */
+export type ListenMode = 'toggle' | 'gaze'
+/** What the gaze rests on in gaze mode: the microphone square, or the whole bar. */
+export type GazeTarget = 'mic' | 'bar'
+/** local: TalTech's model on this computer. soniox: Soniox through the dev server (needs SONIOX_API_KEY there). */
+export type SpeechEngine = 'local' | 'soniox'
 export interface StripSettings {
   barHeight: BarHeight
   micSide: MicSide
   /** The bar starts folded to the pill when the browser starts. */
   barHiddenDefault: boolean
+  listenMode: ListenMode
+  gazeTarget: GazeTarget
+  speechEngine: SpeechEngine
 }
-export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false }
-export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault'] as const
+export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local' }
+export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine'] as const
 
 /** Reads the strip's settings out of a chrome.storage.local answer, defaults for anything missing. */
 export function settingsFrom(stored: Record<string, unknown>): StripSettings {
   const h = stored.barHeight
   const barHeight = BAR_HEIGHTS.find((x) => x === h) ?? DEFAULT_SETTINGS.barHeight
   const micSide: MicSide = stored.micSide === 'right' ? 'right' : 'left'
-  return { barHeight, micSide, barHiddenDefault: stored.barHiddenDefault === true }
+  return {
+    barHeight,
+    micSide,
+    barHiddenDefault: stored.barHiddenDefault === true,
+    listenMode: stored.listenMode === 'gaze' ? 'gaze' : 'toggle',
+    gazeTarget: stored.gazeTarget === 'bar' ? 'bar' : 'mic',
+    speechEngine: stored.speechEngine === 'soniox' ? 'soniox' : 'local',
+  }
 }
 
 const PILL_SIZE = 72

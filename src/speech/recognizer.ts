@@ -6,6 +6,8 @@ export interface Recognizer {
   setLang(lang: string): void
   /** False when the browser has no speech recognition. The typed box still works. */
   readonly supported: boolean
+  /** Ends the utterance being spoken now and delivers its words at once (push-to-talk released). Optional. */
+  flush?(): void
 }
 
 export interface RecognizerHandlers {

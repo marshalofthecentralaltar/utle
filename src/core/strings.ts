@@ -1,4 +1,4 @@
-import type { BrowserCommand, BrowserFailure, MediaAction } from '../browser/protocol.ts'
+import type { BrowserCommand, BrowserFailure, MediaAction, PressableKey } from '../browser/protocol.ts'
 
 /**
  * Every line a person can read in Ütle, in one table keyed by language, so a native speaker
@@ -245,6 +245,40 @@ function placeOf(url: string): { search: string | null; host: string } {
   return { search: null, host }
 }
 
+const KEY_ET: Record<PressableKey, string> = {
+  Escape: 'Sulgen.',
+  Enter: 'Kinnitan.',
+  Tab: 'Järgmine väli.',
+  Backspace: 'Kustutan tagant.',
+  Delete: 'Kustutan eest.',
+  ArrowLeft: 'Vasakule.',
+  ArrowRight: 'Paremale.',
+  ArrowUp: 'Üles.',
+  ArrowDown: 'Alla.',
+  Home: 'Rea algusesse.',
+  End: 'Rea lõppu.',
+  Undo: 'Võtan tagasi.',
+  Redo: 'Teen uuesti.',
+  SelectAll: 'Valin kõik.',
+}
+
+const KEY_EN: Record<PressableKey, string> = {
+  Escape: 'Closing.',
+  Enter: 'Confirming.',
+  Tab: 'Next field.',
+  Backspace: 'Deleting backwards.',
+  Delete: 'Deleting forwards.',
+  ArrowLeft: 'Left.',
+  ArrowRight: 'Right.',
+  ArrowUp: 'Up.',
+  ArrowDown: 'Down.',
+  Home: 'Start of the line.',
+  End: 'End of the line.',
+  Undo: 'Undoing.',
+  Redo: 'Redoing.',
+  SelectAll: 'Selecting everything.',
+}
+
 const MEDIA_ET: Record<MediaAction, string> = {
   play: 'Mängin.',
   pause: 'Paus.',
@@ -337,6 +371,8 @@ const ET: Strings = {
       case 'reload':
         return 'Laadin lehe uuesti.'
       case 'scroll':
+        if (command.mode === 'stop') return 'Kerimine seis.'
+        if (command.mode === 'slow') return command.direction === 'up' ? 'Kerin aeglaselt üles.' : 'Kerin aeglaselt alla.'
         return { down: 'Kerin alla.', up: 'Kerin üles.', top: 'Lehe algusesse.', bottom: 'Lehe lõppu.' }[command.direction]
       case 'showHints':
         return 'Näitan numbreid.'
@@ -365,7 +401,13 @@ const ET: Strings = {
       case 'media':
         return MEDIA_ET[command.action]
       case 'pressKey':
-        return command.key === 'Escape' ? 'Sulgen.' : 'Kinnitan.'
+        return KEY_ET[command.key]
+      case 'caret':
+        return 'Liigutan kursorit.'
+      case 'select':
+        return 'Valin teksti.'
+      case 'typeText':
+        return 'Kirjutan siia.'
       case 'clearField':
         return 'Tühjendan kasti.'
       case 'arm':
@@ -422,6 +464,8 @@ const ET: Strings = {
         if (command.kind === 'siteSearch') return 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.'
         if (command.kind === 'media') return 'Siin ei ole videot.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'Ühtegi kasti ei ole valitud. Ütle „näita numbreid“ ja number.'
+        if (command.kind === 'caret' || command.kind === 'select') return 'Seda teksti kastis ei ole.'
+        if (command.kind === 'typeText') return 'Ühtegi kasti ei ole valitud, kuhu kirjutada.'
         return 'Seda ei leitud.'
       case 'not_allowed':
         return 'Seda lehte ei saa Ütle juhtida.'
@@ -655,6 +699,8 @@ const EN: Strings = {
       case 'reload':
         return 'Reloading the page.'
       case 'scroll':
+        if (command.mode === 'stop') return 'Scrolling stopped.'
+        if (command.mode === 'slow') return command.direction === 'up' ? 'Scrolling slowly up.' : 'Scrolling slowly down.'
         return { down: 'Scrolling down.', up: 'Scrolling up.', top: 'To the top of the page.', bottom: 'To the end of the page.' }[command.direction]
       case 'showHints':
         return 'Showing numbers.'
@@ -683,7 +729,13 @@ const EN: Strings = {
       case 'media':
         return MEDIA_EN[command.action]
       case 'pressKey':
-        return command.key === 'Escape' ? 'Closing.' : 'Confirming.'
+        return KEY_EN[command.key]
+      case 'caret':
+        return 'Moving the caret.'
+      case 'select':
+        return 'Selecting text.'
+      case 'typeText':
+        return 'Typing here.'
       case 'clearField':
         return 'Clearing the field.'
       case 'arm':
@@ -740,6 +792,8 @@ const EN: Strings = {
         if (command.kind === 'siteSearch') return 'This page has no search. Say "search google for".'
         if (command.kind === 'media') return 'There is no video here.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'No field is picked. Say "show numbers" and a number.'
+        if (command.kind === 'caret' || command.kind === 'select') return 'That text is not in the field.'
+        if (command.kind === 'typeText') return 'No field is picked to write in.'
         return 'That was not found.'
       case 'not_allowed':
         return 'Ütle cannot control this page.'

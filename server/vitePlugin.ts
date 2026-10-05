@@ -8,7 +8,8 @@ import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode, MessagesClient } from './interpret.ts'
 import { rehearse } from './rehearsal.ts'
 
-const DEFAULT_MODEL = 'claude-opus-5-5'
+/** Sonnet 5.5: the eval on Opus 5.5 gave p50 2.7 s per command, too slow for a spoken command. UTLE_MODEL overrides. */
+const DEFAULT_MODEL = 'claude-sonnet-5-5'
 const MAX_BODY_BYTES = 1_000_000
 
 const STATUS: Record<InterpretErrorCode, number> = {

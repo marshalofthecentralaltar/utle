@@ -3,7 +3,7 @@
 // See docs/ARCHITECTURE.md 20.2 and 21.2, and docs/plans/2026-10-05-m7-understanding.md (M7:
 // readPage, clickItem, focusItem, siteSearch, media, pressKey, clearField, arm, the armed box).
 
-import type { BoxState, BrowserCommand, BrowserResult, MediaAction, MediaState, PageContext, PageItem } from '../../src/browser/protocol.ts'
+import type { BoxState, BrowserCommand, BrowserResult, MediaAction, MediaState, PageContext, PageItem, PressableKey } from '../../src/browser/protocol.ts'
 import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
 import { armElement, armedElement, boxState, disarm, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
@@ -1027,14 +1027,30 @@ function arm(on: boolean, site: Site | null): BrowserResult {
   return ok({ box: boxState(el, site) })
 }
 
-function pressKey(key: 'Escape' | 'Enter'): BrowserResult {
+const KEY_CODES: Record<PressableKey, number> = {
+  Escape: 27, Enter: 13, Tab: 9, Backspace: 8, Delete: 46, ArrowLeft: 37, ArrowRight: 39, ArrowUp: 38, ArrowDown: 40, Home: 36, End: 35, Undo: 90, Redo: 89, SelectAll: 65,
+}
+
+/**
+ * A key on the focused element, times times. Undo, Redo and SelectAll are the editing commands
+ * (Ctrl+Z, Ctrl+Y, Ctrl+A): execCommand where the field honours it, else the key with ctrlKey.
+ * Round 3 (edit lane) refines the editing keys for contenteditable editors.
+ */
+function pressKey(key: PressableKey, times = 1): BrowserResult {
   let target: Element = document.activeElement ?? document.body
   while (target.shadowRoot?.activeElement) target = target.shadowRoot.activeElement
-  const code = key === 'Enter' ? 13 : 27
-  const init = { key, code: key, keyCode: code, which: code, charCode: 0, bubbles: true, cancelable: true, composed: true }
-  target.dispatchEvent(new KeyboardEvent('keydown', init))
-  if (key === 'Enter') target.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: 13 }))
-  target.dispatchEvent(new KeyboardEvent('keyup', init))
+  const code = KEY_CODES[key]
+  const ctrl = key === 'Undo' || key === 'Redo' || key === 'SelectAll'
+  const keyName = key === 'Undo' ? 'z' : key === 'Redo' ? 'y' : key === 'SelectAll' ? 'a' : key
+  const init = { key: keyName, code: ctrl ? `Key${keyName.toUpperCase()}` : key, keyCode: code, which: code, charCode: 0, ctrlKey: ctrl, bubbles: true, cancelable: true, composed: true }
+  for (let i = 0; i < Math.max(1, Math.min(times, 50)); i++) {
+    const command = key === 'Undo' ? 'undo' : key === 'Redo' ? 'redo' : key === 'SelectAll' ? 'selectAll' : key === 'Backspace' ? 'delete' : key === 'Delete' ? 'forwardDelete' : null
+    const handled = command !== null && target instanceof HTMLElement && isTextField(target) && exec(command)
+    if (handled) continue
+    target.dispatchEvent(new KeyboardEvent('keydown', init))
+    if (key === 'Enter') target.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: 13 }))
+    target.dispatchEvent(new KeyboardEvent('keyup', init))
+  }
   if (key === 'Escape' && target instanceof HTMLElement && isTextField(target)) target.blur()
   return ok()
 }
@@ -1381,7 +1397,7 @@ async function run(command: PageCommand): Promise<PageResult> {
       case 'media':
         return await media(command.action)
       case 'pressKey':
-        return pressKey(command.key)
+        return pressKey(command.key, command.times)
       case 'clearField':
         return await clearField(site)
       case 'arm':

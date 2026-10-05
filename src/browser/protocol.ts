@@ -27,7 +27,8 @@ export type BrowserCommand =
   | { kind: 'goTo'; url: string }
   | { kind: 'history'; direction: 'back' | 'forward' }
   | { kind: 'reload' }
-  | { kind: 'scroll'; direction: 'up' | 'down' | 'top' | 'bottom' }
+  /** mode page (default) is 80% of the view; little a third; slow a steady 90 px/s until stop or another scroll; stop ends a slow scroll. */
+  | { kind: 'scroll'; direction: 'up' | 'down' | 'top' | 'bottom'; mode?: ScrollMode }
   /** Puts a number on everything clickable or typeable that is visible. Answers with how many. */
   | { kind: 'showHints' }
   | { kind: 'hideHints' }
@@ -55,13 +56,51 @@ export type BrowserCommand =
   /** Acts on the largest visible video or audio element. */
   | { kind: 'media'; action: MediaAction }
   /** A key on the focused element. */
-  | { kind: 'pressKey'; key: 'Escape' | 'Enter' }
+  | { kind: 'pressKey'; key: PressableKey; times?: number }
+  // M8 (round 3): editing inside the armed box, like a keyboard would.
+  /** Moves the caret inside the armed or focused field. find: the first match before or after the caret (case-insensitive), the caret lands before or after it. */
+  | { kind: 'caret'; to: CaretTarget }
+  /** Selects inside the armed or focused field; typeText or Backspace then act on the selection. */
+  | { kind: 'select'; what: SelectTarget }
+  /** Types text at the caret (replacing a selection), without touching the rest of the field. */
+  | { kind: 'typeText'; text: string }
   /** Empties the focused or armed field, whichever it is. */
   | { kind: 'clearField' }
   /** Marks the focused field as the dictation target ("kirjuta siia"), or releases it. */
   | { kind: 'arm'; on: boolean }
   /** Hides the strip to a small microphone pill, or shows it again. Every tab follows. */
   | { kind: 'bar'; show: boolean }
+
+export type ScrollMode = 'page' | 'little' | 'slow' | 'stop'
+
+export type PressableKey =
+  | 'Escape'
+  | 'Enter'
+  | 'Tab'
+  | 'Backspace'
+  | 'Delete'
+  | 'ArrowLeft'
+  | 'ArrowRight'
+  | 'ArrowUp'
+  | 'ArrowDown'
+  | 'Home'
+  | 'End'
+  | 'Undo'
+  | 'Redo'
+  | 'SelectAll'
+
+export type CaretTarget =
+  | 'start'
+  | 'end'
+  | 'lineStart'
+  | 'lineEnd'
+  | 'sentenceStart'
+  | 'sentenceEnd'
+  | 'wordBack'
+  | 'wordForward'
+  | { find: string; where: 'before' | 'after' }
+
+export type SelectTarget = 'all' | 'word' | 'sentence' | 'line' | 'lastWord' | 'lastSentence' | { find: string }
 
 export type MediaAction =
   | 'play'

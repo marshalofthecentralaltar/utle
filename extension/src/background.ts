@@ -347,6 +347,9 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     case 'focusItem':
     case 'media':
     case 'pressKey':
+    case 'caret':
+    case 'select':
+    case 'typeText':
     case 'clearField':
     case 'arm':
       return clean(await runInPage(tab, command))
