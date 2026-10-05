@@ -165,7 +165,8 @@ describe('rule 3: browser commands', () => {
     ['next', { kind: 'switchTab', to: 'next' }],
     ['previous', { kind: 'switchTab', to: 'previous' }],
   ])('bare "%s" is the browser in this mode', (u, command) => {
-    expect(inpageStep(session(), u, box('Tere')).commands).toEqual(only(command))
+    // An empty armed box: with words in it "tagasi" is undo and "edasi" a word of the message (section 22).
+    expect(inpageStep(session(), u, box('')).commands).toEqual(only(command))
   })
 
   it('a page change empties undo, because the old texts belong to another box', () => {
@@ -536,6 +537,9 @@ const COMMAND_PHRASES = [
   'pane heli vaiksemaks', 'täisekraan', 'full screen', 'välju täisekraanist', 'exit full screen', 'keri edasi', 'keri tagasi',
 ]
 
+/** One-word fixed phrases that are ordinary words of a message: commands only with an empty or unarmed box (section 22). */
+const SOFT_WORDS = ['välja', 'siia', 'edasi', 'sulge', 'enter', 'sisesta', 'kinnita', 'paus', 'peata', 'mängi', 'esita', 'close', 'play', 'pause', 'forward', 'escape']
+
 const DICTATION = [
   'Ma jõuan homme kell kolm',
   'ja võtan koogi kaasa',
@@ -552,7 +556,8 @@ const DICTATION = [
 describe('inpageInstant agrees with inpageStep', () => {
   it.each(COMMAND_PHRASES)('"%s" is instant and not dictation', (u) => {
     expect(inpageInstant(session(), u)).toBe(true)
-    const step = inpageStep(session(), u, box('kolm kolm. Tere'))
+    // The soft one-word phrases are dictation while the armed box holds words (section 22): an empty box here.
+    const step = inpageStep(session(), u, box(SOFT_WORDS.includes(u) ? '' : 'kolm kolm. Tere'))
     const dictated = step.commands.length === 1 && step.commands[0]?.kind === 'setText' && step.commands[0].text.endsWith(u)
     expect(dictated).toBe(false)
   })
@@ -598,7 +603,7 @@ describe('properties', () => {
   })
 
   it.each(COMMAND_PHRASES)('command "%s" never types its own words', (u) => {
-    const step = inpageStep(session({ hints: true }), u, box('kolm kolm. Tere'))
+    const step = inpageStep(session({ hints: true }), u, box(SOFT_WORDS.includes(u) ? '' : 'kolm kolm. Tere'))
     for (const c of step.commands) {
       if (c.kind === 'setText') expect(c.text.toLowerCase()).not.toContain(u.toLowerCase())
       if (c.kind === 'insertText') throw new Error('in-page mode never uses insertText')
@@ -921,10 +926,27 @@ describe('M7 "tagasi" takes the words back when there are words to take back', (
     expect(inpageInstant(session({ undo: ['Tere'] }), u)).toBe(true)
   })
 
+  it.each<[string, BoxState]>([
+    ['an empty box', box('')],
+    ['a box of spaces', box('  ')],
+  ])('with %s and an undo entry it is still undo: the words just cleared come back, the page stays', (_what, b) => {
+    for (const u of ['tagasi', 'back', 'go back']) {
+      const step = inpageStep(session({ undo: ['Tere'] }), u, b)
+      expect(step.commands).toEqual(only({ kind: 'setText', text: 'Tere' }))
+      expect(step.line).toBe(ET.inpage.undoing)
+    }
+  })
+
+  it('with words in the armed box and nothing to undo it says so and never leaves the page', () => {
+    for (const u of ['tagasi', 'back', 'go back']) {
+      const step = inpageStep(session({ undo: [] }), u, box('Tere kõik'))
+      expect(step.commands).toEqual([])
+      expect(step.line).toBe(ET.nothingToUndo)
+    }
+  })
+
   it.each<[string, BoxState, string[]]>([
-    ['no undo entry', box('Tere kõik'), []],
-    ['an empty box', box(''), ['Tere']],
-    ['a box of spaces', box('  '), ['Tere']],
+    ['an empty armed box and nothing to undo', box(''), []],
     ['an unarmed field', unarmed('Tere kõik'), ['Tere']],
     ['no box', NO_BOX, ['Tere']],
   ])('with %s it is the page history', (_what, b, undo) => {
@@ -946,6 +968,28 @@ describe('M7 "tagasi" takes the words back when there are words to take back', (
     expect(step.line).not.toBe(ET.inpage.undoing)
     expect(step.commands).not.toEqual(only({ kind: 'history', direction: 'back' }))
     expect(step.ask).toBe(true)
+  })
+})
+
+describe('M7 soft words: one ordinary word while he is writing is a word of the message', () => {
+  it.each(SOFT_WORDS)('"%s" with words in the armed box is dictation, asked of the model', (u) => {
+    const step = inpageStep(session(), u, box('Tulen'))
+    expect(step.commands).toEqual(only({ kind: 'setText', text: `Tulen ${u}` }))
+    expect(step.ask).toBe(true)
+  })
+
+  it.each(['välja', 'siia', 'enter', 'sulge', 'edasi'])('"%s" with an empty, unarmed or absent box is the command', (u) => {
+    for (const b of [box(''), box('  '), unarmed('Tere'), NO_BOX]) {
+      const step = inpageStep(session(), u, b)
+      expect(step.commands).toHaveLength(1)
+      expect(step.commands[0]?.kind).not.toBe('setText')
+      expect(step.ask).toBeUndefined()
+    }
+  })
+
+  it('a two-word phrase is a command whatever the box ("pane kinni", "kirjuta siia")', () => {
+    expect(inpageStep(session(), 'pane kinni', box('Tulen')).commands).toEqual(only({ kind: 'pressKey', key: 'Escape' }))
+    expect(inpageStep(session(), 'kirjuta siia', box('Tulen')).commands).toEqual(only({ kind: 'arm', on: true }))
   })
 })
 
@@ -1034,7 +1078,8 @@ describe('M7 the new phrases', () => {
     ['keri edasi', { kind: 'media', action: 'forward' }],
     ['keri tagasi', { kind: 'media', action: 'back' }],
   ])('"%s"', (u, command) => {
-    const step = inpageStep(session({ undo: ['Tere'] }), u, box('Tere kõik'))
+    // An empty armed box: with words in it the soft one-word phrases are dictation (below).
+    const step = inpageStep(session({ undo: ['Tere'] }), u, box(''))
     expect(step.commands).toEqual(only(command))
     expect(step.line).toBe(ET.browserDoing(command))
     expect(step.ask).toBeUndefined()
@@ -1050,12 +1095,12 @@ describe('M7 the new phrases', () => {
   it('media, bar and arm leave the labels and the undo texts; a search or a key does not', () => {
     const s = session({ hints: true, undo: ['a'] })
     for (const u of ['paus', 'heli valjemaks', 'peida riba', 'kirjuta siia', 'tühjenda kast']) {
-      const step = inpageStep(s, u, box('b'))
+      const step = inpageStep(s, u, box(''))
       expect(step.session.hints, u).toBe(true)
       expect(step.session.undo, u).toEqual(['a'])
     }
     for (const u of ['otsi kassid', 'sulge aken', 'enter', 'sulge']) {
-      const step = inpageStep(s, u, box('b'))
+      const step = inpageStep(s, u, box(''))
       expect(step.session.hints, u).toBe(false)
       expect(step.session.undo, u).toEqual([])
     }

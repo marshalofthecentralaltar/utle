@@ -8,7 +8,7 @@ import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pag
 import { browserSocket, createLocalRecognizer } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
-import { createEngine } from './engine.ts'
+import { ASK_TIMEOUT_MS, createEngine } from './engine.ts'
 import type { AskFailure, InpageLogic } from './engine.ts'
 import type { RunAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
 
@@ -19,6 +19,9 @@ export const DEFAULT_ASR_URL = 'ws://localhost:5173/api/asr'
  * to the box on its own, so it need not wait LOCAL_HOLD_MS (700 ms) for a following one.
  */
 export const INPAGE_HOLD_MS = 150
+
+/** GET /api/status may take this long before the engine goes on without it. */
+export const STATUS_TIMEOUT_MS = 3000
 
 export interface OffscreenOptions {
   /** The test's baseline build passes LOCAL_HOLD_MS to measure the old delay. Default INPAGE_HOLD_MS. */
@@ -50,7 +53,8 @@ function errorMessage(body: unknown): string {
 export async function askIntent(intentUrl: string, request: IntentRequest): Promise<IntentAnswer | AskFailure> {
   let response: Response
   try {
-    response = await fetch(intentUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request) })
+    // The engine gives up at ASK_TIMEOUT_MS; the request itself ends a little later, so no fetch dangles.
+    response = await fetch(intentUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request), signal: AbortSignal.timeout(ASK_TIMEOUT_MS + 1000) })
   } catch {
     return { error: 'unreachable' }
   }
@@ -68,7 +72,8 @@ export async function askIntent(intentUrl: string, request: IntentRequest): Prom
 /** GET /api/status (M7): whether the server has a model. */
 export async function serverStatus(statusUrl: string): Promise<'live' | 'no_key' | 'unreachable'> {
   try {
-    const response = await fetch(statusUrl)
+    // Checked once in the engine's queue before the first utterance: a server that hangs must not hold it.
+    const response = await fetch(statusUrl, { signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) })
     if (!response.ok) return 'unreachable'
     const body: unknown = await response.json()
     const intent = typeof body === 'object' && body !== null && 'intent' in body ? body.intent : undefined

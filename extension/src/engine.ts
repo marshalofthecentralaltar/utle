@@ -59,8 +59,13 @@ const NO_BOX: BoxState = { present: false, text: '', armed: false }
 export const LONG_UTTERANCE_WORDS = 9
 /** The model must answer within this time, or the rules' step stands. */
 export const ASK_TIMEOUT_MS = 7000
-/** How many strip lines the model is told about. */
+/** How many strip lines the model is told about, and how long each may be (IntentRequestSchema: 200). */
 const RECENT_LINES = 3
+const RECENT_LINE_CHARS = 200
+/** The request's limits in IntentRequestSchema: a page beyond them would be a 400, and the model never asked. */
+const URL_CHARS = 2000
+const TITLE_CHARS = 300
+const BOX_CHARS = 4000
 
 const wordCount = (utterance: string): number => utterance.trim().split(/\s+/).filter((w) => w !== '').length
 
@@ -100,7 +105,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /** Publishes a line about an utterance and remembers it for the model. */
   const say = (line: string): void => {
-    if (line !== '') recent = [...recent, line].slice(-RECENT_LINES)
+    if (line !== '') recent = [...recent, line.slice(0, RECENT_LINE_CHARS)].slice(-RECENT_LINES)
     deps.publish({ line, resting: session.asleep })
   }
 
@@ -158,9 +163,10 @@ export function createEngine(deps: EngineDeps): Engine {
   /** The page in front for the model: readPage, or what is known from the box when the page cannot answer. */
   const readPage = async (box: BoxState, previewInBox: boolean): Promise<PageContext> => {
     const read = await runSafe({ kind: 'readPage' })
-    if (!read.ok || !read.page) return { url: '', title: '', box, items: [], media: null, hints: session.hints }
+    if (!read.ok || !read.page) return { url: '', title: '', box: { ...box, text: box.text.slice(0, BOX_CHARS) }, items: [], media: null, hints: session.hints }
     // The box as it was before the utterance began, never with its preview in it.
-    return previewInBox ? { ...read.page, box: { ...read.page.box, text: box.text } } : read.page
+    const page = previewInBox ? { ...read.page, box: { ...read.page.box, text: box.text } } : read.page
+    return { ...page, url: page.url.slice(0, URL_CHARS), title: page.title.slice(0, TITLE_CHARS), box: { ...page.box, text: page.box.text.slice(0, BOX_CHARS) } }
   }
 
   const askWithTimeout = (request: IntentRequest): Promise<IntentAnswer | AskFailure> =>
@@ -247,7 +253,8 @@ export function createEngine(deps: EngineDeps): Engine {
         const u = live
         live = null
         if (u !== null) u.over = true
-        queue = queue.then(() => handle(utterance, u))
+        // A step that throws must not stop every utterance after it: the queue stays a resolved promise.
+        queue = queue.then(() => handle(utterance, u)).catch(() => undefined)
       },
       onInterim(interim) {
         // An empty interim keeps the last words on the strip until new speech arrives.

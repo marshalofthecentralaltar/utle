@@ -539,6 +539,52 @@ describe('understanding by meaning (M7)', () => {
     expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'pressSend'])
   })
 
+  it('clips the lines it tells the model, so a long line never makes the request a 400', async () => {
+    const long = 'x'.repeat(260)
+    const wordy: InpageLogic = { ...asking, applyIntent: (session) => ({ session, commands: [], line: long }) }
+    const t = setup({ logic: wordy, box: armed, ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })) })
+    t.engine.start()
+    t.say('a')
+    await t.engine.idle()
+    t.say('b')
+    await t.engine.idle()
+    expect(t.asked[1]?.recent).toEqual([long.slice(0, 200)])
+  })
+
+  it('clips the page to what the request schema takes', async () => {
+    const t = setup({
+      logic: asking,
+      box: { present: true, text: 'y'.repeat(5000), armed: true },
+      page: (box) => ({ url: `https://a.ee/${'u'.repeat(3000)}`, title: 't'.repeat(400), box, items: [], media: null, hints: false }),
+      ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })),
+    })
+    t.engine.start()
+    t.say('a')
+    await t.engine.idle()
+    const page = t.asked[0]?.page
+    expect(page?.url).toHaveLength(2000)
+    expect(page?.title).toHaveLength(300)
+    expect(page?.box.text).toHaveLength(4000)
+  })
+
+  it('a step that throws does not stop the utterances after it', async () => {
+    const throwing: InpageLogic = {
+      ...logic,
+      inpageStep: (session, utterance, box) => {
+        if (utterance === 'paha') throw new Error('bug')
+        return logic.inpageStep(session, utterance, box)
+      },
+    }
+    const t = setup({ logic: throwing })
+    t.engine.start()
+    t.say('paha')
+    await t.engine.idle()
+    t.say('tere')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['xtere'])
+    expect(t.state.line).toBe('tehtud')
+  })
+
   it('tells him before he speaks when the server has no key', async () => {
     const t = setup({ status: 'no_key' })
     await t.engine.idle()
