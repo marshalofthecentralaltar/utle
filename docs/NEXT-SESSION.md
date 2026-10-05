@@ -62,7 +62,7 @@ The loop for each round:
 
 ## Where things stand
 
-### Round 3 (2026-10-05 night, in progress when this file was written)
+### Round 3 (2026-10-05 night): done, merged into main
 
 Lanes dispatched from commit `5889326` on branch `claude/utla-voice-command-access-4ftxk4`:
 `speech` (bounded backlog on the ASR server, lag message, flush, client-side guard, worker thread if
@@ -71,8 +71,7 @@ off the critical path, lag on the strip), `ptt` (gaze push-to-talk, whole-bar ta
 speech-engine setting), `edit` (caret, select, typeText, keys; essay fixture; Docs best effort),
 `nav` (phonetic matching, sound-alike site names, saadake, slow and little scroll, stop), `soniox`
 (a second recogniser backend behind `SONIOX_API_KEY` and `?engine=soniox`). The default intent model
-is now `claude-sonnet-5-5` (Opus 5.5 measured p50 2.7 s). After the merge: review lane, then merge
-into `main`.
+is now `claude-sonnet-5-5` (Opus 5.5 measured p50 2.7 s). Review lane (`docs/REVIEW-R3.md`) and docs lane merged; the whole round is on `main`. What the owner should try first: the speed under a screen recording, gaze mode with the whole bar, "kustuta sõna X" and "mine lause algusesse" in WhatsApp, "keri aeglaselt alla" then "stopp". Next round candidates: the review's open proposals (M3 barge-in on queued jobs, M6 "kustuta see" as undo, M5 Docs gluing), a Soniox run with a key, the eval again on Sonnet 5.5 with the editing cases, and whatever the morning's voice test reports.
 
 ### Rounds 1 and 2 (2026-10-05 evening): done, on GitHub
 

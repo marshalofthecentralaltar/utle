@@ -1,6 +1,6 @@
 # Ütle: handoff
 
-Written 2026-10-05 about 22:30 (Tallinn), after milestones M7 and M7.2, for a fresh session with no context.
+Written 2026-10-06 about 02:00 (Tallinn), after milestones M7, M7.2 and round 3, for a fresh session with no context.
 Read this, then `docs/PRODUCT.md`, then `docs/ARCHITECTURE.md` section 21 onward (22 is M7).
 The plan for M7 is `docs/plans/2026-10-05-m7-understanding.md`.
 
@@ -52,12 +52,43 @@ search), video control ("paus", "vaiksemaks", "täisekraan"), Escape and Enter, 
 bar is restyled, can be hidden to a pill, and the options page is usable by voice and by dwell
 (bar height, microphone side, hidden at start).
 
-- Branch `claude/utla-voice-command-access-4ftxk4` on GitHub, gate green (`npm run check`: 1856
+- Branch `claude/utla-voice-command-access-4ftxk4` on GitHub, gate green (`npm run check`: 2495
   tests), browser suite green (`xvfb-run -a npx tsx extension/test/run.ts`: every command kind,
   Messenger stand-in skipped where there is no IPv6).
 - Speech: TalTech's model in the dev server (`ws://localhost:5173/api/asr`), unchanged.
 - The default model for `/api/intent` is `claude-opus-5-5` at low effort; `UTLE_MODEL` overrides it
   (`claude-haiku-4-5` if a command feels slow).
+
+## 1b. Round 3 (2026-10-05 night): speed, push-to-talk, sound-alikes, editing, Soniox
+
+Ralf's report after real use: much better; but "at the end it reacted to 'open WhatsApp' four or
+five minutes later"; wants push-to-talk by gaze with the whole bar as the button; it mishears a lot
+(try Soniox); proper text editing; slow scrolling; an undo. Built, all green on the gate (2495 tests)
+and the browser suite, none of it tried with a real voice:
+
+- **It cannot fall minutes behind any more.** The speech server decodes on a worker thread
+  (Node 22.18 or newer; older Node decodes on the server thread with the same bound), keeps at most
+  1.5 s of audio queued and drops the oldest when behind, telling the bar, which shows "Kõne jääb
+  maha N s" from 1 s. The engine runs the rules only for an utterance that waited over 3 s, a new
+  utterance cancels an earlier one's model work, and dictation verification no longer blocks the
+  next utterance (a "saada" still waits for it). The default intent model is `claude-sonnet-5-5`.
+- **Push-to-talk by gaze.** Settings: Kuulamine = Lülitiga (as before) or Vaatamisega; the target is
+  the microphone square or the whole bar; it listens from 250 ms of rest and stops 600 ms after the
+  pointer leaves, delivering the words at once. The pill works the same way when the bar is folded.
+- **Sound-alikes.** "juutuba", "aga whatsapp", "keri ala", "saadake" and the like work (phonetic
+  keys in `src/core/phonetic.ts`); a reviewer's scan over 170 common words found and fixed two false
+  positives; "mina" still sounds like "mine" by design.
+- **Editing in the box.** Caret by sentence, word or to a named word; select; type at the caret;
+  Backspace, Delete, arrows, Home, End, Undo, Redo, Tab, with counts ("kustuta kolm tähte"); on
+  textareas and rich editors. Google Docs: keys and typing only, no reading; "saada" does nothing
+  there. The model knows these commands too.
+- **Scrolling.** "keri natuke", "keri aeglaselt alla" until "stopp"/"seis", smooth page scrolls.
+- **Soniox** as a second recogniser behind `SONIOX_API_KEY` on the dev server and the Kõnemudel
+  setting; built from Soniox's public client code, never run against the real service.
+
+Known, not fixed (docs/REVIEW-R3.md has the details): a queued utterance that has not started is
+cancelled by a barge-in and typed unverified; a one-word "kustuta see" with nothing selected deletes
+one letter; after 4 s on Google Docs the next sentence is glued to the last; Soniox has no lag path.
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
@@ -78,8 +109,8 @@ on which to keep, per file.**
 
 ## 2. What Ralf must do before the demo
 
-1. `git pull`, `npm ci` (zod is already a dependency; nothing new to install), `npm run ext`,
-   reload the extension on `chrome://extensions`, reload open tabs.
+1. `git pull` on `main`, `npm ci`, `npm run ext`, reload the extension on `chrome://extensions`,
+   reload open tabs. Restart `npm run dev` and look for `[asr] model loaded on a worker thread`.
 2. Put a working Anthropic key in the environment of the terminal that runs `npm run dev`
    (`ANTHROPIC_API_KEY`). Without it everything in section 1 except the free-form understanding
    works, and the bar shows one amber line saying so. `curl localhost:5173/api/status` must say
