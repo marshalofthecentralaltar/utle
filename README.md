@@ -4,8 +4,8 @@
 otse avatud veebilehe enda sõnumikasti (esmalt WhatsApp Web) ning häälkäsklustega saab lehte kerida,
 vahelehti vahetada ja saite avada. Kõne tuvastab Tallinna Tehnikaülikooli keeletehnoloogia labori
 mudel, mis töötab samas arvutis, nii et heli arvutist välja ei lähe. Tegemist on häkatoni
-prototüübiga: seda ei ole veel proovinud inimene, kellele see on mõeldud, ega päris
-pilgujälgimisseadmega. Paigaldamiseks on praegu vaja arendaja oskusi; juhend on allpool inglise
+prototüübiga: seda ei ole veel proovinud inimene, kellele see on mõeldud, ega ole seda proovitud
+päris pilgujälgimisseadmega. Paigaldamiseks on praegu vaja arendaja oskusi; juhend on allpool inglise
 keeles.
 
 ## What it does
