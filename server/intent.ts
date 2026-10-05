@@ -9,7 +9,9 @@ import { ANSWER_TOOL, INTENT_SYSTEM_PROMPT, intentUserMessage } from './intentPr
 /**
  * M7 (docs/plans/2026-10-05-m7-understanding.md): POST /api/intent. One utterance the rules did
  * not recognise, with what is on the page, in; one IntentAnswer out. One model call, no retry: a
- * voice command must answer at once, and whatever the model gets wrong becomes `unclear`.
+ * voice command must answer at once, and whatever the model gets wrong becomes `unclear`. M7.2: the
+ * answer carries `done`; false means the engine runs the step, reads the page again and asks again
+ * with `steps`. The server keeps no state between the asks.
  * Logs the kind and the time only, never the utterance or the page (CLAUDE.md).
  */
 
@@ -53,12 +55,17 @@ function toIntentError(error: unknown): InterpretError {
 }
 
 /** The answer tool's input, as the model sent it. */
-function answerFrom(reply: ModelReply): { intent: unknown; say: string } | null {
+function answerFrom(reply: ModelReply): { intent: unknown; say: string; done: boolean } | null {
   if (reply.stop_reason === 'refusal' || reply.stop_reason === 'max_tokens') return null
   const call = reply.content.find((block) => block.type === 'tool_use' && block.name === ANSWER_TOOL.name)
   if (!call || typeof call.input !== 'object' || call.input === null) return null
   const input = withoutNulls(call.input) as Record<string, unknown>
-  return { intent: input.intent, say: typeof input.say === 'string' ? input.say.slice(0, 120) : '' }
+  return {
+    intent: input.intent,
+    say: typeof input.say === 'string' ? input.say.slice(0, 120) : '',
+    // M7.2: absent means the one action completes the utterance.
+    done: input.done !== false,
+  }
 }
 
 export async function pageIntent(input: unknown, deps: { client: MessagesClient; model: string }): Promise<IntentAnswer> {
@@ -91,7 +98,7 @@ export async function pageIntent(input: unknown, deps: { client: MessagesClient;
 
   const raw = answerFrom(reply)
   const intent = raw ? pageIntentFrom(raw.intent, request) : null
-  const answer: IntentAnswer = intent && raw ? { intent, say: raw.say } : unclear(request)
-  console.info(`[intent] kind=${answer.intent.kind} ms=${Date.now() - started}`)
+  const answer: IntentAnswer = intent && raw ? { intent, say: raw.say, done: raw.done } : unclear(request)
+  console.info(`[intent] kind=${answer.intent.kind} done=${answer.done !== false} ms=${Date.now() - started}`)
   return answer
 }

@@ -64,7 +64,7 @@ describe('pageIntent', () => {
   it('turns an answer call into a validated intent with one model call', async () => {
     const { client, calls } = fakeClient(CLICK_LATER)
     const result = await pageIntent(request(), { client, model: 'm' })
-    expect(result).toEqual({ intent: { kind: 'command', command: { kind: 'clickItem', id: 2 } }, say: 'ava Vaata hiljem' })
+    expect(result).toEqual({ intent: { kind: 'command', command: { kind: 'clickItem', id: 2 } }, say: 'ava Vaata hiljem', done: true })
     expect(calls).toHaveLength(1)
   })
 
@@ -94,6 +94,52 @@ describe('pageIntent', () => {
     expect(calls[0]?.system).toContain('Always call the answer tool')
   })
 
+  it('passes done through, true when the model leaves it out', async () => {
+    const first = answer({ intent: { kind: 'command', command: { kind: 'goTo', url: 'https://www.youtube.com/' } }, say: 'avan youtube', done: false })
+    const { client } = fakeClient(first, CLICK_LATER)
+    const multi = await pageIntent(request({ utterance: 'mine youtube ja otsi kassivideod' }), { client, model: 'm' })
+    expect(multi.done).toBe(false)
+    const single = await pageIntent(request(), { client, model: 'm' })
+    expect(single.done).toBe(true)
+  })
+
+  it('lists the earlier steps in the user turn, as ok or failed lines', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    const steps = [
+      { action: 'command goTo', say: 'avan youtube', ok: true, message: '' },
+      { action: 'command clickItem 7', say: 'ava koerte video', ok: false, message: 'not_found' },
+    ]
+    await pageIntent(request({ utterance: 'mine youtube ja ava koerte video', steps }), { client, model: 'm' })
+    const text = String(calls[0]?.messages[0]?.content)
+    expect(text).toContain('step 1: command goTo "avan youtube" -> ok')
+    expect(text).toContain('step 2: command clickItem 7 "ava koerte video" -> failed: not_found')
+    const { client: fresh, calls: freshCalls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client: fresh, model: 'm' })
+    expect(String(freshCalls[0]?.messages[0]?.content)).toContain('steps: none')
+  })
+
+  it('keeps the answer schema strict with every property required, done among them', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client, model: 'm' })
+    const tool = calls[0]?.tools?.[0]
+    const schema = tool && 'input_schema' in tool ? tool.input_schema : undefined
+    expect(schema?.required).toEqual(['intent', 'say', 'done'])
+    expect(schema?.additionalProperties).toBe(false)
+    const loose: string[] = []
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) return node.forEach((n, i) => walk(n, `${path}[${i}]`))
+      if (node === null || typeof node !== 'object') return
+      const o = node as Record<string, unknown>
+      if (o.type === 'object') {
+        const keys = Object.keys((o.properties ?? {}) as object)
+        if (o.additionalProperties !== false || JSON.stringify(o.required) !== JSON.stringify(keys)) loose.push(path)
+      }
+      for (const [k, v] of Object.entries(o)) walk(v, `${path}.${k}`)
+    }
+    walk(schema, 'input_schema')
+    expect(loose).toEqual([])
+  })
+
   it('answers unclear when the item id is not on the page', async () => {
     const { client } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'clickItem', id: 99 } }, say: 'x' }))
     const result = await pageIntent(request(), { client, model: 'm' })
@@ -104,7 +150,7 @@ describe('pageIntent', () => {
     const { client } = fakeClient(answer({ intent: { kind: 'dictate', text: 'Tulen kell viis.' }, say: '' }))
     const armed = { ...YOUTUBE, box: { present: true, text: '', armed: true, kind: 'composer' as const } }
     const result = await pageIntent(request({ utterance: 'tulen kell viis', page: armed }), { client, model: 'm' })
-    expect(result).toEqual({ intent: { kind: 'dictate', text: 'Tulen kell viis.' }, say: '' })
+    expect(result).toEqual({ intent: { kind: 'dictate', text: 'Tulen kell viis.' }, say: '', done: true })
   })
 
   it('maps a null newTab url to an absent one', async () => {
@@ -171,7 +217,7 @@ describe('pageIntent', () => {
     const { client } = fakeClient(CLICK_LATER)
     await pageIntent(request({ utterance: 'mine vaata hiljem palun' }), { client, model: 'm' })
     const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
-    expect(logged.some((line) => /^\[intent\] kind=command ms=\d+$/.test(line))).toBe(true)
+    expect(logged.some((line) => /^\[intent\] kind=command done=true ms=\d+$/.test(line))).toBe(true)
     const all = logged.join('\n')
     expect(all).not.toContain('vaata hiljem')
     expect(all).not.toContain('Kassid')
