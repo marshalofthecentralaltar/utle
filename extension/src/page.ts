@@ -1,11 +1,12 @@
 // Injected into the page in front (isolated world) by background.ts. Defines globalThis.__utle
 // once; background.ts then calls __utle.run(command) and gets a BrowserResult back.
-// See docs/ARCHITECTURE.md 20.2 and 21.2.
+// See docs/ARCHITECTURE.md 20.2 and 21.2, and docs/plans/2026-10-05-m7-understanding.md (M7:
+// readPage, clickItem, focusItem, siteSearch, media, pressKey, clearField, arm, the armed box).
 
-import type { BoxState, BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
-import { SITES } from './sites.ts'
+import type { BoxState, BrowserCommand, BrowserResult, MediaAction, MediaState, PageContext, PageItem } from '../../src/browser/protocol.ts'
+import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
-import { findMessageBox, isTextField, readText, visible } from './box.ts'
+import { armElement, armedElement, boxState, disarm, findMessageBox, focusedTextField, isTextField, onScreenRect, readText, visible } from './box.ts'
 
 /** What background.ts sends: a command plus which messaging site the page is. */
 export type PageCommand = BrowserCommand & { site: SiteName | null }
@@ -20,12 +21,26 @@ const ENTER_GRACE_MS = 500
 const SEND_TIMEOUT_MS = 2000
 /** On a site whose address does not change, how long a conversation may take to open. */
 const OPEN_TIMEOUT_MS = 3000
+/** clickItem on a chat row: how long the row itself gets to open the chat before its name is clicked. */
+const ROW_REACT_MS = 800
+/** siteSearch: how long a search field may take to appear. */
+const SEARCH_FIELD_MS = 1000
+/** siteSearch: how long Enter gets to navigate before the form is submitted. */
+const ENTER_NAVIGATE_MS = 600
+/** siteSearch on a chat list: how long the filtered list gets to settle on one row. */
+const FILTER_MS = 1500
+/** media on YouTube: how long a keyboard shortcut gets to change the player's state. */
+const SHORTCUT_MS = 250
+/** readPage lists at most this many items. */
+const MAX_ITEMS = 120
+/** readPage looks at this many elements at most for a pointer cursor. */
+const POINTER_SCAN = 2000
 /** How often the searches look again. */
 const POLL_MS = 150
 
 type PageResult = BrowserResult | { ok: true; href: string; settled?: boolean }
 
-const ok = (extra: { box?: BoxState; hints?: number } = {}): BrowserResult => ({ ok: true, ...extra })
+const ok = (extra: { box?: BoxState; hints?: number; page?: PageContext } = {}): BrowserResult => ({ ok: true, ...extra })
 const fail = (code: 'not_found' | 'failed', message: string): BrowserResult => ({ ok: false, code, message })
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -33,7 +48,7 @@ function siteOf(name: SiteName | null): Site | null {
   return name === null ? null : SITES[name]
 }
 
-// ---------- numbered labels ----------
+// ---------- the visible actionable elements (numbers and readPage) ----------
 
 const ACTIONABLE = [
   'a[href]',
@@ -51,11 +66,20 @@ const ACTIONABLE = [
   '[role="option"]',
   '[role="checkbox"]',
   '[role="textbox"]',
+  '[role="row"]',
+  '[role="listitem"]',
+  '[role="gridcell"]',
+  'summary',
+  'video',
+  'ytd-thumbnail',
+  '[tabindex="0"]',
   '[onclick]',
 ].join(', ')
 
 let hintLayer: HTMLElement | null = null
 let hinted: HTMLElement[] = []
+/** The elements of the last readPage, by id (1-based, the same numbers the labels would show). */
+let pageItems: HTMLElement[] = []
 
 interface Box {
   left: number
@@ -72,20 +96,92 @@ function isDisabled(el: HTMLElement): boolean {
   return ('disabled' in el && (el as HTMLButtonElement).disabled === true) || el.getAttribute('aria-disabled') === 'true'
 }
 
+function isOurs(el: Element): boolean {
+  return el.localName.startsWith('utle-')
+}
+
+function roleOf(el: HTMLElement): string {
+  const role = el.getAttribute('role')
+  if (el instanceof HTMLMediaElement || el.localName === 'ytd-thumbnail') return 'video'
+  if (el instanceof HTMLInputElement) return ['button', 'submit', 'reset', 'image', 'checkbox', 'radio'].includes(el.type) ? 'button' : 'field'
+  // A plain boolean: the type guard would otherwise narrow el to never below.
+  const typeable: boolean = isTextField(el)
+  if (typeable || el instanceof HTMLSelectElement || role === 'textbox') return 'field'
+  if (el instanceof HTMLAnchorElement || role === 'link') return 'link'
+  if (el instanceof HTMLButtonElement || role === 'button' || role === 'checkbox' || el.localName === 'summary') return 'button'
+  if (role === 'tab') return 'tab'
+  if (role === 'option' || role === 'menuitem') return 'option'
+  if (role === 'row' || role === 'listitem' || role === 'gridcell') return 'row'
+  return 'other'
+}
+
+function firstLine(text: string): string {
+  return (text.split('\n').find((line) => line.trim() !== '') ?? '').trim()
+}
+
+/** aria-label, else the first line of text, else title, else an inner image's alt, else the placeholder. */
+function textOf(el: HTMLElement): string {
+  const label = el.getAttribute('aria-label')?.trim()
+  if (label) return label.slice(0, 60)
+  const own = el instanceof HTMLInputElement ? el.value : firstLine(el.innerText || '')
+  if (own.trim()) return own.trim().slice(0, 60)
+  const title = el.getAttribute('title')?.trim()
+  if (title) return title.slice(0, 60)
+  const alt = el.querySelector('img[alt]')?.getAttribute('alt')?.trim()
+  if (alt) return alt.slice(0, 60)
+  const placeholder = el.getAttribute('placeholder')?.trim()
+  if (placeholder) return placeholder.slice(0, 60)
+  return ''
+}
+
+/** Elements that only their pointer cursor marks as clickable: short text, no actionable element around or inside. */
+function pointerTargets(): HTMLElement[] {
+  const found: HTMLElement[] = []
+  const taken = new Set<HTMLElement>()
+  let scanned = 0
+  for (const el of document.body.querySelectorAll<HTMLElement>('*')) {
+    if (++scanned > POINTER_SCAN) break
+    if (isOurs(el) || el.closest(ACTIONABLE) !== null) continue
+    const parent = el.parentElement
+    if (parent && taken.has(parent)) continue
+    if (getComputedStyle(el).cursor !== 'pointer') continue
+    const text = (el.innerText || '').trim()
+    if (text === '' || text.length > 60 || text.split('\n').length > 2) continue
+    if (el.querySelector(ACTIONABLE) !== null) continue
+    if (!visible(el)) continue
+    found.push(el)
+    taken.add(el)
+  }
+  return found
+}
+
+/** Every visible actionable element, top to bottom then left to right. */
 function collectActionable(): HTMLElement[] {
   const found: HTMLElement[] = []
   for (const el of document.querySelectorAll<HTMLElement>(ACTIONABLE)) {
-    if (isDisabled(el)) continue
+    if (isOurs(el) || isDisabled(el)) continue
     if (!visible(el)) continue
     found.push(el)
   }
-  // A nested element with nearly the same box as an actionable ancestor is the same target.
-  return found.filter((el) => {
+  found.push(...pointerTargets())
+  const kept = found.filter((el) => {
     const box = el.getBoundingClientRect()
+    const role = roleOf(el)
     for (const other of found) {
-      if (other !== el && other.contains(el) && sameBox(other.getBoundingClientRect(), box)) return false
+      if (other === el || !other.contains(el)) continue
+      // A nested element with nearly the same box as an actionable ancestor is the same target.
+      if (sameBox(other.getBoundingClientRect(), box)) return false
+      // A cell or a plain element inside a listed row is part of the row.
+      if (role === 'row' || role === 'other') return false
     }
     return true
+  })
+  const rects = new Map(kept.map((el) => [el, el.getBoundingClientRect()] as const))
+  const band = (r: DOMRect): number => Math.round(r.top / 12)
+  return kept.sort((a, b) => {
+    const ra = rects.get(a) ?? new DOMRect()
+    const rb = rects.get(b) ?? new DOMRect()
+    return band(ra) - band(rb) || ra.left - rb.left
   })
 }
 
@@ -186,6 +282,12 @@ function caretToEnd(el: HTMLElement): void {
   selection.addRange(range)
 }
 
+/** Focuses a text field the user picked and makes it the dictation target. */
+function pick(el: HTMLElement): void {
+  caretToEnd(el)
+  armElement(el)
+}
+
 function activate(el: HTMLElement): void {
   const r = el.getBoundingClientRect()
   const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 }
@@ -203,9 +305,88 @@ function clickHint(number: number): BrowserResult {
   }
   hideHints()
   if (!el.isConnected) return fail('not_found', `Number ${number} is no longer on the page.`)
-  if (isTextField(el)) caretToEnd(el)
+  if (isTextField(el)) pick(el)
   else activate(el)
   return ok()
+}
+
+// ---------- readPage, clickItem, focusItem ----------
+
+/** The largest video on screen, else a playing audio, else any audio. */
+function mediaElement(): HTMLMediaElement | null {
+  let best: HTMLMediaElement | null = null
+  let bestArea = 0
+  for (const video of document.querySelectorAll<HTMLVideoElement>('video')) {
+    const r = onScreenRect(video)
+    if (!r) continue
+    const area = (Math.min(r.right, window.innerWidth) - Math.max(r.left, 0)) * (Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0))
+    if (area > bestArea) {
+      best = video
+      bestArea = area
+    }
+  }
+  if (best) return best
+  const audios = [...document.querySelectorAll<HTMLAudioElement>('audio')]
+  return audios.find((a) => !a.paused) ?? audios[0] ?? null
+}
+
+function mediaState(el: HTMLMediaElement | null): MediaState | null {
+  if (!el) return null
+  return { playing: !el.paused, muted: el.muted || el.volume === 0, volume: el.volume, fullscreen: document.fullscreenElement !== null }
+}
+
+function readPage(site: Site | null): BrowserResult {
+  const elements = collectActionable()
+  pageItems = elements
+  const items: PageItem[] = []
+  elements.forEach((el, i) => {
+    if (items.length >= MAX_ITEMS) return
+    const role = roleOf(el)
+    const text = textOf(el)
+    if (text === '' && role !== 'field' && role !== 'video') return
+    items.push({ id: i + 1, role, text })
+  })
+  const page: PageContext = {
+    url: location.href,
+    title: document.title,
+    box: boxState(findMessageBox(site), site),
+    items,
+    media: mediaState(mediaElement()),
+    hints: hintLayer !== null,
+  }
+  return ok({ page })
+}
+
+function itemOf(id: number): HTMLElement | BrowserResult {
+  const el = pageItems[id - 1]
+  if (!el) return fail('not_found', pageItems.length === 0 ? 'The page has not been read yet.' : `There is no item ${id}. The items go up to ${pageItems.length}.`)
+  if (!el.isConnected) return fail('not_found', `Item ${id} is no longer on the page.`)
+  return el
+}
+
+async function clickItem(id: number, site: Site | null): Promise<PageResult> {
+  const el = itemOf(id)
+  if (!(el instanceof HTMLElement)) return el
+  hideHints()
+  const typeable: boolean = isTextField(el)
+  if (typeable) {
+    pick(el)
+    return ok({ box: boxState(el, site) })
+  }
+  if (site?.conversationRows && el.matches(site.conversationRows)) return clickRow(el, site)
+  activate(el)
+  return ok()
+}
+
+function focusItem(id: number, site: Site | null): BrowserResult {
+  const el = itemOf(id)
+  if (!(el instanceof HTMLElement)) return el
+  const typeable: boolean = isTextField(el)
+  const field = typeable ? el : [...el.querySelectorAll<HTMLElement>('input, textarea, [contenteditable], [role="textbox"]')].find((x) => isTextField(x)) ?? null
+  if (!field) return fail('not_found', `Item ${id} is not a text field.`)
+  hideHints()
+  pick(field)
+  return ok({ box: boxState(field, site) })
 }
 
 // ---------- scroll ----------
@@ -232,10 +413,6 @@ function scroll(direction: string): BrowserResult {
 }
 
 // ---------- the message box ----------
-
-function boxState(el: HTMLElement | null): BoxState {
-  return el === null ? { present: false, text: '', armed: false } : { present: true, text: readText(el), armed: true }
-}
 
 function nativeSetValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const proto = el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype
@@ -320,6 +497,23 @@ async function selectAllIn(el: HTMLElement): Promise<void> {
   await sleep(30)
 }
 
+/** Selects everything in the field and deletes it, with fallbacks for editors that refuse execCommand. */
+async function emptyField(el: HTMLElement): Promise<void> {
+  await selectAllIn(el)
+  if (readText(el) === '') return
+  const deleted = exec('delete')
+  if (deleted && readText(el) !== '') await sleep(30)
+  if (!deleted || readText(el) !== '') {
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      nativeSetValue(el, '')
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }))
+    } else {
+      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: 'deleteContentBackward' }))
+    }
+  }
+  await sleep(30)
+}
+
 /** Puts the caret at the very end of el. True when it had to move (an editor needs a moment to see that). */
 function caretAtEnd(el: HTMLElement): boolean {
   el.focus()
@@ -359,22 +553,9 @@ async function setText(text: string, site: Site | null): Promise<BrowserResult> 
     if (caretAtEnd(el)) await sleep(30)
     if (tail !== '') await typeAtSelection(el, tail)
     await sleep(30)
-    if (readText(el) === text) return ok({ box: boxState(el) })
+    if (readText(el) === text) return ok({ box: boxState(el, site) })
   }
-  await selectAllIn(el)
-  if (readText(el) !== '') {
-    const deleted = exec('delete')
-    if (deleted && readText(el) !== '') await sleep(30)
-    if (!deleted || readText(el) !== '') {
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        nativeSetValue(el, '')
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }))
-      } else {
-        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: 'deleteContentBackward' }))
-      }
-    }
-    await sleep(30)
-  }
+  await emptyField(el)
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
   for (const [i, line] of lines.entries()) {
     const target = el.isConnected ? el : findMessageBox(site) ?? el
@@ -383,7 +564,7 @@ async function setText(text: string, site: Site | null): Promise<BrowserResult> 
   }
   // Let the page's editor commit its state before reading it back.
   await sleep(60)
-  return ok({ box: boxState(el.isConnected ? el : findMessageBox(site)) })
+  return ok({ box: boxState(el.isConnected ? el : findMessageBox(site), site) })
 }
 
 function pressEnter(el: HTMLElement): void {
@@ -442,8 +623,207 @@ async function pressSend(site: Site | null): Promise<BrowserResult> {
   if (!el) return fail('not_found', 'There is no message box on this page.')
   const text = readText(el)
   if (text.trim() === '') return fail('failed', 'The message box is empty.')
-  if (await send(el, text, site)) return ok({ box: boxState(el.isConnected ? el : findMessageBox(site)) })
+  if (await send(el, text, site)) return ok({ box: boxState(el.isConnected ? el : findMessageBox(site), site) })
   return fail('failed', 'The text is still in the box: it was not sent.')
+}
+
+// ---------- clearField, arm, pressKey ----------
+
+/** The user's armed field, else the focused text field, else the site's composer. */
+function fieldToClear(site: Site | null): HTMLElement | null {
+  const chosen = armedElement()
+  if (chosen && isTextField(chosen)) return chosen
+  const active = focusedTextField()
+  if (active) return active
+  const box = findMessageBox(site)
+  return box && boxState(box, site).armed ? box : null
+}
+
+async function clearField(site: Site | null): Promise<BrowserResult> {
+  const el = fieldToClear(site)
+  if (!el) return fail('not_found', 'There is no field to clear.')
+  await emptyField(el)
+  await sleep(60)
+  return ok({ box: boxState(el, site) })
+}
+
+function arm(on: boolean, site: Site | null): BrowserResult {
+  if (!on) {
+    disarm()
+    return ok({ box: boxState(findMessageBox(site), site) })
+  }
+  const el = focusedTextField()
+  if (!el) return fail('not_found', 'Nothing that takes text is focused. Say "numbers" and pick a field.')
+  armElement(el)
+  return ok({ box: boxState(el, site) })
+}
+
+function pressKey(key: 'Escape' | 'Enter'): BrowserResult {
+  let target: Element = document.activeElement ?? document.body
+  while (target.shadowRoot?.activeElement) target = target.shadowRoot.activeElement
+  const code = key === 'Enter' ? 13 : 27
+  const init = { key, code: key, keyCode: code, which: code, charCode: 0, bubbles: true, cancelable: true, composed: true }
+  target.dispatchEvent(new KeyboardEvent('keydown', init))
+  if (key === 'Enter') target.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: 13 }))
+  target.dispatchEvent(new KeyboardEvent('keyup', init))
+  if (key === 'Escape' && target instanceof HTMLElement && isTextField(target)) target.blur()
+  return ok()
+}
+
+// ---------- siteSearch ----------
+
+const GENERIC_SEARCH_FIELDS = [
+  'input[type="search"]',
+  '[role="searchbox"]',
+  'input[name="q"]',
+  'textarea[name="q"]',
+  'input#search',
+  'input[name="search_query"]',
+  'input[placeholder*="otsi" i]',
+  'input[placeholder*="search" i]',
+]
+
+function searchField(site: Site | null): HTMLElement | null {
+  const selectors = [searchFieldFor(location.hostname), site?.searchField ?? null, ...GENERIC_SEARCH_FIELDS]
+  for (const selector of selectors) {
+    if (!selector) continue
+    for (const el of document.querySelectorAll<HTMLElement>(selector)) {
+      if (isTextField(el) && visible(el)) return el
+    }
+  }
+  return null
+}
+
+/** True once the page has started leaving (the answer may then never arrive; background.ts waits for the load). */
+let leaving = false
+
+async function siteSearch(query: string, site: Site | null): Promise<PageResult> {
+  const text = query.trim()
+  if (text === '') return fail('not_found', 'Nothing to search for.')
+  const field = await waitFor(() => searchField(site), SEARCH_FIELD_MS)
+  if (!field) return fail('not_found', 'This page has no search field.')
+  await emptyField(field)
+  await typeAtSelection(field, text)
+  await sleep(60)
+  const rows = site?.conversationRows
+  if (site && rows) {
+    // A chat list: the search filters it. One row left is the one meant.
+    const single = await waitFor(() => {
+      const shown = [...document.querySelectorAll<HTMLElement>(rows)].filter((row) => visible(row))
+      return shown.length === 1 ? shown[0] ?? null : null
+    }, FILTER_MS)
+    if (single) return openRow(single, site)
+    return ok()
+  }
+  const before = location.href
+  pressEnter(field)
+  const form = field.closest('form')
+  if (form) {
+    const navigated = await waitFor(() => (leaving || location.href !== before ? true : null), ENTER_NAVIGATE_MS)
+    if (!navigated) form.requestSubmit()
+  }
+  return ok()
+}
+
+// ---------- media ----------
+
+type Check = (el: HTMLMediaElement) => boolean
+
+/** The YouTube shortcut for an action, and how to tell it worked. null: no shortcut (exitFullscreen). */
+function shortcutFor(action: MediaAction, el: HTMLMediaElement): { key: string; done: Check } | null {
+  const volume = el.volume
+  const time = el.currentTime
+  switch (action) {
+    case 'play':
+      return el.paused ? { key: 'k', done: (m) => !m.paused } : { key: '', done: () => true }
+    case 'pause':
+      return el.paused ? { key: '', done: () => true } : { key: 'k', done: (m) => m.paused }
+    case 'toggle':
+      return { key: 'k', done: (m) => m.paused !== el.paused }
+    case 'mute':
+      return el.muted ? { key: '', done: () => true } : { key: 'm', done: (m) => m.muted }
+    case 'unmute':
+      return el.muted ? { key: 'm', done: (m) => !m.muted } : { key: '', done: () => true }
+    case 'volumeUp':
+      return { key: 'ArrowUp', done: (m) => !m.muted && (m.volume > volume || volume >= 1) }
+    case 'volumeDown':
+      return { key: 'ArrowDown', done: (m) => m.volume < volume || volume <= 0 }
+    case 'fullscreen':
+      return { key: 'f', done: () => document.fullscreenElement !== null }
+    case 'exitFullscreen':
+      return null
+    case 'forward':
+      return { key: 'l', done: (m) => m.currentTime > time + 5 || m.ended }
+    case 'back':
+      return { key: 'j', done: (m) => m.currentTime < time - 5 || time < 10 }
+  }
+}
+
+/** On YouTube, the player's own keyboard shortcut; true when the element shows it worked. */
+async function youtubeShortcut(player: HTMLElement, el: HTMLMediaElement, action: MediaAction): Promise<boolean> {
+  const shortcut = shortcutFor(action, el)
+  if (!shortcut) return false
+  if (shortcut.key === '') return true
+  const key = shortcut.key
+  const code = key.length === 1 ? `Key${key.toUpperCase()}` : key
+  const init = { key, code, bubbles: true, cancelable: true, composed: true }
+  player.focus()
+  player.dispatchEvent(new KeyboardEvent('keydown', init))
+  player.dispatchEvent(new KeyboardEvent('keyup', init))
+  await sleep(SHORTCUT_MS)
+  return shortcut.done(el)
+}
+
+async function media(action: MediaAction): Promise<BrowserResult> {
+  const el = mediaElement()
+  if (!el) return fail('not_found', 'There is no video or audio on this page.')
+  if (action === 'exitFullscreen') {
+    if (document.fullscreenElement) await document.exitFullscreen()
+    return ok()
+  }
+  const player = document.querySelector<HTMLElement>('#movie_player')
+  if (player && player.contains(el) && (await youtubeShortcut(player, el, action))) return ok()
+  try {
+    switch (action) {
+      case 'play':
+        await el.play()
+        break
+      case 'pause':
+        el.pause()
+        break
+      case 'toggle':
+        if (el.paused) await el.play()
+        else el.pause()
+        break
+      case 'mute':
+        el.muted = true
+        break
+      case 'unmute':
+        el.muted = false
+        if (el.volume === 0) el.volume = 0.2
+        break
+      case 'volumeUp':
+        el.volume = Math.min(1, Math.round((el.volume + 0.2) * 10) / 10)
+        el.muted = false
+        break
+      case 'volumeDown':
+        el.volume = Math.max(0, Math.round((el.volume - 0.2) * 10) / 10)
+        break
+      case 'fullscreen':
+        await (player ?? el.closest<HTMLElement>('.html5-video-player') ?? el).requestFullscreen()
+        break
+      case 'forward':
+        el.currentTime = Number.isFinite(el.duration) ? Math.min(el.duration, el.currentTime + 10) : el.currentTime + 10
+        break
+      case 'back':
+        el.currentTime = Math.max(0, el.currentTime - 10)
+        break
+    }
+  } catch (error) {
+    return fail('failed', `The video did not take "${action}": ${error instanceof Error ? error.message : String(error)}`)
+  }
+  await sleep(60)
+  return ok()
 }
 
 // ---------- open a conversation ----------
@@ -554,25 +934,46 @@ async function openConversation(name: string, site: Site | null): Promise<PageRe
   return { ok: true, href }
 }
 
+/** True once the conversation called wanted is open: its composer is visible and its header says the name. */
+function conversationOpen(site: Site, wanted: string): true | null {
+  const composer = document.querySelector<HTMLElement>(site.composer)
+  if (!composer || !visible(composer)) return null
+  if (!site.openChatName) return true
+  const header = document.querySelector(site.openChatName)
+  // When the header is not found (an unverified selector), the composer alone is taken as proof.
+  if (!header) return true
+  return normalize(header.getAttribute('title') ?? header.textContent) === wanted ? true : null
+}
+
+/** The chat is open: the next words belong in its composer, which is armed. */
+function settleInComposer(site: Site): PageResult {
+  const composer = document.querySelector<HTMLElement>(site.composer)
+  if (composer) pick(composer)
+  return { ok: true, href: '', settled: true }
+}
+
 /** A chat row that opens without changing the address: wait here for its composer and its name. */
 async function openRow(row: HTMLElement, site: Site): Promise<PageResult> {
   const wanted = normalize(nameOf(row, site))
   const target = row.querySelector<HTMLElement>(site.rowName ?? 'span[title]') ?? row
   activate(target)
-  const opened = await waitFor(() => {
-    const composer = document.querySelector<HTMLElement>(site.composer)
-    if (!composer || !visible(composer)) return null
-    if (!site.openChatName) return true
-    const header = document.querySelector(site.openChatName)
-    // When the header is not found (an unverified selector), the composer alone is taken as proof.
-    if (!header) return true
-    return normalize(header.getAttribute('title') ?? header.textContent) === wanted ? true : null
-  }, OPEN_TIMEOUT_MS)
+  const opened = await waitFor(() => conversationOpen(site, wanted), OPEN_TIMEOUT_MS)
   if (!opened) return fail('failed', 'The conversation did not open, so nothing will be typed. Try again or use the numbers.')
-  // The search field may still have focus; the next words belong in the composer.
-  const composer = document.querySelector<HTMLElement>(site.composer)
-  if (composer) caretToEnd(composer)
-  return { ok: true, href: '', settled: true }
+  return settleInComposer(site)
+}
+
+/** clickItem on a chat row: the row itself first; when the chat does not open, the name inside it. */
+async function clickRow(row: HTMLElement, site: Site): Promise<PageResult> {
+  const wanted = normalize(nameOf(row, site))
+  activate(row)
+  let opened = await waitFor(() => conversationOpen(site, wanted), ROW_REACT_MS)
+  if (!opened) {
+    const name = row.querySelector<HTMLElement>(site.rowName ?? 'span[title]')
+    if (name) activate(name)
+    opened = await waitFor(() => conversationOpen(site, wanted), OPEN_TIMEOUT_MS)
+  }
+  if (!opened) return fail('failed', 'The conversation did not open. Try again or use the numbers.')
+  return settleInComposer(site)
 }
 
 // ---------- entry ----------
@@ -595,11 +996,27 @@ async function run(command: PageCommand): Promise<PageResult> {
       case 'openConversation':
         return await openConversation(command.name, site)
       case 'readBox':
-        return ok({ box: boxState(findMessageBox(site)) })
+        return ok({ box: boxState(findMessageBox(site), site) })
       case 'setText':
         return await setText(String(command.text), site)
       case 'pressSend':
         return await pressSend(site)
+      case 'readPage':
+        return readPage(site)
+      case 'clickItem':
+        return await clickItem(Number(command.id), site)
+      case 'focusItem':
+        return focusItem(Number(command.id), site)
+      case 'siteSearch':
+        return await siteSearch(String(command.query), site)
+      case 'media':
+        return await media(command.action)
+      case 'pressKey':
+        return pressKey(command.key)
+      case 'clearField':
+        return await clearField(site)
+      case 'arm':
+        return arm(command.on === true, site)
       default:
         return fail('failed', `The page does not know the command "${command.kind}".`)
     }
@@ -613,12 +1030,21 @@ declare global {
   var __utle: { run(command: PageCommand): Promise<PageResult> } | undefined
 }
 
+/** A navigation: the labels go, and the armed field with them (it belonged to the page before). */
+function onNavigation(): void {
+  hideHints()
+  disarm()
+}
+
 if (!globalThis.__utle) {
   globalThis.__utle = { run }
   // Same-document navigations do not unload the page, so remove the labels ourselves.
   const nav = (globalThis as { navigation?: EventTarget }).navigation
-  nav?.addEventListener('navigate', hideHints)
-  window.addEventListener('popstate', hideHints)
-  window.addEventListener('hashchange', hideHints)
-  window.addEventListener('pagehide', hideHints)
+  nav?.addEventListener('navigate', onNavigation)
+  window.addEventListener('popstate', onNavigation)
+  window.addEventListener('hashchange', onNavigation)
+  window.addEventListener('pagehide', onNavigation)
+  window.addEventListener('beforeunload', () => {
+    leaving = true
+  })
 }
