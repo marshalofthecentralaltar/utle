@@ -13,8 +13,11 @@ export const ASR_MAX_FRAME_BYTES = ASR_SAMPLE_RATE * 4
  * silence before it sends a final, so most of a thinking pause has passed by then.
  */
 export const LOCAL_HOLD_MS = 500
-/** How long a partial that is a quick reply must stay unchanged before it is released. */
-export const INSTANT_SETTLE_MS = 350
+/**
+ * How long a partial that is a quick reply must stay unchanged before it is released. Longer than
+ * the gap between the model's partials (about 620 ms), so "ei, mitte kolm" is never cut at "ei".
+ */
+export const INSTANT_SETTLE_MS = 650
 
 /** The lines the page shows when the local recogniser cannot run (src/speech/pick.ts). */
 export const FELL_BACK = "The speech model on this computer is not running, so Chrome's recognition is listening instead."
