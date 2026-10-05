@@ -78,6 +78,8 @@ export interface Strings {
   sendFailed(reason: string): string
   draftDropped: string
   noDraft: string
+  browserTimedOut: string
+  sendTimedOut: string
 
   // The interpreter.
   stillWorks: string
@@ -290,6 +292,8 @@ const ET: Strings = {
   sendFailed: (reason) => `Ei saatnud. ${reason} Sõnum on alles.`,
   draftDropped: 'Sõnum on katkestatud. Dokument on tagasi.',
   noDraft: 'Pooleli sõnumit ei ole.',
+  browserTimedOut: 'Brauser ei vastanud õigel ajal.',
+  sendTimedOut: 'Brauser ei vastanud õigel ajal. Sõnum võis minna või mitte: vaata vestlus üle, enne kui uuesti saadad.',
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
   unreachable: 'Abiline ei vasta.',
@@ -495,6 +499,8 @@ const EN: Strings = {
   sendFailed: (reason) => `Not sent. ${reason} The message is still here.`,
   draftDropped: 'Message cancelled. The document is back.',
   noDraft: 'There is no message open.',
+  browserTimedOut: 'The browser did not answer in time.',
+  sendTimedOut: 'The browser did not answer in time. The message may or may not have gone: look at the conversation before you send it again.',
 
   stillWorks: 'Yes, no and undo still work.',
   unreachable: 'The assistant is unreachable.',

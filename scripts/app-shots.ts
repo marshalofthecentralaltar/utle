@@ -14,19 +14,21 @@ const BASE = process.env.UTLE_URL ?? 'http://localhost:5182'
 const OUT = 'docs/proof'
 const VIEWPORT = { width: 1280, height: 800 }
 
-/** A page-side stand-in for the extension: records every BridgeRequest and answers success. */
-const STUB = `
+/** A page-side stand-in for the extension: records every command (pings apart) and answers success. */
+const stub = (openConversationMs: number): string => `
   window.__bridge = [];
   window.addEventListener('message', (event) => {
     const data = event.data;
     if (!data || data.source !== 'utle-app') return;
-    window.__bridge.push(data.command);
+    if (data.command.kind !== 'ping') window.__bridge.push(data.command);
     const result = data.command.kind === 'openConversation'
       ? { ok: true, tab: { title: data.command.name, url: 'https://www.messenger.com/' } }
       : { ok: true };
-    setTimeout(() => window.postMessage({ source: 'utle-extension', id: data.id, result }, window.location.origin), 50);
+    const delay = data.command.kind === 'openConversation' ? ${openConversationMs} : 50;
+    setTimeout(() => window.postMessage({ source: 'utle-extension', id: data.id, result }, window.location.origin), delay);
   });
 `
+const STUB = stub(50)
 
 /** A speech recogniser that starts and stops and never hears anything, so the microphone control can be driven. */
 const QUIET_MIC = `
@@ -41,7 +43,11 @@ const QUIET_MIC = `
 `
 
 async function freshPage(browser: Browser, ...scripts: string[]): Promise<Page> {
-  const context = await browser.newContext({ viewport: VIEWPORT, locale: 'et-EE' })
+  return sizedPage(browser, VIEWPORT, ...scripts)
+}
+
+async function sizedPage(browser: Browser, viewport: { width: number; height: number }, ...scripts: string[]): Promise<Page> {
+  const context = await browser.newContext({ viewport, locale: 'et-EE' })
   for (const script of scripts) await context.addInitScript(script)
   return context.newPage()
 }
@@ -81,37 +87,79 @@ async function languages(browser: Browser): Promise<void> {
   await page.context().close()
 }
 
-async function message(browser: Browser): Promise<void> {
-  const page = await freshPage(browser, STUB, QUIET_MIC)
+/** At a narrow width: nothing scrolls sideways, and every control showing is at least 96 x 96 and on screen. */
+async function layout(page: Page, state: string): Promise<void> {
+  const viewport = page.viewportSize()
+  if (!viewport) return
+  const scrollWidth = await page.evaluate<number>('document.documentElement.scrollWidth')
+  const parts = [`scrollWidth=${scrollWidth} (<= ${viewport.width}: ${scrollWidth <= viewport.width})`]
+  let ok = scrollWidth <= viewport.width
+  for (const control of ['microphone', 'yes', 'no']) {
+    const locator = page.locator(`[data-control="${control}"]`)
+    if ((await locator.count()) === 0) continue
+    const box = await locator.boundingBox()
+    if (!box) continue
+    const big = box.width >= 96 && box.height >= 96
+    const inside = box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height
+    ok = ok && big && inside
+    parts.push(`${control} ${box.width}x${box.height} at ${Math.round(box.x)},${Math.round(box.y)} big=${big} inside=${inside}`)
+  }
+  console.log(`[440] ${state}: ${parts.join('; ')} -> ${ok ? 'PASS' : 'FAIL'}`)
+  if (!ok) process.exitCode = 1
+}
+
+async function message(browser: Browser, width = VIEWPORT.width): Promise<void> {
+  const narrow = width < VIEWPORT.width
+  const tag = narrow ? '440' : '6'
+  const shot = (name: string): string => (narrow ? `${OUT}/app-440-${name}.png` : `${OUT}/app-${name}.png`)
+  // The stub answers openConversation after 4 s, as the real extension may while it loads the list.
+  const page = await sizedPage(browser, narrow ? { width, height: 900 } : VIEWPORT, stub(4000), QUIET_MIC)
   await page.goto(BASE)
   await page.waitForSelector('#typed')
+  if (narrow) {
+    await page.screenshot({ path: shot('et') })
+    await layout(page, 'fresh')
+    // The bar is taller at this width: the last paragraph must still scroll clear of it.
+    await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+    await page.waitForTimeout(300)
+    const clear = await page.evaluate<string>(
+      `(() => { const rows = document.querySelectorAll('[aria-label="Dokument"] > div'); const last = rows[rows.length - 1].getBoundingClientRect(); const bar = document.querySelector('.fixed').getBoundingClientRect(); return Math.round(last.bottom) + ' ' + Math.round(bar.top) })()`,
+    )
+    const [lastBottom, barTop] = clear.split(' ').map(Number)
+    console.log(`[440] scrolled to the end: last paragraph ends at ${lastBottom}, bar starts at ${barTop} -> ${(lastBottom ?? 0) <= (barTop ?? 0) ? 'PASS' : 'FAIL'}`)
+    await page.evaluate('window.scrollTo(0, 0)')
+  }
 
-  const lines = [
-    'Kirjuta Marile, et ma jõuan homme kell kolm',
-    'Mitte kolm, vaid neli',
-    'jah',
-  ]
+  const lines = ['Kirjuta Marile, et ma jõuan homme kell kolm', 'Mitte kolm, vaid neli', 'jah']
   for (const line of lines) {
     await typeLine(page, line)
     await page.waitForTimeout(150)
     await settled(page)
-    console.log(`[6] "${line}" -> ${await understood(page)}`)
+    console.log(`[${tag}] "${line}" -> ${await understood(page)}`)
   }
-  await page.screenshot({ path: `${OUT}/app-draft.png` })
+  await page.screenshot({ path: shot('draft') })
+  if (narrow) await layout(page, 'draft')
 
   await typeLine(page, 'saada')
   await page.waitForSelector('[data-control="yes"]')
-  console.log(`[6] "saada" -> ${await understood(page)}`)
-  await page.screenshot({ path: `${OUT}/app-send-confirm.png` })
+  console.log(`[${tag}] "saada" -> ${await understood(page)}`)
+  await page.screenshot({ path: shot('send-confirm') })
+  if (narrow) {
+    await layout(page, 'send-confirm')
+    await page.context().close()
+    return
+  }
 
+  const started = Date.now()
   await typeLine(page, 'jah')
-  await page.waitForFunction('window.__bridge.length >= 2')
-  await page.waitForTimeout(300)
-  console.log(`[6] "jah" -> ${await understood(page)}`)
+  await page.waitForTimeout(2000)
+  console.log(`[6] 2 s after "jah", openConversation not answered yet -> ${await understood(page)}`)
+  await page.waitForFunction(`document.querySelector('.fixed')?.textContent?.includes('Saadetud')`, undefined, { timeout: 30_000 })
+  console.log(`[6] after ${((Date.now() - started) / 1000).toFixed(1)} s -> ${await understood(page)}`)
   const commands = await page.evaluate<unknown>('window.__bridge')
   console.log(`[6] recorded bridge commands: ${JSON.stringify(commands)}`)
 
-  // Proof 7: one deliberately unclear Estonian utterance through the real model.
+  // Proof 7: one deliberately unclear Estonian utterance through the interpreter.
   await typeLine(page, 'noh see seal üleval vist')
   await page.waitForTimeout(150)
   await settled(page)
@@ -172,6 +220,7 @@ async function main(): Promise<void> {
     const only = process.argv[2]
     if (!only || only === 'languages') await languages(browser)
     if (!only || only === 'message') await message(browser)
+    if (!only || only === 'narrow') await message(browser, 440)
     if (!only || only === 'dwell') {
       await dwell(browser)
       await yesNoBoxes(browser)

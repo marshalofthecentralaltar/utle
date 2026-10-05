@@ -1,10 +1,14 @@
-import { BRIDGE_APP, BRIDGE_EXTENSION, BRIDGE_TIMEOUT_MS } from './protocol.ts'
+import { BRIDGE_TIMED_OUT } from '../core/browserIntent.ts'
+import { BRIDGE_APP, BRIDGE_COMMAND_TIMEOUT_MS, BRIDGE_EXTENSION, BRIDGE_TIMEOUT_MS } from './protocol.ts'
 import type { BridgeRequest, BrowserCommand, BrowserResult } from './protocol.ts'
 
 /**
  * The page's side of the bridge (docs/ARCHITECTURE.md section 20.3). Posts a BridgeRequest on
- * the window and resolves the BridgeResponse with the same id. Never rejects: no answer in time
- * is no_extension. The window and the timers are injected, so it is tested without a DOM.
+ * the window and resolves the BridgeResponse with the same id. Never rejects.
+ * Only ping uses the short timeout: no answer is no_extension. Before any other command the bridge
+ * pings once to know the extension is there (again after a failure), then waits up to
+ * BRIDGE_COMMAND_TIMEOUT_MS, because a command may load a page or a conversation first. No answer
+ * then is failed with the message BRIDGE_TIMED_OUT. Window and timers are injected for tests.
  */
 
 /** The part of window the bridge uses. */
@@ -55,32 +59,50 @@ const realTimers: BridgeTimers = {
 export function createBridge(win: BridgeWindow, timers: BridgeTimers = realTimers): Bridge {
   // Ids start somewhere random, so two pages open at once do not answer each other's requests.
   let nextId = Math.floor(Math.random() * 1_000_000) + 1
+  /** True once a ping was answered, until a command fails. */
+  let present = false
+
+  const post = (command: BrowserCommand, timeoutMs: number, onTimeout: BrowserResult): Promise<BrowserResult> => {
+    const id = nextId
+    nextId += 1
+    return new Promise<BrowserResult>((resolve) => {
+      let timer: unknown = null
+      const finish = (result: BrowserResult): void => {
+        win.removeEventListener('message', listener)
+        if (timer !== null) timers.clearTimeout(timer)
+        resolve(result)
+      }
+      const listener = (event: { data: unknown }): void => {
+        const data = event.data
+        if (!isRecord(data) || data.source !== BRIDGE_EXTENSION || data.id !== id) return
+        const result = asResult(data.result)
+        if (result) finish(result)
+      }
+      win.addEventListener('message', listener)
+      timer = timers.setTimeout(() => finish(onTimeout), timeoutMs)
+      const request: BridgeRequest = { source: BRIDGE_APP, id, command }
+      win.postMessage(request, win.location.origin)
+    })
+  }
+
+  const ping = (): Promise<BrowserResult> =>
+    post({ kind: 'ping' }, BRIDGE_TIMEOUT_MS, { ok: false, code: 'no_extension', message: 'No answer from the Ütle extension.' })
 
   return {
-    sendCommand(command) {
-      const id = nextId
-      nextId += 1
-      return new Promise<BrowserResult>((resolve) => {
-        let timer: unknown = null
-        const finish = (result: BrowserResult): void => {
-          win.removeEventListener('message', listener)
-          if (timer !== null) timers.clearTimeout(timer)
-          resolve(result)
-        }
-        const listener = (event: { data: unknown }): void => {
-          const data = event.data
-          if (!isRecord(data) || data.source !== BRIDGE_EXTENSION || data.id !== id) return
-          const result = asResult(data.result)
-          if (result) finish(result)
-        }
-        win.addEventListener('message', listener)
-        timer = timers.setTimeout(
-          () => finish({ ok: false, code: 'no_extension', message: 'No answer from the Ütle extension.' }),
-          BRIDGE_TIMEOUT_MS,
-        )
-        const request: BridgeRequest = { source: BRIDGE_APP, id, command }
-        win.postMessage(request, win.location.origin)
-      })
+    async sendCommand(command) {
+      if (command.kind === 'ping') {
+        const answer = await ping()
+        present = answer.ok
+        return answer
+      }
+      if (!present) {
+        const answer = await ping()
+        if (!answer.ok) return answer
+        present = true
+      }
+      const result = await post(command, BRIDGE_COMMAND_TIMEOUT_MS, { ok: false, code: 'failed', message: BRIDGE_TIMED_OUT })
+      if (!result.ok) present = false
+      return result
     },
   }
 }

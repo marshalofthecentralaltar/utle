@@ -67,7 +67,7 @@ export function App() {
   const quiet = 'flex h-11 cursor-pointer items-center border-0 bg-transparent px-3 hover:text-ink'
 
   return (
-    <div className="flex min-h-screen flex-col pb-48">
+    <div className="flex min-h-screen flex-col pb-80 min-[1000px]:pb-48">
       <header className="grid min-h-11 grid-cols-[1fr_auto] items-center border-b border-edge px-2 text-[0.8125rem] text-soft min-[700px]:grid-cols-[1fr_auto_1fr]">
         <div className="flex" role="group" aria-label={t.language}>
           {LANGUAGES.map((language) => (

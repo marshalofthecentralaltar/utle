@@ -7,6 +7,9 @@ import { spokenNumber } from './quickReply.ts'
  * something in the document never reaches this table.
  */
 
+/** The message of a failed result when the extension did not answer a command in time. */
+export const BRIDGE_TIMED_OUT = 'timed_out'
+
 export const SITES: Record<string, string> = {
   messenger: 'https://www.messenger.com/',
   facebook: 'https://www.facebook.com/',

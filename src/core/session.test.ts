@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BrowserCommand, BrowserResult } from '../browser/protocol.ts'
+import { BRIDGE_TIMED_OUT } from './browserIntent.ts'
 import { SAMPLE_DOC, sampleDoc } from './document.ts'
 import type { Doc } from './document.ts'
 import type { Intent, InterpretRequest } from './intent.ts'
@@ -914,6 +915,30 @@ describe('the message draft', () => {
     expect(later.state.understood).toBe(
       'Ei saatnud. Brauseri laiendus ei vasta. Paigalda Ütle laiendus ja laadi see leht uuesti. Sõnum on alles.',
     )
+  })
+
+  it('a send the browser did not answer in time keeps the draft and says to look before sending again', () => {
+    const yes = run(written(), say('saada'), say('jah'))
+    const late = answer(answer(yes, OK), { ok: false, code: 'failed', message: BRIDGE_TIMED_OUT })
+    expect(late.state.mode).toBe('listening')
+    expect(late.state.draft?.to).toBe('Mari')
+    expect(late.state.understood).toBe(
+      'Brauser ei vastanud õigel ajal. Sõnum võis minna või mitte: vaata vestlus üle, enne kui uuesti saadad.',
+    )
+    // Opening the conversation timed out: nothing was typed, so nothing can have gone.
+    const open = answer(yes, { ok: false, code: 'failed', message: BRIDGE_TIMED_OUT })
+    expect(open.state.understood).toBe('Ei saatnud. Brauser ei vastanud õigel ajal. Sõnum on alles.')
+  })
+
+  it('a browser command that timed out says so instead of "did not work"', () => {
+    const { state } = answer(run(ET(), say('ava messenger')), { ok: false, code: 'failed', message: BRIDGE_TIMED_OUT })
+    expect(state.understood).toBe('Brauser ei vastanud õigel ajal.')
+  })
+
+  it('while sending, the line says what is happening until the answer comes', () => {
+    const yes = run(written(), say('saada'), say('jah'))
+    expect(yes.state.understood).toBe('Avan vestluse: Mari.')
+    expect(answer(yes, OK).state.understood).toBe('Kirjutan sõnumi.')
   })
 
   it('an utterance while sending waits', () => {
