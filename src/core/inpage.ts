@@ -57,7 +57,8 @@ export function inpageStep(session: InpageSession, utterance: string, box: BoxSt
   const classified = classify(session, utterance)
   const spoken: Action = { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
   // One ordinary word while he is writing is a word of the message, not a command (section 22, "Soft words").
-  const soft = classified.action.kind === 'browser' && SOFT_WORDS.has(normalise(utterance)) && box.present && box.armed && box.text.trim() !== ''
+  // With the labels showing he is navigating, not writing: "stopp" hides them whatever the box holds.
+  const soft = classified.action.kind === 'browser' && !session.hints && SOFT_WORDS.has(normalise(utterance)) && box.present && box.armed && box.text.trim() !== ''
   // "mine X juurde", "vali X": the caret or a selection only when X is in the box; else the words go to the model,
   // which may mean a section of the page or a choice in a list (round 3, editing).
   const wanted = classified.action.kind === 'browser' ? findOf(classified.action.command) : classified.action.kind === 'deleteNamed' ? classified.action.find : null
@@ -245,6 +246,8 @@ const BACK = new Set(['tagasi', 'back', 'go back'])
 const SOFT_WORDS = new Set([
   'välja', 'siia', 'edasi', 'sulge', 'enter', 'sisesta', 'kinnita', 'paus', 'peata', 'mängi', 'esita',
   'close', 'play', 'pause', 'forward', 'escape',
+  // Round 3: the scroll's stop words are chat replies too ("aitab", "seis").
+  'stopp', 'seis', 'aitab', 'lõpeta', 'stop',
 ])
 
 /** M7: "stopp" while the labels show hides them. */

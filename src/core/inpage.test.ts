@@ -546,7 +546,7 @@ const COMMAND_PHRASES = [
 ]
 
 /** One-word fixed phrases that are ordinary words of a message: commands only with an empty or unarmed box (section 22). */
-const SOFT_WORDS = ['välja', 'siia', 'edasi', 'sulge', 'enter', 'sisesta', 'kinnita', 'paus', 'peata', 'mängi', 'esita', 'close', 'play', 'pause', 'forward', 'escape']
+const SOFT_WORDS = ['välja', 'siia', 'edasi', 'sulge', 'enter', 'sisesta', 'kinnita', 'paus', 'peata', 'mängi', 'esita', 'close', 'play', 'pause', 'forward', 'escape', 'stopp', 'seis', 'aitab', 'lõpeta', 'stop']
 
 const DICTATION = [
   'Ma jõuan homme kell kolm',
@@ -987,6 +987,12 @@ describe('M7 soft words: one ordinary word while he is writing is a word of the 
     const step = inpageStep(session(), u, box('Tulen'))
     expect(step.commands).toEqual(only({ kind: 'setText', text: `Tulen ${u}` }))
     expect(step.ask).toBe(true)
+  })
+
+  it.each(['aitab', 'seis', 'stopp'])('"%s" while writing is a word of the message, and with the labels showing "stopp" still hides them', (u) => {
+    const writing = inpageStep(session(), u, box('Tulen homme'))
+    expect(writing.commands[0]?.kind).toBe('setText')
+    expect(inpageStep(session({ hints: true }), 'stopp', box('Tulen homme')).commands).toEqual(only({ kind: 'hideHints' }))
   })
 
   it.each(['välja', 'siia', 'enter', 'sulge', 'edasi'])('"%s" with an empty, unarmed or absent box is the command', (u) => {

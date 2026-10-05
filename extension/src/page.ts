@@ -1709,6 +1709,44 @@ async function select(what: SelectTarget, site: Site | null): Promise<BrowserRes
   return ok({ box: boxState(el, site) })
 }
 
+/**
+ * Google Docs as a box (round 3). Docs has no text Ütle can read, so the box reports what Ütle itself
+ * typed since the last utterance ended: the core joins its dictation onto that, and setText types only
+ * the new tail (or erases with Backspace when the text shrinks, as a preview turning into a command does).
+ * The hidden editor must exist and be focused; otherwise the page has no box at all.
+ */
+let docsTyped = ''
+let docsTypedAt = 0
+const DOCS_TYPED_RESET_MS = 4000
+
+function docsBox(): BoxState | null {
+  const docs = docsEditor()
+  if (docs === null || docs === 'missing') return null
+  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
+  return { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' }
+}
+
+function docsSetText(text: string): BrowserResult {
+  const docs = docsEditor()
+  if (docs === null || docs === 'missing') return fail('not_found', DOCS_MISSING)
+  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
+  let common = 0
+  while (common < docsTyped.length && common < text.length && docsTyped[common] === text[common]) common += 1
+  const erase = docsTyped.length - common
+  if (erase > 0) {
+    const init = { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true, composed: true }
+    for (let i = 0; i < erase; i++) {
+      docs.dispatchEvent(new KeyboardEvent('keydown', init))
+      docs.dispatchEvent(new KeyboardEvent('keyup', init))
+    }
+  }
+  const tail = text.slice(common)
+  if (tail !== '') docsType(docs, tail)
+  docsTyped = text
+  docsTypedAt = Date.now()
+  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' } })
+}
+
 /** Types at the caret, replacing a selection, through the same typing path as setText, with the join rules of joinAtCaret. */
 async function typeText(text: string, site: Site | null): Promise<BrowserResult> {
   const docs = docsEditor()
@@ -2054,9 +2092,9 @@ async function run(command: PageCommand): Promise<PageResult> {
       case 'openConversation':
         return await openConversation(command.name, site)
       case 'readBox':
-        return ok({ box: boxState(findMessageBox(site), site) })
+        return ok({ box: docsBox() ?? boxState(findMessageBox(site), site) })
       case 'setText':
-        return await setText(String(command.text), site)
+        return docsBox() ? docsSetText(String(command.text)) : await setText(String(command.text), site)
       case 'pressSend':
         return await pressSend(site)
       case 'readPage':
