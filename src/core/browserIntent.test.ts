@@ -30,6 +30,8 @@ const ROWS: Array<[string, BrowserCommand]> = [
   ['third tab', { kind: 'switchTab', to: { index: 3 } }],
   ['go to tab 3', { kind: 'switchTab', to: { index: 3 } }],
   // Sites by name
+  ['Ava WhatsApp.', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
+  ['ava vatsap', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
   ['ava messenger', { kind: 'goTo', url: SITES.messenger }],
   ['Ava Messenger.', { kind: 'goTo', url: 'https://www.messenger.com/' }],
   ['ava gmail', { kind: 'goTo', url: 'https://mail.google.com/' }],

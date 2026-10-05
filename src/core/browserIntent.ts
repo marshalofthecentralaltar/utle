@@ -11,6 +11,9 @@ import { spokenNumber } from './quickReply.ts'
 export const BRIDGE_TIMED_OUT = 'timed_out'
 
 export const SITES: Record<string, string> = {
+  whatsapp: 'https://web.whatsapp.com/',
+  'whats app': 'https://web.whatsapp.com/',
+  vatsap: 'https://web.whatsapp.com/',
   messenger: 'https://www.messenger.com/',
   facebook: 'https://www.facebook.com/',
   'face book': 'https://www.facebook.com/',

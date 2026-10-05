@@ -16,7 +16,7 @@ const PHRASES: Record<Exclude<Quick['kind'], 'number'>, readonly string[]> = {
   yes: ['yes', 'yeah', 'yep', 'ok', 'okay', 'correct', 'do it', 'confirm', 'accept', 'jah', 'jaa', 'just nii'],
   no: ['no', 'nope', 'cancel', 'discard', 'reject', 'ei', 'tühista'],
   undo: ['undo', 'undo that', 'võta tagasi'],
-  sleep: ['stop listening', 'go to sleep', 'sleep', 'ära kuula', 'maga'],
+  sleep: ['stop listening', 'go to sleep', 'sleep', 'ära kuula', 'maga', 'puhka'],
   wake: ['wake up', 'start listening', 'ärka', 'ärka üles'],
   stop: ['stop', 'stop reading', 'quiet', 'be quiet', 'stopp', 'vait', 'lõpeta'],
   help: ['help', 'what can i say', 'abi'],

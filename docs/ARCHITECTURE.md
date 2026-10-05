@@ -645,3 +645,59 @@ The owner cancelled the shape in section 20 the same day it was built. His words
 - "puhka" stops everything being typed; "ärka üles" resumes. The strip shows which.
 - Extension code is TypeScript bundled by `npm run ext` into `extension/dist/`, so it imports `src/core` and `src/speech` instead of copying them.
 - The section 20 page at localhost stays as a development harness and the voice check; it is not part of what he uses.
+
+### 21.1 What an utterance does
+
+`inpageStep(session, utterance, box)` in `src/core/inpage.ts` decides; the extension runs the commands it returns in order and reports the first failure, or the last success, to `inpageResult`, which gives the line for the strip. Phrases are matched on the whole utterance, lowercased with punctuation dropped, in either language whatever the session's language; the lines are in the session's language and live in `src/core/strings.ts` (`inpage`).
+
+**Order.** The first rule that matches wins.
+
+1. Asleep: only the wake phrase does anything (it wakes); everything else is ignored with a line saying Ütle is resting. Awake, a sleep phrase puts it to sleep.
+2. While numbered labels show (`hints`), a bare number ("viis", "5", "number viis") is `clickHint`.
+3. Send.
+4. Undo ("võta tagasi").
+5. Repairs of the box text.
+6. Conversations, including the one-breath form.
+7. Browser commands: the table of 20.3 (`browserIntent`) plus the bare words below.
+8. Everything else is dictation.
+
+**Sleep and wake.** Sleep: puhka, ära kuula, maga / sleep, go to sleep, stop listening. Wake: ärka üles, ärka / wake up, start listening.
+
+**Conversations.**
+
+| Phrase (Estonian / English) | Commands |
+|---|---|
+| ava vestlus Mariga, ava Mari vestlus, kirjuta Marile, sõnum Marile, kirjuta sõnum Marile / open chat with Mari, open the conversation with Mari, message Mari, write to Mari | `openConversation{name: 'Mari'}` |
+| kirjuta Marile, et ma jõuan homme kell kolm / write to Mari that ..., tell Mari that ... | `openConversation{name}`, then `setText{'Ma jõuan homme kell kolm.'}`. It does not send. |
+| uus sõnum, kirjuta sõnum / new message (no name) | Nothing; the line asks for the name. |
+
+The name rule of 20.3, plus the comitative: the last word loses "-le" (Marile, Mari) or "-ga" (Mariga, Mari; Jaaniga, Jaani), and every word is capitalised. Pronouns are not names: "kirjuta mulle" (mulle, sulle, talle, meile, teile, neile, endale) is dictation. Opening a conversation (and anything else that changes the page in front) empties the undo list, because the earlier texts belong to another box; the one-breath form then pushes the empty text, so "võta tagasi" clears what it typed.
+
+**Send.** saada, saada ära, saada sõnum, saada see / send, send it, send the message: `pressSend`. An absent or empty box: no command, the line says there is nothing to send. No second yes: the box is the preview. A successful send empties the undo list.
+
+**Repairs.** None uses the model. Each emits one `setText` with the whole new text and pushes the old text onto `undo` (at most 30 entries, the oldest dropped). With no box: no command, the line says to pick a text field.
+
+| Phrase (Estonian / English) | What happens to the box text |
+|---|---|
+| mitte X, vaid Y; mitte X vaid Y; X asemel Y; asenda X sõnaga Y / not X but Y; replace X with Y; change X to Y | The last occurrence of X (case-insensitive, whole words, X and Y may be several words) becomes Y. When the replaced text began with a capital letter at a sentence start, Y does too. "X asemel Y" is a repair only when X and Y are at most two words each (longer is a sentence being dictated), and because "asemel" takes the genitive ("kolme asemel neli"), a one-word X that is not found also matches a word it extends by one or two letters (kolme finds kolm). X not found: no command, the line quotes X. |
+| kustuta viimane sõna / delete the last word | The last word goes, with the punctuation attached to it. |
+| kustuta viimane lause / delete the last sentence | Everything after the last sentence end (. ! ? or a line break) before the final one goes. |
+| kustuta kõik, tühjenda, alusta uuesti, katkesta sõnum / delete everything, clear, start again, cancel the message | The box is emptied. |
+| uus rida, reavahetus / new line | A line break is appended. |
+| punkt, koma, küsimärk, hüüumärk / full stop, period, comma, question mark, exclamation mark | As the whole utterance only: the mark is appended, replacing a mark already at the end. Inside dictation the words stay words (the recogniser punctuates). |
+| võta tagasi / undo, undo that | The newest text on `undo` is put back. It leaves `undo` when that `setText` succeeds (in `inpageResult`), so a failed undo loses nothing. Nothing there: the line says so. |
+
+An empty box makes the word, sentence and mark repairs say the box is empty.
+
+**Browser.** Everything in the 20.3 table. The ambiguity rule of 20.3 existed because a document came first; in this mode there is no document, so bare words go to the browser: "tagasi" / "back", "go back" are `history back`; "edasi" / "forward" are `history forward`; "järgmine" / "next" and "eelmine" / "previous" are `switchTab next / previous` (the tab is what he moves between; pages have "tagasi" and "edasi"). "Võta tagasi" stays undo. `hints` stays true only after `showHints`, `scroll`, `ping`, `readBox`, `setText` and `pressSend`, which do not remove the labels (20.2); every other command clears it, and a failed `showHints` clears it in `inpageResult`.
+
+**Dictation.** Anything else is appended to the box text with one `setText`; the old text is pushed onto `undo`. With no box (`present` false): no command, the line says to pick a text field ("näita numbreid" and the number) or open a conversation.
+
+- Joining: nothing between when the old text is empty or ends with a line break; otherwise one space (trailing spaces of the old text are dropped first).
+- Continuing a sentence: when the utterance starts with a joining word (ja, ning, ega, või, aga, kuid, vaid, sest, et, kui / and, or, but, because, so, that) and the old text ends with a full stop, that full stop is dropped and the utterance continues the sentence; before aga, kuid, vaid, sest, et, but and because a comma takes its place, as Estonian punctuation wants. This is what makes "Ma jõuan homme kell neli." plus "ja võtan koogi kaasa" one sentence; a sentence that should start with "Ja" can be fixed with "punkt" first, which is rare in a chat message.
+- First letter: capitalised when the box is empty or the old text ends a sentence (. ! ? … or a line break). Otherwise the recogniser's capital is lowered, except when the word cannot be a plain word: it has a capital after its first letter (ERR, iPhone), it is English "I" or starts with "I'", or the same word with the same capital already stands in the box in the middle of a sentence (a name he has used, such as "Mari").
+- Final full stop: added only when the utterance has more than two words and ends without punctuation (. ! ? … , : ;).
+
+**Instant.** `inpageInstant(session, utterance)` is true for everything rules 1 to 7 recognise except the one-breath form, and for everything while asleep (it is ignored, so there is nothing to join). It is false for dictation, for the one-breath form (a sentence a pause may split) and for an empty utterance. A bare number is instant only while labels show.
+
+**Results.** `inpageResult` maps the result code, never the extension's message text. Success: `pressSend` says "Saadetud." and empties `undo`; `setText` says it is done; `openConversation` names the conversation; tab and navigation commands give the tab title (20.3 `browserDone`); `showHints` gives the label count. Failure: the failed command is taken to be the first of the step (only the one-breath form has two, and when `openConversation` fails `setText` never ran); `not_found` names the conversation, the number or the box; `no_target` says no browser window was found; a timed-out `pressSend` says the message may or may not have gone. `undo` stays true to the box: a step whose `setText` text equals the newest `undo` entry was an undo, and that entry is removed when it succeeds; any other step with a `setText` pushed the old text, and that entry is removed when the step fails. A repair that would leave the text as it is emits nothing, so the two cannot be confused.
