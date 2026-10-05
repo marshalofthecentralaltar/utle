@@ -688,7 +688,8 @@ describe('browser commands: local, no model, no yes', () => {
     ['mine tagasi', { kind: 'history', direction: 'back' }],
     ['laadi uuesti', { kind: 'reload' }],
     ['keri alla', { kind: 'scroll', direction: 'down' }],
-    ['otsi bussiaeg', { kind: 'goTo', url: 'https://www.google.com/search?q=bussiaeg' }],
+    ['otsi bussiaeg', { kind: 'siteSearch', query: 'bussiaeg' }],
+    ['otsi googlest bussiaeg', { kind: 'goTo', url: 'https://www.google.com/search?q=bussiaeg' }],
   ]
   it.each(rows)('%s emits the browser effect and no interpret effect', (text, command) => {
     const { state, effects } = run(ET(), say(text))

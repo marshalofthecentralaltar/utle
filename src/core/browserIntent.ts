@@ -44,7 +44,25 @@ function phrases(command: BrowserCommand, ...list: string[]): void {
   for (const phrase of list) FIXED[phrase] = command
 }
 
-phrases({ kind: 'newTab' }, 'ava uus vaheleht', 'uus vaheleht', 'ava vaheleht', 'new tab', 'open a new tab', 'open new tab')
+phrases(
+  { kind: 'newTab' },
+  'ava uus vaheleht',
+  'uus vaheleht',
+  'ava vaheleht',
+  'new tab',
+  'open a new tab',
+  'open new tab',
+  // M7 (section 22): the words he used.
+  'uus leht',
+  'ava uus leht',
+  'uus aken',
+  'ava uus aken',
+  'new page',
+  'new window',
+  'open a new page',
+  'open a new window',
+  'open new window',
+)
 phrases(
   { kind: 'closeTab' },
   'sulge vaheleht',
@@ -53,6 +71,8 @@ phrases(
   'close tab',
   'close the tab',
   'close this tab',
+  'sulge',
+  'close',
 )
 phrases({ kind: 'switchTab', to: 'next' }, 'järgmine vaheleht', 'mine järgmisele vahelehele', 'next tab')
 phrases({ kind: 'switchTab', to: 'previous' }, 'eelmine vaheleht', 'mine eelmisele vahelehele', 'previous tab')
@@ -96,6 +116,56 @@ phrases({ kind: 'scroll', direction: 'top' }, 'lehe algusesse', 'keri algusesse'
 phrases({ kind: 'scroll', direction: 'bottom' }, 'lehe lõppu', 'keri lõppu', 'scroll to the bottom', 'scroll to bottom')
 phrases({ kind: 'showHints' }, 'näita numbreid', 'näita numbrid', 'show numbers', 'show the numbers', 'show hints')
 phrases({ kind: 'hideHints' }, 'peida numbrid', 'peida numbrid ära', 'hide numbers', 'hide the numbers', 'hide hints')
+
+// M7 (docs/ARCHITECTURE.md section 22): the strip, the field in front, keys and the video.
+phrases({ kind: 'bar', show: false }, 'peida riba', 'peida ütle', 'peida ütle ära', 'hide the bar', 'hide bar')
+phrases({ kind: 'bar', show: true }, 'näita riba', 'näita ütle', 'show the bar', 'show bar')
+phrases({ kind: 'arm', on: true }, 'kirjuta siia', 'siia', 'write here', 'type here')
+phrases({ kind: 'arm', on: false }, 'ära kirjuta siia', 'ära siia kirjuta', 'do not write here', 'dont write here')
+phrases(
+  { kind: 'clearField' },
+  'tühjenda otsing',
+  'kustuta otsing',
+  'tühjenda kast',
+  'kustuta kast',
+  'tühjenda väli',
+  'clear the search',
+  'clear search',
+  'clear the field',
+  'clear the box',
+)
+phrases({ kind: 'pressKey', key: 'Escape' }, 'sulge aken', 'pane kinni', 'välja', 'escape', 'close this', 'close the window')
+phrases({ kind: 'pressKey', key: 'Enter' }, 'enter', 'sisesta', 'kinnita')
+phrases({ kind: 'media', action: 'play' }, 'mängi', 'esita', 'play', 'play the video', 'jätka videot')
+phrases({ kind: 'media', action: 'pause' }, 'paus', 'peata', 'peata video', 'pause', 'stop the video', 'pause the video')
+phrases({ kind: 'media', action: 'mute' }, 'vaigista', 'heli maha', 'heli välja', 'mute')
+phrases({ kind: 'media', action: 'unmute' }, 'heli tagasi', 'heli peale', 'heli sisse', 'unmute')
+phrases(
+  { kind: 'media', action: 'volumeUp' },
+  'heli valjemaks',
+  'valjemaks',
+  'kõvemaks',
+  'heli kõvemaks',
+  'pane heli valjemaks',
+  'pane heli kõvemaks',
+  'louder',
+  'volume up',
+  'turn it up',
+)
+phrases(
+  { kind: 'media', action: 'volumeDown' },
+  'heli vaiksemaks',
+  'vaiksemaks',
+  'pane heli vaiksemaks',
+  'tee heli vaiksemaks',
+  'quieter',
+  'volume down',
+  'turn it down',
+)
+phrases({ kind: 'media', action: 'fullscreen' }, 'täisekraan', 'täisekraanile', 'full screen', 'fullscreen')
+phrases({ kind: 'media', action: 'exitFullscreen' }, 'välju täisekraanist', 'täisekraanist välja', 'exit full screen', 'exit fullscreen')
+phrases({ kind: 'media', action: 'forward' }, 'keri edasi', 'skip forward')
+phrases({ kind: 'media', action: 'back' }, 'keri tagasi', 'skip back')
 
 const ORDINALS: Record<string, number> = {
   esimene: 1, teine: 2, kolmas: 3, neljas: 4, viies: 5, kuues: 6, seitsmes: 7, kaheksas: 8, üheksas: 9, kümnes: 10,
@@ -157,6 +227,11 @@ function tabIndex(s: string): number | null {
   return null
 }
 
+/** "otsi googlest X", "guugelda X", "google X", "search google for X" (cleanForBrowser drops the apostrophe of "google'ist"). */
+const GOOGLE = /^(?:(?:otsi|search) (?:googlest|googlist|googleist|googlei|google|guuglist|guuglest)(?: for)?|guugelda|googelda|google) (.+)$/
+/** "otsi youtube'ist X", "otsi youtubest X", "search youtube for X". */
+const YOUTUBE = /^(?:otsi|search) (?:you ?tubest|you ?tubeist|you ?tubist|you ?tubei|you ?tube)(?: for)? (.+)$/
+
 /** Every fixed phrase of the table, for the in-page command vocabulary (section 21.3). */
 export const BROWSER_PHRASES: readonly string[] = Object.keys(FIXED)
 
@@ -185,8 +260,13 @@ export function browserUnderstood(text: string): { command: BrowserCommand; unde
     return number === null ? null : plain({ kind: 'clickHint', number })
   }
 
-  const search = /^(?:otsi|search for|search) (.+)$/.exec(s)
-  if (search?.[1]) return plain({ kind: 'goTo', url: `https://www.google.com/search?q=${encodeURIComponent(search[1])}` })
+  // M7: "otsi X" is the site's own search (the extension falls back to Google); Google and YouTube by name.
+  const google = GOOGLE.exec(s)
+  if (google?.[1]) return plain({ kind: 'goTo', url: `https://www.google.com/search?q=${encodeURIComponent(google[1])}` })
+  const youtube = YOUTUBE.exec(s)
+  if (youtube?.[1]) return plain({ kind: 'goTo', url: `https://www.youtube.com/results?search_query=${encodeURIComponent(youtube[1])}` })
+  const search = /^(?:otsi|search for|search|look up) (.+)$/.exec(s)
+  if (search?.[1]) return plain({ kind: 'siteSearch', query: search[1] })
 
   const go = /^(mine lehele|ava leht|ava lehekülg|go to|open|ava|mine) (.+)$/.exec(s)
   if (go?.[1] && go[2]) {
