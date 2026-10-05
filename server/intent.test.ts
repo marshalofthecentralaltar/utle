@@ -1,0 +1,180 @@
+import Anthropic from '@anthropic-ai/sdk'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { IntentRequest } from '../src/core/pageIntent.ts'
+import { STRINGS } from '../src/core/strings.ts'
+import { InterpretError } from './interpret.ts'
+import type { MessagesClient, ModelReply } from './interpret.ts'
+import { pageIntent } from './intent.ts'
+
+type CreateParams = Parameters<MessagesClient['messages']['create']>[0]
+
+function answer(input: unknown): ModelReply {
+  return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_1', name: 'answer', input }] }
+}
+
+function fakeClient(...queue: Array<ModelReply | Error>): { client: MessagesClient; calls: CreateParams[] } {
+  const calls: CreateParams[] = []
+  const client: MessagesClient = {
+    messages: {
+      create: async (params) => {
+        calls.push(structuredClone(params))
+        const next = queue.shift()
+        if (!next) throw new Error('fake client: no reply queued')
+        if (next instanceof Error) throw next
+        return next
+      },
+    },
+  }
+  return { client, calls }
+}
+
+const YOUTUBE: IntentRequest['page'] = {
+  url: 'https://www.youtube.com/watch?v=abc',
+  title: 'Kassid mängivad - YouTube',
+  box: { present: true, text: '', armed: false, kind: 'search', label: 'Otsi' },
+  items: [
+    { id: 0, role: 'field', text: 'Otsi' },
+    { id: 1, role: 'button', text: 'Meeldib' },
+    { id: 2, role: 'button', text: 'Vaata hiljem' },
+    { id: 3, role: 'field', text: 'Lisa kommentaar...' },
+    { id: 4, role: 'link', text: 'Koerad jooksevad pargis' },
+  ],
+  media: { playing: true, muted: false, volume: 0.8, fullscreen: false },
+  hints: false,
+}
+
+function request(overrides: Partial<IntentRequest> = {}): IntentRequest {
+  return {
+    lang: 'et',
+    utterance: 'mine vaata hiljem',
+    page: YOUTUBE,
+    tabs: [{ index: 1, title: 'Kassid mängivad - YouTube', active: true }],
+    recent: [],
+    ...overrides,
+  }
+}
+
+const CLICK_LATER = answer({ intent: { kind: 'command', command: { kind: 'clickItem', id: 2 } }, say: 'ava Vaata hiljem' })
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('pageIntent', () => {
+  it('turns an answer call into a validated intent with one model call', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    const result = await pageIntent(request(), { client, model: 'm' })
+    expect(result).toEqual({ intent: { kind: 'command', command: { kind: 'clickItem', id: 2 } }, say: 'ava Vaata hiljem' })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('asks for one strict answer tool with low effort and a short budget', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client, model: 'claude-opus-5-5' })
+    const params = calls[0]
+    expect(params?.model).toBe('claude-opus-5-5')
+    expect(params?.max_tokens).toBe(400)
+    expect(params?.output_config).toEqual({ effort: 'low' })
+    expect(params?.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true })
+    const tools = params?.tools ?? []
+    expect(tools).toHaveLength(1)
+    const tool = tools[0]
+    expect(tool && 'name' in tool && tool.name).toBe('answer')
+    expect(tool && 'strict' in tool && tool.strict).toBe(true)
+  })
+
+  it('sends the page as numbered items and the utterance in the user turn', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client, model: 'm' })
+    const first = calls[0]?.messages[0]
+    const text = typeof first?.content === 'string' ? first.content : ''
+    expect(text).toContain('2. [button] Vaata hiljem')
+    expect(text).toContain('mine vaata hiljem')
+    expect(text).toContain('armed=false')
+    expect(calls[0]?.system).toContain('Always call the answer tool')
+  })
+
+  it('answers unclear when the item id is not on the page', async () => {
+    const { client } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'clickItem', id: 99 } }, say: 'x' }))
+    const result = await pageIntent(request(), { client, model: 'm' })
+    expect(result).toEqual({ intent: { kind: 'unclear', say: STRINGS.et.inpage.notUnderstood }, say: '' })
+  })
+
+  it('passes dictation through when the box is armed', async () => {
+    const { client } = fakeClient(answer({ intent: { kind: 'dictate', text: 'Tulen kell viis.' }, say: '' }))
+    const armed = { ...YOUTUBE, box: { present: true, text: '', armed: true, kind: 'composer' as const } }
+    const result = await pageIntent(request({ utterance: 'tulen kell viis', page: armed }), { client, model: 'm' })
+    expect(result).toEqual({ intent: { kind: 'dictate', text: 'Tulen kell viis.' }, say: '' })
+  })
+
+  it('maps a null newTab url to an absent one', async () => {
+    const { client } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'newTab', url: null } }, say: 'uus leht' }))
+    const result = await pageIntent(request({ utterance: 'uus leht' }), { client, model: 'm' })
+    expect(result.intent).toEqual({ kind: 'command', command: { kind: 'newTab' } })
+  })
+
+  it('answers unclear on a text-only reply, a refusal or max_tokens', async () => {
+    const replies: ModelReply[] = [
+      { stop_reason: 'end_turn', content: [{ type: 'text' }] },
+      { stop_reason: 'refusal', content: [] },
+      { stop_reason: 'max_tokens', content: [{ type: 'tool_use', id: 't', name: 'answer', input: {} }] },
+    ]
+    for (const reply of replies) {
+      const { client, calls } = fakeClient(reply)
+      const result = await pageIntent(request(), { client, model: 'm' })
+      expect(result.intent.kind).toBe('unclear')
+      expect(calls).toHaveLength(1)
+    }
+  })
+
+  it('rejects a malformed request without calling the model', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await expect(pageIntent({ utterance: 'x' }, { client, model: 'm' })).rejects.toMatchObject({ code: 'bad_request' })
+    await expect(pageIntent(request({ utterance: '  ' }), { client, model: 'm' })).rejects.toBeInstanceOf(InterpretError)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('maps SDK errors to codes, with no_key for a rejected key', async () => {
+    const cases: Array<[Error, string, string?]> = [
+      [new Anthropic.APIConnectionTimeoutError(), 'timeout'],
+      [new Anthropic.APIConnectionError({ message: 'offline' }), 'upstream_unavailable'],
+      [Anthropic.APIError.generate(429, undefined, 'slow down', new Headers()), 'upstream_unavailable'],
+      [Anthropic.APIError.generate(500, undefined, 'boom', new Headers()), 'upstream_unavailable'],
+      [Anthropic.APIError.generate(400, undefined, 'bad', new Headers()), 'upstream_rejected'],
+      [Anthropic.APIError.generate(401, undefined, 'no key', new Headers()), 'upstream_rejected', 'no_key'],
+      [Anthropic.APIError.generate(403, undefined, 'no key', new Headers()), 'upstream_rejected', 'no_key'],
+    ]
+    for (const [error, code, message] of cases) {
+      const { client } = fakeClient(error)
+      const expected = message ? { code, message } : { code }
+      await expect(pageIntent(request(), { client, model: 'm' })).rejects.toMatchObject(expected)
+    }
+  })
+
+  it('never puts the key in the request', async () => {
+    const before = process.env.ANTHROPIC_API_KEY
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test-secret-key'
+    try {
+      const { client, calls } = fakeClient(CLICK_LATER)
+      await pageIntent(request(), { client, model: 'm' })
+      expect(JSON.stringify(calls[0])).not.toContain('sk-ant-test-secret-key')
+    } finally {
+      if (before === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = before
+    }
+  })
+
+  it('logs the kind and the time, never the utterance or the page', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation(() => {}),
+    )
+    const { client } = fakeClient(CLICK_LATER)
+    await pageIntent(request({ utterance: 'mine vaata hiljem palun' }), { client, model: 'm' })
+    const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
+    expect(logged.some((line) => /^\[intent\] kind=command ms=\d+$/.test(line))).toBe(true)
+    const all = logged.join('\n')
+    expect(all).not.toContain('vaata hiljem')
+    expect(all).not.toContain('Kassid')
+    expect(all).not.toContain('youtube')
+  })
+})

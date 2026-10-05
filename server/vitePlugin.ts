@@ -3,11 +3,12 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { Plugin } from 'vite'
 import { InterpretRequestSchema } from '../src/core/intent.ts'
 import { attachAsr } from './asr.ts'
+import { pageIntent } from './intent.ts'
 import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode, MessagesClient } from './interpret.ts'
 import { rehearse } from './rehearsal.ts'
 
-const DEFAULT_MODEL = 'claude-haiku-4-5'
+const DEFAULT_MODEL = 'claude-opus-5-5'
 const MAX_BODY_BYTES = 1_000_000
 
 const STATUS: Record<InterpretErrorCode, number> = {
@@ -35,16 +36,39 @@ function readBody(req: IncomingMessage): Promise<string> {
   })
 }
 
+/** The extension's offscreen document calls from a chrome-extension:// origin, so every answer allows any origin. */
+function allowCors(res: ServerResponse): void {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
+  allowCors(res)
   res.statusCode = status
   res.setHeader('Content-Type', 'application/json; charset=utf-8')
   res.end(JSON.stringify(body))
 }
 
+function preflight(req: IncomingMessage, res: ServerResponse): boolean {
+  if (req.method !== 'OPTIONS') return false
+  allowCors(res)
+  res.statusCode = 204
+  res.end()
+  return true
+}
+
+function toKnownError(error: unknown): InterpretError {
+  return error instanceof InterpretError
+    ? error
+    : new InterpretError('upstream_rejected', 'The server has no working Anthropic credentials.')
+}
+
 /**
  * Hosts the API on the Vite dev server, so `npm run dev` is the whole product.
  *   POST /api/interpret  one utterance in, one Intent out
- *   GET  /api/status     which interpreter is answering
+ *   POST /api/intent     one unrecognised utterance with the page in, one IntentAnswer out (M7)
+ *   GET  /api/status     which interpreter is answering, and whether /api/intent has a key
  *   WS   /api/asr        the local recogniser (ARCHITECTURE 20.1)
  * The Anthropic key is read from the server's environment and never reaches the browser (principle P8).
  * `vite --mode rehearsal` answers from the demo script instead of the model.
@@ -56,7 +80,7 @@ export function utleApi(): Plugin {
 
   const getClient = (): MessagesClient => {
     if (!client) {
-      const anthropic = new Anthropic({ maxRetries: 1 })
+      const anthropic = new Anthropic({ maxRetries: 0 })
       client = { messages: { create: (params, options) => anthropic.messages.create(params, options) } }
     }
     return client
@@ -79,14 +103,41 @@ export function utleApi(): Plugin {
       if (server.httpServer && !process.env.VITEST) attachAsr(server.httpServer, server.config.root)
 
       server.middlewares.use('/api/status', (req, res, next) => {
+        if (preflight(req, res)) return
         if (req.method !== 'GET') {
           next()
           return
         }
-        send(res, 200, rehearsal ? { mode: 'rehearsal', model: null } : { mode: 'live', model: model() })
+        const intent = process.env.ANTHROPIC_API_KEY ? 'live' : 'no_key'
+        send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent } : { mode: 'live', model: model(), intent })
+      })
+
+      server.middlewares.use('/api/intent', (req, res, next) => {
+        if (preflight(req, res)) return
+        if (req.method !== 'POST') {
+          next()
+          return
+        }
+        void (async () => {
+          try {
+            let input: unknown
+            try {
+              input = JSON.parse(await readBody(req))
+            } catch (error) {
+              if (error instanceof InterpretError) throw error
+              throw new InterpretError('bad_request', 'The request body is not JSON.')
+            }
+            if (!process.env.ANTHROPIC_API_KEY) throw new InterpretError('upstream_rejected', 'no_key')
+            send(res, 200, await pageIntent(input, { client: getClient(), model: model() }))
+          } catch (error) {
+            const known = toKnownError(error)
+            send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })
+          }
+        })()
       })
 
       server.middlewares.use('/api/interpret', (req, res, next) => {
+        if (preflight(req, res)) return
         if (req.method !== 'POST') {
           next()
           return
@@ -102,10 +153,7 @@ export function utleApi(): Plugin {
             }
             send(res, 200, await answer(input))
           } catch (error) {
-            const known =
-              error instanceof InterpretError
-                ? error
-                : new InterpretError('upstream_rejected', 'The server has no working Anthropic credentials.')
+            const known = toKnownError(error)
             send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })
           }
         })()
