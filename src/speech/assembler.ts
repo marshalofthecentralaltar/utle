@@ -5,6 +5,8 @@ export interface Assembler {
   activity(): void
   /** True when nothing is held waiting to be joined. */
   idle(): boolean
+  /** Delivers what is held now, without waiting for the hold (push-to-talk released). */
+  releaseNow(): void
   dispose(): void
 }
 
@@ -64,6 +66,9 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
     },
     idle() {
       return held.length === 0
+    },
+    releaseNow() {
+      release()
     },
     dispose() {
       cancel()
