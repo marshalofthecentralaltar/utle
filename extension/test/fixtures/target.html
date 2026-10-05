@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Target page</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 20px; min-height: 4000px; position: relative; }
+      .row { display: flex; gap: 16px; margin: 12px 0; align-items: center; }
+      #editor { border: 1px solid #888; min-height: 40px; width: 360px; padding: 6px; }
+      #offscreen { position: absolute; top: 3000px; left: 20px; }
+      #hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1>Target page</h1>
+    <div class="row">
+      <a id="l1" href="page-one.html">Link one</a>
+      <a id="l2" href="page-two.html">Link two</a>
+      <a id="l3" href="page-three.html">Link three</a>
+    </div>
+    <div class="row">
+      <button id="b1" type="button" onclick="this.textContent = 'Pressed'">Button one</button>
+      <button id="b2" type="button">Button two</button>
+      <button id="hidden" type="button">Hidden button</button>
+    </div>
+    <div class="row"><input id="name" type="text" placeholder="An input" /></div>
+    <div class="row"><textarea id="notes" rows="3" cols="40" placeholder="A textarea"></textarea></div>
+    <div class="row"><div id="editor" contenteditable="true" role="textbox" aria-label="Message"></div></div>
+    <h2>Sent</h2>
+    <ul id="sent"></ul>
+    <button id="offscreen" type="button">Off-screen button</button>
+    <script type="module">
+      import { createEditor, $getRoot, KEY_ENTER_COMMAND, COMMAND_PRIORITY_HIGH, registerPlainText } from '../vendor/lexical.js'
+      const editor = createEditor({ namespace: 'fixture', onError: (e) => { throw e } })
+      editor.setRootElement(document.getElementById('editor'))
+      registerPlainText(editor)
+      // Enter sends: like Messenger, the editor's text goes to the sent list and the editor clears.
+      editor.registerCommand(KEY_ENTER_COMMAND, (event) => {
+        if (event) event.preventDefault()
+        const text = editor.getEditorState().read(() => $getRoot().getTextContent())
+        if (text.trim() !== '') {
+          const li = document.createElement('li')
+          li.textContent = text
+          document.getElementById('sent').append(li)
+        }
+        editor.update(() => $getRoot().clear())
+        return true
+      }, COMMAND_PRIORITY_HIGH)
+      window.lexicalText = () => editor.getEditorState().read(() => $getRoot().getTextContent())
+      window.lexicalReady = true
+    </script>
+  </body>
+</html>
