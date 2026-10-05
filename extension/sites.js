@@ -6,6 +6,10 @@
 
 globalThis.__utleSites = {
   messenger: {
+    // openConversation goes here when the target tab is on another site. The options storage
+    // key 'messagingHome' overrides it.
+    home: 'https://www.messenger.com/',
+
     // Where openConversation uses these selectors instead of the generic link search.
     isHere: (location) =>
       /(^|\.)messenger\.com$/.test(location.hostname) ||

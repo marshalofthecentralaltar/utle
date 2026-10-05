@@ -20,6 +20,8 @@ const repoRoot = resolve(extensionDir, '..')
 const PORT = 5183
 const UTLE = `http://localhost:${PORT}/fixtures/utle.html`
 const T = `http://127.0.0.1:${PORT}/fixtures`
+// The messaging site: another origin on the same server (IPv6 loopback).
+const M = `http://[::1]:${PORT}/fixtures`
 const ESTONIAN = 'Tere! Jõuan homme kell kolm.'
 // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
 const headed = true
@@ -210,16 +212,54 @@ async function main(): Promise<void> {
     r = await send({ kind: 'clickHint', number: 2 })
     line('clickHint', '2 follows "Link two"', r !== 'timeout' && r.ok && r.tab?.title === 'Page two' && utleUntouched(), describe(r))
 
-    // ---------- 5. openConversation ----------
-    await send({ kind: 'goTo', url: `${T}/convs.html` })
-    r = await send({ kind: 'openConversation', name: 'mari' })
-    line('openConversation', '"mari" -> Mari Maasikas', r !== 'timeout' && r.ok && r.tab?.url.endsWith('c=mari') === true, describe(r))
-    await send({ kind: 'history', direction: 'back' })
-    r = await send({ kind: 'openConversation', name: 'Märt' })
-    line('openConversation', '"Märt" -> Märt Tamm', r !== 'timeout' && r.ok && r.tab?.url.endsWith('c=mart') === true, describe(r))
-    await send({ kind: 'history', direction: 'back' })
-    r = await send({ kind: 'openConversation', name: 'nobody' })
-    line('openConversation', '"nobody" -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    // ---------- 5. openConversation on the messaging site ----------
+    const timed = async (command: unknown): Promise<[Result | 'timeout', number]> => {
+      const t0 = Date.now()
+      const res = await send(command)
+      return [res, Date.now() - t0]
+    }
+    const tabCount = async (): Promise<number> => sw.evaluate(async () => (await chrome.tabs.query({ windowType: 'normal' })).length)
+    let ms = 0
+
+    // A messaging home with no conversation list (a login page).
+    await send({ kind: 'goTo', url: `${T}/page-one.html` })
+    await sw.evaluate((url) => chrome.storage.local.set({ messagingHome: url }), `${M}/login.html`)
+    ;[r, ms] = await timed({ kind: 'openConversation', name: 'mari' })
+    line('openConversation', 'home is a login page -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found' && /logging in/.test(r.message), `${describe(r)} (${ms} ms)`)
+
+    // Not on the messaging site, no messaging tab: the target tab goes to the home; the list arrives 1.5 s after load.
+    await send({ kind: 'goTo', url: `${T}/page-one.html` })
+    await sw.evaluate((url) => chrome.storage.local.set({ messagingHome: url }), `${M}/messenger.html`)
+    const tabsBefore = await tabCount()
+    ;[r, ms] = await timed({ kind: 'openConversation', name: 'mari' })
+    line('openConversation', 'from page-one -> home, late list, Mari', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mari` && (await tabCount()) === tabsBefore, `${describe(r)} (${ms} ms) tabs ${tabsBefore}->${await tabCount()}`)
+    const messenger = ctx.pages().find((p) => p.url().startsWith(`http://[::1]:${PORT}/`))
+    if (!messenger) throw new Error('messaging page not found')
+
+    // A same-document switch: the old composer goes at once, the new one appears 800 ms later.
+    ;[r, ms] = await timed({ kind: 'openConversation', name: 'Märt' })
+    line('openConversation', '"Märt" -> Märt Tamm (pushState)', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mart`, `${describe(r)} (${ms} ms)`)
+    ;[r, ms] = await timed({ kind: 'insertText', text: ESTONIAN, submit: true })
+    const toMart = await messenger.evaluate(() => (window as unknown as { sentTo: (id: string) => string[] }).sentTo('mart'))
+    const toMari = await messenger.evaluate(() => (window as unknown as { sentTo: (id: string) => string[] }).sentTo('mari'))
+    line('insertText', 'lands in Märt list, not in Mari list', r !== 'timeout' && r.ok && toMart.length === 1 && toMart[0] === ESTONIAN && toMari.length === 0, `${describe(r)} (${ms} ms) mart=${JSON.stringify(toMart)} mari=${JSON.stringify(toMari)}`)
+    await messenger.screenshot({ path: join(repoRoot, 'docs/proof/ext-messenger-sent.png') })
+
+    for (const [spoken, id, who] of [['Jaani', 'jaan', 'Jaan Tamm'], ['Märdi', 'mart', 'Märt Tamm'], ['Peetri', 'peeter', 'Peeter Kask'], ['Mari', 'mari', 'Mari Maasikas']] as const) {
+      ;[r, ms] = await timed({ kind: 'openConversation', name: spoken })
+      line('openConversation', `"${spoken}" -> ${who}`, r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/${id}`, `${describe(r)} (${ms} ms)`)
+    }
+    ;[r, ms] = await timed({ kind: 'openConversation', name: 'nobody' })
+    line('openConversation', '"nobody" -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', `${describe(r)} (${ms} ms)`)
+    ;[r, ms] = await timed({ kind: 'openConversation', name: 'Broken Link' })
+    line('openConversation', 'click that does not open -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', `${describe(r)} (${ms} ms)`)
+
+    // Not on the messaging site, but a messaging tab is open in the window: switch to it.
+    await send({ kind: 'newTab', url: `${T}/page-one.html` })
+    const tabsWithTwo = await tabCount()
+    ;[r, ms] = await timed({ kind: 'openConversation', name: 'Märt' })
+    const active = await activeTab()
+    line('openConversation', 'messaging tab exists -> it becomes active', r !== 'timeout' && r.ok && r.tab?.url === `${M}/t/mart` && active?.url === `${M}/t/mart` && (await tabCount()) === tabsWithTwo, `${describe(r)} (${ms} ms) tabs ${tabsWithTwo}->${await tabCount()}`)
 
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })

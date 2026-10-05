@@ -16,7 +16,9 @@
 `clickHint {number}`, `openConversation {name}`, `insertText {text, submit}`.
 
 They act on the active tab of the last focused ordinary browser window that is not Ütle's window.
-Only the page at the configured Ütle origin gets answers. Messenger selectors live in `sites.js`.
+Only the page at the configured Ütle origin gets answers. Messenger selectors and its home address
+live in `sites.js`. `openConversation` from any other site first switches to a Messenger tab in the
+window, or opens https://www.messenger.com/ in the target tab.
 
 ## Test
 

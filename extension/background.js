@@ -1,10 +1,17 @@
 // Service worker: finds the target tab, runs browser commands, docks the Ütle window.
 // The contract is src/browser/protocol.ts; this file follows it by hand. See docs/ARCHITECTURE.md 20.2.
 
+// Defines globalThis.__utleSites: the messaging site's address rules and home.
+import './sites.js'
+
 /** Where Ütle runs unless the options page says otherwise. */
 export const DEFAULT_UTLE_URL = 'http://localhost:5173'
 const DOCK_WIDTH = 440
 const LOAD_TIMEOUT_MS = 8000
+/** After openConversation clicks, how long the address may take to change. */
+const SETTLE_TIMEOUT_MS = 3000
+/** After the address changed (or where it does not), time for the page to swap its composer. */
+const SETTLE_QUIET_MS = 500
 
 // ---------- settings ----------
 
@@ -20,6 +27,23 @@ async function utleOrigin() {
     return new URL(DEFAULT_UTLE_URL).origin
   }
 }
+
+/** The messaging site's home. Stored 'messagingHome' overrides sites.js (the test uses it). */
+async function messagingHome() {
+  const { messagingHome: stored } = await chrome.storage.local.get('messagingHome')
+  return typeof stored === 'string' && stored.length > 0 ? stored : globalThis.__utleSites.messenger.home
+}
+
+function onMessaging(url, home) {
+  try {
+    const u = new URL(url)
+    return globalThis.__utleSites.messenger.isHere(u) || u.origin === new URL(home).origin
+  } catch {
+    return false
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------- results ----------
 
@@ -147,7 +171,7 @@ async function runInPage(tab, command) {
     const [frame] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (cmd) => globalThis.__utle.run(cmd),
-      args: [command],
+      args: [{ ...command, onMessaging: onMessaging(tab.url, await messagingHome()) }],
     })
     const result = frame && frame.result
     if (!result || typeof result.ok !== 'boolean') return fail('failed', 'The page did not answer.')
@@ -257,8 +281,9 @@ async function execute(command, senderWindowId) {
     case 'hideHints':
     case 'insertText':
       return runInPage(tab, command)
-    case 'clickHint':
-    case 'openConversation': {
+    case 'openConversation':
+      return openConversation(tab, command)
+    case 'clickHint': {
       let result = null
       await andWaitForLoad(tab.id, async () => {
         result = await runInPage(tab, command)
@@ -269,6 +294,49 @@ async function execute(command, senderWindowId) {
     default:
       return fail('failed', `Unknown command "${command.kind}".`)
   }
+}
+
+async function waitForUrlChange(tabId, before, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const t = await chrome.tabs.get(tabId).catch(() => null)
+    if (!t) return false
+    if ((t.pendingUrl || t.url) !== before) return true
+    await sleep(100)
+  }
+  return false
+}
+
+/**
+ * Opens a conversation on the messaging site. A target tab elsewhere first switches to a
+ * messaging tab in the same window, or goes to the messaging home. Answers ok only once the
+ * address has moved to the clicked conversation, so a following insertText cannot type into the
+ * conversation that was open before.
+ */
+async function openConversation(tab, command) {
+  const home = await messagingHome()
+  let t = tab
+  if (!onMessaging(t.url, home)) {
+    const tabs = await chrome.tabs.query({ windowId: t.windowId })
+    const there = tabs.find((x) => onMessaging(x.url, home))
+    if (there) {
+      t = await chrome.tabs.update(there.id, { active: true })
+      await waitForComplete(t.id)
+    } else {
+      await andWaitForLoad(t.id, () => chrome.tabs.update(t.id, { url: home }))
+    }
+    t = await chrome.tabs.get(t.id)
+  }
+  const before = t.url
+  const result = await runInPage(t, command)
+  if (!result.ok) return result
+  const href = typeof result.href === 'string' ? result.href : ''
+  if (href !== '' && href === before) return freshTab(t.id)
+  const changed = await waitForUrlChange(t.id, before, SETTLE_TIMEOUT_MS)
+  if (changed) await waitForComplete(t.id)
+  else if (href !== '') return fail('failed', 'The conversation did not open, so nothing will be typed. Try again or use the numbers.')
+  await sleep(SETTLE_QUIET_MS)
+  return freshTab(t.id)
 }
 
 async function waitForComplete(tabId) {

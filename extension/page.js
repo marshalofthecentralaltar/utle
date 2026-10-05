@@ -5,6 +5,13 @@
 ;(() => {
   if (globalThis.__utle) return
 
+  /** openConversation keeps looking this long for the name (lists render after load). */
+  const FIND_TIMEOUT_MS = 4000
+  /** insertText keeps looking this long for a message box (composers render late). */
+  const BOX_TIMEOUT_MS = 3000
+  /** How often both searches look again. */
+  const POLL_MS = 150
+
   const ok = (extra) => ({ ok: true, ...extra })
   const fail = (code, message) => ({ ok: false, code, message })
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -111,19 +118,56 @@
            border: 2px solid #000; border-radius: 4px; padding: 2px 5px; box-shadow: 0 1px 3px rgba(0,0,0,.5);
            white-space: nowrap; pointer-events: none; }`
     root.append(style)
-    elements.forEach((el, i) => {
-      const r = el.getBoundingClientRect()
+    elements.forEach((_el, i) => {
       const label = document.createElement('span')
       label.className = 'n'
       label.textContent = String(i + 1)
-      label.style.left = `${Math.max(r.left + window.scrollX - 4, window.scrollX)}px`
-      label.style.top = `${Math.max(r.top + window.scrollY - 4, window.scrollY)}px`
       root.append(label)
     })
     document.documentElement.append(host)
+    placeLabels(root, elements)
     hintLayer = host
     hinted = elements
     return ok({ hints: elements.length })
+  }
+
+  function overlaps(a, b) {
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+  }
+
+  // Each label goes outside its element so it never hides the element's text. Spots in order:
+  // left, above, right, below. The first one that stays in the viewport and covers nothing wins;
+  // if every spot covers something, the one covering least. Only when no outside spot fits in the
+  // viewport does the label sit on the element's corner.
+  function placeLabels(root, elements) {
+    const rects = elements.map((el) => el.getBoundingClientRect())
+    const taken = []
+    const labels = root.querySelectorAll('.n')
+    elements.forEach((_el, i) => {
+      const label = labels[i]
+      const r = rects[i]
+      const w = label.offsetWidth
+      const h = label.offsetHeight
+      const gap = 2
+      const spots = [
+        [r.left - w - gap, r.top + Math.max((r.height - h) / 2, 0)],
+        [r.left, r.top - h - gap],
+        [r.right + gap, r.top + Math.max((r.height - h) / 2, 0)],
+        [r.left, r.bottom + gap],
+      ].map(([x, y]) => ({ left: x, top: y, right: x + w, bottom: y + h }))
+      const area = (a, b) => (overlaps(a, b) ? (Math.min(a.right, b.right) - Math.max(a.left, b.left)) * (Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)) : 0)
+      // Cost of a spot: how much it covers other elements and labels. Never its own element.
+      const cost = (b) => {
+        if (b.left < 0 || b.top < 0 || b.right > window.innerWidth || b.bottom > window.innerHeight || overlaps(b, r)) return Infinity
+        return rects.reduce((sum, o) => sum + area(b, o), 0) + taken.reduce((sum, o) => sum + area(b, o) * 4, 0)
+      }
+      const costs = spots.map(cost)
+      const best = costs.indexOf(Math.min(...costs))
+      const spot = costs[best] < Infinity ? spots[best] : { left: Math.max(r.left, 0), top: Math.max(r.top, 0), right: Math.max(r.left, 0) + w, bottom: Math.max(r.top, 0) + h }
+      taken.push(spot)
+      label.style.left = `${spot.left + window.scrollX}px`
+      label.style.top = `${spot.top + window.scrollY}px`
+    })
   }
 
   // Same-document navigations do not unload the page, so remove the labels ourselves.
@@ -229,12 +273,12 @@
     return best
   }
 
-  function messageBox() {
+  function messageBox(onMessaging) {
     let active = document.activeElement
     while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement
     if (isTextField(active)) return active
     const messenger = sites().messenger
-    if (messenger && messenger.isHere(window.location)) {
+    if (messenger && onMessaging) {
       const composer = lowestVisible(messenger.composer)
       if (composer) return composer
     }
@@ -289,20 +333,29 @@
     el.dispatchEvent(new KeyboardEvent('keyup', init))
   }
 
-  async function insertText(text, submit) {
-    const el = messageBox()
+  async function waitFor(find, timeoutMs) {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const found = find()
+      if (found || Date.now() >= deadline) return found
+      await sleep(POLL_MS)
+    }
+  }
+
+  async function insertText(text, submit, onMessaging) {
+    const el = await waitFor(() => messageBox(onMessaging), BOX_TIMEOUT_MS)
     if (!el) return fail('not_found', 'There is no message box on this page.')
     insertInto(el, text)
     // Let the page's editor commit its state before Enter.
     await sleep(60)
     if (!submit) return ok()
-    const target = el.isConnected ? el : messageBox() || el
+    const target = el.isConnected ? el : messageBox(onMessaging) || el
     pressEnter(target)
     await sleep(400)
     if (!target.isConnected || !currentText(target).includes(text)) return ok()
     // Enter did not send. Try the site's send button, then the form.
     const messenger = sites().messenger
-    const button = messenger && messenger.isHere(window.location) ? document.querySelector(messenger.sendButton) : null
+    const button = messenger && onMessaging ? document.querySelector(messenger.sendButton) : null
     if (button) {
       activate(button)
       return ok()
@@ -333,7 +386,18 @@
     if (spoken.every((w) => words.includes(w))) return 80
     if (spoken.every((w) => words.some((x) => x.startsWith(w)))) return 60
     if (name.includes(query)) return 40
+    // Estonian case endings change the stem (Jaanile -> jaani, Märdile -> mardi, Peetrile ->
+    // peetri): a spoken word matches a name word sharing a prefix of at least 3 letters that is
+    // at least all but the last two letters of the shorter word.
+    if (spoken.every((w) => words.some((x) => stemMatch(w, x)))) return 20
     return 0
+  }
+
+  function stemMatch(a, b) {
+    const shorter = Math.min(a.length, b.length)
+    let p = 0
+    while (p < shorter && a[p] === b[p]) p++
+    return p >= 3 && p >= shorter - 2
   }
 
   function nameOf(el) {
@@ -343,30 +407,51 @@
     return text.split('\n')[0]
   }
 
-  async function openConversation(name) {
+  const GENERIC_CANDIDATES = 'a[href], [role="link"], li, [role="listitem"], [role="row"], [role="option"]'
+
+  /** One pass: the best visible match, and whether a conversation list is on screen at all. */
+  function findConversation(query, onMessaging) {
+    const messenger = sites().messenger
+    const selectors = onMessaging && messenger ? [messenger.conversationLinks, GENERIC_CANDIDATES] : [GENERIC_CANDIDATES]
+    let listSeen = false
+    for (const [i, selector] of selectors.entries()) {
+      let best = null
+      let bestScore = 0
+      let bestLength = Infinity
+      for (const el of document.querySelectorAll(selector)) {
+        if (!visible(el)) continue
+        if (i === 0 && onMessaging) listSeen = true
+        const candidate = normalize(nameOf(el))
+        const s = score(query, candidate)
+        if (s > bestScore || (s === bestScore && s > 0 && candidate.length < bestLength)) {
+          best = el
+          bestScore = s
+          bestLength = candidate.length
+        }
+      }
+      if (best) return { best, listSeen }
+    }
+    return { best: null, listSeen }
+  }
+
+  async function openConversation(name, onMessaging) {
     const query = normalize(name)
     if (!query) return fail('not_found', 'No name was given.')
-    const messenger = sites().messenger
-    const onMessenger = messenger && messenger.isHere(window.location)
-    const selector = onMessenger ? messenger.conversationLinks : 'a[href], [role="link"], li, [role="listitem"], [role="row"], [role="option"]'
-    let best = null
-    let bestScore = 0
-    let bestLength = Infinity
-    for (const el of document.querySelectorAll(selector)) {
-      if (!visible(el)) continue
-      const candidate = normalize(nameOf(el))
-      const s = score(query, candidate)
-      if (s > bestScore || (s === bestScore && s > 0 && candidate.length < bestLength)) {
-        best = el
-        bestScore = s
-        bestLength = candidate.length
-      }
+    let last = { best: null, listSeen: false }
+    const best = await waitFor(() => {
+      last = findConversation(query, onMessaging)
+      return last.best
+    }, FIND_TIMEOUT_MS)
+    if (!best) {
+      if (onMessaging && !last.listSeen) return fail('not_found', 'There is no conversation list on this page. The site may need logging in.')
+      return fail('not_found', `No conversation called "${name}" is visible here.`)
     }
-    if (!best) return fail('not_found', `No conversation called "${name}" is visible here.`)
     // A list item is not clickable itself; click the link inside it when there is one.
     const clickable = best.matches('a[href], [role="link"], [role="button"]') ? best : best.querySelector('a[href], [role="link"], [role="button"]') || best
+    const href = clickable.href || ''
     activate(clickable)
-    return ok()
+    // background.js waits for the address to change and strips href before answering the page.
+    return ok({ href: typeof href === 'string' ? href : '' })
   }
 
   // ---------- entry ----------
@@ -384,9 +469,9 @@
         case 'clickHint':
           return clickHint(command.number)
         case 'insertText':
-          return await insertText(String(command.text), command.submit === true)
+          return await insertText(String(command.text), command.submit === true, command.onMessaging === true)
         case 'openConversation':
-          return await openConversation(command.name)
+          return await openConversation(command.name, command.onMessaging === true)
         default:
           return fail('failed', `The page does not know the command "${command.kind}".`)
       }
