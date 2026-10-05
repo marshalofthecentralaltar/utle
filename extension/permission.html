@@ -4,9 +4,13 @@
     <meta charset="utf-8" />
     <title>Ütle</title>
     <style>
-      body { font: 24px/1.5 system-ui, sans-serif; margin: 48px; background: #111; color: #fff; }
+      :root { --bg: #141414; --ink: #f5f1e8; --edge: #3a3a3a; --panel: #242424; --amber: #f0b429; }
+      body { font: 24px/1.5 "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, "Segoe UI", sans-serif; margin: 48px; background: var(--bg); color: var(--ink); }
       h1 { font-size: 36px; }
-      button { font: inherit; padding: 16px 32px; min-width: 200px; min-height: 96px; background: #ffd400; color: #000; border: 0; border-radius: 12px; }
+      #status { color: var(--amber); }
+      button { font: 700 24px "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, "Segoe UI", sans-serif; padding: 16px 32px; min-width: 240px; min-height: 96px;
+        background: var(--panel); color: var(--ink); border: 3px solid var(--edge); border-radius: 16px; cursor: pointer; }
+      button:hover, button:focus-visible { border-color: var(--amber); outline: none; }
     </style>
   </head>
   <body>

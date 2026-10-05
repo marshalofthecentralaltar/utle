@@ -506,6 +506,12 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
     case 'utle-state':
       void patchState(message.patch)
       return false
+    case 'utle-bar':
+      void patchState({ hidden: !message.show })
+      return false
+    case 'utle-open-options':
+      void chrome.runtime.openOptionsPage()
+      return false
     case 'utle-mic-blocked':
       void chrome.storage.session.set({ wantListening: true }).then(openPermissionPage)
       return false

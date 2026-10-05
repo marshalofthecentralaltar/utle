@@ -82,7 +82,45 @@ if (heading) heading.textContent = text.newTabTitle
 const hint = document.getElementById('hint')
 if (hint) hint.textContent = text.newTabHint
 
+/** The three example phrases to show at offset `at` of the list, wrapping round. */
+export function exampleWindow(list: readonly string[], at: number, count = 3): string[] {
+  if (list.length === 0) return []
+  const out: string[] = []
+  for (let i = 0; i < Math.min(count, list.length); i++) out.push(list[(at + i) % list.length] ?? '')
+  return out
+}
+
+/** Under the tiles: "Ütle:" and three example phrases, three more every 6 s. */
+function examples(): void {
+  const p = document.getElementById('examples')
+  if (!p) return
+  const lead = document.createElement('span')
+  lead.className = 'lead'
+  lead.textContent = text.examplesLead
+  const spans = [0, 1, 2].map(() => {
+    const span = document.createElement('span')
+    span.className = 'ex'
+    return span
+  })
+  p.replaceChildren(lead, ...spans)
+  let at = 0
+  const show = (): void => {
+    const three = exampleWindow(text.examples, at)
+    spans.forEach((span, i) => (span.textContent = three[i] ?? ''))
+  }
+  show()
+  setInterval(() => {
+    p.classList.add('fade')
+    setTimeout(() => {
+      at = (at + 3) % text.examples.length
+      show()
+      p.classList.remove('fade')
+    }, 400)
+  }, 6000)
+}
+
 render(tiles(null))
+examples()
 chrome.storage.local.get('messagingHome').then(
   ({ messagingHome }) => {
     if (typeof messagingHome === 'string' && messagingHome !== '') render(tiles(messagingHome))
