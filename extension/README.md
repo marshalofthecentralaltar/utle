@@ -60,9 +60,23 @@ From the repository root:
 - Settings (the **Seaded** control, or the extension's options page) are large buttons that a
   click or a one-second dwell toggles, saved at once: bar height (Väike 96 / Tavaline 128 / Suur
   192, `barHeight`), microphone side (`micSide`: Vasakul / Paremal), and whether the bar starts
-  folded (`barHiddenDefault`). The speech-model and development-page addresses are under
-  "Täpsemalt". The same strip is mounted there. (Numbering the buttons by voice needs the service
-  worker to treat options.html like newtab.html; see HANDOFF.md.)
+  folded (`barHiddenDefault`), how listening is triggered (`listenMode`: Lülitiga / Vaatamisega),
+  what the gaze rests on (`gazeTarget`: Mikrofon / Kogu riba, shown only for Vaatamisega) and the
+  speech model (`speechEngine`: Arvutis (TalTech) / Soniox (pilves); Soniox needs `SONIOX_API_KEY`
+  on the dev server and takes effect the next time listening starts). The speech-model and
+  development-page addresses are under "Täpsemalt". The same strip is mounted there. (Numbering the
+  buttons by voice needs the service worker to treat options.html like newtab.html; see HANDOFF.md.)
+- **Push-to-talk by looking** (`listenMode: gaze`): the microphone square, or the whole bar when
+  the gaze target is Kogu riba, listens while the eye-tracker pointer rests on it. It starts after
+  250 ms on the target (a pass-through does nothing) and stops 600 ms after the pointer leaves
+  (jitter does not cut a sentence); on the stop the words said so far are delivered at once. Off,
+  the square reads "Vaata siia ja räägi"; the whole bar as target shows a green inner outline while
+  it listens and an amber fill that drains during the 600 ms grace. A click on the target does
+  nothing in this mode. The folded pill is a gaze target too (resting on it for two seconds no
+  longer unfolds the bar in this mode; use **Näita**). When a page swallows the pointer-leave
+  event, a one-second poll of the pointer's last position ends listening instead.
+- When the speech server falls behind by more than two seconds, a thin dim line under the amber
+  one says "Kõne jääb maha N s" until it has caught up.
 - What to say (the exact phrases come from `src/core/inpage.ts`, the core lane):
   - dictation: anything that is not a command is added to the message box;
   - `saada`: sends what is in the box;

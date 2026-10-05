@@ -55,9 +55,18 @@ export type ToBackground =
   | { type: 'utle-open-options' }
   /** From the strip's "Peida" and "Näita" controls: fold the bar to the pill, or unfold it. */
   | { type: 'utle-bar'; show: boolean }
+  /**
+   * From the strip in gaze mode (round 3): listen while the pointer rests on the target. on:false
+   * with flush delivers the words said so far before the microphone closes.
+   */
+  | { type: 'utle-listen'; on: boolean; flush?: boolean }
 
-/** To the offscreen document. */
-export type ToOffscreen = { target: 'offscreen'; type: 'toggle' } | { target: 'offscreen'; type: 'start' }
+/** To the offscreen document. stop with flush: deliver the words said so far, then stop. */
+export type ToOffscreen =
+  | { target: 'offscreen'; type: 'toggle' }
+  | { target: 'offscreen'; type: 'start' }
+  | { target: 'offscreen'; type: 'stop'; flush?: boolean }
+  | { target: 'offscreen'; type: 'flush' }
 
 /**
  * To the extension's new-tab page, from the service worker: run one page command there (21.3). The
@@ -79,6 +88,10 @@ export interface StripMeasure {
   line: string
   /** The bar is folded to the pill. */
   hidden: boolean
+  /** Gaze mode (round 3): the target's phase ('arming', 'on', 'leaving'), or '' when off or not in gaze mode. */
+  gaze: string
+  /** The lag line's text, or '' when hidden. */
+  lag: string
 }
 
 export type RunAnswer = { result: BrowserResult }

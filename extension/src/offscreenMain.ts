@@ -83,8 +83,20 @@ export async function serverStatus(statusUrl: string): Promise<'live' | 'no_key'
   }
 }
 
+/** After a flush, the microphone stays open this long so the final can arrive (round 3). */
+export const FLUSH_STOP_MS = 300
+
+/** The speech model's address with the engine chosen on the options page: ?engine=soniox asks the dev server for Soniox (round 3). */
+export function asrAddress(base: string, engine: string | null): string {
+  if (engine !== 'soniox') return base
+  const url = new URL(base)
+  url.searchParams.set('engine', 'soniox')
+  return url.toString()
+}
+
 export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {}): void {
-  const address = new URLSearchParams(location.search).get('asr') ?? DEFAULT_ASR_URL
+  const params = new URLSearchParams(location.search)
+  const address = asrAddress(params.get('asr') ?? DEFAULT_ASR_URL, params.get('engine'))
   const intentUrl = serverUrl(address, '/api/intent')
   const statusUrl = serverUrl(address, '/api/status')
   let connects = 0
@@ -138,10 +150,40 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     status: () => serverStatus(statusUrl),
   })
 
+  // Gaze mode (round 3): a stop with flush delivers the words said so far, then stops once the final has had time to arrive.
+  let pendingStop: ReturnType<typeof setTimeout> | null = null
+  const cancelStop = (): void => {
+    if (pendingStop === null) return
+    clearTimeout(pendingStop)
+    pendingStop = null
+  }
   chrome.runtime.onMessage.addListener((message: ToOffscreen) => {
     if (!message || message.target !== 'offscreen') return false
-    if (message.type === 'toggle') engine.toggle()
-    else if (message.type === 'start') engine.start()
+    switch (message.type) {
+      case 'toggle':
+        cancelStop()
+        engine.toggle()
+        break
+      case 'start':
+        cancelStop()
+        engine.start()
+        break
+      case 'flush':
+        engine.flush()
+        break
+      case 'stop':
+        cancelStop()
+        if (message.flush === true && engine.listening) {
+          engine.flush()
+          pendingStop = setTimeout(() => {
+            pendingStop = null
+            engine.stop()
+          }, FLUSH_STOP_MS)
+        } else engine.stop()
+        break
+      default:
+        break
+    }
     return false
   })
 }

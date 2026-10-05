@@ -7,6 +7,8 @@
 
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
+import { createGaze, GAZE_OFF_MS, GAZE_ON_MS, GAZE_POLL_MS } from '../../src/ui/gaze.ts'
+import type { Gaze } from '../../src/ui/gaze.ts'
 import { bottomBox, watchTrustedClicks } from './box.ts'
 import { INITIAL_STATE, STATE_KEY } from './messages.ts'
 import type { StripMeasure, StripState, ToBackground, ToStrip } from './messages.ts'
@@ -57,6 +59,8 @@ const PILL_SIZE = 72
 const SHOW_SIZE = 40
 /** Resting on the pill this long brings the bar back (the mic toggles at the usual 1 s). */
 const PILL_SHOW_MS = 2000
+/** The lag line appears when the speech server is this far behind, and stays until it has caught up (round 3). */
+export const LAG_SHOW_MS = 2000
 const text = STRINGS.et.strip
 
 /** Per height: the microphone square, the controls, the type. */
@@ -104,6 +108,19 @@ button { font-family: ${FONT}; }
 @keyframes pulse { 0%, 80%, 100% { opacity: .25; transform: scale(.8); } 40% { opacity: 1; transform: scale(1); } }
 .notice { display: none; font-size: var(--notice); line-height: 1.25; color: var(--amber); border-top: 1px solid var(--amber); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .notice.on { display: block; }
+.lag { display: none; font-size: var(--notice); line-height: 1.25; color: var(--dim); border-top: 1px solid var(--edge); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lag.on { display: block; }
+/* Gaze mode (round 3): the target listens while the pointer rests on it. A quick amber fill says the rest was
+   seen (arming); a green inner outline says it listens; the fill growing again over the grace says it is about to stop. */
+.bar > * { position: relative; z-index: 1; }
+.barfill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--amber); opacity: .3; z-index: 0; pointer-events: none; }
+.bar[data-gaze="arming"] .barfill, .mic[data-gaze="arming"] .fill { height: 100%; transition: height ${GAZE_ON_MS}ms linear; }
+.bar[data-gaze="leaving"] .barfill, .mic[data-gaze="leaving"] .fill { height: 100%; transition: height ${GAZE_OFF_MS}ms linear; }
+.bar[data-gaze="on"] { box-shadow: inset 0 0 0 4px var(--green); }
+.bar[data-gaze="leaving"] { box-shadow: inset 0 0 0 4px var(--amber); }
+.mic.gaze { cursor: default; }
+.mic.gaze[data-state="off"] { font-size: 15px; }
+.mic .label { text-align: center; padding: 0 6px; }
 .ctls { flex: none; display: flex; flex-direction: column; gap: 8px; }
 .ctls.rows { flex-direction: row; }
 .ctl { position: relative; overflow: hidden; width: var(--control-w); height: var(--control-h); box-sizing: border-box; padding: 0;
@@ -124,25 +141,41 @@ function micState(state: StripState): 'listening' | 'resting' | 'off' {
   return state.resting ? 'resting' : 'listening'
 }
 
-function micLabel(state: StripState): string {
+function micLabel(state: StripState, gaze: boolean): string {
   const s = micState(state)
-  return s === 'listening' ? text.listening : s === 'resting' ? text.resting : text.notListening
+  return s === 'listening' ? text.listening : s === 'resting' ? text.resting : gaze ? text.gazeOff : text.notListening
+}
+
+/** The lag line: shown once the server is LAG_SHOW_MS behind, kept until it has caught up (0). */
+export function lagShown(lag: number, shown: boolean): boolean {
+  return lag > LAG_SHOW_MS || (shown && lag > 0)
 }
 
 function send(message: ToBackground): void {
   chrome.runtime.sendMessage(message).catch(() => undefined)
 }
 
-/** A control that acts on a click or on a 1 s dwell, without taking focus from the page's box. */
-function dwellable(el: HTMLElement, onFire: () => void): void {
+function inside(el: Element, point: { x: number; y: number }): boolean {
+  const r = el.getBoundingClientRect()
+  return point.x >= r.left && point.x < r.right && point.y >= r.top && point.y < r.bottom
+}
+
+/**
+ * A control that acts on a click or on a 1 s dwell, without taking focus from the page's box.
+ * when: the control is live only while this holds (the microphone is not a toggle in gaze mode).
+ */
+function dwellable(el: HTMLElement, onFire: () => void, when: () => boolean = () => true): void {
   const dwell = createDwell({
     onFire,
     onChange: (dwelling) => el.classList.toggle('dwelling', dwelling),
   })
-  el.addEventListener('pointerenter', () => dwell.enter())
+  el.addEventListener('pointerenter', () => {
+    if (when()) dwell.enter()
+  })
   el.addEventListener('pointerleave', () => dwell.leave())
   el.addEventListener('mousedown', (event) => event.preventDefault())
   el.addEventListener('click', () => {
+    if (!when()) return
     if (dwell.click()) onFire()
   })
 }
@@ -209,13 +242,17 @@ export function mountStrip(): void {
   row.append(line, think)
   const notice = document.createElement('div')
   notice.className = 'notice'
-  words.append(heard, row, notice)
+  const lag = document.createElement('div')
+  lag.className = 'lag'
+  words.append(heard, row, notice, lag)
   const ctls = document.createElement('div')
   ctls.className = 'ctls'
   const hide = control('hide', text.hide)
   const settings = control('settings', text.settings)
   ctls.append(hide, settings)
-  bar.append(mic, words, ctls)
+  const barFill = document.createElement('span')
+  barFill.className = 'barfill'
+  bar.append(barFill, mic, words, ctls)
 
   // The pill.
   const pill = document.createElement('div')
@@ -234,6 +271,63 @@ export function mountStrip(): void {
 
   let settingsNow: StripSettings = DEFAULT_SETTINGS
   let state: StripState = INITIAL_STATE
+  let lagOn = false
+  const gazeMode = (): boolean => settingsNow.listenMode === 'gaze'
+
+  // Gaze mode (round 3): the target listens while the pointer rests on it. The pointer's last
+  // position is kept because a page can swallow the leave event; a poll then ends the rest.
+  let pointer: { x: number; y: number } | null = null
+  document.addEventListener(
+    'pointermove',
+    (event) => {
+      pointer = { x: event.clientX, y: event.clientY }
+    },
+    true,
+  )
+  let gaze: Gaze | null = null
+  let gazeEl: HTMLElement | null = null
+  let unbindGaze: (() => void) | null = null
+  const gazeTargetEl = (): HTMLElement | null => {
+    if (!gazeMode()) return null
+    if (state.hidden) return pillMic
+    return settingsNow.gazeTarget === 'bar' ? bar : mic
+  }
+  const bindGaze = (): void => {
+    const el = gazeTargetEl()
+    if (el === gazeEl) return
+    unbindGaze?.()
+    unbindGaze = null
+    // Disposing a gaze that is on sends the stop, so the microphone never stays open on a target that went away.
+    gaze?.dispose()
+    gaze = null
+    gazeEl = el
+    if (!el) return
+    const g = createGaze({
+      onStart: () => send({ type: 'utle-listen', on: true }),
+      onStop: () => send({ type: 'utle-listen', on: false, flush: true }),
+      onPhase: (phase) => {
+        if (phase === 'off') delete el.dataset.gaze
+        else el.dataset.gaze = phase
+      },
+    })
+    gaze = g
+    const enter = (): void => g.enter()
+    const leave = (): void => g.leave()
+    el.addEventListener('pointerenter', enter)
+    el.addEventListener('pointerleave', leave)
+    unbindGaze = () => {
+      el.removeEventListener('pointerenter', enter)
+      el.removeEventListener('pointerleave', leave)
+      delete el.dataset.gaze
+    }
+    // The pointer is already on the new target (the mode changed, the bar unfolded under it).
+    if (pointer && inside(el, pointer)) g.enter()
+  }
+  setInterval(() => {
+    if (!gaze || !gazeEl || !pointer) return
+    if (inside(gazeEl, pointer)) gaze.enter()
+    else gaze.leave()
+  }, GAZE_POLL_MS)
 
   const applySettings = (): void => {
     const s = sizes(settingsNow.barHeight)
@@ -282,8 +376,9 @@ export function mountStrip(): void {
     for (const m of [mic, pillMic]) {
       m.dataset.state = ms
       m.setAttribute('aria-pressed', String(state.listening))
+      m.classList.toggle('gaze', gazeMode())
     }
-    label.textContent = micLabel(state)
+    label.textContent = micLabel(state, gazeMode())
     heard.textContent = state.heard
     const problem = state.problem !== ''
     line.textContent = problem ? state.problem : state.line
@@ -291,6 +386,9 @@ export function mountStrip(): void {
     think.classList.toggle('on', state.thinking)
     notice.textContent = state.modelProblem
     notice.classList.toggle('on', state.modelProblem !== '')
+    lagOn = lagShown(state.lag, lagOn)
+    lag.textContent = lagOn ? text.lagLine(Math.round(state.lag / 1000)) : ''
+    lag.classList.toggle('on', lagOn)
     bar.hidden = state.hidden
     pill.hidden = !state.hidden
     if (state.hidden) {
@@ -301,23 +399,28 @@ export function mountStrip(): void {
       if (room.textContent !== css) room.textContent = css
       fitApp()
     }
+    bindGaze()
   }
   applySettings()
   render()
 
+  // In gaze mode the microphone is not a toggle: a click or a dwell on it does nothing.
+  const toggleMode = (): boolean => !gazeMode()
   const toggle = (): void => send({ type: 'utle-toggle' })
-  dwellable(mic, toggle)
-  dwellable(pillMic, toggle)
+  dwellable(mic, toggle, toggleMode)
+  dwellable(pillMic, toggle, toggleMode)
   dwellable(hide, () => send({ type: 'utle-bar', show: false }))
   dwellable(show, () => send({ type: 'utle-bar', show: true }))
   dwellable(settings, () => send({ type: 'utle-open-options' }))
-  // Resting on the pill for 2 s brings the bar back.
+  // Resting on the pill for 2 s brings the bar back (not in gaze mode, where resting on it is how he speaks).
   const long = createDwell({
     onFire: () => send({ type: 'utle-bar', show: true }),
     onChange: (dwelling) => pillMic.classList.toggle('dwelling-long', dwelling),
     ms: PILL_SHOW_MS,
   })
-  pillMic.addEventListener('pointerenter', () => long.enter())
+  pillMic.addEventListener('pointerenter', () => {
+    if (toggleMode()) long.enter()
+  })
   pillMic.addEventListener('pointerleave', () => long.leave())
 
   const read = (): void => {
@@ -396,6 +499,8 @@ export function mountStrip(): void {
       heardPx: parseFloat(getComputedStyle(heard).fontSize),
       line: line.textContent ?? '',
       hidden: state.hidden,
+      gaze: gazeEl?.dataset.gaze ?? '',
+      lag: lag.textContent ?? '',
     }
     reply(answer)
     return false
