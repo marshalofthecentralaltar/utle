@@ -12,7 +12,8 @@ import { DEMO_SCRIPT } from '../speech/lines.ts'
 import type { Recognizer } from '../speech/recognizer.ts'
 import { createScriptedRecognizer } from '../speech/scripted.ts'
 import { hush, speak } from '../speech/synth.ts'
-import { HOLD_MS, createWebSpeechRecognizer } from '../speech/webSpeech.ts'
+import { createRecognizer } from '../speech/pick.ts'
+import { HOLD_MS } from '../speech/webSpeech.ts'
 
 export interface Microphone {
   supported: boolean
@@ -166,7 +167,7 @@ export function useSession(paused: boolean): SessionApi {
     }
     const created = demo
       ? createScriptedRecognizer(handlers, DEMO_SCRIPT, { ...DEMO_TIMING, isInstant })
-      : createWebSpeechRecognizer(handlers, langRef.current, isInstant)
+      : createRecognizer(handlers, langRef.current, isInstant)
     recognizer.current = created
     setSupported(created.supported)
 

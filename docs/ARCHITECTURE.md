@@ -456,3 +456,25 @@ Proof without a person: `speech/scripted.ts` is a recogniser that replays a scri
 While you speak, your words stand beside the wordmark; once understood they move to the small line above and the answer takes their place. The margin stays empty until there is a change or help to show. The typed box lives in the bar; it is the fallback, not the product. Mock: `docs/mocks/`.
 
 **Rules.** No cards, no rounded panels, no all-caps labels, no monospace labels, no gradient, no icon set. A rule or a fill appears only where it carries a state: the change bar, the highlight, the focus mark.
+
+## 20. M4: Estonian first, a local recogniser, the browser and messages (2026-10-05)
+
+Decided after talking to a user with a motor disability. His words: typing messages is slow; he wants to move around the browser by voice; Estonian, not English. This section is the frame. Each of the three parts below is filled in by the lane that builds it, under its own heading (20.1, 20.2, 20.3).
+
+**What changes.**
+
+| Part | Decision |
+|---|---|
+| Language | Estonian is the default language of recognition, of the interface and of what Ütle says back. English stays selectable. |
+| Recognition | TalTech's `streaming-zipformer-large.et-en` (MIT, Estonian and English in one model) runs on this machine through `sherpa-onnx-node`, inside the dev server. No audio leaves the laptop. Chrome's recognition stays as the fallback. Replaces decision D6. |
+| Browser | A web page cannot open tabs or touch another site, so a Chrome extension does it. The page and the extension speak the contract in `src/browser/protocol.ts`, which is the source of truth for both sides. |
+| Where Ütle sits | In its own narrow window beside the browser window, so the microphone, the captions and the repair loop are always visible. The extension opens and docks it. |
+| Messages | A message is written and repaired in Ütle, where say, see, repair works. Sending puts the finished text into the site's message box. Ütle never edits inside another site's text box. |
+
+**Rules that follow.**
+
+- Browser commands that only move (tabs, history, scrolling, numbers) are local: no model call and no yes. They are reversible.
+- Sending a message leaves the machine and cannot be taken back, so it always shows who and what and waits for yes.
+- `src/browser/protocol.ts` is pure types and constants. `src/core/**` may import it. The extension does not import from `src/`; it follows the file by hand, and a change to the contract changes both in one commit.
+- The local recogniser's server never logs audio or text.
+- Messenger's page is not ours and cannot be tested without a logged-in person. Everything site-specific is best effort and says so when it fails; the numbered labels are the fallback that works on any page.

@@ -4,7 +4,7 @@ import { CHECK_DEMO, CHECK_LINES } from '../speech/lines.ts'
 import { LANGUAGES } from '../speech/recognizer.ts'
 import type { Recognizer } from '../speech/recognizer.ts'
 import { createScriptedRecognizer } from '../speech/scripted.ts'
-import { createWebSpeechRecognizer } from '../speech/webSpeech.ts'
+import { createRecognizer } from '../speech/pick.ts'
 
 const never = (): boolean => false
 
@@ -47,7 +47,7 @@ export function VoiceCheck({ lang, demo }: { lang: string; demo: boolean }) {
     }
     const created = demo
       ? createScriptedRecognizer(handlers, CHECK_DEMO, { startMs: 500, wordMs: 110, gapMs: 350, pauseMs: 0, holdMs: 500, isInstant: never })
-      : createWebSpeechRecognizer(handlers, lang, never)
+      : createRecognizer(handlers, lang, never)
     if (!created.supported) {
       setError('This browser has no speech recognition. Use Chrome.')
       return
