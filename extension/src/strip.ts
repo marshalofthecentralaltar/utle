@@ -140,6 +140,10 @@ export function mountStrip(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') read()
   })
+  // A page restored from the back/forward cache missed the changes made while it was away.
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) read()
+  })
 
   // Making room: a full-height app built on 100vh is shrunk so its message box sits above the strip.
   let site: SiteName | null = null
@@ -166,7 +170,15 @@ export function mountStrip(): void {
     pick.style.setProperty('height', `calc(100vh - ${STRIP_HEIGHT}px)`, 'important')
     pick.style.setProperty('max-height', `calc(100vh - ${STRIP_HEIGHT}px)`, 'important')
   }
-  setInterval(fitApp, 1000)
+  // A page that rewrites its document can take the strip with it: put it back.
+  const stay = (): void => {
+    if (!host.isConnected) document.documentElement.append(host)
+    if (!room.isConnected) (document.head ?? document.documentElement).append(room)
+  }
+  setInterval(() => {
+    stay()
+    fitApp()
+  }, 1000)
 
   // For the tests: where the strip and the microphone are, and what they show.
   chrome.runtime.onMessage.addListener((message: ToStrip, _sender, reply) => {
@@ -175,7 +187,7 @@ export function mountStrip(): void {
       const r = el.getBoundingClientRect()
       return { left: r.left, top: r.top, width: r.width, height: r.height }
     }
-    const answer: StripMeasure = { strip: box(bar), mic: box(mic), micState: mic.dataset.state ?? '', heard: heard.textContent ?? '', line: line.textContent ?? '' }
+    const answer: StripMeasure = { strip: box(bar), mic: box(mic), micState: mic.dataset.state ?? '', heard: heard.textContent ?? '', heardPx: parseFloat(getComputedStyle(heard).fontSize), line: line.textContent ?? '' }
     reply(answer)
     return false
   })

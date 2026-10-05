@@ -1,9 +1,9 @@
 # Ütle extension
 
 Speak Estonian; the words go into the message box of the page you are on (WhatsApp Web first,
-Messenger, any page), and the browser scrolls and switches tabs by voice. A strip at the bottom of
-every page shows the microphone, the words heard, and what was done. Nothing opens a separate
-window. Design: `docs/ARCHITECTURE.md` section 21.2.
+Messenger, any page) while you speak, and the browser scrolls and switches tabs by voice. A strip at
+the bottom of every page, and of the new-tab page, shows the microphone, the words heard, and what
+was done. Nothing opens a separate window. Design: `docs/ARCHITECTURE.md` sections 21.2 and 21.3.
 
 ## Build
 
@@ -22,6 +22,12 @@ From the repository root:
 5. If the speech model runs at another address, set it under **Details → Extension options**, then
    reload the extension.
 
+## After pulling a change
+
+1. `npm run ext` in the repository root.
+2. On `chrome://extensions`, press the reload arrow on the Ütle card.
+3. Reload the tabs that were already open (or open them again), so they get the new strip.
+
 ## Grant the microphone (once, done by a helper)
 
 1. Right after loading, a tab "Ütle vajab mikrofoni" opens by itself.
@@ -34,7 +40,15 @@ From the repository root:
 - The strip sits at the bottom of every web page. The big square on the left is the microphone:
   click it, or rest the eye-tracker pointer on it for one second (a yellow fill grows), to turn
   listening on or off. Green "Kuulan" = listening, hollow "Ei kuula" = off, blue "Puhkan" = resting.
-- Open a chat in WhatsApp Web and speak: the words go into the chat's message box.
+- Open a chat in WhatsApp Web and speak: the words appear in the chat's message box as you say
+  them, and are tidied when you stop (capital letter, full stop). Words that may be a command
+  ("saa...", "keri...") are not typed; if they turn out not to be one, they appear then.
+- The upper line of the strip always shows the words being heard, and keeps the last ones until you
+  speak again.
+- A new tab is Ütle's own page: the same strip, and big tiles for WhatsApp and the other known
+  sites. Rest the eye-tracker pointer on a tile for one second (or click it) to open the site in
+  that tab, or say `näita numbreid` and the number. Chrome may ask, once, whether to keep this
+  changed new-tab page: choose **Keep it**.
 - What to say (the exact phrases come from `src/core/inpage.ts`, the core lane):
   - dictation: anything that is not a command is added to the message box;
   - `saada`: sends what is in the box;
@@ -51,10 +65,22 @@ From the repository root:
   `pressSend` and a WhatsApp stand-in page. Builds the extension first. Opens Chromium windows on
   screen for about a minute.
 - `npx tsx extension/test/voice.ts`: by voice with no person. Needs `npx vite --port 5193 --strictPort`
-  running. A fake microphone plays Estonian recordings (`scripts/fixtures/et-dictate-send-16k.wav`,
-  `et-scroll-tab-16k.wav`) into the real recogniser; the extension is built with a stand-in for the
-  step logic (`extension/test/standin.ts`).
+  running (another port: `UTLE_PORT=5194` for both). A fake microphone plays Estonian recordings
+  (`scripts/fixtures/et-dictate-send-16k.wav`, `et-scroll-tab-16k.wav`, `et-numbers-one-16k.wav`)
+  into the real recogniser; the extension is built with a stand-in for the step logic
+  (`extension/test/standin.ts`). It prints the box text every 100 ms and the time from the end of
+  speech to the first and the final words in the box. `UTLE_ONLY=dictate|scroll|newtab` runs one part.
+- `npx tsx extension/test/voice.ts baseline`: the same dictation timing as the extension behaved
+  before live words (no previews, 700 ms hold), for comparison.
 - `npx tsx extension/test/voice.ts down`: with the dev server stopped; start it when the test says so.
+
+## Where the strip cannot be
+
+Chrome lets no extension draw on these, so the strip is absent and voice commands there answer that
+the page is not allowed: `chrome://` pages other than the new tab (settings, extensions, history,
+downloads), the Chrome Web Store (`chromewebstore.google.com`), `view-source:` pages, the built-in
+PDF viewer, and other extensions' pages. Switching tabs and going to a site by voice still work
+from them. If another extension also replaces the new-tab page, Chrome uses only one of them.
 
 ## Unverified
 
@@ -64,6 +90,9 @@ From the repository root:
 - Messenger: every selector is a best guess; nobody has tried it logged in.
 - Whether the strip makes room on the real WhatsApp layout (tested on stand-ins built on `100%`
   and on `100vh` heights).
-- Branded Google Chrome (tested in Playwright's bundled Chromium only), and a real microphone and
-  voice (tested with recorded speech through a fake microphone).
+- Branded Google Chrome (tested in Playwright's bundled Chromium only), including how it asks about
+  the replaced new-tab page, and a real microphone and voice (tested with recorded speech through a
+  fake microphone).
+- Live words on real WhatsApp: whether its composer takes the typed-at-the-end words as smoothly as
+  the Lexical stand-in does.
 - The development page at localhost (section 20) still works through `relay.js` as a harness.

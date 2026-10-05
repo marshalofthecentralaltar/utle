@@ -181,6 +181,9 @@ export interface Strings {
     permissionAsk: string
     permissionDone: string
     permissionRetry: string
+    // The new-tab page (21.3), ext lane.
+    newTabTitle: string
+    newTabHint: string
   }
 }
 
@@ -447,6 +450,9 @@ const ET: Strings = {
     permissionAsk: 'Vajuta brauseri küsimuses „Luba“. See leht sulgub ise.',
     permissionDone: 'Mikrofon on lubatud. Leht sulgub.',
     permissionRetry: 'Proovi uuesti',
+    // The new-tab page (21.3), ext lane.
+    newTabTitle: 'Uus vaheleht',
+    newTabHint: 'Vaata paanile üks sekund, et see avada. Või ütle „näita numbreid“ ja number.',
   },
 }
 
@@ -697,6 +703,9 @@ const EN: Strings = {
     permissionAsk: 'Press “Allow” in the browser’s question. This page closes itself.',
     permissionDone: 'The microphone is allowed. This page is closing.',
     permissionRetry: 'Try again',
+    // The new-tab page (21.3), ext lane.
+    newTabTitle: 'New tab',
+    newTabHint: 'Rest your eyes on a tile for one second to open it. Or say “show numbers” and a number.',
   },
 }
 

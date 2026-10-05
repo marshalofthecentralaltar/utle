@@ -320,9 +320,47 @@ async function selectAllIn(el: HTMLElement): Promise<void> {
   await sleep(30)
 }
 
+/** Puts the caret at the very end of el. True when it had to move (an editor needs a moment to see that). */
+function caretAtEnd(el: HTMLElement): boolean {
+  el.focus()
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const end = el.value.length
+    if (el.selectionStart === end && el.selectionEnd === end) return false
+    try {
+      el.setSelectionRange(end, end)
+    } catch {
+      // number and email inputs have no selection range
+    }
+    return false
+  }
+  const selection = window.getSelection()
+  if (!selection) return false
+  if (selection.rangeCount > 0 && selection.isCollapsed && el.contains(selection.anchorNode)) {
+    const rest = document.createRange()
+    rest.selectNodeContents(el)
+    rest.setStart(selection.getRangeAt(0).endContainer, selection.getRangeAt(0).endOffset)
+    if (rest.toString() === '') return false
+  }
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return true
+}
+
 async function setText(text: string, site: Site | null): Promise<BrowserResult> {
   const el = await waitFor(() => findMessageBox(site), BOX_TIMEOUT_MS)
   if (!el) return fail('not_found', 'There is no message box on this page.')
+  // Live dictation (21.3) mostly adds words at the end: type only those, so the box never blanks.
+  const current = readText(el)
+  const tail = text.slice(current.length)
+  if (current !== '' && text.startsWith(current) && !/[\r\n]/.test(tail)) {
+    if (caretAtEnd(el)) await sleep(30)
+    if (tail !== '') await typeAtSelection(el, tail)
+    await sleep(30)
+    if (readText(el) === text) return ok({ box: boxState(el) })
+  }
   await selectAllIn(el)
   if (readText(el) !== '') {
     const deleted = exec('delete')

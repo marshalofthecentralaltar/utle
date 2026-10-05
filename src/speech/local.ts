@@ -28,6 +28,8 @@ export interface LocalOptions {
   /** The recogniser's websocket address. Default: /api/asr on the page's own host. The extension sets it. */
   address?: string
   audio: () => AudioSource
+  /** How long a final is held to be joined with the next one. Default LOCAL_HOLD_MS. */
+  holdMs?: number
 }
 
 const OPEN = 1
@@ -78,7 +80,7 @@ export function createLocalRecognizer(
   isInstant: (text: string) => boolean,
   options: LocalOptions,
 ): Recognizer {
-  const assembler = createAssembler({ holdMs: LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
+  const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
   const connect = options.connect ?? ((events: SocketEvents) => browserSocket(events, options.address))
   let running = false
   let served = false

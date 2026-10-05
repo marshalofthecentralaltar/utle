@@ -33,4 +33,5 @@ models
 # The built extension and its test copy
 extension/dist
 extension/test/.standin
+extension/test/.baseline
 check.log

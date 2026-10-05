@@ -3,7 +3,7 @@
 
 import type { BrowserCommand, BrowserFailure, BrowserResult } from '../../src/browser/protocol.ts'
 import { INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
-import type { StripState, ToBackground, ToOffscreen } from './messages.ts'
+import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.ts'
 import type { PageCommand } from './page.ts'
 import { SITES, siteOf } from './sites.ts'
 import type { SiteName, SiteSettings } from './sites.ts'
@@ -196,7 +196,30 @@ const NOT_ALLOWED = (tab: Tab): BrowserResult =>
 
 type PageAnswer = BrowserResult | { ok: true; href: string; settled?: boolean }
 
+/** How long the new-tab page may take to answer a page command (setText waits up to 3 s for a box). */
+const NEWTAB_TIMEOUT_MS = 6000
+
+/** The extension's own new-tab page (21.3). Chrome reports it as chrome://newtab/. */
+function ourNewTab(url: string | undefined): boolean {
+  return url === 'chrome://newtab/' || (url ?? '').startsWith(chrome.runtime.getURL('newtab.html'))
+}
+
+/** The worker cannot inject into an extension page: the new-tab page runs the command with its own page.js. */
+async function runOnNewTab(tab: Tab, tabId: number, command: BrowserCommand): Promise<PageAnswer> {
+  const message: ToPage = { type: 'utle-page-run', tabId, command: { ...command, site: null } }
+  // A tab opened a moment ago may not be listening yet.
+  await waitForComplete(tabId)
+  const deadline = Date.now() + NEWTAB_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const answer = (await Promise.race([chrome.runtime.sendMessage(message).catch(() => undefined), sleep(deadline - Date.now()).then(() => undefined)])) as PageAnswer | undefined
+    if (answer && typeof answer.ok === 'boolean') return answer
+    await sleep(200)
+  }
+  return NOT_ALLOWED(tab)
+}
+
 async function runInPage(tab: Tab, command: BrowserCommand): Promise<PageAnswer> {
+  if (tab.id !== undefined && ourNewTab(tab.url ?? tab.pendingUrl)) return runOnNewTab(tab, tab.id, command)
   if (!scriptable(tab.url) || tab.id === undefined) return NOT_ALLOWED(tab)
   try {
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['dist/page.js'] })
