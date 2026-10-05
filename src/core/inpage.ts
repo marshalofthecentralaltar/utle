@@ -454,6 +454,8 @@ function misheard(session: InpageSession, utterance: string): Classified | null 
     const text = candidate.join(' ')
     const { action } = classifyExact(session, text)
     if (NEVER_CORRECTED.has(action.kind)) return
+    // "kirjuta siis" is not "kirjuta siia", "pane kinn" is not Escape: arming and keys are never reached by a correction.
+    if (action.kind === 'browser' && (action.command.kind === 'arm' || action.command.kind === 'pressKey')) return
     const key = JSON.stringify(action)
     const before = found.get(key)
     if (before === undefined || cost < before.cost) found.set(key, { classified: { action, understood: text }, cost })

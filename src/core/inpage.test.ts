@@ -1115,6 +1115,11 @@ describe('M7 the new phrases', () => {
     },
   )
 
+  it.each(['kirjuta siis', 'pane kinn'])('"%s" is never corrected into arming or a key', (u) => {
+    const step = inpageStep(session(), u, EMPTY)
+    expect(step.commands.some((c) => c.kind === 'arm' || c.kind === 'pressKey')).toBe(false)
+  })
+
   it('a misheard new phrase is corrected and named', () => {
     const step = inpageStep(session(), 'heli valjemas', EMPTY)
     expect(step.commands).toEqual(only({ kind: 'media', action: 'volumeUp' }))

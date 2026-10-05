@@ -59,7 +59,8 @@ const NO_BOX: BoxState = { present: false, text: '', armed: false }
 /** The model is not asked about an utterance this long when the box is armed: a sentence is dictation. */
 export const LONG_UTTERANCE_WORDS = 14
 /** The model must answer within this time, or the rules' step stands. */
-export const ASK_TIMEOUT_MS = 7000
+/** Longer than the server's own 7 s, so a slow model answers 504 and the engine sees it rather than giving up first. */
+export const ASK_TIMEOUT_MS = 9000
 /** How many strip lines the model is told about, and how long each may be (IntentRequestSchema: 200). */
 const RECENT_LINES = 3
 /** M7.2: a multi-step utterance gets no further step once this long has passed since it arrived. */

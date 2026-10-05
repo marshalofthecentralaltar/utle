@@ -91,7 +91,11 @@ describe('pageIntent', () => {
     expect(text).toContain('2. [button] Vaata hiljem')
     expect(text).toContain('mine vaata hiljem')
     expect(text).toContain('armed=false')
-    expect(calls[0]?.system).toContain('Always call the answer tool')
+    const system = calls[0]?.system
+    const systemText = typeof system === 'string' ? system : (system ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('')
+    expect(systemText).toContain('Always call the answer tool')
+    // The fixed prompt is marked for caching.
+    expect(Array.isArray(system) && system[0]?.cache_control?.type).toBe('ephemeral')
   })
 
   it('passes done through, true when the model leaves it out', async () => {

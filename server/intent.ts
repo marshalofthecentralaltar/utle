@@ -83,7 +83,8 @@ export async function pageIntent(input: unknown, deps: { client: MessagesClient;
         model: deps.model,
         max_tokens: MAX_TOKENS,
         output_config: { effort: 'low' },
-        system: INTENT_SYSTEM_PROMPT,
+        // The fixed prompt is marked for caching: every call shares the same prefix (tools, then system).
+        system: [{ type: 'text', text: INTENT_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
         tools: [ANSWER_TOOL],
         tool_choice: { type: 'auto', disable_parallel_tool_use: true },
         messages: [{ role: 'user', content: intentUserMessage(request) }],
