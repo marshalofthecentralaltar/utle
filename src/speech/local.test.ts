@@ -164,6 +164,19 @@ describe('local recogniser (browser side)', () => {
     expect(utterances).toEqual(['jah', 'muuda pealkirja'])
   })
 
+  it('drops a final that hears the released command again a little differently', () => {
+    const r = make()
+    r.start()
+    socket().says({ type: 'ready' })
+    for (const [partial, final] of [['jah', 'Jahh.'], ['jah', 'Jah ja']] as const) {
+      socket().says({ type: 'partial', text: partial })
+      vi.advanceTimersByTime(INSTANT_SETTLE_MS)
+      socket().says({ type: 'final', text: final })
+      vi.advanceTimersByTime(5000)
+    }
+    expect(utterances).toEqual(['jah', 'jah'])
+  })
+
   it('delivers only the new words when speech goes on after a released quick reply', () => {
     const r = make()
     r.start()

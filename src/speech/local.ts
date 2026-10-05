@@ -132,6 +132,10 @@ export function createLocalRecognizer(
       return
     }
     const heard = words(text)
+    // The final is the same breath heard again. The model often changes its mind by a word
+    // ("saada" becomes "saadake", "keri alla" becomes "keri alla ja"); the command has already
+    // run, so a final no more than one word longer than what was released is that breath and is dropped.
+    if (heard.length <= before.length + 1) return
     const same = before.every((word, i) => heard[i] === word)
     if (!same) {
       assembler.final(text)
