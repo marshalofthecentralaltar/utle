@@ -14,6 +14,11 @@ export const SITES: Record<string, string> = {
   whatsapp: 'https://web.whatsapp.com/',
   'whats app': 'https://web.whatsapp.com/',
   vatsap: 'https://web.whatsapp.com/',
+  vatsapp: 'https://web.whatsapp.com/',
+  whatsup: 'https://web.whatsapp.com/',
+  'whats up': 'https://web.whatsapp.com/',
+  votsap: 'https://web.whatsapp.com/',
+  votsapp: 'https://web.whatsapp.com/',
   messenger: 'https://www.messenger.com/',
   facebook: 'https://www.facebook.com/',
   'face book': 'https://www.facebook.com/',
@@ -22,6 +27,8 @@ export const SITES: Record<string, string> = {
   youtube: 'https://www.youtube.com/',
   'you tube': 'https://www.youtube.com/',
   postimees: 'https://www.postimees.ee/',
+  // The stem changes before a case ending (postimehesse); section 21.3.
+  postimehe: 'https://www.postimees.ee/',
   delfi: 'https://www.delfi.ee/',
   err: 'https://www.err.ee/',
   linkedin: 'https://www.linkedin.com/',
@@ -113,11 +120,23 @@ export function cleanForBrowser(text: string): string {
 
 const ADDRESS = /^(?:www\.)?[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.[a-z]{2,}$/u
 
-/** The address for a site name or a bare domain, or null. */
-function siteUrl(name: string): string | null {
+/** Estonian case endings taken off a site name (section 21.3), longest first. */
+const ENDINGS = ['isse', 'sse', 'ile', 'le', 'is', 'it', 'i', 's', 't']
+
+/**
+ * The address for a site name or a bare domain, or null. key is the site table's name when an
+ * Estonian case ending had to come off first ("whatsappi" is whatsapp), else null.
+ */
+function siteUrl(name: string): { url: string; key: string | null } | null {
   const known = SITES[name]
-  if (known) return known
-  return ADDRESS.test(name) ? `https://${name}` : null
+  if (known) return { url: known, key: null }
+  for (const ending of ENDINGS) {
+    if (name.length - ending.length < 3 || !name.endsWith(ending)) continue
+    const key = name.slice(0, -ending.length)
+    const url = SITES[key]
+    if (url) return { url, key }
+  }
+  return ADDRESS.test(name) ? { url: `https://${name}`, key: null } : null
 }
 
 function ordinal(word: string): number | null {
@@ -138,29 +157,41 @@ function tabIndex(s: string): number | null {
   return null
 }
 
+/** Every fixed phrase of the table, for the in-page command vocabulary (section 21.3). */
+export const BROWSER_PHRASES: readonly string[] = Object.keys(FIXED)
+
 export function browserIntent(text: string): BrowserCommand | null {
+  return browserUnderstood(text)?.command ?? null
+}
+
+/**
+ * browserIntent, plus what it was taken to be when a case ending came off a site name
+ * ("mine whatsappi" is understood as "mine whatsapp"); understood is null otherwise.
+ */
+export function browserUnderstood(text: string): { command: BrowserCommand; understood: string | null } | null {
   const s = cleanForBrowser(text)
   if (s === '') return null
+  const plain = (command: BrowserCommand): { command: BrowserCommand; understood: null } => ({ command, understood: null })
 
   const fixed = FIXED[s]
-  if (fixed) return fixed
+  if (fixed) return plain(fixed)
 
   const index = tabIndex(s)
-  if (index !== null && index >= 1) return { kind: 'switchTab', to: { index } }
+  if (index !== null && index >= 1) return plain({ kind: 'switchTab', to: { index } })
 
   const click = /^(?:vajuta|klõpsa|kliki|click|press)(?: number)? (.+)$/.exec(s)
   if (click?.[1]) {
     const number = spokenNumber(click[1])
-    return number === null ? null : { kind: 'clickHint', number }
+    return number === null ? null : plain({ kind: 'clickHint', number })
   }
 
   const search = /^(?:otsi|search for|search) (.+)$/.exec(s)
-  if (search?.[1]) return { kind: 'goTo', url: `https://www.google.com/search?q=${encodeURIComponent(search[1])}` }
+  if (search?.[1]) return plain({ kind: 'goTo', url: `https://www.google.com/search?q=${encodeURIComponent(search[1])}` })
 
-  const go = /^(?:mine lehele|ava leht|ava lehekülg|go to|open|ava|mine) (.+)$/.exec(s)
-  if (go?.[1]) {
-    const url = siteUrl(go[1])
-    if (url) return { kind: 'goTo', url }
+  const go = /^(mine lehele|ava leht|ava lehekülg|go to|open|ava|mine) (.+)$/.exec(s)
+  if (go?.[1] && go[2]) {
+    const site = siteUrl(go[2])
+    if (site) return { command: { kind: 'goTo', url: site.url }, understood: site.key === null ? null : `${go[1]} ${site.key}` }
   }
   return null
 }

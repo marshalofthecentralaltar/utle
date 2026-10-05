@@ -1,5 +1,5 @@
 import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult } from '../browser/protocol.ts'
-import { BRIDGE_TIMED_OUT, browserIntent } from './browserIntent.ts'
+import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
 import { normalise, quickReply } from './quickReply.ts'
 import { STRINGS } from './strings.ts'
@@ -45,7 +45,10 @@ export function initialInpage(lang: Lang): InpageSession {
  * utterance ended (present false when the page has no text field).
  */
 export function inpageStep(session: InpageSession, utterance: string, box: BoxState): InpageStep {
-  return act(session, classify(session, utterance), box)
+  const { action, understood } = classify(session, utterance)
+  const step = act(session, action, box)
+  if (understood === null) return step
+  return { ...step, line: `${STRINGS[session.lang].inpage.understood(understood)} ${step.line}` }
 }
 
 /**
@@ -96,7 +99,7 @@ function failureLine(s: Strings, command: BrowserCommand, code: BrowserFailure, 
 
 /** True for an utterance that should not wait to be joined with more speech: a command, not dictation. */
 export function inpageInstant(session: InpageSession, utterance: string): boolean {
-  const kind = classify(session, utterance).kind
+  const kind = classify(session, utterance).action.kind
   return kind !== 'dictate' && kind !== 'oneBreath' && kind !== 'empty'
 }
 
@@ -246,31 +249,148 @@ function replaceEdit(utterance: string): Edit | null {
   return null
 }
 
-function classify(session: InpageSession, utterance: string): Action {
+/** What an utterance means, and what it was taken to be when an ending or a letter was corrected (21.3). */
+interface Classified {
+  action: Action
+  understood: string | null
+}
+
+function classify(session: InpageSession, utterance: string): Classified {
+  const exact = classifyExact(session, utterance)
+  if (exact.action.kind !== 'dictate') return exact
+  return misheard(session, utterance) ?? exact
+}
+
+function classifyExact(session: InpageSession, utterance: string): Classified {
+  const plain = (action: Action): Classified => ({ action, understood: null })
   const quick = quickReply(utterance)
-  if (session.asleep) return quick?.kind === 'wake' ? { kind: 'wake' } : { kind: 'ignored' }
+  if (session.asleep) return plain(quick?.kind === 'wake' ? { kind: 'wake' } : { kind: 'ignored' })
 
   const clean = normalise(utterance)
-  if (clean === '') return { kind: 'empty' }
-  if (quick?.kind === 'sleep') return { kind: 'sleep' }
-  if (quick?.kind === 'wake') return { kind: 'wake' }
-  if (session.hints && quick?.kind === 'number') return { kind: 'browser', command: { kind: 'clickHint', number: quick.n } }
+  if (clean === '') return plain({ kind: 'empty' })
+  if (quick?.kind === 'sleep') return plain({ kind: 'sleep' })
+  if (quick?.kind === 'wake') return plain({ kind: 'wake' })
+  if (session.hints && quick?.kind === 'number') {
+    return plain({ kind: 'browser', command: { kind: 'clickHint', number: quick.n } })
+  }
 
-  if (messageCommand(utterance)?.kind === 'send') return { kind: 'send' }
-  if (quick?.kind === 'undo') return { kind: 'undo' }
+  if (messageCommand(utterance)?.kind === 'send') return plain({ kind: 'send' })
+  if (quick?.kind === 'undo') return plain({ kind: 'undo' })
 
   const fixed = EDITS[clean]
-  if (fixed) return { kind: 'edit', edit: fixed }
+  if (fixed) return plain({ kind: 'edit', edit: fixed })
   const replace = replaceEdit(utterance)
-  if (replace) return { kind: 'edit', edit: replace }
+  if (replace) return plain({ kind: 'edit', edit: replace })
 
   const talk = conversation(utterance, clean)
-  if (talk) return talk
+  if (talk) return plain(talk)
 
-  const command = BARE_BROWSER[clean] ?? browserIntent(utterance)
-  if (command) return { kind: 'browser', command }
+  const bare = BARE_BROWSER[clean]
+  if (bare) return plain({ kind: 'browser', command: bare })
+  const browser = browserUnderstood(utterance)
+  if (browser) return { action: { kind: 'browser', command: browser.command }, understood: browser.understood }
 
-  return { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
+  return plain({ kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') })
+}
+
+// ---------------------------------------------------------------------------------------------
+// The one-letter rule (section 21.3): a short utterance one letter away from a command is that command.
+
+/** Never reached by a correction: a send, a sleep or a wake, an undo cannot be taken back (21.3). */
+const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'dictate', 'oneBreath', 'empty', 'ignored'])
+
+/** Words left out of the vocabulary: those of NEVER_CORRECTED, and the keywords of free-text patterns. */
+const LEFT_OUT = new Set([
+  'saada', 'send', 'puhka', 'maga', 'kuula', 'ärka', 'sleep', 'wake', 'listening', 'stop', 'võta', 'undo',
+  'otsi', 'search', 'mitte', 'vaid', 'asemel', 'asenda', 'sõnaga', 'not', 'but', 'replace', 'with', 'change',
+])
+
+/** Verb endings: "otsin" is "I search", a sentence, not a misheard "otsi" (21.3). */
+const VERB_ENDINGS = new Set(['n', 'd', 'b', 's', 'me', 'te', 'vad', 'ma', 'sin', 'sid', 'nud'])
+
+/** Allative pronouns as spoken: "kirjuta mulle" is dictation. */
+const PRONOUN_WORDS = new Set(['mulle', 'sulle', 'talle', 'meile', 'teile', 'neile', 'endale'])
+
+/** Fixed command phrases as word lists: for the vocabulary and for "a partial may still be a command". */
+const PHRASES: readonly (readonly string[])[] = [
+  ...BROWSER_PHRASES,
+  ...Object.keys(EDITS),
+  ...Object.keys(BARE_BROWSER),
+  'saada ära', 'saada sõnum', 'saada see', 'send it', 'send the message', 'send message',
+  'stop listening', 'go to sleep', 'ära kuula', 'wake up', 'start listening', 'ärka üles', 'võta tagasi', 'undo that',
+  'uus sõnum', 'kirjuta sõnum', 'new message', 'write a message to', 'write message to', 'send a message to',
+  'open chat with', 'open the chat with', 'open conversation with', 'open the conversation with', 'chat with', 'write to',
+].map((phrase) => phrase.split(' '))
+
+const VOCABULARY: readonly string[] = [
+  ...new Set([
+    ...PHRASES.flat(),
+    ...Object.keys(SITES).flatMap((site) => site.split(' ')),
+    'kirjuta', 'sõnum', 'vestlus', 'koos', 'ava', 'mine', 'lehele', 'leht', 'lehekülg', 'vajuta', 'klõpsa', 'kliki',
+    'number', 'vaheleht', 'vahelehele', 'click', 'press', 'open', 'chat', 'conversation', 'write', 'message', 'tell', 'tab',
+  ]),
+].filter((word) => !LEFT_OUT.has(word))
+
+/** Optimal string alignment distance (substitution, insertion, deletion, swap of neighbours), capped. */
+function distance(a: string, b: string, cap: number): number {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1
+  const rows: number[][] = [Array.from({ length: b.length + 1 }, (_, j) => j)]
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i]
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      let d = Math.min((rows[i - 1]?.[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (rows[i - 1]?.[j - 1] ?? 0) + cost)
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d = Math.min(d, (rows[i - 2]?.[j - 2] ?? 0) + 1)
+      row.push(d)
+    }
+    rows.push(row)
+  }
+  return rows[a.length]?.[b.length] ?? cap + 1
+}
+
+/** True when heard is one letter (two from eight letters) away from target and not target plus a verb ending. */
+function nearWord(heard: string, target: string): boolean {
+  if (heard.length < 4 || heard === target) return false
+  if (heard.startsWith(target) && VERB_ENDINGS.has(heard.slice(target.length))) return false
+  const cap = heard.length >= 8 ? 2 : 1
+  return distance(heard, target, cap) <= cap
+}
+
+/**
+ * The one-letter rule: two to four words, not a command as they stand. Each word of four letters
+ * or more is tried as each vocabulary word near it, and each pair of neighbours joined into one
+ * ("vahe leht"); when the corrected utterances that are commands all mean one command, it is that one.
+ */
+function misheard(session: InpageSession, utterance: string): Classified | null {
+  if (session.asleep) return null
+  const words = normalise(utterance).split(' ')
+  if (words.length < 2 || words.length > 4) return null
+
+  // One entry per distinct command; of the corrections reaching it, the closest is the one named.
+  const found = new Map<string, { classified: Classified; cost: number }>()
+  const attempt = (candidate: readonly string[], cost: number): void => {
+    const text = candidate.join(' ')
+    const { action } = classifyExact(session, text)
+    if (NEVER_CORRECTED.has(action.kind)) return
+    const key = JSON.stringify(action)
+    const before = found.get(key)
+    if (before === undefined || cost < before.cost) found.set(key, { classified: { action, understood: text }, cost })
+  }
+  words.forEach((word, i) => {
+    for (const target of VOCABULARY) {
+      if (nearWord(word, target)) attempt([...words.slice(0, i), target, ...words.slice(i + 1)], distance(word, target, 2))
+    }
+  })
+  for (let i = 0; i + 1 < words.length; i++) {
+    const joined = `${words[i] ?? ''}${words[i + 1] ?? ''}`
+    for (const target of VOCABULARY) {
+      if (target === joined || nearWord(joined, target)) {
+        attempt([...words.slice(0, i), target, ...words.slice(i + 2)], distance(joined, target, 2))
+      }
+    }
+  }
+  const [only] = found.values()
+  return found.size === 1 && only !== undefined ? only.classified : null
 }
 
 /** The session after commands ran on the page in front: labels and undo kept only where still true. */
@@ -407,8 +527,11 @@ function keepsCapital(word: string, box: string): boolean {
   return new RegExp(`(?<=[\\p{L}\\p{N},;:] )${escapeRegExp(bare)}(?![\\p{L}\\p{N}])`, 'u').test(box)
 }
 
-/** The box text with one dictated utterance appended (the join rules of section 21.1). */
-function joinDictation(old: string, utterance: string): string {
+/**
+ * The box text with one dictated utterance appended (the join rules of section 21.1). stop false
+ * leaves out the closing full stop, for a sentence still being spoken (21.3).
+ */
+function joinDictation(old: string, utterance: string, stop = true): string {
   let base = old.replace(/[ \t]+$/u, '')
   const [head = '', ...rest] = utterance.split(' ')
   const headWord = head.toLocaleLowerCase().replace(/[^\p{L}]/gu, '')
@@ -420,7 +543,7 @@ function joinDictation(old: string, utterance: string): string {
   const sentenceStart = base === '' || /[.!?…\n]$/u.test(base)
   const first = sentenceStart ? capitalise(head) : keepsCapital(head, base) ? head : lowerInitial(head)
   let text = [first, ...rest].join(' ')
-  if (rest.length >= 2 && !/[.!?…,:;]$/u.test(text)) text += '.'
+  if (stop && rest.length >= 2 && !/[.!?…,:;]$/u.test(text)) text += '.'
   const separator = base === '' || base.endsWith('\n') ? '' : comma ? ', ' : ' '
   return base + separator + text
 }
@@ -434,8 +557,57 @@ function joinDictation(old: string, utterance: string): string {
  * alone shows the words. The final utterance still goes through inpageStep with that same earlier box.
  */
 export function inpagePreview(session: InpageSession, partial: string, box: BoxState): string | null {
-  void session
-  void partial
-  void box
-  return null
+  if (session.asleep || !box.present) return null
+  const clean = normalise(partial)
+  if (clean === '' || mayBeCommand(session, partial, clean)) return null
+  return joinDictation(box.text, partial.trim().replace(/\s+/g, ' '), false)
+}
+
+/** Starts of pattern commands that are not complete yet (section 21.3), over normalised text. */
+const PENDING: readonly RegExp[] = [
+  /^(?:mitte|not|asenda|replace|change)(?: \S+){0,4}(?: (?:vaid|but|sõnaga|with|to))?$/u,
+  /^\S+(?: \S+)? asemel$/u,
+  /^(?:ava|mine|open|go|go to|mine lehele|ava leht|ava lehekülg|ava vestlus|ava vestlus koos|chat with|write to|tell|message|switch to)(?: \S+){0,2}$/u,
+  /^(?:tell|write to|message) \S+(?: \S+)? that$/u,
+  /^(?:vajuta|klõpsa|kliki|click|press) number$/u,
+  /^(?:mine )?(?:vaheleht|vahelehele)(?: number)?$/u,
+]
+
+/** The words are the first words of a fixed command phrase, each maybe a letter off, the last maybe half said. */
+function startsPhrase(words: readonly string[]): boolean {
+  return PHRASES.some(
+    (phrase) =>
+      words.length <= phrase.length &&
+      words.every((heard, i) => {
+        const target = phrase[i] ?? ''
+        const last = i === words.length - 1
+        return heard === target || (last && target.startsWith(heard)) || nearWord(heard, target)
+      }),
+  )
+}
+
+/** "kirjuta", "saada", "sõnum", "uus sõnum": still waiting for a name, or a name and "et" (21.3). */
+function pendingMessage(words: readonly string[]): boolean {
+  let rest: readonly string[]
+  if (words[0] === 'uus' && words[1] === 'sõnum') rest = words.slice(2)
+  else if (words[0] === 'kirjuta' || words[0] === 'saada' || words[0] === 'sõnum') rest = words.slice(1)
+  else return false
+  if (rest[0] === 'sõnum') rest = rest.slice(1)
+  const first = rest[0]
+  if (first === undefined) return true
+  if (PRONOUN_WORDS.has(first)) return false
+  if (rest.length <= 2) return true
+  const nameEnd = rest.slice(0, 2).findIndex((word) => word.endsWith('le')) + 1
+  if (nameEnd === 0) return false
+  let after = rest.slice(nameEnd)
+  if (after[0] === 'sõnum') after = after.slice(1)
+  return after[0] === 'et'
+}
+
+/** Section 21.3: a command now, one word, or a start that more words could still make a command. */
+function mayBeCommand(session: InpageSession, partial: string, clean: string): boolean {
+  const words = clean.split(' ')
+  if (words.length === 1) return true
+  if (classify(session, partial).action.kind !== 'dictate') return true
+  return startsPhrase(words) || PENDING.some((pattern) => pattern.test(clean)) || pendingMessage(words)
 }
