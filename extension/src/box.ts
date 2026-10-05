@@ -28,11 +28,30 @@ export function hitTest(el: Element, r: DOMRect): boolean {
     [right - 2, bottom - 2],
   ]
   for (const [x, y] of points) {
-    const hit = document.elementFromPoint(x, y)
+    const hit = throughStrip(x, y)
     if (hit && (hit === el || el.contains(hit))) return true
   }
   return false
 }
+
+/**
+ * The element at a point, looking through Ütle's own strip and labels. A site's fixed bottom bar
+ * (Gmail's compose, a chat widget) sits under the strip; it is still there, and a synthetic click
+ * reaches it, so it must be listed and clickable by voice.
+ */
+function throughStrip(x: number, y: number): Element | null {
+  const hit = document.elementFromPoint(x, y)
+  if (!hit || !(hit instanceof HTMLElement) || !OURS.has(hit.tagName)) return hit
+  const before = hit.style.pointerEvents
+  hit.style.pointerEvents = 'none'
+  try {
+    return document.elementFromPoint(x, y)
+  } finally {
+    hit.style.pointerEvents = before
+  }
+}
+
+const OURS = new Set(['UTLE-STRIP', 'UTLE-HINTS'])
 
 /** On screen, not hidden, and not under something else (a dialog, or the strip). */
 export function visible(el: Element): boolean {
