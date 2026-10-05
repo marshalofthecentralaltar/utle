@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS } from './asrProtocol.ts'
 import { createLocalRecognizer } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
 
@@ -116,7 +117,9 @@ describe('local recogniser (browser side)', () => {
     socket().says({ type: 'final', text: 'ava uus vaheleht' })
     expect(interims.at(-1)).toBe('')
     expect(utterances).toEqual([])
-    vi.advanceTimersByTime(1200)
+    vi.advanceTimersByTime(LOCAL_HOLD_MS - 1)
+    expect(utterances).toEqual([])
+    vi.advanceTimersByTime(1)
     expect(utterances).toEqual(['ava uus vaheleht'])
   })
 
@@ -125,15 +128,79 @@ describe('local recogniser (browser side)', () => {
     r.start()
     socket().says({ type: 'ready' })
     socket().says({ type: 'final', text: 'kirjuta Marile' })
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(300)
     socket().says({ type: 'partial', text: 'et' })
-    vi.advanceTimersByTime(800)
+    vi.advanceTimersByTime(300)
     socket().says({ type: 'final', text: 'et ma jõuan' })
-    vi.advanceTimersByTime(1200)
+    vi.advanceTimersByTime(LOCAL_HOLD_MS)
     expect(utterances).toEqual(['kirjuta Marile et ma jõuan'])
 
     socket().says({ type: 'final', text: 'jah' })
     expect(utterances.at(-1)).toBe('jah')
+  })
+
+  it('releases a quick reply from a partial that has settled, and not again when its final arrives', () => {
+    const r = make()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'jah' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS - 1)
+    expect(utterances).toEqual([])
+    vi.advanceTimersByTime(1)
+    expect(utterances).toEqual(['jah'])
+    expect(interims.at(-1)).toBe('')
+
+    // The server's final for the same word, with its own casing and punctuation, is swallowed.
+    socket().says({ type: 'partial', text: 'Jah.' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS)
+    socket().says({ type: 'final', text: 'Jah.' })
+    vi.advanceTimersByTime(5000)
+    expect(utterances).toEqual(['jah'])
+
+    // A later, different utterance still arrives.
+    socket().says({ type: 'partial', text: 'muuda pealkirja' })
+    socket().says({ type: 'final', text: 'muuda pealkirja' })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS)
+    expect(utterances).toEqual(['jah', 'muuda pealkirja'])
+  })
+
+  it('delivers only the new words when speech goes on after a released quick reply', () => {
+    const r = make()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'jah' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS)
+    socket().says({ type: 'partial', text: 'jah, aga muuda' })
+    socket().says({ type: 'final', text: 'Jah, aga muuda pealkirja.' })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS)
+    expect(utterances).toEqual(['jah', 'aga muuda pealkirja.'])
+  })
+
+  it('does not release a quick reply early when the partial grows before it settles', () => {
+    const r = make()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'jah' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS - 100)
+    socket().says({ type: 'partial', text: 'jah, aga muuda pealkirja' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS * 3)
+    expect(utterances).toEqual([])
+    socket().says({ type: 'final', text: 'jah, aga muuda pealkirja' })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS)
+    expect(utterances).toEqual(['jah, aga muuda pealkirja'])
+  })
+
+  it('does not release a quick reply from a partial while an earlier final is held', () => {
+    const r = make()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'final', text: 'kirjuta' })
+    socket().says({ type: 'partial', text: 'jah' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS)
+    expect(utterances).toEqual([])
+    socket().says({ type: 'final', text: 'jah' })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS)
+    expect(utterances).toEqual(['kirjuta jah'])
   })
 
   it('gives up at once when the server says the model is unavailable', () => {

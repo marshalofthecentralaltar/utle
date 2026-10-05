@@ -1,7 +1,6 @@
 import { createAssembler } from './assembler.ts'
-import { ASR_PATH, parseAsrMessage } from './asrProtocol.ts'
+import { ASR_PATH, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, parseAsrMessage } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
-import { HOLD_MS } from './webSpeech.ts'
 
 /** The parts of the browser's WebSocket this recogniser uses. */
 export interface SocketLike {
@@ -55,16 +54,28 @@ export function localRecognizerPossible(): boolean {
   )
 }
 
+/** Lower-case words without punctuation, for comparing what was released with what the server finalises. */
+function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((word) => word !== '')
+}
+
 /**
  * The local recogniser on the dev server (ARCHITECTURE 20.1) behind the Recognizer interface.
- * Bilingual, so setLang changes nothing. Finals go through the same assembler as Chrome's.
+ * Bilingual, so setLang changes nothing. Finals go through the same assembler as Chrome's, with a
+ * shorter hold. A quick reply does not wait for the final: a partial that is one, with nothing held,
+ * is released once it has stayed the same for INSTANT_SETTLE_MS, and the final for those same words
+ * is then swallowed on the client (only the words after them are delivered).
  */
 export function createLocalRecognizer(
   handlers: RecognizerHandlers,
   isInstant: (text: string) => boolean,
   options: LocalOptions,
 ): Recognizer {
-  const assembler = createAssembler({ holdMs: HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
+  const assembler = createAssembler({ holdMs: LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
   const connect = options.connect ?? browserSocket
   let running = false
   let served = false
@@ -72,10 +83,67 @@ export function createLocalRecognizer(
   let socket: SocketLike | null = null
   let audio: AudioSource | null = null
   let retry: ReturnType<typeof setTimeout> | null = null
+  let settle: ReturnType<typeof setTimeout> | null = null
+  let settling = ''
+  /** The words of a quick reply released from a partial, until the server's final for them arrives. */
+  let released: string[] | null = null
+
+  const cancelSettle = (): void => {
+    if (settle !== null) clearTimeout(settle)
+    settle = null
+    settling = ''
+  }
+
+  const onPartial = (text: string): void => {
+    if (released !== null) {
+      // Still the reply already released: nothing new to show.
+      const heard = words(text)
+      const extra = heard.length > released.length || heard.some((word, i) => word !== released?.[i])
+      handlers.onInterim(extra ? text : '')
+      if (extra) assembler.activity()
+      return
+    }
+    if (text !== '') assembler.activity()
+    handlers.onInterim(text)
+    if (text === settling) return
+    cancelSettle()
+    if (text === '' || !assembler.idle() || !isInstant(text)) return
+    settling = text
+    settle = setTimeout(() => {
+      settle = null
+      settling = ''
+      if (!assembler.idle()) return
+      released = words(text)
+      handlers.onInterim('')
+      handlers.onUtterance(text)
+    }, INSTANT_SETTLE_MS)
+  }
+
+  const onFinal = (text: string): void => {
+    cancelSettle()
+    handlers.onInterim('')
+    const before = released
+    released = null
+    if (before === null) {
+      assembler.final(text)
+      return
+    }
+    const heard = words(text)
+    const same = before.every((word, i) => heard[i] === word)
+    if (!same) {
+      assembler.final(text)
+      return
+    }
+    // Drop the released words; keep the rest as the user said it.
+    const rest = text.trim().split(/\s+/).slice(before.length).join(' ')
+    if (rest !== '') assembler.final(rest)
+  }
 
   const teardown = (): void => {
     if (retry !== null) clearTimeout(retry)
     retry = null
+    cancelSettle()
+    released = null
     const ws = socket
     socket = null
     ws?.close()
@@ -123,12 +191,10 @@ export function createLocalRecognizer(
           giveUp()
           return
         case 'partial':
-          if (message.text !== '') assembler.activity()
-          handlers.onInterim(message.text)
+          onPartial(message.text)
           return
         case 'final':
-          handlers.onInterim('')
-          assembler.final(message.text)
+          onFinal(message.text)
           return
       }
     }

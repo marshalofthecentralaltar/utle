@@ -3,6 +3,8 @@ export interface Assembler {
   final(text: string, alternatives?: readonly string[]): void
   /** The user is audibly still speaking (an interim result arrived). */
   activity(): void
+  /** True when nothing is held waiting to be joined. */
+  idle(): boolean
   dispose(): void
 }
 
@@ -59,6 +61,9 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
     },
     activity() {
       if (held.length > 0) hold()
+    },
+    idle() {
+      return held.length === 0
     },
     dispose() {
       cancel()

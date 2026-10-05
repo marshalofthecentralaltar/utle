@@ -1,18 +1,30 @@
 /**
- * Streams an Estonian sentence to a running dev server's local recogniser in real time and prints
- * what comes back. Exits non-zero unless a final holds the sentence.
+ * Streams an Estonian fixture to a running dev server's local recogniser in real time and prints
+ * what comes back, with the timings the client would act on. Exits non-zero unless a final holds
+ * the expected words.
  *
  *   npx vite --port 5181 --strictPort        (in another shell)
- *   npx tsx scripts/asr-smoke.ts http://localhost:5181
+ *   npx tsx scripts/asr-smoke.ts http://localhost:5181          the sentence
+ *   npx tsx scripts/asr-smoke.ts http://localhost:5181 jah      the one-word quick reply
  */
 import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
-import { ASR_FRAME_SAMPLES, ASR_PATH, ASR_SAMPLE_RATE, parseAsrMessage } from '../src/speech/asrProtocol.ts'
+import {
+  ASR_FRAME_SAMPLES,
+  ASR_PATH,
+  ASR_SAMPLE_RATE,
+  INSTANT_SETTLE_MS,
+  LOCAL_HOLD_MS,
+  parseAsrMessage,
+} from '../src/speech/asrProtocol.ts'
 import { readPcmWav } from './wav.ts'
 
 const base = process.argv[2] ?? 'http://localhost:5173'
-const FIXTURE = fileURLToPath(new URL('./fixtures/et-sentence-16k.wav', import.meta.url))
-const EXPECTED = ['ava uus vaheleht', 'kell kolm']
+const jah = process.argv[3] === 'jah'
+const FIXTURE = fileURLToPath(new URL(jah ? './fixtures/et-jah-16k.wav' : './fixtures/et-sentence-16k.wav', import.meta.url))
+const EXPECTED = jah ? ['jah'] : ['ava uus vaheleht', 'kell kolm']
+const MIN_PARTIALS = jah ? 1 : 3
+const words = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().replace(/\s+/g, ' ')
 const SILENCE = 1e-3
 
 const { rate, samples } = readPcmWav(FIXTURE)
@@ -27,6 +39,9 @@ const partials: string[] = []
 const finals: string[] = []
 let speechEndSentAt = 0
 let finalAt = 0
+/** When the first partial reading just "jah" arrived, and when the partial next changed. */
+let instantAt = 0
+let instantChangedAt = 0
 let readyMs = 0
 const ms = (): string => `${String(Date.now() - opened).padStart(5)} ms`
 
@@ -34,7 +49,15 @@ const done = (code: number): void => {
   ws.close()
   console.log(`\npartials: ${partials.length}, finals: ${finals.length}`)
   console.log(`connect to ready: ${readyMs} ms`)
-  if (finalAt > 0) console.log(`last speech chunk sent to final: ${finalAt - speechEndSentAt} ms (includes the 1000 ms endpoint silence)`)
+  if (finalAt > 0) {
+    console.log(`last speech chunk sent to final: ${finalAt - speechEndSentAt} ms (includes the 1000 ms endpoint silence)`)
+    if (!jah) console.log(`end of speech to the app, final + local hold ${LOCAL_HOLD_MS} ms: ${finalAt - speechEndSentAt + LOCAL_HOLD_MS} ms`)
+  }
+  if (jah && instantAt > 0) {
+    const stable = instantChangedAt === 0 || instantChangedAt - instantAt >= INSTANT_SETTLE_MS
+    console.log(`last speech chunk sent to first partial reading "jah": ${instantAt - speechEndSentAt} ms`)
+    console.log(`end of speech to release, partial + settle ${INSTANT_SETTLE_MS} ms: ${instantAt - speechEndSentAt + INSTANT_SETTLE_MS} ms (partial stayed unchanged for the settle time: ${stable ? 'yes' : 'no'})`)
+  }
   process.exit(code)
 }
 
@@ -72,6 +95,8 @@ ws.on('message', (data, isBinary) => {
       return
     case 'partial':
       partials.push(message.text)
+      if (jah && instantAt > 0 && instantChangedAt === 0) instantChangedAt = Date.now()
+      if (jah && instantAt === 0 && words(message.text) === 'jah') instantAt = Date.now()
       console.log(`${ms()}  partial  ${message.text}`)
       return
     case 'final': {
@@ -79,7 +104,7 @@ ws.on('message', (data, isBinary) => {
       finalAt = Date.now()
       console.log(`${ms()}  FINAL    ${message.text}`)
       const lower = message.text.toLowerCase()
-      if (EXPECTED.every((phrase) => lower.includes(phrase))) done(partials.length >= 3 ? 0 : 1)
+      if (EXPECTED.every((phrase) => lower.includes(phrase))) done(partials.length >= MIN_PARTIALS ? 0 : 1)
       return
     }
   }
