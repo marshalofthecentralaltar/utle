@@ -17,6 +17,23 @@ export interface IntentRequest {
   tabs: TabSummary[]
   /** The last strip lines, newest last, so "ei, teine" can refer to them. At most 3. */
   recent: string[]
+  /**
+   * M7.2: the steps already taken for this same utterance, oldest first, when the model said the
+   * task was not done after the previous one (a bounded loop in the engine, at most 4 steps). Empty
+   * or absent on the first ask.
+   */
+  steps?: IntentStep[]
+}
+
+/** One step the engine took for the utterance: what the model answered, and how it went on the page. */
+export interface IntentStep {
+  /** The intent kind and command kind, e.g. "command goTo", "command clickItem 12", "dictate". */
+  action: string
+  /** The model's say for that step. */
+  say: string
+  ok: boolean
+  /** The failure's message when ok is false, else ''. Never the page text. */
+  message: string
 }
 
 export interface TabSummary {
@@ -50,6 +67,12 @@ export interface IntentAnswer {
   intent: PageIntent
   /** What the model took the words to be, in the request's language, at most 60 characters. '' when obvious. */
   say: string
+  /**
+   * M7.2: false when the utterance asks for more than this one step ("mine youtube'i ja otsi
+   * kassivideod"): the engine runs the step, reads the page again and asks again with `steps`.
+   * Absent means true.
+   */
+  done?: boolean
 }
 
 const Id = z.number().int().nonnegative()
@@ -101,7 +124,12 @@ export const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kin
   z.object({ kind: z.literal('unclear'), say: Short }),
 ])
 
-export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: PageIntentSchema, say: Short })
+export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: PageIntentSchema, say: Short, done: z.boolean().optional() })
+
+/** The engine stops a multi-step utterance after this many steps, whatever the model says. */
+export const MAX_INTENT_STEPS = 4
+
+const IntentStepSchema: z.ZodType<IntentStep> = z.object({ action: z.string().max(60), say: z.string().max(120), ok: z.boolean(), message: z.string().max(200) })
 
 const PageItemSchema = z.object({ id: Id, role: z.string().max(20), text: z.string().max(80) })
 const BoxSchema = z.object({
@@ -126,6 +154,7 @@ export const IntentRequestSchema: z.ZodType<IntentRequest> = z.object({
   }),
   tabs: z.array(z.object({ index: z.number().int().min(1), title: z.string().max(300), active: z.boolean() })).max(60),
   recent: z.array(z.string().max(200)).max(3),
+  steps: z.array(IntentStepSchema).max(MAX_INTENT_STEPS).optional(),
 })
 
 function webAddress(url: string): boolean {
