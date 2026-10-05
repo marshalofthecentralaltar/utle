@@ -81,6 +81,29 @@ export interface Strings {
   browserTimedOut: string
   sendTimedOut: string
 
+  // In-page mode (section 21.1): what an utterance did to the site's message box.
+  inpage: {
+    sleeping: string
+    resting: string
+    pickField: string
+    sayWho: string
+    nothingToSend: string
+    boxEmpty: string
+    boxNotFound: string
+    notInText(text: string): string
+    replacing(from: string, to: string): string
+    deletingWord: string
+    deletingSentence: string
+    clearing: string
+    newLine: string
+    mark(mark: string): string
+    undoing: string
+    written: string
+    conversationOpen(name: string): string
+    sent: string
+    notSent(reason: string): string
+  }
+
   // The interpreter.
   stillWorks: string
   unreachable: string
@@ -301,6 +324,28 @@ const ET: Strings = {
   browserTimedOut: 'Brauser ei vastanud õigel ajal.',
   sendTimedOut: 'Brauser ei vastanud õigel ajal. Sõnum võis minna või mitte: vaata vestlus üle, enne kui uuesti saadad.',
 
+  inpage: {
+    sleeping: 'Puhkan. Midagi ei kirjutata.',
+    resting: 'Puhkan. Jätkamiseks ütle „ärka üles“.',
+    pickField: 'Kuhu kirjutada? Ütle „näita numbreid“ ja siis kasti number või ava vestlus, näiteks „kirjuta Marile“.',
+    sayWho: 'Kellele? Ütle näiteks „kirjuta Marile“.',
+    nothingToSend: 'Sõnumikast on tühi, pole midagi saata.',
+    boxEmpty: 'Sõnumikast on tühi.',
+    boxNotFound: 'Sõnumikasti ei leitud.',
+    notInText: (text) => `„${text}“ ei ole tekstis.`,
+    replacing: (from, to) => `„${from}“ asemel „${to}“.`,
+    deletingWord: 'Kustutan viimase sõna.',
+    deletingSentence: 'Kustutan viimase lause.',
+    clearing: 'Kustutan kõik.',
+    newLine: 'Uus rida.',
+    mark: (mark) => ({ '.': 'Punkt.', ',': 'Koma.', '?': 'Küsimärk.', '!': 'Hüüumärk.' })[mark] ?? mark,
+    undoing: 'Võtan tagasi.',
+    written: 'Tehtud.',
+    conversationOpen: (name) => `Vestlus avatud: ${name}.`,
+    sent: 'Saadetud.',
+    notSent: (reason) => `Ei saatnud. ${reason}`,
+  },
+
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
   unreachable: 'Abiline ei vasta.',
   tooSlow: 'Abiline mõtles liiga kaua.',
@@ -513,6 +558,28 @@ const EN: Strings = {
   noDraft: 'There is no message open.',
   browserTimedOut: 'The browser did not answer in time.',
   sendTimedOut: 'The browser did not answer in time. The message may or may not have gone: look at the conversation before you send it again.',
+
+  inpage: {
+    sleeping: 'Resting. Nothing will be typed.',
+    resting: 'Resting. Say "wake up" to continue.',
+    pickField: 'Where should it go? Say "show numbers" and the number of the box, or open a conversation, for example "message Mari".',
+    sayWho: 'To whom? Say, for example, "message Mari".',
+    nothingToSend: 'The message box is empty, there is nothing to send.',
+    boxEmpty: 'The message box is empty.',
+    boxNotFound: 'No message box was found.',
+    notInText: (text) => `"${text}" is not in the text.`,
+    replacing: (from, to) => `"${to}" instead of "${from}".`,
+    deletingWord: 'Deleting the last word.',
+    deletingSentence: 'Deleting the last sentence.',
+    clearing: 'Deleting everything.',
+    newLine: 'New line.',
+    mark: (mark) => ({ '.': 'Full stop.', ',': 'Comma.', '?': 'Question mark.', '!': 'Exclamation mark.' })[mark] ?? mark,
+    undoing: 'Undoing.',
+    written: 'Done.',
+    conversationOpen: (name) => `Conversation open: ${name}.`,
+    sent: 'Sent.',
+    notSent: (reason) => `Not sent. ${reason}`,
+  },
 
   stillWorks: 'Yes, no and undo still work.',
   unreachable: 'The assistant is unreachable.',

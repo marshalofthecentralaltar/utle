@@ -679,10 +679,10 @@ The name rule of 20.3, plus the comitative: the last word loses "-le" (Marile, M
 
 | Phrase (Estonian / English) | What happens to the box text |
 |---|---|
-| mitte X, vaid Y; mitte X vaid Y; X asemel Y; asenda X sõnaga Y / not X but Y; replace X with Y; change X to Y | The last occurrence of X (case-insensitive, whole words, X and Y may be several words) becomes Y. When the replaced text began with a capital letter at a sentence start, Y does too. "X asemel Y" is a repair only when X and Y are at most three words each (longer is a sentence being dictated), and because "asemel" takes the genitive ("kolme asemel neli"), a one-word X that is not found also matches a word it extends by one or two letters (kolme finds kolm). X not found: no command, the line quotes X. |
+| mitte X, vaid Y; mitte X vaid Y; X asemel Y; asenda X sõnaga Y / not X but Y; replace X with Y; change X to Y | The last occurrence of X (case-insensitive, whole words, X and Y may be several words) becomes Y. When the replaced text began with a capital letter at a sentence start, Y does too. "X asemel Y" is a repair only when X and Y are at most two words each (longer is a sentence being dictated), and because "asemel" takes the genitive ("kolme asemel neli"), a one-word X that is not found also matches a word it extends by one or two letters (kolme finds kolm). X not found: no command, the line quotes X. |
 | kustuta viimane sõna / delete the last word | The last word goes, with the punctuation attached to it. |
 | kustuta viimane lause / delete the last sentence | Everything after the last sentence end (. ! ? or a line break) before the final one goes. |
-| kustuta kõik, tühjenda, alusta uuesti / delete everything, clear, start again | The box is emptied. |
+| kustuta kõik, tühjenda, alusta uuesti, katkesta sõnum / delete everything, clear, start again, cancel the message | The box is emptied. |
 | uus rida, reavahetus / new line | A line break is appended. |
 | punkt, koma, küsimärk, hüüumärk / full stop, period, comma, question mark, exclamation mark | As the whole utterance only: the mark is appended, replacing a mark already at the end. Inside dictation the words stay words (the recogniser punctuates). |
 | võta tagasi / undo, undo that | The newest text on `undo` is put back. It leaves `undo` when that `setText` succeeds (in `inpageResult`), so a failed undo loses nothing. Nothing there: the line says so. |
