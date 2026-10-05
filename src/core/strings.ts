@@ -226,6 +226,31 @@ export interface Strings {
     saved: string
     notAnAddress(value: string): string
     savedReload: string
+    // Push-to-talk by looking (round 3, ptt lane).
+    /** The microphone's label in gaze mode while it is off. */
+    gazeOff: string
+    /** The thin line under the done line when the speech server is behind by this many seconds. */
+    lagLine(seconds: number): string
+    listenMode: string
+    listenModeEn: string
+    listenToggle: string
+    listenToggleEn: string
+    listenGaze: string
+    listenGazeEn: string
+    gazeTarget: string
+    gazeTargetEn: string
+    gazeMic: string
+    gazeMicEn: string
+    gazeBar: string
+    gazeBarEn: string
+    speechEngine: string
+    speechEngineEn: string
+    engineLocal: string
+    engineLocalEn: string
+    engineSoniox: string
+    engineSonioxEn: string
+    engineNote: string
+    engineNoteEn: string
   }
 }
 
@@ -632,6 +657,28 @@ const ET: Strings = {
     saved: 'Salvestatud.',
     notAnAddress: (value) => `See ei ole täielik aadress: ${value}`,
     savedReload: 'Salvestatud. Uus kõnemudeli aadress hakkab kehtima pärast laienduse uuesti laadimist.',
+    gazeOff: 'Vaata siia ja räägi',
+    lagLine: (seconds) => `Kõne jääb maha ${seconds} s`,
+    listenMode: 'Kuulamine',
+    listenModeEn: 'Listening',
+    listenToggle: 'Lülitiga',
+    listenToggleEn: 'Toggle: a click or a one-second look turns it on and off',
+    listenGaze: 'Vaatamisega',
+    listenGazeEn: 'By looking: it listens while you look at the microphone',
+    gazeTarget: 'Vaatamise sihtmärk',
+    gazeTargetEn: 'Gaze target',
+    gazeMic: 'Mikrofon',
+    gazeMicEn: 'The microphone square',
+    gazeBar: 'Kogu riba',
+    gazeBarEn: 'The whole bar',
+    speechEngine: 'Kõnemudel',
+    speechEngineEn: 'Speech model',
+    engineLocal: 'Arvutis (TalTech)',
+    engineLocalEn: 'On this computer (TalTech)',
+    engineSoniox: 'Soniox (pilves)',
+    engineSonioxEn: 'Soniox (in the cloud)',
+    engineNote: 'Soniox vajab võtit arendusserveris (SONIOX_API_KEY). Valik hakkab kehtima järgmisel sisselülitamisel.',
+    engineNoteEn: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
   },
 }
 
@@ -960,6 +1007,28 @@ const EN: Strings = {
     saved: 'Saved.',
     notAnAddress: (value) => `Not a full address: ${value}`,
     savedReload: 'Saved. Reload the extension for a new speech address to take effect.',
+    gazeOff: 'Look here and speak',
+    lagLine: (seconds) => `Speech is ${seconds} s behind`,
+    listenMode: 'Listening',
+    listenModeEn: '',
+    listenToggle: 'Toggle',
+    listenToggleEn: 'A click or a one-second look turns it on and off',
+    listenGaze: 'By looking',
+    listenGazeEn: 'It listens while you look at the microphone',
+    gazeTarget: 'Gaze target',
+    gazeTargetEn: '',
+    gazeMic: 'Microphone',
+    gazeMicEn: 'The microphone square',
+    gazeBar: 'The whole bar',
+    gazeBarEn: 'The whole bar',
+    speechEngine: 'Speech model',
+    speechEngineEn: '',
+    engineLocal: 'On this computer (TalTech)',
+    engineLocalEn: 'On this computer (TalTech)',
+    engineSoniox: 'Soniox (in the cloud)',
+    engineSonioxEn: 'Soniox (in the cloud)',
+    engineNote: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
+    engineNoteEn: '',
   },
 }
 

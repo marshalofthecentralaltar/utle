@@ -463,14 +463,24 @@ function patchState(patch: Partial<StripState>): Promise<void> {
 
 let creating: Promise<void> | null = null
 
+/** The speech engine chosen on the options page (round 3): local (TalTech) or soniox. */
+async function speechEngine(): Promise<'local' | 'soniox'> {
+  const value = await stored('speechEngine')
+  return value === 'soniox' ? 'soniox' : 'local'
+}
+
 async function ensureOffscreen(): Promise<void> {
-  const url = chrome.runtime.getURL('offscreen.html')
+  const base = chrome.runtime.getURL('offscreen.html')
+  // The engine is in the address, so a changed setting makes a new document on the next start.
+  const wanted = `${base}?asr=${encodeURIComponent(await asrUrl())}&engine=${await speechEngine()}`
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
-  if (contexts.some((c) => c.documentUrl?.startsWith(url))) return
+  const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
+  if (existing && existing.documentUrl === wanted) return
   if (creating) return creating
   creating = (async () => {
+    if (existing) await chrome.offscreen.closeDocument().catch(() => undefined)
     await chrome.offscreen.createDocument({
-      url: `offscreen.html?asr=${encodeURIComponent(await asrUrl())}`,
+      url: wanted,
       reasons: [chrome.offscreen.Reason.USER_MEDIA],
       justification: 'Ütle listens to the microphone for the whole browser.',
     })
@@ -486,9 +496,12 @@ async function ensureOffscreen(): Promise<void> {
   }
 }
 
-async function toOffscreen(type: ToOffscreen['type']): Promise<void> {
+async function toOffscreen(type: 'toggle' | 'start'): Promise<void> {
+  await sendOffscreen({ target: 'offscreen', type })
+}
+
+async function sendOffscreen(message: ToOffscreen): Promise<void> {
   await ensureOffscreen()
-  const message: ToOffscreen = { target: 'offscreen', type }
   await chrome.runtime.sendMessage(message).catch(() => undefined)
 }
 
@@ -523,6 +536,10 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       return false
     case 'utle-bar':
       void patchState({ hidden: !message.show })
+      return false
+    case 'utle-listen':
+      // From the strip in gaze mode (round 3).
+      void sendOffscreen(message.on ? { target: 'offscreen', type: 'start' } : { target: 'offscreen', type: 'stop', flush: message.flush })
       return false
     case 'utle-open-options':
       void chrome.runtime.openOptionsPage()

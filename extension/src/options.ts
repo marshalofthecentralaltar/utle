@@ -55,6 +55,10 @@ interface Group {
   title: string
   titleEn: string
   choices: Choice[]
+  /** One line under the choices (the speech model's key). */
+  note?: string
+  /** The group is shown only while this holds (the gaze target needs gaze mode). */
+  when?(settings: StripSettings): boolean
 }
 
 const GROUPS: Group[] = [
@@ -86,13 +90,48 @@ const GROUPS: Group[] = [
       { value: true, label: text.startFolded, sub: en.startFolded },
     ],
   },
+  // Push-to-talk by looking (round 3).
+  {
+    key: 'listenMode',
+    title: text.listenMode,
+    titleEn: text.listenModeEn,
+    choices: [
+      { value: 'toggle', label: text.listenToggle, sub: text.listenToggleEn },
+      { value: 'gaze', label: text.listenGaze, sub: text.listenGazeEn },
+    ],
+  },
+  {
+    key: 'gazeTarget',
+    title: text.gazeTarget,
+    titleEn: text.gazeTargetEn,
+    when: (s) => s.listenMode === 'gaze',
+    choices: [
+      { value: 'mic', label: text.gazeMic, sub: text.gazeMicEn },
+      { value: 'bar', label: text.gazeBar, sub: text.gazeBarEn },
+    ],
+  },
+  {
+    key: 'speechEngine',
+    title: text.speechEngine,
+    titleEn: text.speechEngineEn,
+    note: `${text.engineNote} ${text.engineNoteEn}`,
+    choices: [
+      { value: 'local', label: text.engineLocal, sub: text.engineLocalEn },
+      { value: 'soniox', label: text.engineSoniox, sub: text.engineSonioxEn },
+    ],
+  },
 ]
 
 let current: StripSettings = settingsFrom({})
 const buttons = new Map<SettingKey, { value: Choice['value']; button: HTMLButtonElement }[]>()
+const sections = new Map<SettingKey, HTMLElement>()
 
 function reflect(): void {
   for (const [key, list] of buttons) for (const { value, button } of list) button.setAttribute('aria-pressed', String(current[key] === value))
+  for (const group of GROUPS) {
+    const section = sections.get(group.key)
+    if (section) section.hidden = group.when ? !group.when(current) : false
+  }
 }
 
 function choose(key: SettingKey, value: Choice['value']): void {
@@ -135,8 +174,16 @@ for (const group of GROUPS) {
   }
   buttons.set(group.key, list)
   section.append(h2, sub, grid)
+  if (group.note !== undefined) {
+    const note = document.createElement('p')
+    note.className = 'note'
+    note.textContent = group.note
+    section.append(note)
+  }
+  sections.set(group.key, section)
   groups?.append(section)
 }
+reflect()
 
 chrome.storage.local.get([...SETTING_KEYS]).then(
   (stored) => {

@@ -14,6 +14,8 @@
       .en { color: var(--dim); font-size: 18px; margin: 0; }
       .help { margin: 0 0 8px; font-size: 24px; color: var(--amber); }
       section { margin: 32px 0 0; }
+      section[hidden] { display: none; }
+      .note { margin: 12px 0 0; font-size: 18px; color: var(--dim); }
       .choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 12px; }
       .choice { position: relative; overflow: hidden; min-height: 112px; box-sizing: border-box; padding: 12px 16px; border-radius: 16px;
         border: 3px solid var(--edge); background: var(--panel); color: var(--ink); cursor: pointer; text-align: center;
