@@ -478,7 +478,11 @@ async function ensureOffscreen(): Promise<void> {
   if (existing && existing.documentUrl === wanted) return
   if (creating) return creating
   creating = (async () => {
-    if (existing) await chrome.offscreen.closeDocument().catch(() => undefined)
+    if (existing) {
+      // The old engine dies with its document without a word: what it published is no longer true.
+      await chrome.offscreen.closeDocument().catch(() => undefined)
+      await patchState({ listening: false, thinking: false, lag: 0 })
+    }
     await chrome.offscreen.createDocument({
       url: wanted,
       reasons: [chrome.offscreen.Reason.USER_MEDIA],

@@ -2096,7 +2096,9 @@ async function run(command: PageCommand): Promise<PageResult> {
       case 'setText':
         return docsBox() ? docsSetText(String(command.text)) : await setText(String(command.text), site)
       case 'pressSend':
-        return await pressSend(site)
+        // Docs is a box the dictation types into, not one that sends: a "saada" there must never press
+        // Enter into the document, nor into the title or search input the generic composer rule would find.
+        return docsBox() ? fail('failed', 'Google Docs has nothing to send: the words are in the document.') : await pressSend(site)
       case 'readPage':
         return readPage(site)
       case 'clickItem':

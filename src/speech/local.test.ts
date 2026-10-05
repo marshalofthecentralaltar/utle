@@ -389,6 +389,56 @@ describe('local recogniser (browser side)', () => {
       expect(utterances).toEqual(['pooleli'])
     })
 
+    it('a partial of the flushed utterance keeps its final going without the hold', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'partial', text: 'ma jõuan' })
+      r.flush?.()
+      // The frames queued before the flush are still decoded: the text grows, then the final comes.
+      socket().says({ type: 'partial', text: 'ma jõuan homme' })
+      socket().says({ type: 'final', text: 'ma jõuan homme' })
+      expect(utterances).toEqual(['ma jõuan homme'])
+    })
+
+    it('a stop before the flushed final arrives delivers the words as last heard, with what is held', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'kirjuta Marile' })
+      socket().says({ type: 'partial', text: 'et ma jõuan' })
+      r.flush?.()
+      expect(utterances).toEqual([])
+      r.stop()
+      expect(utterances).toEqual(['kirjuta Marile et ma jõuan'])
+      // The final that would have come is not delivered twice: the socket is gone.
+      socket().says({ type: 'final', text: 'et ma jõuan homme' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['kirjuta Marile et ma jõuan'])
+    })
+
+    it('a stop without a flush drops the utterance in progress and what is held, as before', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'pooleli' })
+      socket().says({ type: 'partial', text: 'ja' })
+      r.stop()
+      expect(utterances).toEqual([])
+    })
+
+    it('a stop after the flushed quick reply was released delivers nothing more', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'partial', text: 'jah' })
+      vi.advanceTimersByTime(100)
+      r.flush?.()
+      expect(utterances).toEqual(['jah'])
+      r.stop()
+      expect(utterances).toEqual(['jah'])
+    })
+
     it('does nothing when not running', () => {
       const r = make()
       r.flush?.()

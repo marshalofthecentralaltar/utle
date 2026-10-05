@@ -619,6 +619,9 @@ function misheard(session: InpageSession, utterance: string): Classified | null 
     }
   })
   for (let i = 0; i + 1 < words.length; i++) {
+    // A word split in two ("vaik semaks"), not a command word with a two-letter word beside it: the
+    // two edits allowed from eight letters would make "ei lõpeta" and "lõpeta ja" into "lõpeta".
+    if ((words[i]?.length ?? 0) < 3 || (words[i + 1]?.length ?? 0) < 3) continue
     const joined = `${words[i] ?? ''}${words[i + 1] ?? ''}`
     for (const target of VOCABULARY) {
       if (target === joined || nearWord(joined, target)) {

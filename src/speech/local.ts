@@ -124,8 +124,9 @@ export function createLocalRecognizer(
   }
 
   const onPartial = (text: string): void => {
+    // A partial after a flush is the flushed utterance still being decoded (the frames queued before
+    // the flush); its final is still the one owed at once.
     current = text
-    flushed = false
     if (released !== null) {
       // Still the reply already released: nothing new to show.
       const heard = words(text)
@@ -277,6 +278,18 @@ export function createLocalRecognizer(
     socket = ws
   }
 
+  /**
+   * Stopped while a flush waits for its final (the gaze left; the server is behind): the words in
+   * progress are delivered as last heard, and whatever is held goes with them, rather than being
+   * dropped with the socket. Without a flush a stop drops the utterance in progress and what is
+   * held, as before (he stopped: those words were not asked for).
+   */
+  const deliverPending = (): void => {
+    if (!flushed) return
+    if (current !== '' && released === null) assembler.final(current)
+    assembler.releaseNow()
+  }
+
   return {
     supported: true,
     start() {
@@ -287,6 +300,7 @@ export function createLocalRecognizer(
       open()
     },
     stop() {
+      if (running) deliverPending()
       running = false
       teardown()
     },
