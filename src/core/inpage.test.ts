@@ -517,6 +517,7 @@ const COMMAND_PHRASES = [
   'järgmine vaheleht', 'eelmine vaheleht', 'kolmas vaheleht', 'ava uus vaheleht', 'sulge vaheleht', 'ava messenger',
   'otsi ilm', 'keri alla', 'keri üles', 'laadi uuesti', 'tagasi', 'edasi', 'järgmine', 'eelmine', 'back', 'go back',
   'forward', 'next', 'previous', 'next tab', 'scroll down',
+  'keri natuke alla', 'natuke üles', 'keri aeglaselt alla', 'keri tasa alla', 'stopp', 'seis', 'aitab', 'lõpeta', 'saadake', 'saadame',
   'ava vestlus Mariga', 'ava Mari vestlus', 'kirjuta Marile', 'sõnum Marile', 'open chat with Mari', 'message Mari',
   'uus sõnum',
   'saada', 'saada ära', 'saada sõnum', 'send', 'send it',
@@ -836,6 +837,8 @@ const SHORT_ET = [
   'Kirjutan hiljem', 'Sulle ka', 'Lähen koju', 'Mine magama', 'Ava aken', 'Pole viga', 'Kõik hästi', 'Armastan sind',
   'Uus aasta', 'Järgmine kord', 'Helista mulle', 'Vasta palun', 'Ootan sind', 'Mina sinna', 'Lahe uudis', 'Kama on otsas',
   'Selge pilt', 'Kirjutas Marile', 'Otsid mind', 'Sulgen akna',
+  // Round 3 (23.2): near the sound-alike rule and not commands.
+  'Sul on õigus', 'Tere kass', 'Kass magab', 'Aita mind', 'Kass on kadunud', 'Saada mulle pilt', 'Sada eurot', 'Ala on suur',
 ]
 const SHORT_EN = ['See you soon', 'Thank you', 'On my way', 'Love you too', 'Call me later', 'Next time maybe', 'I am back home', 'Sounds good', 'Text me', 'Clean the room']
 
@@ -1170,8 +1173,10 @@ describe('M7 numbers while labels show', () => {
     expect(inpageInstant(session({ hints: true }), u)).toBe(true)
   })
 
-  it('"stopp" without labels is left to dictation (and so to the model)', () => {
-    expect(inpageStep(session(), 'stopp', box('')).ask).toBe(true)
+  it.each(['stopp', 'stop', 'lõpeta', 'seis', 'aitab'])('"%s" without labels stops a slow scroll (23.2)', (u) => {
+    const step = inpageStep(session(), u, box(''))
+    expect(step.commands).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'stop' }))
+    expect(step.ask).toBeUndefined()
   })
 })
 
@@ -1249,5 +1254,82 @@ describe('M7 applyIntent: the model\'s intent goes through the same act as the r
     expect(step.line.startsWith('Sain aru: „ava uus leht“.')).toBe(true)
     const en = applyIntent(session({ lang: 'en' }), intent({ kind: 'command', command }), page(EMPTY), 'new tab')
     expect(en.line).toBe(`${EN.inpage.understood('new tab')} ${EN.browserDoing(command)}`)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Round 3 (section 23.2): sound-alike commands.
+
+describe('sound-alike commands (23.2)', () => {
+  it.each<[string, string, BrowserCommand]>([
+    ['aga whatsapp', 'ava whatsapp', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
+    ['Aga WhatsApp.', 'ava whatsapp', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
+    ['keri ala', 'keri alla', { kind: 'scroll', direction: 'down' }],
+    ['keri natuke ala', 'keri natuke alla', { kind: 'scroll', direction: 'down', mode: 'little' }],
+    ['keri aeglaselt ala', 'keri aeglaselt alla', { kind: 'scroll', direction: 'down', mode: 'slow' }],
+    ['geri alla', 'keri alla', { kind: 'scroll', direction: 'down' }],
+    ['näida numbreid', 'näita numbreid', { kind: 'showHints' }],
+    ['mina juutuubi', 'mine juutuubi', { kind: 'goTo', url: 'https://www.youtube.com/' }],
+  ])('"%s" is "%s"', (u, understood, command) => {
+    const step = inpageStep(session(), u, box('Tere'))
+    expect(step.commands).toEqual(only(command))
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(step.line).toBe(`${ET.inpage.understood(understood)} ${ET.browserDoing(command)}`)
+    expect(inpagePreview(session(), u, box('Tere'))).toBeNull()
+  })
+
+  it.each<[string, string]>([
+    ['ava juutuba', 'https://www.youtube.com/'],
+    ['ava jutuub', 'https://www.youtube.com/'],
+    ['mine juutuubi', 'https://www.youtube.com/'],
+    ['ava vatsap', 'https://web.whatsapp.com/'],
+    ['ava gugel', 'https://www.google.com/'],
+    ['ava gmeil', 'https://mail.google.com/'],
+    ['ava fäisbuk', 'https://www.facebook.com/'],
+    ['ava mesendžer', 'https://www.messenger.com/'],
+    ['ava postimehes', 'https://www.postimees.ee/'],
+    ['mine delfis', 'https://www.delfi.ee/'],
+  ])('"%s" opens %s', (u, url) => {
+    expect(inpageStep(session(), u, box('Tere')).commands).toEqual(only({ kind: 'goTo', url }))
+    expect(inpageInstant(session(), u)).toBe(true)
+  })
+
+  it.each(['saadake', 'Saadake.', 'saadake ära', 'saadame', 'saada ära'])('"%s" sends', (u) => {
+    const step = inpageStep(session(), u, box('Tere'))
+    expect(step.commands).toEqual(only({ kind: 'pressSend' }))
+  })
+
+  it.each(['sada', 'saata', 'saadan', 'sada ära', 'saata ära', 'saada mulle pilt', 'Sada eurot', 'kass', 'kass magab', 'tere kass', 'Kass on kadunud', 'kass kast'])(
+    '"%s" is dictation: send is literal, "kass" is never a command',
+    (u) => {
+      const step = inpageStep(session(), u, box('Tere.'))
+      expect(step.commands).toHaveLength(1)
+      expect(step.commands[0]?.kind).toBe('setText')
+      expect(inpageInstant(session(), u)).toBe(false)
+    },
+  )
+
+  it('a single word is never corrected, phonetically either', () => {
+    expect(inpageInstant(session(), 'ala')).toBe(false)
+    expect(inpageInstant(session(), 'juutuba')).toBe(false)
+    expect(inpageInstant(session(), 'aga')).toBe(false)
+  })
+
+  it('two different commands possible: dictation', () => {
+    // "mine" and "mina"; "ala" is "alla", but there is no "mine alla" command, so only "mina alla" could be, which is none.
+    expect(inpageInstant(session(), 'mina ala')).toBe(false)
+  })
+
+  it('"stopp" with the labels showing still hides them; "aitab" scrolls to a stop and keeps them', () => {
+    expect(inpageStep(session({ hints: true }), 'stopp', box('')).commands).toEqual(only({ kind: 'hideHints' }))
+    const step = inpageStep(session({ hints: true }), 'aitab', box(''))
+    expect(step.commands).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'stop' }))
+    expect(step.session.hints).toBe(true)
+  })
+
+  it('numbers spoken as digits with endings still click', () => {
+    expect(inpageStep(session({ hints: true }), 'vajuta 5.', box('')).commands).toEqual(only({ kind: 'clickHint', number: 5 }))
+    expect(inpageStep(session({ hints: true }), 'number viis.', box('')).commands).toEqual(only({ kind: 'clickHint', number: 5 }))
+    expect(inpageStep(session({ hints: true }), '12.', box('')).commands).toEqual(only({ kind: 'clickHint', number: 12 }))
   })
 })
