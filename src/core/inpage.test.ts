@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { BoxState, BrowserCommand, BrowserResult } from '../browser/protocol.ts'
 import { initialInpage, inpageInstant, inpageResult, inpageStep } from './inpage.ts'
 import type { InpageSession } from './inpage.ts'
+import { inpagePreview } from './inpage.ts'
+import { browserIntent } from './browserIntent.ts'
 import { STRINGS } from './strings.ts'
 import { deepFreeze } from './testUtil.ts'
 
@@ -582,5 +584,259 @@ describe('properties', () => {
       if (c.kind === 'setText') expect(c.text.toLowerCase()).not.toContain(u.toLowerCase())
       if (c.kind === 'insertText') throw new Error('in-page mode never uses insertText')
     }
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Section 21.3: live words (inpagePreview), site names with endings, one-letter mishearings.
+
+function preview(partial: string, before: string | BoxState = '', s: InpageSession = session()): string | null {
+  return inpagePreview(s, partial, typeof before === 'string' ? box(before) : before)
+}
+function prefixes(phrase: string): string[] {
+  const words = phrase.split(' ')
+  return words.map((_, i) => words.slice(0, i + 1).join(' '))
+}
+
+const LIVE_ET = [
+  'Ma jõuan homme kell kolm koju',
+  'Kas sa tuled täna õhtul kinno',
+  'Ma olen natuke hiljaks jäämas',
+  'Tänan sind väga abi eest',
+  'Homme on ilus ilm ja päike paistab',
+  'Ostsin poest leiba ja piima',
+  'Kus sa praegu oled',
+  'Ema helistas eile õhtul mulle',
+  'Ma ootan sind bussipeatuses',
+  'Kas me saame reedel kokku',
+  'Mul on täna sünnipäev',
+  'Vabandust et ma hiljaks jäin',
+]
+const LIVE_EN = ['I will be there at three', 'See you tomorrow at the station', 'Can you call me later today', 'Thanks for the lovely dinner']
+
+describe('inpagePreview: the words grow in the box and agree with the final', () => {
+  it.each([...LIVE_ET, ...LIVE_EN])('"%s"', (sentence) => {
+    for (const before of ['', 'Tere, Mari!', 'Ma tulen homme']) {
+      let last: string | null = null
+      for (const [i, partial] of prefixes(sentence).entries()) {
+        const p = preview(partial, before)
+        if (i >= 3) expect(p, `${partial} after ${JSON.stringify(before)}`).not.toBeNull()
+        if (p !== null) {
+          expect(p.startsWith(before)).toBe(true)
+          expect(p.endsWith('.')).toBe(false)
+        }
+        last = p
+      }
+      const final = setTextOf(inpageStep(session(), sentence, box(before)).commands)
+      expect([last, `${last}.`]).toContain(final)
+    }
+  })
+
+  it('the join rules are the dictation ones: capital, joining word, a name kept', () => {
+    expect(preview('ma jõuan homme', '')).toBe('Ma jõuan homme')
+    expect(preview('ma jõuan homme', 'Tere.')).toBe('Tere. Ma jõuan homme')
+    expect(preview('Ja võtan koogi', 'Ma tulen.')).toBe('Ma tulen ja võtan koogi')
+    expect(preview('Sest olen haige', 'Ma ei tule.')).toBe('Ma ei tule, sest olen haige')
+    expect(preview('Kuidas läheb sul', 'Tere')).toBe('Tere kuidas läheb sul')
+    expect(preview('uus rida tuleb', 'Tere\n')).toBe('Tere\nUus rida tuleb')
+  })
+})
+
+const PATTERN_PREFIXES = [
+  'mitte kolm, vaid neli',
+  'mitte homme kell kolm vaid ülehomme',
+  'kirjuta Marile, et ma jõuan homme',
+  'kirjuta Mari Tammele',
+  'ava vestlus Mariga',
+  'ava vestlus koos Mari Tammega',
+  'otsi ilmateade',
+  'asenda kolm sõnaga neli',
+  'kolme asemel neli',
+  'sulge vaheleht',
+  'mine järgmisele vahelehele',
+  'mine kolmandale vahelehele',
+  'vajuta number viis',
+  'tell Mari that I am late',
+  'write to Mari that I am late',
+  'open the conversation with John Smith',
+  'write a message to Mari',
+  'mine lehele delfi',
+  'Mina whatsappi',
+  'keeri alla',
+  'sulge vahe leht',
+  'saada sõnum Marile',
+]
+const NEVER_FLASH = [...new Set([...COMMAND_PHRASES, ...PATTERN_PREFIXES].flatMap(prefixes))]
+
+describe('inpagePreview: no command ever flashes in the box', () => {
+  it.each(NEVER_FLASH)('"%s" previews nothing', (partial) => {
+    expect(preview(partial, 'Tere')).toBeNull()
+    expect(preview(partial, '')).toBeNull()
+  })
+
+  it.each(['Otsi', 'otsi ilm', 'Otsi mulle see raamat'])('"%s" is a search command, never a preview', (partial) => {
+    expect(preview(partial, 'Tere')).toBeNull()
+  })
+})
+
+describe('inpagePreview: a sentence that starts like a command previews once it outgrows it', () => {
+  it.each([
+    ['Saada mulle palun aadress', 2],
+    ['Mine sa homme poodi', 4],
+    ['Ava uks kui tuled', 4],
+    ['Kustuta see pilt ära palun', 2],
+    ['Tagasi tulen kell viis', 2],
+    ['Järgmine nädal sobib', 2],
+    ['Kirjuta mulle kui jõuad', 2],
+    ['Mitte keegi ei tulnud täna kohale', 6],
+  ])('"%s" first previews at word %i', (sentence, first) => {
+    const at = prefixes(sentence).findIndex((p) => preview(p, '') !== null) + 1
+    expect(at).toBe(first)
+    expect(setTextOf(inpageStep(session(), sentence, EMPTY).commands).startsWith(preview(sentence, '') ?? '?')).toBe(true)
+  })
+})
+
+describe('inpagePreview: null cases', () => {
+  it('asleep, no box, an empty partial', () => {
+    expect(preview('Ma jõuan homme kell kolm', '', session({ asleep: true }))).toBeNull()
+    expect(preview('ärka üles', '', session({ asleep: true }))).toBeNull()
+    expect(preview('Ma jõuan homme kell kolm', NO_BOX)).toBeNull()
+    expect(preview('', 'Tere')).toBeNull()
+    expect(preview('   ', 'Tere')).toBeNull()
+  })
+
+  it.each(['viis', '5', 'number viis', 'Kolm.', 'twelve'])('labels showing, the number "%s" previews nothing', (n) => {
+    expect(preview(n, 'Tere', session({ hints: true }))).toBeNull()
+  })
+})
+
+describe('site names with Estonian endings', () => {
+  const WA = 'https://web.whatsapp.com/'
+  it.each([
+    ['mine whatsappi', WA],
+    ['mine WhatsAppi', WA],
+    ['Mine WhatsAppi.', WA],
+    ['ava messengeri', 'https://www.messenger.com/'],
+    ['mine gmaili', 'https://mail.google.com/'],
+    ['mine facebooki', 'https://www.facebook.com/'],
+    ["mine youtube'i", 'https://www.youtube.com/'],
+    ['mine youtube’i', 'https://www.youtube.com/'],
+    ['mine postimehesse', 'https://www.postimees.ee/'],
+    ['mine delfisse', 'https://www.delfi.ee/'],
+    ['mine googlesse', 'https://www.google.com/'],
+    ['ava youtube', 'https://www.youtube.com/'],
+    ['ava vatsap', WA],
+    ['ava vatsapp', WA],
+    ['mine vatsappi', WA],
+    ['ava whats app', WA],
+    ['mine whats appi', WA],
+    ['ava whatsup', WA],
+    ['ava votsap', WA],
+    ['mine votsapi', WA],
+  ])('"%s" goes to %s', (u, url) => {
+    const command: BrowserCommand = { kind: 'goTo', url }
+    const step = inpageStep(session(), u, box('Tere'))
+    expect(step.commands).toEqual(only(command))
+    expect(step.line.endsWith(ET.browserDoing(command))).toBe(true)
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(browserIntent(u)).toEqual(command)
+  })
+
+  it('an ending that was taken off is named in the line', () => {
+    const command: BrowserCommand = { kind: 'goTo', url: 'https://web.whatsapp.com/' }
+    expect(inpageStep(session(), 'mine whatsappi', EMPTY).line).toBe(`${ET.inpage.understood('mine whatsapp')} ${ET.browserDoing(command)}`)
+    expect(inpageStep(session(), 'ava whatsapp', EMPTY).line).toBe(ET.browserDoing(command))
+  })
+
+  it.each(['mine koju', 'ava aken', 'mine sinna', 'mine poodi'])('"%s" is not a site', (u) => {
+    expect(browserIntent(u)).toBeNull()
+  })
+})
+
+describe('one-letter mishearings', () => {
+  it.each<[string, string, BrowserCommand]>([
+    ['Mina whatsappi', 'mine whatsappi', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
+    ['mina WhatsAppi.', 'mine whatsappi', { kind: 'goTo', url: 'https://web.whatsapp.com/' }],
+    ['keeri alla', 'keri alla', { kind: 'scroll', direction: 'down' }],
+    ['keri allla', 'keri alla', { kind: 'scroll', direction: 'down' }],
+    ['kerri üles', 'keri üles', { kind: 'scroll', direction: 'up' }],
+    ['näite numbreid', 'näita numbreid', { kind: 'showHints' }],
+    ['näita numbreit', 'näita numbreid', { kind: 'showHints' }],
+    ['peida numbreid', 'peida numbrid', { kind: 'hideHints' }],
+    ['järgmine vahelehte', 'järgmine vaheleht', { kind: 'switchTab', to: 'next' }],
+    ['eelmine vahelehte', 'eelmine vaheleht', { kind: 'switchTab', to: 'previous' }],
+    ['sulge vahe leht', 'sulge vaheleht', { kind: 'closeTab' }],
+    ['laadi uuesi', 'laadi uuesti', { kind: 'reload' }],
+    ['lehe lõpu', 'lehe lõppu', { kind: 'scroll', direction: 'bottom' }],
+    ['ava mesenger', 'ava messenger', { kind: 'goTo', url: 'https://www.messenger.com/' }],
+    ['scroll dawn', 'scroll down', { kind: 'scroll', direction: 'down' }],
+    ['nest tab', 'next tab', { kind: 'switchTab', to: 'next' }],
+    ['go forwad', 'go forward', { kind: 'history', direction: 'forward' }],
+  ])('"%s" is "%s"', (u, understood, command) => {
+    const step = inpageStep(session(), u, box('Tere'))
+    expect(step.commands).toEqual(only(command))
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(step.line).toBe(`${ET.inpage.understood(understood)} ${ET.browserDoing(command)}`)
+    expect(preview(u, 'Tere')).toBeNull()
+  })
+
+  it('"kirjutta Marile" opens the conversation and says what it understood', () => {
+    const step = inpageStep(session(), 'kirjutta Marile', box('Tere'))
+    expect(step.commands).toEqual(only({ kind: 'openConversation', name: 'Mari' }))
+    expect(step.line.startsWith(ET.inpage.understood('kirjuta marile'))).toBe(true)
+    expect(inpageInstant(session(), 'kirjutta Marile')).toBe(true)
+  })
+
+  it('a repair heard one letter off', () => {
+    const step = inpageStep(session(), 'kustuta viimane sona', box('Ma tulen kell kolm.'))
+    expect(setTextOf(step.commands)).toBe('Ma tulen kell')
+    expect(step.line).toBe(`${ET.inpage.understood('kustuta viimane sõna')} ${ET.inpage.deletingWord}`)
+    expect(inpageInstant(session(), 'kustuta viimane sona')).toBe(true)
+  })
+
+  it('English session, English line', () => {
+    const command: BrowserCommand = { kind: 'scroll', direction: 'down' }
+    expect(inpageStep(session({ lang: 'en' }), 'keeri alla', EMPTY).line).toBe(`${EN.inpage.understood('keri alla')} ${EN.browserDoing(command)}`)
+  })
+
+  it('a single word is never corrected', () => {
+    expect(inpageInstant(session(), 'kama')).toBe(false)
+    expect(inpageInstant(session(), 'tagasy')).toBe(false)
+  })
+})
+
+const SHORT_ET = [
+  'Mina tulen ka', 'Mina ei tea', 'Tere hommikust', 'Aitäh sulle', 'Kell kolm', 'Ma tulen', 'Olen kodus', 'Jah, sobib',
+  'Ei saa', 'Saadan homme', 'Tulen tagasi kell viis', 'Otsin sind', 'Kus sa oled', 'Mina ka', 'Kohe tulen', 'Selge, aitäh',
+  'Tore kuulda', 'Head ööd', 'Näeme homme', 'Olen teel', 'Mis kell', 'Jõuan varsti', 'Võtan tagasi', 'Kustutan kõik',
+  'Kirjutan hiljem', 'Sulle ka', 'Lähen koju', 'Mine magama', 'Ava aken', 'Pole viga', 'Kõik hästi', 'Armastan sind',
+  'Uus aasta', 'Järgmine kord', 'Helista mulle', 'Vasta palun', 'Ootan sind', 'Mina sinna', 'Lahe uudis', 'Kama on otsas',
+  'Selge pilt', 'Kirjutas Marile', 'Otsid mind', 'Sulgen akna',
+]
+const SHORT_EN = ['See you soon', 'Thank you', 'On my way', 'Love you too', 'Call me later', 'Next time maybe', 'I am back home', 'Sounds good', 'Text me', 'Clean the room']
+
+describe('short real messages are not taken for commands', () => {
+  it.each([...SHORT_ET, ...SHORT_EN])('"%s" is dictation', (u) => {
+    const step = inpageStep(session(), u, box('Tere.'))
+    expect(step.commands).toHaveLength(1)
+    expect(step.commands[0]?.kind).toBe('setText')
+    expect(inpageInstant(session(), u)).toBe(false)
+  })
+})
+
+describe('send, sleep, wake and undo are never corrected', () => {
+  it.each([
+    'saadan', 'saadab', 'sada', 'puhkan', 'ärkan', 'saadan ära', 'sada ära', 'saadab sõnumi', 'saata sõnum', 'puhkan nüüd',
+    'ärkan üles', 'võtan tagasi', 'võtta tagasi', 'sennd it', 'wake upp',
+  ])('"%s" is dictation', (u) => {
+    const step = inpageStep(session(), u, box('Tere.'))
+    expect(step.commands).toHaveLength(1)
+    expect(step.commands[0]?.kind).toBe('setText')
+    expect(step.session.asleep).toBe(false)
+    expect(inpageInstant(session(), u)).toBe(false)
+  })
+
+  it('asleep, a phrase one letter from the wake phrase stays ignored', () => {
+    expect(inpageStep(session({ asleep: true }), 'ärkan üles', box('Tere')).session.asleep).toBe(true)
   })
 })

@@ -102,6 +102,8 @@ export interface Strings {
     conversationOpen(name: string): string
     sent: string
     notSent(reason: string): string
+    /** Section 21.3: what a misheard or inflected command was taken to be, before the usual line. */
+    understood(text: string): string
   }
 
   // The interpreter.
@@ -359,6 +361,7 @@ const ET: Strings = {
     conversationOpen: (name) => `Vestlus avatud: ${name}.`,
     sent: 'Saadetud.',
     notSent: (reason) => `Ei saatnud. ${reason}`,
+    understood: (text) => `Sain aru: „${text}“.`,
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -608,6 +611,7 @@ const EN: Strings = {
     conversationOpen: (name) => `Conversation open: ${name}.`,
     sent: 'Sent.',
     notSent: (reason) => `Not sent. ${reason}`,
+    understood: (text) => `Understood: "${text}".`,
   },
 
   stillWorks: 'Yes, no and undo still work.',
