@@ -478,3 +478,27 @@ Decided after talking to a user with a motor disability. His words: typing messa
 - `src/browser/protocol.ts` is pure types and constants. `src/core/**` may import it. The extension does not import from `src/`; it follows the file by hand, and a change to the contract changes both in one commit.
 - The local recogniser's server never logs audio or text.
 - Messenger's page is not ours and cannot be tested without a logged-in person. Everything site-specific is best effort and says so when it fails; the numbered labels are the fallback that works on any page.
+
+### 20.1 The local recogniser
+
+TalTech's `streaming-zipformer-large.et-en` runs inside the dev server through `sherpa-onnx-node`. It hears Estonian and English with one model, so `setLang` changes nothing on this engine. No audio leaves the laptop.
+
+**Where the model lives.** `models/streaming-zipformer-large.et-en/` in the repository root: `encoder.int8.onnx` (155 MB), `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt`. `models/` is gitignored. `npm run model` downloads the missing files from `https://huggingface.co/TalTechNLP/streaming-zipformer-large.et-en/resolve/main/<file>`. The model is loaded once, when the dev server starts listening, and shared by every connection. The native addon is loaded with `createRequire` from `server/asr*.ts` only, so the browser bundle and `npm run build` never contain it.
+
+**Wire.** A websocket at `/api/asr` on Vite's own http server; only upgrades to that path are taken, so Vite's HMR socket is untouched. Types and constants are in `src/speech/asrProtocol.ts`.
+
+| Direction | Frame | Meaning |
+|---|---|---|
+| browser to server | binary | Mono audio, 16 kHz, 32-bit float little-endian samples, about 100 ms per frame. At most 1 s per frame; anything else is ignored. |
+| server to browser | `{"type":"ready"}` | The model is loaded; send audio. Sent once per connection. |
+| server to browser | `{"type":"unavailable","reason":"model_missing" \| "addon_missing" \| "load_failed"}` | This machine cannot recognise; the server closes the socket. |
+| server to browser | `{"type":"partial","text":"..."}` | What is heard in the current utterance so far. Sent when it changes. |
+| server to browser | `{"type":"final","text":"..."}` | The utterance ended. The stream is reset for the next one. |
+
+**Audio.** The browser opens the microphone with echo cancellation and noise suppression, runs it through an `AudioContext` at 16 kHz (the browser resamples) and an `AudioWorklet` (`public/asr-worklet.js`) that posts 1600-sample frames.
+
+**Endpoint rule.** sherpa's endpoint rules, with modified beam search: an utterance ends after 1.0 s of silence once something was heard (rule 2), after 2.4 s of silence with nothing heard (rule 1, which sends no final), or at 30 s of speech (rule 3). A final then goes through the same assembler as Chrome's (section 11), so a pause to think still joins two finals and quick replies stay instant.
+
+**Fallback.** `src/speech/pick.ts` tries the local recogniser first. When the server says `unavailable`, when the socket cannot be opened, or when a lost connection fails to come back after three tries 500 ms apart, it switches to Chrome's recogniser in the current language, keeps the microphone on, and shows one line through `onNotice`: the user does nothing. It does not try the local recogniser again until the page is reloaded.
+
+**What the server logs.** Load time, the reason it is unavailable, connection counts and error codes. Never audio, never text.
