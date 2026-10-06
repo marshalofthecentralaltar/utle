@@ -1,10 +1,11 @@
-import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, PageContext, PressableKey } from '../browser/protocol.ts'
+import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, FieldKind, PageContext, PressableKey } from '../browser/protocol.ts'
 import type { PageIntent } from './pageIntent.ts'
 import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
 import { endsWithConnective } from './chain.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
+import { spokenValueOnly, typedFromSpoken } from './spelling.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
 
@@ -26,6 +27,12 @@ export interface InpageSession {
   hints: boolean
   /** Earlier texts of the message box, newest last, for "võta tagasi". */
   undo: string[]
+  /**
+   * Round 5 (fields): how dictation is written until he says otherwise. "numbritena" sets code
+   * (number words become digits, no spaces), "tavaliselt" clears it. Null or absent: the kind of
+   * the field in front (box.fieldKind), else text.
+   */
+  spell?: FieldKind | null
 }
 
 export interface InpageStep {
@@ -43,10 +50,12 @@ export interface InpageStep {
    * a model, or when the model cannot tell, this step stands.
    */
   ask?: boolean
+  /** Round 5: "katkesta": the engine drops every job, chain and verification in flight and clears the bar. */
+  cancel?: boolean
 }
 
 export function initialInpage(lang: Lang): InpageSession {
-  return { lang, asleep: false, hints: false, undo: [] }
+  return { lang, asleep: false, hints: false, undo: [], spell: null }
 }
 
 /**
@@ -55,6 +64,10 @@ export function initialInpage(lang: Lang): InpageSession {
  * one the page focused by itself, where nothing is typed, M7).
  */
 export function inpageStep(session: InpageSession, utterance: string, box: BoxState): InpageStep {
+  // Round 5: in a one-line form field he armed, "valmis" / "edasi" go to the next field and
+  // "kinnita" / "logi sisse" submit, whatever the box holds; elsewhere the words keep their meaning.
+  const formKey = box.present && box.armed && box.single === true && !session.asleep ? FORM_KEYS[normalise(utterance)] : undefined
+  if (formKey !== undefined) return act(session, { kind: 'browser', command: { kind: 'pressKey', key: formKey } }, box)
   const classified = classify(session, utterance)
   const spoken: Action = { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
   // One ordinary word while he is writing is a word of the message, not a command (section 22, "Soft words").
@@ -67,7 +80,10 @@ export function inpageStep(session: InpageSession, utterance: string, box: BoxSt
   const action: Action = soft || missing ? spoken : classified.action
   const understood = soft || missing ? null : classified.understood
   const step = act(session, action, box)
-  const asked = action.kind === 'dictate' ? { ...step, ask: true } : step
+  // "kirjuta kood X" named its kind: it is a command in its own right, not words to verify.
+  // Review of round 5: nor are digits into a code, phone or number field, or anything into a
+  // password field (a secret is never sent to the model; "kolm üheksa null kaks" is never a tab).
+  const asked = action.kind === 'dictate' && action.spell === undefined && !directValue(session, utterance, box) ? { ...step, ask: true } : step
   if (understood === null) return asked
   return { ...asked, line: `${STRINGS[session.lang].inpage.understood(understood)} ${asked.line}` }
 }
@@ -134,7 +150,7 @@ export function inpageResult(
     let line: string
     if (last.kind === 'pressSend') line = s.inpage.sent
     else if (opened?.kind === 'openConversation') line = s.inpage.conversationOpen(opened.name)
-    else if (last.kind === 'setText') line = s.inpage.written
+    else if (last.kind === 'setText') line = result.box?.single === true ? s.inpage.typedInto(readBack(result.box.text, result.box.fieldKind ?? 'text')) : s.inpage.written
     else line = s.browserDone(last, result.tab?.title ?? null, result.hints ?? null)
     return { session: { ...session, undo, hints }, line }
   }
@@ -184,7 +200,12 @@ type Action =
   /** Round 3: "kustuta sõna X": select the word in the box, then Backspace. */
   | { kind: 'deleteNamed'; find: string }
   | { kind: 'edit'; edit: Edit }
-  | { kind: 'dictate'; text: string }
+  /** Round 5: "numbritena" (code) / "tavaliselt" (null): how dictation is written from now on. */
+  | { kind: 'spell'; spell: FieldKind | null }
+  /** spell: "kirjuta kood X" converts X for that kind of field, this utterance only. */
+  | { kind: 'dictate'; text: string; spell?: FieldKind }
+  /** Round 5: "katkesta": the engine drops everything in flight. Instant, never previewed, never soft. */
+  | { kind: 'cancel' }
 
 type Edit =
   | { kind: 'replace'; from: string; to: string; loose: boolean }
@@ -256,6 +277,40 @@ const SOFT_WORDS = new Set([
 /** M7: "stopp" while the labels show hides them. */
 const STOP = new Set(['stopp', 'stop', 'lõpeta'])
 
+/** Round 5: in an armed one-line form field, the next field and the form's Enter (whole utterance, normalised). */
+const FORM_KEYS: Record<string, PressableKey> = {
+  valmis: 'Tab', 'olen valmis': 'Tab', edasi: 'Tab', 'järgmine väli': 'Tab', done: 'Tab', next: 'Tab', 'next field': 'Tab',
+  kinnita: 'Enter', sisesta: 'Enter', enter: 'Enter', 'logi sisse': 'Enter', 'saada vorm': 'Enter', 'esita vorm': 'Enter',
+  confirm: 'Enter', submit: 'Enter', 'log in': 'Enter', login: 'Enter', 'sign in': 'Enter', 'submit the form': 'Enter', 'send the form': 'Enter',
+}
+
+/** Round 5: "numbritena" writes dictation as digits until "tavaliselt". */
+const SPELL_MODES: Record<string, FieldKind | null> = {
+  numbritena: 'code', numbrid: 'code', numbritega: 'code', 'kirjuta numbritena': 'code', 'kirjuta numbrid': 'code', 'kirjuta numbritega': 'code',
+  'as digits': 'code', 'in digits': 'code', digits: 'code', 'write as digits': 'code', 'write digits': 'code', 'write in digits': 'code',
+  tähtedena: null, tavaliselt: null, sõnadena: null, 'kirjuta tavaliselt': null, 'kirjuta tähtedena': null, 'kirjuta sõnadena': null,
+  'as words': null, 'in words': null, normally: null, 'write normally': null, 'write as words': null, 'write in words': null,
+}
+
+/** Round 5: "kirjuta kood X", "sisesta e-post X", "kirjuta telefon X": X converted for that kind of field. Over the raw utterance. */
+const SPELLED = /^(?:kirjuta|sisesta|trüki|type|write|enter)\s+(number|numbrid|numbritena|numbrina|summa|kood|koodi|koodina|code|e-?posti?|meili?|e-?mail|email|telefon|telefoni|telefoninumber|tel|phone(?: number)?|parool|parooli|password|pin)\s+(.+)$/iu
+const SPELLED_KINDS: ReadonlyArray<readonly [RegExp, FieldKind]> = [
+  [/^(?:number|numbrid|numbritena|numbrina|summa)$/u, 'number'],
+  [/^(?:kood|koodi|koodina|code|pin)$/u, 'code'],
+  [/^(?:e-?posti?|meili?|e-?mail|email)$/u, 'email'],
+  [/^(?:telefon|telefoni|telefoninumber|tel|phone(?: number)?)$/u, 'tel'],
+  [/^(?:parool|parooli|password)$/u, 'password'],
+]
+
+function spelledDictation(utterance: string): Action | null {
+  const m = SPELLED.exec(utterance.trim())
+  const word = m?.[1]?.toLocaleLowerCase() ?? ''
+  const text = m?.[2]?.replace(/\s+/g, ' ').trim() ?? ''
+  if (word === '' || text === '') return null
+  const kind = SPELLED_KINDS.find(([pattern]) => pattern.test(word))?.[1]
+  return kind === undefined ? null : { kind: 'dictate', text, spell: kind }
+}
+
 /** M7: while the labels show, "ava viis", "vali 5", "vajuta number viis", "open five" are the number. */
 const HINT_PICK = /^(?:ava|vali|vajuta|klõpsa|kliki|number|open|choose|pick|select|click|press)(?: number)? (.+)$/u
 
@@ -268,7 +323,7 @@ const PRONOUNS = new Set(['Mul', 'Sul', 'Tal', 'Mei', 'Tei', 'Nei', 'Enda'])
 
 /** Commands that leave the numbered labels on the page (20.2; M7 adds the ones that touch nothing the labels sit on). */
 const KEEPS_HINTS = new Set<BrowserCommand['kind']>([
-  'showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend', 'readPage', 'media', 'bar', 'arm', 'clearField',
+  'showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend', 'readPage', 'media', 'bar', 'arm', 'clearField', 'zoom',
 ])
 /** Commands that leave the same message box in front, so the undo texts still belong to it. */
 const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints'])
@@ -397,9 +452,38 @@ function hintPick(clean: string): number | null {
   return rest === undefined ? null : spokenNumber(rest)
 }
 
+// ---- Round 5 (BRAIN lane): the global voice escape. Only this block is the cancel rule. ----
+/** "katkesta" and its kin: every job, chain and verification in flight is dropped, asleep or not. */
+const CANCEL_ALL = new Set(['katkesta', 'tühista kõik', 'lõpeta kõik', 'stopp kõik', 'cancel', 'cancel everything'])
+/**
+ * True for an utterance that is the global cancel, before anything else is tried. Review of round
+ * 5: also one that ends in it after a connective ("tulen homme ja katkesta"): the recogniser held
+ * the words before the connective (24.1) and joined "katkesta" to them, so the whole is the cancel.
+ */
+function isCancelAll(utterance: string): boolean {
+  const clean = normalise(utterance)
+  if (CANCEL_ALL.has(clean)) return true
+  for (const phrase of CANCEL_ALL) {
+    if (clean.endsWith(` ${phrase}`) && endsWithConnective(clean.slice(0, -phrase.length))) return true
+  }
+  return false
+}
+// ---- end of the cancel rule ----
+
+/** Fields where the rules' typing is final (review of round 5): see inpageStep. */
+const VALUE_FIELDS = new Set<FieldKind>(['code', 'tel', 'number'])
+/** A dictation whose words need no verdict: a secret into a password field, or only numbers into a code, phone or number field he armed. */
+function directValue(session: InpageSession, utterance: string, box: BoxState): boolean {
+  if (!box.present || !box.armed || box.single !== true) return false
+  if (box.fieldKind === 'password') return true
+  const kind = session.spell ?? box.fieldKind ?? 'text'
+  return VALUE_FIELDS.has(kind) && spokenValueOnly(utterance)
+}
+
 function classifyExact(session: InpageSession, utterance: string): Classified {
   const plain = (action: Action): Classified => ({ action, understood: null })
   const quick = quickReply(utterance)
+  if (isCancelAll(utterance)) return plain({ kind: 'cancel' })
   if (session.asleep) return plain(quick?.kind === 'wake' ? { kind: 'wake' } : { kind: 'ignored' })
 
   const clean = normalise(utterance)
@@ -420,6 +504,9 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
   if (fixed) return plain({ kind: 'edit', edit: fixed })
   const replace = replaceEdit(utterance)
   if (replace) return plain({ kind: 'edit', edit: replace })
+  if (Object.hasOwn(SPELL_MODES, clean)) return plain({ kind: 'spell', spell: SPELL_MODES[clean] ?? null })
+  const spelled = spelledDictation(utterance)
+  if (spelled) return plain(spelled)
   const typing = typeTextPattern(utterance)
   if (typing) return plain(typing)
 
@@ -520,7 +607,7 @@ function editingPattern(clean: string): Action | null {
 // The one-letter rule (section 21.3): a short utterance one letter away from a command is that command.
 
 /** Never reached by a correction: a send, a sleep or a wake, an undo cannot be taken back (21.3); "back" may be an undo. */
-const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed'])
+const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed', 'cancel'])
 
 /** Words left out of the vocabulary: those of NEVER_CORRECTED, and the keywords of free-text patterns. */
 const LEFT_OUT = new Set([
@@ -542,6 +629,7 @@ const PHRASES: readonly (readonly string[])[] = [
   ...Object.keys(EDITS),
   ...Object.keys(BARE_BROWSER),
   ...BACK,
+  ...Object.keys(SPELL_MODES),
   'saada ära', 'saada sõnum', 'saada see', 'send it', 'send the message', 'send message',
   'stop listening', 'go to sleep', 'ära kuula', 'wake up', 'start listening', 'ärka üles', 'võta tagasi', 'undo that',
   'uus sõnum', 'kirjuta sõnum', 'new message', 'write a message to', 'write message to', 'send a message to',
@@ -679,6 +767,9 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       return none('')
     case 'ignored':
       return none(s.inpage.resting)
+    case 'cancel':
+      // Round 5: nothing for the page; the engine does the dropping.
+      return { session, commands: [], line: s.inpage.cancelled, cancel: true }
     case 'sleep':
       return { session: { ...session, asleep: true }, commands: [], line: s.inpage.sleeping }
     case 'wake':
@@ -725,13 +816,34 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       if (done.text === box.text) return none(done.line)
       return { session: pushUndo(session, box.text), commands: [{ kind: 'setText', text: done.text }], line: done.line }
     }
+    case 'spell':
+      return { session: { ...session, spell: action.spell }, commands: [], line: action.spell === null ? s.inpage.spellWords : s.inpage.spellDigits }
     case 'dictate': {
       const refused = armed()
       if (refused) return refused
-      const command: BrowserCommand = { kind: 'setText', text: joinDictation(box.text, action.text) }
-      return { session: pushUndo(session, box.text), commands: [command], line: s.browserDoing(command) }
+      const kind = action.spell ?? session.spell ?? box.fieldKind ?? 'text'
+      const command: BrowserCommand = { kind: 'setText', text: joinField(box.text, action.text, kind) }
+      // A one-line form field reads back what it now holds (a PIN is counted, not shown, whatever mode "numbritena" set).
+      const line = box.single === true ? s.inpage.typedInto(readBack(command.text, box.fieldKind === 'password' ? 'password' : kind)) : s.browserDoing(command)
+      return { session: pushUndo(session, box.text), commands: [command], line }
     }
   }
+}
+
+/** The text of a single field as the strip reads it back: a password as dots. */
+function readBack(text: string, kind: FieldKind): string {
+  return kind === 'password' ? '•'.repeat(text.length) : text
+}
+
+/**
+ * Round 5: dictation joined for the kind of field. Text keeps the sentence rules of joinDictation;
+ * an e-mail, a phone number, a code, a number or a password is appended as it is, with no space,
+ * no capital and no full stop. stop as in joinDictation.
+ */
+function joinField(old: string, utterance: string, kind: FieldKind, stop = true): string {
+  const typed = typedFromSpoken(utterance, kind)
+  if (kind === 'text') return joinDictation(old, typed, stop)
+  return old + typed
 }
 
 type Applied = { text: string; line: string } | { fail: string }
@@ -831,9 +943,11 @@ function joinDictation(old: string, utterance: string, stop = true): string {
  */
 export function inpagePreview(session: InpageSession, partial: string, box: BoxState): string | null {
   if (session.asleep || !box.present || !box.armed) return null
+  // Round 5: a one-line form field (a login, an ID code) is never typed into live; the words are checked first.
+  if (box.single === true) return null
   const clean = normalise(partial)
   if (clean === '' || mayBeCommand(session, partial, clean)) return null
-  return joinDictation(box.text, partial.trim().replace(/\s+/g, ' '), false)
+  return joinField(box.text, partial.trim().replace(/\s+/g, ' '), session.spell ?? box.fieldKind ?? 'text', false)
 }
 
 /** Starts of pattern commands that are not complete yet (section 21.3), over normalised text. */
@@ -854,6 +968,8 @@ const PENDING: readonly RegExp[] = [
   /^(?:go|go to|select|select the word|go before|go after|go to before|go to after)(?: \S+){0,2}$/u,
   /^(?:vasakule|paremale|left|right|arrow left|arrow right|go left|go right)(?: \S+){0,2}$/u,
   /^\S+(?: \S+)? (?:korda|rida|sõna|tähte|times|lines?|words?|letters?)$/u,
+  // Round 5: "kirjuta kood", "sisesta e-post": the value is still to come, and is never previewed.
+  /^(?:kirjuta|sisesta|trüki|type|write|enter)(?: (?:number|numbrid|numbritena|numbrina|summa|kood|koodi|koodina|code|pin|eposti?|meili?|email|telefon|telefoni|telefoninumber|tel|phone|phone number|parool|parooli|password)(?: .*)?)?$/u,
 ]
 
 /** The words are the first words of a fixed command phrase, each maybe a letter off, the last maybe half said. */
@@ -891,6 +1007,7 @@ function pendingMessage(words: readonly string[]): boolean {
 function mayBeCommand(session: InpageSession, partial: string, clean: string): boolean {
   const words = clean.split(' ')
   if (words.length === 1) return true
-  if (classify(session, partial).action.kind !== 'dictate') return true
+  const action = classify(session, partial).action
+  if (action.kind !== 'dictate' || action.spell !== undefined) return true
   return startsPhrase(words) || PENDING.some((pattern) => pattern.test(clean)) || pendingMessage(words)
 }

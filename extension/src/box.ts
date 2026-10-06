@@ -2,7 +2,7 @@
 // page.ts (the commands) and strip.ts (making room for the strip). See docs/ARCHITECTURE.md 20.2
 // and 21.2, and docs/plans/2026-10-05-m7-understanding.md ("The armed box").
 
-import type { BoxState } from '../../src/browser/protocol.ts'
+import type { BoxState, FieldKind } from '../../src/browser/protocol.ts'
 import type { Site } from './sites.ts'
 
 /** The element's box when it is on screen and not hidden by style, else null. No hit test. */
@@ -212,17 +212,83 @@ export function boxKind(el: HTMLElement, site: Site | null): 'composer' | 'searc
   return 'field'
 }
 
-/** The field's placeholder, label or title, at most 60 characters. */
-export function boxLabel(el: HTMLElement): string {
-  const raw = el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.getAttribute('title') || ''
-  return raw.trim().slice(0, 60)
+/** The text of the field's <label for>, the label around it, or its aria-labelledby, else ''. */
+function labelText(el: HTMLElement): string {
+  const ids = el.getAttribute('aria-labelledby')
+  const named = ids
+    ? ids
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent ?? '')
+        .join(' ')
+    : ''
+  if (named.trim() !== '') return named
+  const labels = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.labels : null
+  for (const label of labels ?? []) {
+    const text = (label.textContent ?? '').trim()
+    if (text !== '') return text
+  }
+  return el.closest('label')?.textContent ?? ''
 }
 
-/** The box as the page reports it. Armed: a composer, or the element the user armed. */
+/** The field's placeholder, aria-label, title or label text, at most 60 characters. */
+export function boxLabel(el: HTMLElement): string {
+  const raw = el.getAttribute('placeholder') || el.getAttribute('aria-label') || el.getAttribute('title') || labelText(el)
+  return raw.trim().replace(/\s+/g, ' ').slice(0, 60)
+}
+
+// Round 5 (the fields lane): what a one-line field is for, so dictation into it is converted
+// (number words to digits, "ät" to @). Estonian and English clues, in order of trust: the type,
+// the inputmode, autocomplete, then the words of its name, id, placeholder, aria-label and label.
+const EMAIL_CLUE = /e-?post|e-?mail|\bmeil|meiliaadress|username|kasutajanimi/i
+const TEL_CLUE = /telefon|phone|\btel\b|mobiil|mobile/i
+const CODE_CLUE = /isikukood|personal code|id[ -]?code|national id|\bkood|\bpin\b|\botp\b|kinnituskood|turvakood|\bcode\b|verification/i
+const NUMBER_CLUE = /summa|kogus|\bnumber\b|\barv\b|amount|quantity|\bsum\b/i
+/** An "@" or the word e-mail in the clues: a username field that wants the address. */
+const EMAILISH = /@|e-?post|e-?mail|meil/i
+
+function clues(el: HTMLInputElement): string {
+  return [el.name, el.id, el.placeholder, el.getAttribute('aria-label') ?? '', labelText(el)].join(' ')
+}
+
+function kindFromClues(text: string): FieldKind {
+  if (EMAIL_CLUE.test(text)) return 'email'
+  if (TEL_CLUE.test(text)) return 'tel'
+  if (CODE_CLUE.test(text)) return 'code'
+  if (NUMBER_CLUE.test(text)) return 'number'
+  return 'text'
+}
+
+/** What a one-line input is for: email, tel, code, number, password or text. */
+export function fieldKindOf(el: HTMLInputElement): FieldKind {
+  const type = (el.getAttribute('type') ?? '').toLowerCase()
+  if (type === 'email' || type === 'tel' || type === 'number' || type === 'password') return type
+  const words = clues(el)
+  const mode = (el.getAttribute('inputmode') ?? '').toLowerCase()
+  if (mode === 'tel') return 'tel'
+  if (mode === 'email') return 'email'
+  if (mode === 'decimal') return 'number'
+  // numeric: an ID code, a PIN or a one-time code unless the clues say an amount.
+  if (mode === 'numeric') return NUMBER_CLUE.test(words) && !CODE_CLUE.test(words) ? 'number' : 'code'
+  const auto = (el.getAttribute('autocomplete') ?? '').toLowerCase()
+  if (auto.includes('email')) return 'email'
+  if (auto.includes('tel')) return 'tel'
+  if (auto.includes('one-time-code') || auto.includes('cc-number')) return 'code'
+  if (auto.includes('password')) return 'password'
+  if (auto.includes('username')) return EMAILISH.test(words) ? 'email' : kindFromClues(words)
+  return kindFromClues(words)
+}
+
+/**
+ * The box as the page reports it. Armed: a composer, or the element the user armed. Round 5: an
+ * input is single (one line, never previewed, verified before typing) with its fieldKind; a
+ * search box stays kind search with fieldKind text.
+ */
 export function boxState(el: HTMLElement | null, site: Site | null): BoxState {
   if (el === null) return { present: false, text: '', armed: false, kind: 'none' }
   const kind = boxKind(el, site)
-  return { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el) }
+  const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el) }
+  if (!(el instanceof HTMLInputElement)) return base
+  return { ...base, single: true, fieldKind: kind === 'search' ? 'text' : fieldKindOf(el) }
 }
 
 function lowestVisible(selector: string): HTMLElement | null {

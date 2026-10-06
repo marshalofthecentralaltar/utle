@@ -63,6 +63,26 @@ The loop for each round:
 
 ## Where things stand
 
+### Round 5 (2026-10-06): done
+
+The owner's words after the demo with the real user, five of them: an e-mail, a phone number or an ID
+code is very hard to put in (numbers come as words); a long prompt should be thought about before
+acting, without slowing short commands; it got stuck thinking for minutes once; correcting a form
+field was a hassle and a Smart-ID login needs "valmis" and "kinnita"; he could not zoom. Lanes on
+branch `r5`: `fields` (`src/core/spelling.ts`, `BoxState.single` and `fieldKind` from `box.ts`, the
+spell modes "numbritena" / "tavaliselt", "kirjuta kood X", the form keys, no preview and wait-first
+in a one-line field, the read-back line, implicit submission on Enter, `fixtures/login.html`),
+`brain` (`IntentRequest.care` with effort high, 800 tokens and 12 / 14 s for eight words or more, a
+connective or a chain, the 25 s watchdog per job and goal, the seconds on the strip from 3 s, every
+page command cut at 20 s, "katkesta", the M7 long-sentence guard and the M8 continuation window),
+`zoom` (`zoom{in, out, reset}` through Chrome's tab zoom, 50 to 300 %), then `docs`. Nothing tried
+with a real voice, on the real Smart-ID page or on a bank form. What the owner should try first: a
+Smart-ID login on `fixtures/login.html` and then the real one (digits one by one, "valmis",
+"kinnita"); a long chain with "Mõtlen pikemalt…" and the seconds, and a short command beside it;
+"katkesta" mid-chain; "suurenda" twice. Next round candidates: the review's open items
+(`docs/REVIEW-R5.md`); the field kinds measured against the real Smart-ID and bank pages; the
+careful latency read from the eval; the round 3 and 4 leftovers still open in `HANDOFF.md`.
+
 ### Round 4 (2026-10-06): done
 
 The owner's words after the demo morning: several things in one breath, the microphone hears other

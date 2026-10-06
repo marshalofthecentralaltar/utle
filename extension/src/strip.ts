@@ -394,6 +394,8 @@ export function mountStrip(): void {
     line.textContent = problem ? state.problem : state.line
     line.classList.toggle('problem', problem)
     think.classList.toggle('on', state.thinking)
+    // Round 5: how long the job has been working, next to the dots ("Mõtlen… 7 s"), from a few seconds on.
+    thinkText.textContent = state.busySeconds > 0 ? `${text.thinking} ${state.busySeconds} s` : text.thinking
     notice.textContent = state.modelProblem
     notice.classList.toggle('on', state.modelProblem !== '')
     lagOn = lagShown(state.lag, lagOn)

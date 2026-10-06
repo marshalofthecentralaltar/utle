@@ -107,6 +107,63 @@ voice (this machine has no model files):
 - The other voice's partials are typed as a preview before its final is judged; the review made the
   engine take the preview back the moment the final is dropped. Thresholds unmeasured on an
   Estonian voice. See ARCHITECTURE 24.2 and `docs/REVIEW-R4.md` (what was fixed, what is proposed).
+  Round 5 was reviewed the same way: `docs/REVIEW-R5.md`.
+
+## 1d. Round 5 (2026-10-06): the demo with the real user
+
+Ralf's report after the demo, in his words as near as the lanes carried them, in his order:
+
+1. "Inserting an e-mail, a phone number or an ID code is very hard": the recogniser writes numbers
+   as words.
+2. "For long prompts it should take some time to think about what is really wanted; with a very
+   long message it hurried to act too fast, but it can't come at the cost of executing short
+   commands efficiently."
+3. "It got stuck thinking at one point and became unusable for a few minutes."
+4. "Correcting a form field was a hassle"; a Smart-ID login needs a way to move on and to confirm
+   by voice.
+5. He could not zoom or enlarge the text.
+
+Built on branch `r5` in three lanes, each green on the gate and the browser suite, nothing of it
+tried with a real voice (ARCHITECTURE 25):
+
+- **1 and 4, forms (25.1).** Every one-line `<input>` is reported `single` with a `fieldKind`
+  (email, tel, code, number, password, text) read from its type, inputmode, autocomplete, name,
+  id, placeholder and label. Dictation into it is converted in the core (`src/core/spelling.ts`):
+  number words to digits, one by one or as a number, "ät" to @, "punkt" to a dot, letters by name,
+  "suur a". Nothing is typed into a one-line field live: the model checks the words first, the
+  field is replaced whole, and the bar reads it back ("Kirjutasin: 39002100001 (ütle „edasi“ või
+  „valmis“)", a password as dots). "numbritena" / "tavaliselt" switch digits on and off for
+  everything; "kirjuta kood X", "sisesta e-post X" name the kind once and need no model. In a form
+  field "valmis" / "edasi" are Tab and "kinnita" / "logi sisse" are Enter, which submits the form
+  the way a real Enter does.
+- **2 and 3, the brain (25.2).** Every ask carries `care`: careful for eight words or more, a
+  connective, or a chain (effort high, 800 tokens, 12 s on the server, 14 s in the engine, a second
+  system block "read the whole utterance, plan every goal, then act"); quick, unchanged, for
+  everything else. A 25 s watchdog per job and per goal of a chain gives up with "Võttis liiga
+  kaua, katkestasin."; the strip counts the seconds from 3 s ("Mõtlen… 7 s"); every page command is
+  cut at 20 s; "katkesta" (also "tühista kõik", "lõpeta kõik", "stopp kõik", "cancel") drops
+  everything in flight without asking the model. The review's M7 and M8: a sentence of 14 words or
+  more typed first is not taken back for one plain command, and the continuation window is measured
+  from the first word after a delivery.
+- **5, zoom (25.3).** "suurenda", "vähenda", "tavaline suurus" (and "tee suuremaks", "suurem
+  kiri", "suumi sisse", the English forms) step Chrome's own tab zoom through 50 to 300 %, kept per
+  site; the bar zooms with the page.
+
+What to try first:
+
+1. A Smart-ID login. On the test page first: `npx vite --port 5193 --strictPort`, open
+   `http://localhost:5193/extension/test/fixtures/login.html` (the dev server serves the repository's
+   files at their paths; the strip needs an http page, not `file://`), click Isikukood, say the code digit by digit, watch the bar read it
+   back; "valmis"; the phone number; "valmis"; the e-mail with "punkt" and "ät"; "kinnita". Then the
+   real page: note which fields are taken for the wrong kind (the bar's read-back shows it) and
+   whether "kinnita" submits.
+2. A long chain in one breath ("mine youtube'i, siis otsi kassivideod, siis mängi esimene ja pane
+   heli vaiksemaks"): the bar should say "Mõtlen pikemalt…" and count seconds, then run the goals.
+   Time a short command next to it ("keri alla"): it must stay instant.
+3. Say "katkesta" in the middle of that chain: everything stops with "Katkestatud." within a second.
+4. "suurenda" twice on Postimees, then "tavaline suurus".
+5. If a careful ask feels slow, run `npx tsx scripts/intent-eval.ts` with the key: it prints the
+   care and the latency per ask.
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
@@ -154,10 +211,26 @@ on which to keep, per file.**
 - His voice, a real eye tracker, real WhatsApp with the M7 build, real YouTube and Google, Messenger.
 - Whether `requestFullscreen` works from an injected script (it may need a user gesture; then the
   command answers "See ei õnnestunud").
-- Latency of a model answer in his network. The engine waits at most 7 s and shows "Mõtlen…".
+- Latency of a model answer in his network. The engine waits at most 9 s for a quick ask and 14 s for
+  a careful one and shows "Mõtlen…" / "Mõtlen pikemalt…" with the seconds from 3 s on (25.2).
 
 ## 4. Known faults
 
+- Round 5 (BRAIN lane, 2026-10-06 afternoon, spec 25.2), after the owner's report that a long prompt
+  was acted on too fast and that it once got stuck for minutes: the model is asked with `care`
+  (careful for eight words or more, a connective, or a chain: effort high, 2000 tokens, 12 s on the
+  server, 14 s in the engine, an extra system block; quick for everything else, unchanged), a 25 s
+  watchdog per job and per goal, the elapsed seconds on the strip from 3 s, every page command cut
+  at 20 s, and `katkesta` as a global escape. Single-line fields (`box.single`) are verified before
+  anything is typed, except digits into a code, phone or number field and anything into a password
+  field, which the rules type at once (review of round 5, `docs/REVIEW-R5.md`). None of it has met a real voice; the latency of a careful ask on the real model
+  is unmeasured (the eval prints care per ask).
+- Round 5 (FIELDS lane, spec 25.1): the field kinds come from the markup of the test page and of
+  what the lane knew of Smart-ID and bank forms, never from the real pages; a field the rules take
+  for text gets words, not digits ("numbritena" is the way round it). "kirjuta kood X" is typed by
+  the rules without the model's check even in a one-line field, by design. A one-line field is
+  always replaced whole, so a value said in two breaths is joined by the core, not by the page.
+- Round 5 review: see `docs/REVIEW-R5.md` when it lands; its open items belong here.
 - "Kirjuta siis mulle" is taken as opening a conversation with "Siis Mul" (the two-word name rule
   in `src/core/message.ts` excludes only single-word pronouns). Not fixed.
 - A page that navigates on the search's Enter within 600 ms can lose the page's answer, so the bar
@@ -179,7 +252,8 @@ on which to keep, per file.**
 | The intent set and its validation | `src/core/pageIntent.ts` |
 | Rules, the armed box, `applyIntent` | `src/core/inpage.ts`, `src/core/browserIntent.ts` |
 | The prompt and the endpoint | `server/intentPrompt.ts`, `server/intent.ts`, `server/vitePlugin.ts` |
-| When the engine asks the model | `extension/src/engine.ts` (`LONG_UTTERANCE_WORDS`, `ASK_TIMEOUT_MS`) |
+| When the engine asks the model, and how carefully | `extension/src/engine.ts` (`LONG_UTTERANCE_WORDS`, `ASK_TIMEOUT_MS`, `CAREFUL_WORDS`, `JOB_WATCHDOG_MS`) |
+| Numbers and symbols as a field needs them | `src/core/spelling.ts`; the field's kind in `extension/src/box.ts` (`fieldKindOf`) |
 | Page commands, the armed element | `extension/src/page.ts`, `extension/src/box.ts` |
 | Strip, pill, settings | `extension/src/strip.ts`, `extension/src/options.ts` |
 | Screenshots | `docs/proof/m7-*.png` |

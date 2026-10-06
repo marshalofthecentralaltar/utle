@@ -46,6 +46,7 @@ Messages, headings and paragraphs are "text" items. A text item can be hovered (
 - A site by name ("mine whatsappi", "vatsap", "ava youtube", "gmail", "postimees"): goTo its full address, https://... When a tab of that site is open and he says "tagasi youtube'i", "mine youtube'i tagasi", "the youtube tab": switchTab { query } with the site name.
 - "uus leht" / "uus aken" / "new page": newTab (url null, or the site he named). "sulge": closeTab. "järgmine leht" / "eelmine leht": switchTab next / previous; a tab by its title: switchTab query.
 - "tagasi" / "back": edit undo when the box is armed and has text, else history back. "edasi": history forward. "värskenda": reload. "keri alla / üles / lõppu / algusesse": scroll.
+- The page's size ("tee suuremaks", "suurenda", "suurem kiri", "ma ei näe", "liiga väike", "zoom in"): zoom in; "tee väiksemaks", "vähenda", "liiga suur": zoom out; "tavaline suurus", "algne suurus": zoom reset. The page's own zoom, never a media volume.
 - Searching ("otsi kassivideod", "find cat videos"): siteSearch with the query without the verb, when the page has a search field (video sites, Google, shops, mail, chat lists). From a page without one, "otsi X" / "guugelda X": goTo https://www.google.com/search?q=X. A named site from elsewhere ("otsi youtube'ist X"): goTo that site with done:false, then siteSearch there.
 - Media, only when media is present: "mängi" play, "paus" / "peata" pause, "vaigista" mute, "heli peale" unmute, "valjemaks" / "turn it up" volumeUp, "vaiksemaks" volumeDown, "täisekraan" fullscreen, "välja täisekraanist" exitFullscreen, "keri edasi" forward, "keri tagasi" back.
 - Labels: "näita numbreid" showHints; "peida numbrid" / "stopp" while they show: hideHints; a number while they show: clickHint. When nothing on a crowded page matches what he asked for, showHints is a good answer: he then picks by number.
@@ -54,6 +55,10 @@ Messages, headings and paragraphs are "text" items. A text item can be hovered (
 # Editing the text in the box
 
 When the box is armed and he asks to change what is in it, edit in place with the editing commands; never retype the whole box for a small change. caret moves the caret: start, end, lineStart, lineEnd, sentenceStart, sentenceEnd, wordBack, wordForward, or { find: "word", where: "before" | "after" } for the nearest match of a word in the box text (use the word as it stands in the text, not the spoken case ending). select selects: all, word, sentence, line, lastWord, lastSentence, or { find: "word" }; the next typeText or Backspace acts on the selection. typeText { text } types at the caret with the spaces and the capital worked out there. pressKey with Backspace, Delete, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Home, End, Undo, Redo, SelectAll, Tab, and times for a count. One step at a time, done:false until the last: "lisa pärast sõna homme kell viis" is caret { find: "homme", where: "after" } then typeText "kell viis"; "kustuta sõna ilus" is select { find: "ilus" } then pressKey Backspace; "muuda teine lause" is caret find of that sentence's first word then select sentence, and the new words he says next replace it; "mine lause algusesse ja kirjuta ..." is caret sentenceStart then typeText. A single word swap ("ilus asemel kena") is edit replace. "võta tagasi" is edit undo. On Google Docs (docs.google.com) there is no box text: only the keys and typeText work there (pressKey ArrowLeft, Home, Backspace, Undo; typeText), never caret or select by a word.
+
+# Form fields
+
+A box with single=true is a one-line form field (a login, an ID code, a phone number, an address); its fieldKind says what it is for: email, tel, code, number, password or text. Into email, tel, code, number and password fields the extension itself converts his words (number words to digits, "ät" to @, "punkt" to a dot, letters said by name): answer dictate with the words AS HE SAID THEM ("kolm üheksa null kaks", "ralf punkt sepp ät gmail punkt com"), never pre-converted and never tidied into a sentence. Spoken number words that are a value for the field are dictation, not a hint number. After a value, "valmis" / "edasi" / "done" is pressKey Tab (the next field) and "kinnita" / "logi sisse" / "sisesta" / "submit" is pressKey Enter; "numbritena" and "tavaliselt" are handled by the rules.
 
 # Dictation
 
@@ -70,6 +75,12 @@ unclear when nothing fits: say is one short line telling him one or two things h
 say for every other answer: at most 8 words stating what you took the words to be, like "ava Vaata hiljem", "avan vestluse Mariga", "otsin kassivideod". Empty string when the utterance already said it plainly. Never a question, never an apology.
 
 Every say is in the language he spoke: lang is his default, an English utterance gets English.`
+
+/**
+ * Round 5: the paragraph added as a second system block for a careful ask (a long utterance or a
+ * chain). Sent only then, so the cached first block stays identical on every call.
+ */
+export const CAREFUL_PROMPT = `This utterance is long or part of a chain. Read the whole utterance before acting. List every goal in "plan" in order, in his words. Choose the first action only after the plan is complete. Prefer one safe action over a fast guess.`
 
 const STRING = { type: 'string' } as const
 const BOOLEAN = { type: 'boolean' } as const
@@ -187,7 +198,7 @@ function stepLine(n: number, step: IntentStep): string {
 export function intentUserMessage(request: IntentRequest): string {
   const { page } = request
   const box = page.box.present
-    ? `present armed=${page.box.armed} kind=${page.box.kind ?? 'field'} label=${JSON.stringify(page.box.label ?? '')} text=${JSON.stringify(clip(page.box.text, BOX_TEXT_MAX))}`
+    ? `present armed=${page.box.armed} kind=${page.box.kind ?? 'field'}${page.box.single === true ? ` single=true fieldKind=${page.box.fieldKind ?? 'text'}` : ''} label=${JSON.stringify(page.box.label ?? '')} text=${JSON.stringify(page.box.fieldKind === 'password' ? '•'.repeat(page.box.text.length) : clip(page.box.text, BOX_TEXT_MAX))}`
     : 'none'
   const media = page.media
     ? `playing=${page.media.playing} muted=${page.media.muted} volume=${page.media.volume.toFixed(2)} fullscreen=${page.media.fullscreen}`

@@ -23,6 +23,8 @@ export interface StripState {
   modelProblem: string
   /** How far behind the speech server is, in ms (round 3). 0 when caught up. */
   lag: number
+  /** Round 5: seconds the current job has been working, shown while it is above a few; 0 when idle. */
+  busySeconds: number
   /** Round 4: progress through a chain of goals, e.g. "2/4 · otsin kassivideod", or ''. */
   chain: string
   /** Round 4: a line when speech was dropped as someone else's voice, or ''. Cleared on the next owner utterance. */
@@ -37,7 +39,7 @@ export interface StripState {
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, chain: '', foreign: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
 
 /** To the service worker. */
 export type ToBackground =

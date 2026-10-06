@@ -29,7 +29,7 @@ const ESTONIAN = 'Tere! Jõuan homme kell kolm.'
 // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
 const headed = true
 
-type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string }
+type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string; fieldKind?: string; single?: boolean }
 type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean }
 type Result = { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxInfo; page?: PageInfo } | { ok: false; code: string; message: string }
 
@@ -750,6 +750,45 @@ async function main(): Promise<void> {
     check('clickItem + setText: the To field, by its label', toValue === 'mari@example.com', `to=${JSON.stringify(toValue)}`)
     r = await send({ kind: 'scroll', direction: 'down' })
     line('scroll', 'page that does not scroll -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
+    r = await send({ kind: 'readBox' })
+    check('readBox: the To field is single, fieldKind text (no clue in its name), label from <label for>', r !== 'timeout' && r.ok && r.box?.single === true && r.box.fieldKind === 'text' && r.box.label === 'Saaja', describe(r))
+
+    // ---------- Round 5 (fields): a Smart-ID-like login, one-line fields of every kind ----------
+    await send({ kind: 'goTo', url: `${T}/login.html` })
+    const login = pageAt(`${T}/login.html`)
+    if (!login) throw new Error('login page not found')
+    const loginValue = async (id: string): Promise<string> => login.evaluate((i) => (document.getElementById(i) as HTMLInputElement).value, id)
+    const loginFocus = async (): Promise<string> => login.evaluate(() => document.activeElement?.id ?? '')
+    await login.click('#isikukood')
+    r = await send({ kind: 'readBox' })
+    line('readBox', 'login: Isikukood (inputmode numeric, label) is single, kind code, armed by the click', r !== 'timeout' && r.ok && r.box?.single === true && r.box.fieldKind === 'code' && r.box.armed === true && r.box.kind === 'field' && r.box.label === 'Isikukood', describe(r))
+    r = await send({ kind: 'setText', text: '39002100001' })
+    line('setText', 'login: the converted digits into the code field, read back', r !== 'timeout' && r.ok && (await loginValue('isikukood')) === '39002100001' && r.box?.text === '39002100001' && r.box.single === true, `${describe(r)} value=${JSON.stringify(await loginValue('isikukood'))}`)
+    r = await send({ kind: 'setText', text: '39002100002' })
+    check('setText: a one-line field is replaced whole, never appended to', r !== 'timeout' && r.ok && (await loginValue('isikukood')) === '39002100002', `value=${JSON.stringify(await loginValue('isikukood'))}`)
+    r = await send({ kind: 'pressKey', key: 'Tab' })
+    line('pressKey', 'login: Tab ("valmis") lands in the phone field and arms it', r !== 'timeout' && r.ok && (await loginFocus()) === 'phone' && r.box?.armed === true && r.box.fieldKind === 'tel', `${describe(r)} focused=${await loginFocus()}`)
+    r = await send({ kind: 'setText', text: '+37251234567' })
+    check('setText: a phone number into the tel field', r !== 'timeout' && r.ok && (await loginValue('phone')) === '+37251234567' && r.box?.fieldKind === 'tel' && r.box.single === true, describe(r))
+    await login.click('#email')
+    r = await send({ kind: 'readBox' })
+    check('readBox: type=email is fieldKind email, label E-post', r !== 'timeout' && r.ok && r.box?.fieldKind === 'email' && r.box.single === true && r.box.label === 'E-post', describe(r))
+    r = await send({ kind: 'setText', text: 'ralf.sepp@gmail.com' })
+    check('setText: an address into the email field', r !== 'timeout' && r.ok && (await loginValue('email')) === 'ralf.sepp@gmail.com' && r.box?.text === 'ralf.sepp@gmail.com', describe(r))
+    await login.click('#amount')
+    r = await send({ kind: 'readBox' })
+    check('readBox: inputmode decimal is fieldKind number', r !== 'timeout' && r.ok && r.box?.fieldKind === 'number' && r.box.single === true, describe(r))
+    await login.click('#pin')
+    r = await send({ kind: 'readBox' })
+    check('readBox: type=password is fieldKind password', r !== 'timeout' && r.ok && r.box?.fieldKind === 'password' && r.box.single === true && r.box.label === 'PIN1', describe(r))
+    r = await send({ kind: 'setText', text: '1234' })
+    check('setText: digits into the PIN field', r !== 'timeout' && r.ok && (await loginValue('pin')) === '1234', describe(r))
+    r = await send({ kind: 'pressKey', key: 'Enter' })
+    const submits = await login.evaluate(() => (window as unknown as { submits: number }).submits)
+    check('pressKey Enter ("kinnita") submits the form once', r !== 'timeout' && r.ok && submits === 1, `${describe(r)} submits=${submits}`)
+    await login.click('#notes')
+    r = await send({ kind: 'readBox' })
+    check('readBox: the textarea is not single and has no fieldKind', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.single === undefined && r.box.fieldKind === undefined && r.box.label === 'Märkused', describe(r))
 
     await send({ kind: 'goTo', url: `${T}/page-one.html` })
     r = await send({ kind: 'siteSearch', query: 'kassid' })
@@ -866,6 +905,38 @@ async function main(): Promise<void> {
     line('bar', 'show false: stripState.hidden true', r !== 'timeout' && r.ok && (await stripHidden()), describe(r))
     r = await send({ kind: 'bar', show: true })
     line('bar', 'show true: stripState.hidden false', r !== 'timeout' && r.ok && !(await stripHidden()), describe(r))
+
+    // ---------- zoom: Chrome's tab zoom, stepped by the worker; the strip scales with the page ----------
+    const zoomNow = async (): Promise<number> =>
+      sw.evaluate(async (windowId) => {
+        const [t] = await chrome.tabs.query({ active: true, windowId })
+        return t?.id === undefined ? -1 : Math.round((await chrome.tabs.getZoom(t.id)) * 100) / 100
+      }, targetWindowId)
+    const stripSize = async (): Promise<{ height: number; heardPx: number } | null> =>
+      sw.evaluate(async (windowId) => {
+        const [t] = await chrome.tabs.query({ active: true, windowId })
+        if (t?.id === undefined) return null
+        const m = (await chrome.tabs.sendMessage(t.id, { type: 'utle-strip-measure' }).catch(() => null)) as { strip: { height: number }; heardPx: number } | null
+        return m ? { height: m.strip.height, heardPx: m.heardPx } : null
+      }, targetWindowId)
+    const sizeAtOne = await stripSize()
+    r = await send({ kind: 'zoom', direction: 'in' })
+    line('zoom', 'in from 100% -> 110%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.1, `${describe(r)} zoom=${await zoomNow()}`)
+    r = await send({ kind: 'zoom', direction: 'in' })
+    line('zoom', 'in again -> 125%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.25, `${describe(r)} zoom=${await zoomNow()}`)
+    r = await send({ kind: 'zoom', direction: 'in' })
+    line('zoom', 'in again -> 150%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.5, `${describe(r)} zoom=${await zoomNow()}`)
+    const sizeAtOneAndAHalf = await stripSize()
+    // The strip is drawn in the page's CSS pixels, so it zooms with the page: the same CSS size, 1.5 times as big on screen.
+    check(
+      'strip still measures at 150% (same CSS size as at 100%)',
+      sizeAtOne !== null && sizeAtOneAndAHalf !== null && sizeAtOneAndAHalf.height === sizeAtOne.height && sizeAtOneAndAHalf.heardPx === sizeAtOne.heardPx && sizeAtOne.height > 0,
+      `at 100%=${JSON.stringify(sizeAtOne)} at 150%=${JSON.stringify(sizeAtOneAndAHalf)}`,
+    )
+    r = await send({ kind: 'zoom', direction: 'out' })
+    line('zoom', 'out from 150% -> 125%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.25, `${describe(r)} zoom=${await zoomNow()}`)
+    r = await send({ kind: 'zoom', direction: 'reset' })
+    line('zoom', 'reset -> 100%', r !== 'timeout' && r.ok && (await zoomNow()) === 1, `${describe(r)} zoom=${await zoomNow()}`)
 
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })

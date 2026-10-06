@@ -4,7 +4,7 @@ import type { IntentAnswer, IntentRequest } from '../src/core/pageIntent.ts'
 import { STRINGS } from '../src/core/strings.ts'
 import { InterpretError } from './interpret.ts'
 import type { MessagesClient, ModelReply } from './interpret.ts'
-import { ANSWER_TOOL, INTENT_SYSTEM_PROMPT, intentUserMessage } from './intentPrompt.ts'
+import { ANSWER_TOOL, CAREFUL_PROMPT, INTENT_SYSTEM_PROMPT, intentUserMessage } from './intentPrompt.ts'
 
 /**
  * M7 (docs/plans/2026-10-05-m7-understanding.md): POST /api/intent. One utterance the rules did
@@ -17,6 +17,26 @@ import { ANSWER_TOOL, INTENT_SYSTEM_PROMPT, intentUserMessage } from './intentPr
 
 export const INTENT_TIMEOUT_MS = 7000
 const MAX_TOKENS = 400
+/**
+ * Round 5: a careful ask (request.care, set by the engine for a long utterance or a chain) gets
+ * higher effort, a longer answer budget and a longer wait; the engine waits 14 s for it, 9 s for a
+ * quick one. Expected latency (not measured here; round 3 measured Sonnet at low effort, p50 about
+ * 1 s): quick 1 to 3 s, careful a few seconds more with the thinking it buys.
+ */
+export const INTENT_TIMEOUT_CAREFUL_MS = 12_000
+/**
+ * Review of round 5: the model's thinking counts against max_tokens, and at effort high it may
+ * spend more than a few hundred tokens before the tool call; a cut-off answer (stop_reason
+ * max_tokens) is an `unclear`, so the budget is generous. The timeout still bounds the wait.
+ */
+const MAX_TOKENS_CAREFUL = 2000
+
+type Care = NonNullable<IntentRequest['care']>
+
+/** What one ask costs the model, by its care. */
+export function careSettings(care: Care): { effort: 'low' | 'high'; maxTokens: number; timeoutMs: number } {
+  return care === 'careful' ? { effort: 'high', maxTokens: MAX_TOKENS_CAREFUL, timeoutMs: INTENT_TIMEOUT_CAREFUL_MS } : { effort: 'low', maxTokens: MAX_TOKENS, timeoutMs: INTENT_TIMEOUT_MS }
+}
 
 function unclear(request: IntentRequest): IntentAnswer {
   return { intent: { kind: 'unclear', say: STRINGS[request.lang].inpage.notUnderstood }, say: '' }
@@ -91,31 +111,37 @@ export async function pageIntent(input: unknown, deps: { client: MessagesClient;
   }
   const request = parsed.data
   const started = Date.now()
+  const care: Care = request.care ?? 'quick'
+  const settings = careSettings(care)
 
   let reply: ModelReply
   try {
     reply = await deps.client.messages.create(
       {
         model: deps.model,
-        max_tokens: MAX_TOKENS,
-        output_config: { effort: 'low' },
+        max_tokens: settings.maxTokens,
+        output_config: { effort: settings.effort },
         // The fixed prompt is marked for caching: every call shares the same prefix (tools, then system).
-        system: [{ type: 'text', text: INTENT_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+        // Round 5: a careful ask adds a second block after it, so the cached first block stays identical.
+        system: [
+          { type: 'text', text: INTENT_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+          ...(care === 'careful' ? [{ type: 'text' as const, text: CAREFUL_PROMPT }] : []),
+        ],
         tools: [ANSWER_TOOL],
         tool_choice: { type: 'auto', disable_parallel_tool_use: true },
         messages: [{ role: 'user', content: intentUserMessage(request) }],
       },
-      { timeout: INTENT_TIMEOUT_MS },
+      { timeout: settings.timeoutMs },
     )
   } catch (error) {
     const mapped = toIntentError(error)
-    console.info(`[intent] error=${mapped.code} ms=${Date.now() - started}`)
+    console.info(`[intent] error=${mapped.code} care=${care} ms=${Date.now() - started}`)
     throw mapped
   }
 
   const raw = answerFrom(reply)
   const intent = raw ? pageIntentFrom(raw.intent, request) : null
   const answer: IntentAnswer = intent && raw ? { intent, say: raw.say, done: raw.done, ...(raw.plan.length > 0 ? { plan: raw.plan } : {}) } : unclear(request)
-  console.info(`[intent] kind=${answer.intent.kind} done=${answer.done !== false} plan=${answer.plan?.length ?? 0} ms=${Date.now() - started}`)
+  console.info(`[intent] kind=${answer.intent.kind} done=${answer.done !== false} plan=${answer.plan?.length ?? 0} care=${care} ms=${Date.now() - started}`)
   return answer
 }

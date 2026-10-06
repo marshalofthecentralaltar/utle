@@ -18,6 +18,12 @@ export interface IntentRequest {
   /** The last strip lines, newest last, so "ei, teine" can refer to them. At most 3. */
   recent: string[]
   /**
+   * Round 5: how hard the model should think. quick for a short utterance (low effort, answer in a
+   * second); careful for a long one or a chain (higher effort: read the whole utterance, plan every
+   * goal, then act). The engine decides; the server maps it to the model's effort.
+   */
+  care?: 'quick' | 'careful'
+  /**
    * M7.2: the steps already taken for this same utterance, oldest first, when the model said the
    * task was not done after the previous one (a bounded loop in the engine, at most 4 steps). Empty
    * or absent on the first ask.
@@ -137,6 +143,7 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('clearField') }),
   z.object({ kind: z.literal('arm'), on: z.boolean() }),
   z.object({ kind: z.literal('bar'), show: z.boolean() }),
+  z.object({ kind: z.literal('zoom'), direction: z.enum(['in', 'out', 'reset']) }),
 ])
 
 const EditSchema = z.discriminatedUnion('kind', [
@@ -174,6 +181,8 @@ const BoxSchema = z.object({
   text: z.string().max(4000),
   armed: z.boolean(),
   kind: z.enum(['composer', 'search', 'field', 'none']).optional(),
+  fieldKind: z.enum(['email', 'tel', 'code', 'number', 'password', 'text']).optional(),
+  single: z.boolean().optional(),
   label: z.string().max(80).optional(),
 })
 const MediaSchema = z.object({ playing: z.boolean(), muted: z.boolean(), volume: z.number().min(0).max(1), fullscreen: z.boolean() })
@@ -191,6 +200,7 @@ export const IntentRequestSchema: z.ZodType<IntentRequest> = z.object({
   }),
   tabs: z.array(z.object({ index: z.number().int().min(1), title: z.string().max(300), active: z.boolean() })).max(60),
   recent: z.array(z.string().max(200)).max(3),
+  care: z.enum(['quick', 'careful']).optional(),
   steps: z.array(IntentStepSchema).max(MAX_INTENT_STEPS).optional(),
   chain: z
     .object({ original: z.string().max(1000), completed: z.array(z.string().max(200)).max(12), goal: z.string().max(200), remaining: z.array(z.string().max(200)).max(12) })

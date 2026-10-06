@@ -368,6 +368,16 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     case 'bar':
       await patchState({ hidden: !command.show })
       return ok()
+    case 'zoom': {
+      // Round 5: Chrome's own tab zoom, so text and layout grow together and the setting sticks per site.
+      const now = await chrome.tabs.getZoom(tabId)
+      const steps = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+      let next = 1
+      if (command.direction === 'in') next = steps.find((z) => z > now + 0.01) ?? 3
+      else if (command.direction === 'out') next = [...steps].reverse().find((z) => z < now - 0.01) ?? 0.5
+      await chrome.tabs.setZoom(tabId, next)
+      return ok()
+    }
     case 'openConversation':
       return openConversation(tab, command)
     case 'clickHint':

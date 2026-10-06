@@ -4,7 +4,8 @@ import type { IntentRequest } from '../src/core/pageIntent.ts'
 import { STRINGS } from '../src/core/strings.ts'
 import { InterpretError } from './interpret.ts'
 import type { MessagesClient, ModelReply } from './interpret.ts'
-import { pageIntent } from './intent.ts'
+import { INTENT_TIMEOUT_CAREFUL_MS, INTENT_TIMEOUT_MS, careSettings, pageIntent } from './intent.ts'
+import { CAREFUL_PROMPT, INTENT_SYSTEM_PROMPT } from './intentPrompt.ts'
 
 type CreateParams = Parameters<MessagesClient['messages']['create']>[0]
 
@@ -12,12 +13,14 @@ function answer(input: unknown): ModelReply {
   return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_1', name: 'answer', input }] }
 }
 
-function fakeClient(...queue: Array<ModelReply | Error>): { client: MessagesClient; calls: CreateParams[] } {
+function fakeClient(...queue: Array<ModelReply | Error>): { client: MessagesClient; calls: CreateParams[]; timeouts: Array<number | undefined> } {
   const calls: CreateParams[] = []
+  const timeouts: Array<number | undefined> = []
   const client: MessagesClient = {
     messages: {
-      create: async (params) => {
+      create: async (params, options) => {
         calls.push(structuredClone(params))
+        timeouts.push(options?.timeout)
         const next = queue.shift()
         if (!next) throw new Error('fake client: no reply queued')
         if (next instanceof Error) throw next
@@ -25,7 +28,14 @@ function fakeClient(...queue: Array<ModelReply | Error>): { client: MessagesClie
       },
     },
   }
-  return { client, calls }
+  return { client, calls, timeouts }
+}
+
+/** The system blocks' texts, in order. */
+function systemTexts(params: CreateParams | undefined): string[] {
+  const system = params?.system
+  if (typeof system === 'string') return [system]
+  return (system ?? []).map((block) => (block.type === 'text' ? block.text : ''))
 }
 
 const YOUTUBE: IntentRequest['page'] = {
@@ -262,10 +272,55 @@ describe('pageIntent', () => {
     const { client } = fakeClient(CLICK_LATER)
     await pageIntent(request({ utterance: 'mine vaata hiljem palun' }), { client, model: 'm' })
     const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
-    expect(logged.some((line) => /^\[intent\] kind=command done=true plan=0 ms=\d+$/.test(line))).toBe(true)
+    expect(logged.some((line) => /^\[intent\] kind=command done=true plan=0 care=quick ms=\d+$/.test(line))).toBe(true)
     const all = logged.join('\n')
     expect(all).not.toContain('vaata hiljem')
     expect(all).not.toContain('Kassid')
     expect(all).not.toContain('youtube')
+  })
+
+  describe('care (round 5)', () => {
+    it('a quick ask, or one without care, gets low effort, 400 tokens, 7 s and the one cached system block', async () => {
+      const { client, calls, timeouts } = fakeClient(CLICK_LATER, CLICK_LATER)
+      await pageIntent(request(), { client, model: 'm' })
+      await pageIntent(request({ care: 'quick' }), { client, model: 'm' })
+      for (const params of calls) {
+        expect(params.max_tokens).toBe(400)
+        expect(params.output_config).toEqual({ effort: 'low' })
+        expect(systemTexts(params)).toHaveLength(1)
+      }
+      expect(timeouts).toEqual([INTENT_TIMEOUT_MS, INTENT_TIMEOUT_MS])
+      expect(INTENT_TIMEOUT_MS).toBe(7000)
+    })
+
+    it('a careful ask gets high effort, 2000 tokens, 12 s, and the careful paragraph as a second block after the unchanged cached one', async () => {
+      const { client, calls, timeouts } = fakeClient(CLICK_LATER)
+      await pageIntent(request({ care: 'careful', utterance: 'mine youtube ja otsi kassivideod ja mängi esimene' }), { client, model: 'm' })
+      const params = calls[0]
+      expect(params?.max_tokens).toBe(2000)
+      expect(params?.output_config).toEqual({ effort: 'high' })
+      expect(timeouts).toEqual([INTENT_TIMEOUT_CAREFUL_MS])
+      expect(INTENT_TIMEOUT_CAREFUL_MS).toBe(12_000)
+      const blocks = systemTexts(params)
+      expect(blocks).toHaveLength(2)
+      expect(blocks[0]).toBe(INTENT_SYSTEM_PROMPT)
+      expect(blocks[1]).toBe(CAREFUL_PROMPT)
+      expect(blocks[1]).toContain('Read the whole utterance before acting')
+      // Only the first block is cached, and it is the same text as on a quick call.
+      const system = params?.system
+      expect(Array.isArray(system) && system[0]?.cache_control?.type).toBe('ephemeral')
+      expect(Array.isArray(system) && system[1]?.cache_control).toBeUndefined()
+      expect(careSettings('quick')).toEqual({ effort: 'low', maxTokens: 400, timeoutMs: 7000 })
+      expect(careSettings('careful')).toEqual({ effort: 'high', maxTokens: 2000, timeoutMs: 12_000 })
+    })
+
+    it('logs the care, never the words', async () => {
+      const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}))
+      const { client } = fakeClient(CLICK_LATER)
+      await pageIntent(request({ care: 'careful', utterance: 'mine vaata hiljem ja siis keri alla palun' }), { client, model: 'm' })
+      const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
+      expect(logged.some((line) => /^\[intent\] kind=command done=true plan=0 care=careful ms=\d+$/.test(line))).toBe(true)
+      expect(logged.join('\n')).not.toContain('vaata hiljem')
+    })
   })
 })

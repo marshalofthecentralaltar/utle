@@ -243,6 +243,35 @@ phrases({ kind: 'media', action: 'exitFullscreen' }, 'välju täisekraanist', 't
 phrases({ kind: 'media', action: 'forward' }, 'keri edasi', 'skip forward')
 phrases({ kind: 'media', action: 'back' }, 'keri tagasi', 'skip back')
 
+// Round 5 (the owner's fifth report): the page's size. Chrome's tab zoom, so text and layout grow together.
+phrases(
+  { kind: 'zoom', direction: 'in' },
+  'suurenda',
+  'suurenda lehte',
+  'suumi sisse',
+  'tee suuremaks',
+  'suurem tekst',
+  'suurem kiri',
+  'tee tekst suuremaks',
+  'zoom in',
+  'bigger',
+  'make it bigger',
+  'larger text',
+)
+phrases(
+  { kind: 'zoom', direction: 'out' },
+  'vähenda',
+  'vähenda lehte',
+  'suumi välja',
+  'tee väiksemaks',
+  'väiksem tekst',
+  'väiksem kiri',
+  'zoom out',
+  'smaller',
+  'make it smaller',
+)
+phrases({ kind: 'zoom', direction: 'reset' }, 'tavaline suurus', 'algne suurus', 'suumi tagasi', 'reset zoom', 'normal size')
+
 // Round 3, the edit lane (docs/ARCHITECTURE.md 21.1 "Editing"): the caret, a selection and the editing
 // keys inside the armed box, as whole phrases. The box-dependent forms ("mine sõna X ette", "vali X",
 // "kustuta kolm tähte", "kirjuta siia vahele X") are patterns in inpage.ts; act there refuses all of

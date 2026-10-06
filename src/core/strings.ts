@@ -120,6 +120,23 @@ export interface Strings {
     catchingUp: string
     /** A verification came back as a command after the box had changed: nothing was touched. */
     lateCommand(say: string): string
+    // Round 5 (fields).
+    /** "numbritena": dictation is written as digits until "tavaliselt". */
+    spellDigits: string
+    spellWords: string
+    /** What a one-line form field holds after typing, read back, with what to say next. */
+    typedInto(text: string): string
+    // Round 5 (BRAIN lane).
+    /** The model is being asked with care (a long utterance or a chain): it takes longer. */
+    thinkingLong: string
+    /** The job's watchdog fired: everything of it was given up. */
+    tookTooLong: string
+    /** "katkesta": every job, chain and verification was dropped. */
+    cancelled: string
+    /** A long sentence typed into the box was judged a single command: the words stay, nothing runs. */
+    keptWords: string
+    /** A single-line field waits for the model; it did not answer, so nothing was typed. */
+    fieldUnverified: string
   }
 
   // The interpreter.
@@ -471,6 +488,8 @@ const ET: Strings = {
         return command.on ? 'Kirjutan siia.' : 'Siia enam ei kirjuta.'
       case 'bar':
         return command.show ? 'Näitan riba.' : 'Peidan riba.'
+      case 'zoom':
+        return command.direction === 'in' ? 'Suurendan.' : command.direction === 'out' ? 'Vähendan.' : 'Tavaline suurus.'
     }
   },
   browserDone(command, title, hints) {
@@ -574,6 +593,14 @@ const ET: Strings = {
     noPlaceToWrite: 'Siin pole kuhu kirjutada. Ütle „kirjuta siia“ kasti peal, „näita numbreid“ ja number, või ava vestlus.',
     catchingUp: 'Jõuan järele…',
     lateCommand: (say) => `Hiljem: see oli käsk „${say}“, teksti ei muutnud.`,
+    spellDigits: 'Kirjutan numbritena.',
+    spellWords: 'Kirjutan tavaliselt.',
+    typedInto: (text) => `Kirjutasin: ${text} (ütle „edasi“ või „valmis“)`,
+    thinkingLong: 'Mõtlen pikemalt…',
+    tookTooLong: 'Võttis liiga kaua, katkestasin.',
+    cancelled: 'Katkestatud.',
+    keptWords: 'Pikk lause jäi kasti, käsku ei täitnud.',
+    fieldUnverified: 'Abiline ei vastanud, välja ei kirjutanud.',
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -844,6 +871,8 @@ const EN: Strings = {
         return command.on ? 'Writing here.' : 'Not writing here any more.'
       case 'bar':
         return command.show ? 'Showing the bar.' : 'Hiding the bar.'
+      case 'zoom':
+        return command.direction === 'in' ? 'Zooming in.' : command.direction === 'out' ? 'Zooming out.' : 'Normal size.'
     }
   },
   browserDone(command, title, hints) {
@@ -947,6 +976,14 @@ const EN: Strings = {
     noPlaceToWrite: 'There is nowhere to write here. Say "write here" on a field, "show numbers" and a number, or open a conversation.',
     catchingUp: 'Catching up…',
     lateCommand: (say) => `Later: "${say}" was a command, text left as is.`,
+    spellDigits: 'Writing as digits.',
+    spellWords: 'Writing as words.',
+    typedInto: (text) => `Typed: ${text} (say "next" or "done")`,
+    thinkingLong: 'Thinking it through…',
+    tookTooLong: 'It took too long, I stopped it.',
+    cancelled: 'Cancelled.',
+    keptWords: 'The long sentence stays in the box; no command was run.',
+    fieldUnverified: 'The assistant did not answer; nothing was typed into the field.',
   },
 
   stillWorks: 'Yes, no and undo still work.',

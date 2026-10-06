@@ -77,6 +77,11 @@ export type BrowserCommand =
   | { kind: 'arm'; on: boolean }
   /** Hides the strip to a small microphone pill, or shows it again. Every tab follows. */
   | { kind: 'bar'; show: boolean }
+  // Round 5: the page's size.
+  /** Chrome's tab zoom: in and out by one step, reset to 100%. Text grows with it. */
+  | { kind: 'zoom'; direction: 'in' | 'out' | 'reset' }
+
+export type FieldKind = 'email' | 'tel' | 'code' | 'number' | 'password' | 'text'
 
 export type ScrollMode = 'page' | 'little' | 'slow' | 'stop'
 
@@ -161,6 +166,15 @@ export interface BoxState {
   armed: boolean
   /** composer, search, field or none: what kind of box it is, for the model and the strip. */
   kind?: 'composer' | 'search' | 'field' | 'none'
+  /**
+   * Round 5: what a single-line field is for, from its type, inputmode, autocomplete, name, id,
+   * placeholder and label: email, tel (a phone number), code (an ID code, a PIN, a one-time code),
+   * number, password, text. Dictation into email, tel, code and number fields is converted (number
+   * words to digits, "ät" to @, "punkt" to a dot). Absent for composers and multi-line boxes.
+   */
+  fieldKind?: FieldKind
+  /** Round 5: true for a one-line form field (input), where words are never previewed and are verified before they are typed. */
+  single?: boolean
   /** The field's label or placeholder, at most 60 characters. */
   label?: string
 }
