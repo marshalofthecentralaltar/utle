@@ -22,6 +22,12 @@ with a Claude model that sees the words and what is on the page (it needs a key 
 Listening is a toggle, or, for an eye tracker, push-to-talk by looking: it listens while the pointer
 rests on the microphone and delivers the words when it leaves.
 
+Since 6 October one breath may hold a chain of things to do ("mine whatsappi, siis ava Karini viimane
+sõnum, siis kustuta see kõigi jaoks"), done one after the other with the bar showing where it is;
+the server can learn your voice so that, with "Kuula ainult mind" on, other people's speech is
+skipped; and the model sees the messages, headings and paragraphs on the page too, can rest the
+pointer on one so its hidden controls appear, and can open its menu.
+
 Nothing opens in a separate window. Ütle also replaces Chrome's new-tab page with the same bar and
 large tiles for common sites, so the bar is there on an empty tab too.
 
@@ -47,6 +53,9 @@ This is a hackathon prototype.
   commands, slow scrolling, Soniox, the speech server that never falls behind) is proven with recorded
   speech, stand-in pages and unit tests only. Google Docs has not been tried on the real site; Soniox
   has not been tried with a key.
+- Everything from 6 October (chains of goals, only your own voice, the messages and hover on the
+  page) is proven on stand-in pages and with fakes only: no real voice, no real site, and the
+  speaker model never run on an Estonian voice. The WhatsApp message selectors are guesses.
 - Built and tested on Windows 11 only.
 
 Known faults: if you keep talking straight after a short command, the command word can show in the
@@ -60,8 +69,8 @@ cannot show the bar (see below).
   server decodes on its own thread (it runs a `.ts` worker file as is). On 22.12 to 22.17 it still
   works, decoding on the server thread, and logs `decode worker could not start`.
 - Git.
-- About 350 MB of disk space: the speech model is 156 MB, and the installed packages about 190 MB.
-  Running the extension tests downloads a test browser on top of that.
+- About 380 MB of disk space: the speech model is 156 MB, the optional speaker model 29 MB, and the
+  installed packages about 190 MB. Running the extension tests downloads a test browser on top of that.
 - A microphone.
 
 ## Install
@@ -81,7 +90,8 @@ Every step is run from a terminal. Steps 1 to 5 are done once.
    npm ci
    ```
 
-3. Download the Estonian speech model (156 MB, into `models/`):
+3. Download the Estonian speech model (156 MB, into `models/`) and the small speaker model for
+   "Kuula ainult mind" (29 MB, into `models/speaker/`; a failure there is only a warning):
 
    ```
    npm run model
@@ -134,7 +144,7 @@ Anything that is not a command is typed into the message box. Commands are match
 utterance, in Estonian or English, whatever was said before. The bar's own lines are in Estonian.
 What no fixed phrase covers ("uus leht", "vajuta Mari", "pane vaiksemaks") is understood by meaning
 when the local server has an `ANTHROPIC_API_KEY`. The full list, with the English forms, is in
-`extension/README.md` ("What to say"); the rules are `docs/ARCHITECTURE.md` 21.1, 22 and 23.
+`extension/README.md` ("What to say"); the rules are `docs/ARCHITECTURE.md` 21.1, 22, 23 and 24.
 
 | Estonian | English | What happens |
 |---|---|---|
@@ -152,6 +162,7 @@ when the local server has an `ANTHROPIC_API_KEY`. The full list, with the Englis
 | ärka üles | wake up | Starts again. |
 | kirjuta Marile, ava vestlus Mariga | write to Mari, open chat with Mari | Opens the chat with Mari. |
 | kirjuta Marile, et ma jõuan homme | tell Mari that I will come tomorrow | Opens the chat with Mari and writes the sentence. It does not send. |
+| mine whatsappi, siis ava Karini viimane sõnum, siis kustuta see kõigi jaoks | go to whatsapp, then open Karin's last message, then delete it for everyone | A chain: the goals are done one after the other (needs the model). Say "siis" or "ja siis" between them; a pause is fine. |
 | keri alla, keri üles | scroll down, scroll up | Scrolls most of a screen, smoothly. |
 | keri natuke alla, keri aeglaselt alla, stopp | scroll down a little, scroll down slowly, stop | A third of a screen; a steady slow scroll; stop it. |
 | lehe algusesse, lehe lõppu | scroll to the top, scroll to the bottom | Goes to the top or the end of the page. |

@@ -62,6 +62,27 @@ The loop for each round:
 
 ## Where things stand
 
+### Round 4 (2026-10-06): done
+
+The owner's words after the demo morning: several things in one breath, the microphone hears other
+people, and what he refers to on a page must be something the model can act on. Lanes dispatched
+from the contract commit `9073ad1` on branch `r4`: `chain` (connectives and the 2.5 s hold in
+`src/core/chain.ts` and the assembler, `onUtteranceContinued`, the model's `plan`, the chain of goals
+in the engine with its caps, the chain line on the strip), `voice` (the speaker model fetched by
+`npm run model`, enrolment from the settings page, `speaker` on every final, "Kuula ainult mind"),
+`page` (text items `[sõnum]`, headings and paragraphs in `readPage`; `hover`, `contextMenu`,
+`scrollTo`; every click starts with the hover sequence; the WhatsApp stand-in's delete-for-everyone
+chain in the browser suite), then `docs`. `LONG_UTTERANCE_WORDS` is 60, so almost every dictation
+is verified after typing. Nothing of it tried with a real voice or on a real site; the WhatsApp
+message selectors are guesses marked UNVERIFIED. What the owner should try first: a chain on
+YouTube ("mine youtube'i, siis otsi kassivideod, siis mängi esimene", watching the "2/3 · …" line);
+`npm run model`, then **Õpeta mu hääl** on the settings page and **Kuula ainult mind** with someone
+else talking; the WhatsApp chain "ava Karini viimane sõnum, siis kustuta see kõigi jaoks" on a chat
+where that is harmless, and if no `[sõnum]` items or no `sõnumi menüü` appear, the four selector
+lines in `extension/src/sites.ts`. Next round candidates: the review's open items; the round 3
+leftovers (M3 barge-in on queued jobs, M6 "kustuta see" as undo, M5 Docs gluing); the other voice's
+partials typed as a preview before its final is judged; the thresholds measured on his voice.
+
 ### Round 3 (2026-10-05 night): done, merged into main
 
 Lanes dispatched from commit `5889326` on branch `claude/utla-voice-command-access-4ftxk4`:
