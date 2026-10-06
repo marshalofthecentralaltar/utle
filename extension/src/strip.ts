@@ -36,9 +36,11 @@ export interface StripSettings {
   listenMode: ListenMode
   gazeTarget: GazeTarget
   speechEngine: SpeechEngine
+  /** Round 4: only the owner's voice is obeyed (needs an enrolled voice on the dev server). */
+  onlyOwner: boolean
 }
-export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local' }
-export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine'] as const
+export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local', onlyOwner: false }
+export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine', 'onlyOwner'] as const
 
 /** Reads the strip's settings out of a chrome.storage.local answer, defaults for anything missing. */
 export function settingsFrom(stored: Record<string, unknown>): StripSettings {
@@ -52,6 +54,7 @@ export function settingsFrom(stored: Record<string, unknown>): StripSettings {
     listenMode: stored.listenMode === 'gaze' ? 'gaze' : 'toggle',
     gazeTarget: stored.gazeTarget === 'bar' ? 'bar' : 'mic',
     speechEngine: stored.speechEngine === 'soniox' ? 'soniox' : 'local',
+    onlyOwner: stored.onlyOwner === true,
   }
 }
 
@@ -110,6 +113,9 @@ button { font-family: ${FONT}; }
 .notice.on { display: block; }
 .lag { display: none; font-size: var(--notice); line-height: 1.25; color: var(--dim); border-top: 1px solid var(--edge); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lag.on { display: block; }
+/* Round 4: someone else's utterance was skipped (only-owner mode). */
+.foreign { display: none; font-size: var(--notice); line-height: 1.25; color: var(--dim); border-top: 1px solid var(--edge); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.foreign.on { display: block; }
 /* Gaze mode (round 3): the target listens while the pointer rests on it. A quick amber fill says the rest was
    seen (arming); a green inner outline says it listens; the fill growing again over the grace says it is about to stop. */
 .bar > * { position: relative; z-index: 1; }
@@ -244,7 +250,9 @@ export function mountStrip(): void {
   notice.className = 'notice'
   const lag = document.createElement('div')
   lag.className = 'lag'
-  words.append(heard, row, notice, lag)
+  const foreign = document.createElement('div')
+  foreign.className = 'foreign'
+  words.append(heard, row, notice, lag, foreign)
   const ctls = document.createElement('div')
   ctls.className = 'ctls'
   const hide = control('hide', text.hide)
@@ -391,6 +399,18 @@ export function mountStrip(): void {
     lagOn = lagShown(state.lag, lagOn)
     lag.textContent = lagOn ? text.lagLine(Math.round(state.lag / 1000)) : ''
     lag.classList.toggle('on', lagOn)
+    // Round 4: a small dim line while a chain of goals runs ("2/4 · ava Karini viimane sõnum"),
+    // styled like the lag line and placed under it; made here so the edit stays in render.
+    let chainEl = words.querySelector<HTMLDivElement>('.chain')
+    if (chainEl === null) {
+      chainEl = document.createElement('div')
+      chainEl.className = 'lag chain'
+      words.append(chainEl)
+    }
+    chainEl.textContent = state.chain
+    chainEl.classList.toggle('on', state.chain !== '')
+    foreign.textContent = state.foreign
+    foreign.classList.toggle('on', state.foreign !== '')
     bar.hidden = state.hidden
     pill.hidden = !state.hidden
     if (state.hidden) {

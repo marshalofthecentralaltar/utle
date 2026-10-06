@@ -1,6 +1,7 @@
 import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, PageContext, PressableKey } from '../browser/protocol.ts'
 import type { PageIntent } from './pageIntent.ts'
 import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
+import { endsWithConnective } from './chain.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
@@ -157,6 +158,8 @@ function failureLine(s: Strings, command: BrowserCommand, code: BrowserFailure, 
 
 /** True for an utterance that should not wait to be joined with more speech: a command, not dictation. */
 export function inpageInstant(session: InpageSession, utterance: string): boolean {
+  // Round 4: "keri alla ja" promises more; it waits for the rest of the chain.
+  if (endsWithConnective(utterance)) return false
   const kind = classify(session, utterance).action.kind
   return kind !== 'dictate' && kind !== 'oneBreath' && kind !== 'empty'
 }

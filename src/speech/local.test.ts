@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS } from './asrProtocol.ts'
 import { MAX_BUFFERED_BYTES, createLocalRecognizer } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
@@ -444,6 +445,198 @@ describe('local recogniser (browser side)', () => {
       r.flush?.()
       expect(FakeSocket.made).toHaveLength(0)
       expect(utterances).toEqual([])
+    })
+  })
+
+  describe('chains across pauses (round 4)', () => {
+    let continued: Array<[string, string]>
+    const chaining = () =>
+      createLocalRecognizer(
+        { ...handlers, onUtteranceContinued: (text: string, added: string) => continued.push([text, added]) },
+        isInstant,
+        { onUnavailable: () => (unavailable += 1), connect: (events) => new FakeSocket(events), audio: () => new FakeAudio() },
+      )
+
+    beforeEach(() => {
+      continued = []
+    })
+
+    it('holds a final that ends with a connective for CONNECTIVE_HOLD_MS and joins the next one', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'mine whatsappi ja' })
+      vi.advanceTimersByTime(CONNECTIVE_HOLD_MS - 1)
+      expect(utterances).toEqual([])
+      socket().says({ type: 'final', text: 'ava Karin' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi ja ava Karin'])
+    })
+
+    it('a partial that is a command ending with a connective is not released early', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      // isInstant says no for "keri alla ja" (inpageInstant: a connective-ending text is never instant).
+      socket().says({ type: 'partial', text: 'keri alla ja' })
+      vi.advanceTimersByTime(INSTANT_SETTLE_MS * 2)
+      expect(utterances).toEqual([])
+    })
+
+    it('a final starting with a connective soon after an utterance continues it through onUtteranceContinued', () => {
+      const r = chaining()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'mine whatsappi' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi'])
+      vi.advanceTimersByTime(1000)
+      socket().says({ type: 'final', text: 'siis ava Karin' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi'])
+      expect(continued).toEqual([['mine whatsappi siis ava Karin', 'siis ava Karin']])
+    })
+
+    it('without the handler, a connective-led final is an utterance of its own', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'mine whatsappi' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      socket().says({ type: 'final', text: 'siis ava Karin' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi', 'siis ava Karin'])
+    })
+  })
+
+  // The owner's voice (round 4, VOICE lane).
+
+  describe('only the owner (round 4)', () => {
+    let foreign: number
+    let enrolled: Array<[boolean, number]>
+    const voiceHandlers = () => ({
+      ...handlers,
+      onForeign: () => (foreign += 1),
+      onEnrolled: (ok: boolean, seconds: number) => enrolled.push([ok, seconds]),
+    })
+    const makeOwner = (onlyOwner: boolean) =>
+      createLocalRecognizer(voiceHandlers(), isInstant, {
+        onUnavailable: () => (unavailable += 1),
+        connect: (events) => new FakeSocket(events),
+        audio: () => new FakeAudio(),
+        onlyOwner,
+        holdMs: 150,
+      })
+    const texts = (): unknown[] => socket().sent.filter((item) => typeof item === 'string').map((item) => JSON.parse(item as string))
+
+    beforeEach(() => {
+      foreign = 0
+      enrolled = []
+    })
+
+    it('tells the server right after ready, and only when the mode is on', () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      expect(texts()).toEqual([{ type: 'onlyOwner', on: true }])
+      r.stop()
+      const off = makeOwner(false)
+      off.start()
+      socket().says({ type: 'ready' })
+      expect(texts()).toEqual([])
+    })
+
+    it("drops a final of someone else's voice, clears the interim and says who spoke", () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'partial', text: 'pane telekas kinni' })
+      expect(interims.at(-1)).toBe('pane telekas kinni')
+      socket().says({ type: 'final', text: 'pane telekas kinni', speaker: 'other' })
+      expect(interims.at(-1)).toBe('')
+      expect(foreign).toBe(1)
+      vi.advanceTimersByTime(1000)
+      expect(utterances).toEqual([])
+      // The owner's own words after it go as always.
+      socket().says({ type: 'final', text: 'ava uus vaheleht', speaker: 'owner' })
+      vi.advanceTimersByTime(150)
+      expect(utterances).toEqual(['ava uus vaheleht'])
+      expect(foreign).toBe(1)
+    })
+
+    it('delivers finals of the owner, of an unknown voice, and without a speaker', () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'üks', speaker: 'owner' })
+      vi.advanceTimersByTime(150)
+      socket().says({ type: 'final', text: 'kaks', speaker: 'unknown' })
+      vi.advanceTimersByTime(150)
+      socket().says({ type: 'final', text: 'kolm' })
+      vi.advanceTimersByTime(150)
+      expect(utterances).toEqual(['üks', 'kaks', 'kolm'])
+      expect(foreign).toBe(0)
+    })
+
+    it('delivers finals of other voices while the mode is off', () => {
+      const r = makeOwner(false)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'pane telekas kinni', speaker: 'other' })
+      vi.advanceTimersByTime(150)
+      expect(utterances).toEqual(['pane telekas kinni'])
+      expect(foreign).toBe(0)
+    })
+
+    it('does not release a settling quick reply that turns out to be another voice', () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'partial', text: 'jah' })
+      vi.advanceTimersByTime(INSTANT_SETTLE_MS - 1)
+      socket().says({ type: 'final', text: 'jah', speaker: 'other' })
+      vi.advanceTimersByTime(INSTANT_SETTLE_MS + LOCAL_HOLD_MS)
+      expect(utterances).toEqual([])
+      expect(foreign).toBe(1)
+    })
+
+    it('still delivers the words held before a flush when the flushed utterance was another voice', () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'ma jõuan', speaker: 'owner' })
+      socket().says({ type: 'partial', text: 'homme' })
+      r.flush?.()
+      expect(utterances).toEqual([])
+      socket().says({ type: 'final', text: 'homme', speaker: 'other' })
+      expect(utterances).toEqual(['ma jõuan'])
+      expect(foreign).toBe(1)
+    })
+
+    it('asks the server to learn the voice, waits for the connection when it must, and reports the answer', () => {
+      const r = makeOwner(false)
+      r.start()
+      r.enrol?.(8)
+      expect(texts()).toEqual([])
+      socket().says({ type: 'ready' })
+      expect(texts()).toEqual([{ type: 'enrol', seconds: 8 }])
+      r.enrol?.(8)
+      expect(texts()).toEqual([
+        { type: 'enrol', seconds: 8 },
+        { type: 'enrol', seconds: 8 },
+      ])
+      socket().says({ type: 'enrolled', ok: true, seconds: 8 })
+      socket().says({ type: 'enrolled', ok: false, seconds: 8 })
+      expect(enrolled).toEqual([
+        [true, 8],
+        [false, 8],
+      ])
+    })
+
+    it('does nothing for an enrolment while stopped', () => {
+      const r = makeOwner(false)
+      r.enrol?.(8)
+      expect(FakeSocket.made).toEqual([])
     })
   })
 })

@@ -258,6 +258,25 @@ export interface Strings {
     engineSonioxEn: string
     engineNote: string
     engineNoteEn: string
+    // The owner's voice (round 4, VOICE lane).
+    /** The group on the options page. */
+    myVoice: string
+    myVoiceEn: string
+    /** The button that starts enrolment. */
+    teachVoice: string
+    teachVoiceEn: string
+    /** The two choices of the only-owner setting. */
+    onlyOwner: string
+    onlyOwnerEn: string
+    everyone: string
+    everyoneEn: string
+    voiceNote: string
+    voiceNoteEn: string
+    /** The strip's lines: speak now, learnt, failed; and someone else's utterance was skipped. */
+    enrolStart(seconds: number): string
+    enrolDone: string
+    enrolFailed: string
+    foreign: string
   }
 }
 
@@ -428,6 +447,12 @@ const ET: Strings = {
         return 'Vajutan.'
       case 'focusItem':
         return 'Valin kasti.'
+      case 'hover':
+        return 'Näitan valikuid.'
+      case 'contextMenu':
+        return 'Avan menüü.'
+      case 'scrollTo':
+        return 'Kerin selle juurde.'
       case 'siteSearch':
         return `Otsin siit: ${command.query}`
       case 'media':
@@ -492,7 +517,7 @@ const ET: Strings = {
         if (command.kind === 'switchTab') return 'Sellist vahelehte ei ole.'
         if (command.kind === 'openConversation') return `Vestlust „${command.name}“ ei leitud.`
         if (command.kind === 'insertText') return 'Sõnumikasti ei leitud.'
-        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'Seda ei ole enam lehel. Ütle uuesti.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem' || command.kind === 'hover' || command.kind === 'contextMenu' || command.kind === 'scrollTo') return 'Seda ei ole enam lehel. Ütle uuesti.'
         if (command.kind === 'siteSearch') return 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.'
         if (command.kind === 'media') return 'Siin ei ole videot.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'Ühtegi kasti ei ole valitud. Ütle „näita numbreid“ ja number.'
@@ -689,6 +714,20 @@ const ET: Strings = {
     engineSonioxEn: 'Soniox (in the cloud)',
     engineNote: 'Soniox vajab võtit arendusserveris (SONIOX_API_KEY). Valik hakkab kehtima järgmisel sisselülitamisel.',
     engineNoteEn: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
+    myVoice: 'Minu hääl',
+    myVoiceEn: 'My voice',
+    teachVoice: 'Õpeta mu hääl',
+    teachVoiceEn: 'Teach it my voice: speak for 8 seconds',
+    onlyOwner: 'Kuula ainult mind',
+    onlyOwnerEn: 'Listen only to me',
+    everyone: 'Kuula kõiki',
+    everyoneEn: 'Listen to everyone',
+    voiceNote: '„Kuula ainult mind“ vajab õpitud häält ja häälemudelit arendusserveris (npm run model). Ilma mudelita jäetakse vahele ainult vaiksem kõne. Valik hakkab kehtima järgmisel sisselülitamisel.',
+    voiceNoteEn: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model only fainter speech is skipped. The choice takes effect the next time listening starts.',
+    enrolStart: (seconds) => `Räägi ${seconds} sekundit tavalisel häälel…`,
+    enrolDone: 'Hääl on õpitud.',
+    enrolFailed: 'Hääle õppimine ei õnnestunud.',
+    foreign: 'Keegi teine rääkis, jätsin vahele.',
   },
 }
 
@@ -781,6 +820,12 @@ const EN: Strings = {
         return 'Clicking.'
       case 'focusItem':
         return 'Picking the field.'
+      case 'hover':
+        return 'Showing its options.'
+      case 'contextMenu':
+        return 'Opening the menu.'
+      case 'scrollTo':
+        return 'Scrolling to it.'
       case 'siteSearch':
         return `Searching here: ${command.query}`
       case 'media':
@@ -845,7 +890,7 @@ const EN: Strings = {
         if (command.kind === 'switchTab') return 'There is no such tab.'
         if (command.kind === 'openConversation') return `No conversation with ${command.name} was found.`
         if (command.kind === 'insertText') return 'No message box was found.'
-        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'That is no longer on the page. Say it again.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem' || command.kind === 'hover' || command.kind === 'contextMenu' || command.kind === 'scrollTo') return 'That is no longer on the page. Say it again.'
         if (command.kind === 'siteSearch') return 'This page has no search. Say "search google for".'
         if (command.kind === 'media') return 'There is no video here.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'No field is picked. Say "show numbers" and a number.'
@@ -1042,6 +1087,20 @@ const EN: Strings = {
     engineSonioxEn: 'Soniox (in the cloud)',
     engineNote: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
     engineNoteEn: '',
+    myVoice: 'My voice',
+    myVoiceEn: '',
+    teachVoice: 'Teach it my voice',
+    teachVoiceEn: 'Speak for 8 seconds',
+    onlyOwner: 'Listen only to me',
+    onlyOwnerEn: '',
+    everyone: 'Listen to everyone',
+    everyoneEn: '',
+    voiceNote: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model only fainter speech is skipped. The choice takes effect the next time listening starts.',
+    voiceNoteEn: '',
+    enrolStart: (seconds) => `Speak for ${seconds} seconds in your usual voice…`,
+    enrolDone: 'Your voice is learnt.',
+    enrolFailed: 'Learning your voice did not work.',
+    foreign: 'Someone else spoke; skipped it.',
   },
 }
 

@@ -4,15 +4,17 @@ Speak Estonian; the words go into the message box of the page you are on (WhatsA
 Messenger, any page) while you speak, and the browser scrolls and switches tabs by voice. A strip at
 the bottom of every page, and of the new-tab page, shows the microphone, the words heard, and what
 was done. Nothing opens a separate window. Design: `docs/ARCHITECTURE.md` sections 21.2 and 21.3 (the strip and
-live words), 22 (understanding by meaning) and 23 (round 3: speed, push-to-talk by looking, sound-alike
-commands, editing, Soniox).
+live words), 22 (understanding by meaning), 23 (round 3: speed, push-to-talk by looking, sound-alike
+commands, editing, Soniox) and 24 (round 4: chains of goals, only your own voice, everything on the page).
 
 ## Build
 
 From the repository root:
 
 1. `npm ci` (once).
-2. `npm run model` (once): downloads the Estonian speech model into `models/`.
+2. `npm run model` (once): downloads the Estonian speech model into `models/`, and the small
+   speaker model (29 MB) for "Kuula ainult mind" into `models/speaker/` (optional; a failure there
+   is a warning).
 3. `npm run ext`: bundles `extension/src/` into `extension/dist/`. Run it again after any change.
 
 ## Load
@@ -36,6 +38,27 @@ page choose **Kõnemudel: Soniox (pilves)**; the choice takes effect the next ti
 on. `UTLE_ASR=soniox` in the same environment sends every connection to Soniox whatever the setting.
 Without the key the bar says the speech model is not reachable and the server logs
 `[soniox] SONIOX_API_KEY is not set`. Nobody has run this with a real key (see "Unverified").
+
+## Only your own voice (round 4, optional)
+
+Background conversations are typed as if you said them. Two things stop that: push-to-talk by
+looking (below), and the server knowing your voice. On the settings page, group **Minu hääl**:
+
+1. **Õpeta mu hääl**: listening starts if it was off and the bar says "Räägi 8 sekundit tavalisel
+   häälel…"; speak normally for eight seconds (pauses are skipped). The bar then says "Hääl on
+   õpitud." or "Hääle õppimine ei õnnestunud." (too little speech within about 30 s). What you say
+   meanwhile is neither typed nor run. The server
+   keeps `models/speaker/owner.json`: a voice embedding and a loudness, never audio. Press the
+   button again to replace it.
+2. **Kuula ainult mind**: from the next time listening starts, an utterance the server judges to be
+   another voice is dropped and the bar says "Keegi teine rääkis, jätsin vahele." for three seconds.
+   An utterance it cannot place is obeyed. Words the other voice typed as a preview are taken back
+   the moment its final is dropped. **Kuula kõiki** turns it off.
+
+Without the speaker model (`npm run model` not run, or the download failed) the server logs
+`[asr] no speaker model (npm run model fetches it; loudness only until then); …`, and "Kuula ainult mind" only skips speech clearly fainter than yours was
+at enrolment: distance from the microphone, not the voice. Nobody has tried this with a real voice;
+the thresholds are in `server/speaker.ts`.
 
 ## After pulling a change
 
@@ -78,7 +101,10 @@ Without the key the bar says the speech model is not reachable and the server lo
   folded (`barHiddenDefault`), how listening is triggered (`listenMode`: Lülitiga / Vaatamisega),
   what the gaze rests on (`gazeTarget`: Mikrofon / Kogu riba, shown only for Vaatamisega) and the
   speech model (`speechEngine`: Arvutis (TalTech) / Soniox (pilves); Soniox needs `SONIOX_API_KEY`
-  on the dev server and takes effect the next time listening starts). The speech-model and
+  on the dev server and takes effect the next time listening starts), and since round 4 the group
+  **Minu hääl**: the button **Õpeta mu hääl** (speak 8 s; see "Only your own voice" above) and the
+  choice **Kuula ainult mind** / **Kuula kõiki** (`onlyOwner`, default off; takes effect the next
+  time listening starts). The speech-model and
   development-page addresses are under "Täpsemalt". The same strip is mounted there. (Numbering the
   buttons by voice needs the service worker to treat options.html like newtab.html; see HANDOFF.md.)
 - **Push-to-talk by looking** (`listenMode: gaze`): the microphone square, or the whole bar when
@@ -90,13 +116,25 @@ Without the key the bar says the speech model is not reachable and the server lo
   nothing in this mode. The folded pill is a gaze target too (resting on it for two seconds no
   longer unfolds the bar in this mode; use **Näita**). When a page swallows the pointer-leave
   event, a one-second poll of the pointer's last position ends listening instead.
-- When the speech server falls behind by more than two seconds, a thin dim line under the amber
-  one says "Kõne jääb maha N s" until it has caught up.
+- When the speech server falls behind by more than one second, a thin dim line under the amber
+  one says "Kõne jääb maha N s" until it has caught up. While a chain of goals runs (below) a
+  line in the same place says where it is: "2/4 · ava Karini viimane sõnum".
 - What to say (the exact phrases come from `src/core/inpage.ts` and `src/core/browserIntent.ts`; the
   full tables are `docs/ARCHITECTURE.md` 21.1, 22 and 23.4):
   - dictation: anything that is not a command is added to the message box. What the fixed phrases do
     not recognise goes to the model with what is on the page ("uus leht", "vajuta Mari", "pane
-    vaiksemaks"); it needs `ANTHROPIC_API_KEY` on the dev server.
+    vaiksemaks"); it needs `ANTHROPIC_API_KEY` on the dev server. Since round 4 almost every
+    dictation is checked by the model after it is typed (anything under 60 words; it was 14): a
+    chain of commands can be long. The words stay unless the model says they were a command.
+  - chains (round 4): several goals in one breath, "mine whatsappi, siis ava Karini viimane sõnum,
+    siis kustuta see kõigi jaoks" or "mine youtube'i, otsi kassivideod, mängi esimene ja pane heli
+    vaiksemaks". Say `siis`, `ja siis`, `ja`, `ning`, `seejärel` or `pärast seda` between goals; a pause
+    is fine: after a joining word Ütle waits 2.5 s for the rest instead of 150 ms, and a part that
+    starts with `siis` (or `ja siis`, `seejärel`, `pärast seda`) within 2.5 s of the last words goes on
+    from them without starting over. The model splits the goals and the engine does them one by
+    one, at most 16 page steps and 90 s in all, four steps and 15 s per goal; the strip shows
+    "2/4 · …". Any other utterance stops the chain; a plain `saada` waits behind it. Words that are
+    a message ("kirjuta et tulen homme") are never split.
   - `saada`, `saada ära`, `saadake`, `saadame`: sends what is in the box. Never guessed from a misheard
     word: "sada" and "saata" are typed.
   - corrections: `mitte kolm, vaid neli`, `kolme asemel neli`, `kustuta viimane sõna`, `kustuta viimane
@@ -151,8 +189,12 @@ Without the key the bar says the speech model is not reachable and the server lo
   `[asr] connection closed, code N: X s received, Y s dropped (0 open)` when it is turned off. A
   dropped count above 0 means the server fell behind and threw old audio away; the bar showed
   "Kõne jääb maha N s" while it did.
-- `[intent] kind=command done=true ms=1800`: one answer of the model; `[intent] error=upstream_rejected`
-  with no key.
+- `[intent] kind=command done=true plan=2 ms=1800`: one answer of the model (`plan` is how many goals
+  it left for later, round 4); `[intent] error=upstream_rejected` with no key.
+- `[asr] speaker model loaded; owner's voice learnt` once the model and the profile are there
+  (round 4); `[asr] no speaker model (npm run model fetches it; loudness only until then); owner's
+  voice not learnt yet` when neither is. The two halves vary on their own. Nothing says whose
+  voice an utterance was; the close line counts the finals of other voices.
 - `[soniox] connecting`, `[soniox] session open`, `[soniox] browser closed, code 1000`; with no key
   `[soniox] SONIOX_API_KEY is not set; the Soniox engine is unavailable`.
 
@@ -196,6 +238,42 @@ accessibility tree would, on any site, without site-specific paths:
 - **Scrolling.** `scroll` moves the largest scrollable container under the middle of the screen,
   then the next one, then the document; when nothing moved it answers `failed`, so the model can do
   something else.
+- **Text items (round 4).** After the actionable items and the markers come the things he may refer
+  to that are not clickable, role `text`: on a messaging site the open chat's messages as
+  `[sõnum] …` (his own as `[sõnum] mina: …`, so "Karini viimane sõnum" is the last one without
+  `mina:`), then headings `h1` to `h3`, list items and paragraphs of 12 to 160 characters. Visible
+  only, deduplicated by text, top to bottom, 60 characters each, at most 40, and at most 150 items
+  in all. Over the cap a chat keeps the bottom-most (the latest messages), any other page the
+  top-most. Text inside or around a clickable thing is not repeated (it is that thing's name), nor
+  is the `h1` that is already `[pealkiri]`. The numbers never label text items; their ids continue
+  after the actionable ids. A message container (and WhatsApp's `role=row` around it) is not an
+  actionable item, so a chat is not listed twice; a control inside a message (the hover arrow, a
+  link) still is. The message selectors are `messageRows`, `messageText`, `messageMenu` and
+  `messageMine` in `sites.ts`; the arrow named by `messageMenu` is listed as the button
+  `sõnumi menüü`.
+- **hover, contextMenu, scrollTo (round 4).** `hover {id}` rests the pointer on an item: `pointerover`,
+  `mouseover`, `pointerenter` and `mouseenter` on the element and each ancestor, then `pointermove`
+  and `mousemove` at its centre, repeated every 200 ms for 3 s, so a control that shows on hover
+  only (WhatsApp's message arrow, YouTube's card menu, Gmail's row actions) is still there when the
+  page is read again and clicked. The next `hover` on an unrelated element sends the leave events to
+  the old one. `contextMenu {id}` is a right click at the centre (`pointerdown` and `mousedown` with
+  button 2, then `contextmenu`, bubbling and cancelable), for sites whose actions live in their own
+  context menu. `scrollTo {id}` scrolls the item to the middle of its pane and waits 200 ms. All three
+  take a text item as well as an actionable one; an id that is gone answers `not_found`. Every click
+  (`clickItem`, `clickHint`) now starts with the hover sequence, so a control that needs hover state
+  reacts; `clickItem` on a text item is a click at its centre with no fallbacks (on WhatsApp it
+  selects the message). The events land on the element at the item's centre (a message's text
+  span), as a real pointer's would, and bubble from there.
+- **Unverified on real WhatsApp.** The message selectors in `sites.ts` (`messageRows`,
+  `messageText`, `messageMenu`, `messageMine`) are guesses from WhatsApp Web's DOM of earlier
+  builds, marked UNVERIFIED 2026-10-06; so is whether its arrow shows on synthetic `mouseover`
+  (React tracks hover through `mouseover`/`mouseout`, which is what is sent). If the demo shows no
+  `[sõnum]` items or no `sõnumi menüü` after a hover, those four lines are the place to fix. The
+  stand-in `extension/test/fixtures/whatsapp.html` has the guessed structure: a `role=row` per
+  message, `div[data-id].message-in|out`, the text in `span.selectable-text.copyable-text`, an
+  arrow `div[role=button][aria-label="Context menu"]` shown on hover, a menu (Vasta, Edasta,
+  Kustuta sõnum), a confirmation dialog with `div[role=button]`s (Kustuta minu jaoks, Kustuta kõigi
+  jaoks, Tühista), and a `contextmenu` handler that opens the same menu.
 
 ## Test
 
@@ -270,3 +348,15 @@ keys reach it, the whole-box repairs and "find a word" do not (see "What to say"
     fake slow decoder.
   - The sound-alike rows (`juutuba`, `aga whatsapp`, `saadake`): from the owner's report, not from
     recordings of his voice.
+- Round 4, all of it: nothing below has been tried with a real voice or on a real site.
+  - Chains with a real voice: whether the recogniser hears "siis" after a pause as "siis", and
+    whether 2.5 s is the right wait; the chain itself is tested with fakes in the engine and with the
+    real model against fake pages in the eval.
+  - The speaker model on an Estonian voice: the 0.55 / 0.35 thresholds in `server/speaker.ts` come
+    from the model's published scores on English, not from any measurement; the model files were
+    not on the machine that built this.
+  - The WhatsApp and Messenger message selectors (`messageRows`, `messageText`, `messageMenu`,
+    `messageMine` in `sites.ts`), every one marked UNVERIFIED 2026-10-06.
+  - Hover on real sites: whether WhatsApp's arrow, YouTube's card menu and Gmail's row actions
+    show on the synthetic pointer events (tested on stand-ins that react to `mouseover`).
+  - The delete-for-everyone chain end to end on real WhatsApp: it runs on the stand-in only.

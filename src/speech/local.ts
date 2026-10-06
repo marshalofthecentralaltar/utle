@@ -1,4 +1,6 @@
+import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { createAssembler } from './assembler.ts'
+import type { AssemblerOptions } from './assembler.ts'
 import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, parseAsrMessage } from './asrProtocol.ts'
 import type { AsrClientMessage } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
@@ -33,6 +35,8 @@ export interface LocalOptions {
   audio: () => AudioSource
   /** How long a final is held to be joined with the next one. Default LOCAL_HOLD_MS. */
   holdMs?: number
+  /** Round 4: only the owner's voice is obeyed; a final the server marks as someone else's is dropped. */
+  onlyOwner?: boolean
 }
 
 const OPEN = 1
@@ -92,7 +96,13 @@ export function createLocalRecognizer(
   isInstant: (text: string) => boolean,
   options: LocalOptions,
 ): Recognizer {
-  const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
+  // Round 4 (the chain lane): a final ending with a connective is held CONNECTIVE_HOLD_MS, and one
+  // starting with a connective soon after a delivery continues it. Only this block is the chain's.
+  const chained: Pick<AssemblerOptions, 'connectiveHoldMs' | 'onUtteranceContinued'> = {
+    connectiveHoldMs: CONNECTIVE_HOLD_MS,
+    ...(handlers.onUtteranceContinued ? { onUtteranceContinued: (text: string, added: string) => handlers.onUtteranceContinued?.(text, added) } : {}),
+  }
+  const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant, ...chained })
   const connect = options.connect ?? ((events: SocketEvents) => browserSocket(events, options.address))
   let running = false
   let served = false
@@ -177,6 +187,41 @@ export function createLocalRecognizer(
     if (atOnce) assembler.releaseNow()
   }
 
+  // ---- The owner's voice (round 4, VOICE lane; ARCHITECTURE 24.2) ----
+  /**
+   * A final the server marks as another voice, while only the owner is obeyed: nothing is
+   * delivered. The preview its partials typed stays in the box until the owner's next utterance
+   * begins, when the engine takes it back (an empty utterance would cancel the model work of an
+   * earlier one, so none is sent). Words held from an earlier flush still go.
+   */
+  const onForeignFinal = (): void => {
+    cancelSettle()
+    handlers.onInterim('')
+    current = ''
+    released = null
+    const atOnce = flushed
+    flushed = false
+    if (atOnce) assembler.releaseNow()
+    handlers.onForeign?.()
+  }
+  const send = (message: AsrClientMessage): boolean => {
+    if (socket?.readyState !== OPEN) return false
+    socket.send(JSON.stringify(message))
+    return true
+  }
+  /** An enrolment asked before the socket was ready is sent at ready. */
+  let enrolWanted: number | null = null
+  const sendEnrol = (seconds: number): void => {
+    if (send({ type: 'enrol', seconds })) enrolWanted = null
+    else enrolWanted = seconds
+  }
+  /** Right after ready: the server knows the mode, and any enrolment that waited for the connection goes. */
+  const afterReady = (): void => {
+    if (options.onlyOwner === true) send({ type: 'onlyOwner', on: true })
+    if (enrolWanted !== null) sendEnrol(enrolWanted)
+  }
+  // ---- end of the owner's voice ----
+
   const teardown = (): void => {
     if (retry !== null) clearTimeout(retry)
     retry = null
@@ -237,6 +282,7 @@ export function createLocalRecognizer(
         case 'ready':
           served = true
           attempts = 0
+          afterReady()
           listen()
           return
         case 'unavailable':
@@ -246,10 +292,14 @@ export function createLocalRecognizer(
           onPartial(message.text)
           return
         case 'final':
-          onFinal(message.text)
+          if (options.onlyOwner === true && message.speaker === 'other') onForeignFinal()
+          else onFinal(message.text)
           return
         case 'lag':
           handlers.onLag?.(message.ms)
+          return
+        case 'enrolled':
+          handlers.onEnrolled?.(message.ok, message.seconds)
           return
       }
     }
@@ -322,6 +372,10 @@ export function createLocalRecognizer(
         return
       }
       assembler.releaseNow()
+    },
+    enrol(seconds) {
+      if (!running) return
+      sendEnrol(seconds)
     },
   }
 }

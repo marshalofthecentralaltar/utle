@@ -14,8 +14,8 @@ web by speaking Estonian, inside the sites they already use.
 
 ## Who it is for
 
-People who cannot type or use a mouse comfortably because of a motor disability, an injury, an illness
-or a stroke. Many of them already use an eye tracker to move a pointer by looking.
+People who cannot type or use a mouse comfortably because of a motor disability, an injury or an
+illness. Many of them already use an eye tracker to move a pointer by looking.
 
 The product changed direction after the team talked to an eye-tracker user with a motor disability
 on the first day of the hackathon. He said three things, and they are the brief:
@@ -80,6 +80,15 @@ stopped. The speech server can no longer fall minutes behind, and the bar says w
 all. And there are two speech backends: TalTech's model on the laptop, or Soniox in the cloud when a
 key is set. None of this has been tried with his voice yet.
 
+**What changed on 6 October, morning.** After the demo he asked for three more things. One breath
+may now hold a chain: "mine whatsappi, siis ava Karini viimane sõnum, siis kustuta see kõigi jaoks"
+is done goal by goal, with the bar showing "2/3 · …", and a pause before "siis" does not break it.
+The server can learn his voice from eight seconds of speech and, with "Kuula ainult mind" on, skip
+what other people in the room say. And the model now sees everything on the page he might refer
+to, not only the clickable things: the messages of the open chat, headings, paragraphs; it can rest
+the pointer on one so its hidden menu appears, open a right-click menu, and scroll to it. All of it
+is proven on stand-in pages only.
+
 **The first version, a document editor,** survives only as a development page at localhost: say
 "change the budget deadline to Friday", see the change marked in the text, say yes or no. Its edits
 need an Anthropic API key, and the key on the build machine is rejected. It is not part of what the
@@ -133,7 +142,7 @@ tracker.
 
 ## What is proven and what is not
 
-| Claim | Status on 5 October 2026, night |
+| Claim | Status on 6 October 2026, morning |
 |---|---|
 | Dictating and sending in real WhatsApp Web | Done with the first version by the developer and one team member, both with ordinary voices |
 | Words typed while speaking, and the new-tab page | Done by recorded speech in automated tests in Chromium; not yet on real WhatsApp or in Google Chrome |
@@ -148,6 +157,9 @@ tracker.
 | Works with a real eye tracker | Not tried |
 | Faster for him than typing | Not measured |
 | Messenger | Built against a stand-in page, never tried on the real site |
+| Chains of goals in one breath (6 October) | Stand-in pages only: the engine with fakes, the real model against fake pages in the eval; not with a voice |
+| Only your own voice (6 October) | Stand-in pages only: a fake speaker model in the tests; the real model never run on an Estonian voice |
+| Everything on the page: messages, hover, the menu (6 October) | Stand-in pages only: the WhatsApp stand-in deletes a message for everyone; the real site's selectors are guesses |
 
 ## What it is not, yet
 

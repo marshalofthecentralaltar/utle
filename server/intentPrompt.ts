@@ -12,17 +12,25 @@ export const INTENT_SYSTEM_PROMPT = `You are the understanding engine of Ütle, 
 
 # What you get, what you answer
 
-The user turn has the page: address, title, the message box (present, armed, kind, label, text), the media state, the open tabs (the active one starred), the last strip lines, the steps already taken for this utterance, the visible items as "id. [role] text" in reading order (roles: link, button, field, tab, option, row, video, other), and the utterance. Answer with exactly one call of the tool "answer", input { intent, say, done }. Always call the answer tool, never reply in text.
+The user turn has the page: address, title, the message box (present, armed, kind, label, text), the media state, the open tabs (the active one starred), the last strip lines, the chain of goals when there is one, the steps already taken for this goal, the visible items as "id. [role] text" in reading order (roles: link, button, field, tab, option, row, video, text, other), and the utterance. Answer with exactly one call of the tool "answer", input { intent, say, done, plan }. Always call the answer tool, never reply in text.
 
 The engine runs one action at a time. After done:false it runs the action, reads the page again and asks you again with the same utterance and a "steps" list: each earlier step, your say, and ok or failed with the reason.
+
+# Several goals in one breath
+
+He may say a whole chain at once: "mine whatsappi, ava Karini viimane sõnum, kustuta see kõigi jaoks", "mine youtube'i otsi kassivideod mängi esimene ja pane heli vaiksemaks". Split the utterance on "ja", "siis", "ja siis", "pärast seda", "seejärel", "ning", commas and sentence ends, wherever each part is an action of its own. Answer the FIRST goal's action, with done judged for that goal alone (true when this one action finishes it), and put the remaining goals in "plan", in his own words, in order, one string each ("plan": ["ava Karini viimane sõnum", "kustuta see kõigi jaoks"]). "plan" is [] when the utterance is one goal. Words that are a message to type ("kirjuta et tulen homme") are one goal, never split.
+
+When the user turn has a chain (chain original, chain done, chain goal, chain next): work on "chain goal" only. "chain done" is finished, "chain next" comes later and is not yours to do now; answer plan [] unless the goal itself still holds several actions. The page may have changed since the earlier goals: judge by what you see now. Answer done:true on the action that finishes the goal; when the steps show the goal is already finished, answer unclear with say "Valmis" (en: "Done"). The steps you get are this goal's only.
+
+Messages, headings and paragraphs are "text" items. A text item can be hovered (hover: its hidden controls appear, like a message's menu arrow or reaction bar), right-clicked (contextMenu), scrolled into view (scrollTo) or clicked (clickItem). After hover or contextMenu always answer done:false, so the page is read again and you see what appeared; then clickItem the control or the menu entry. "Ava Karini viimane sõnum" on a chat page is the last text item of that chat: hover it, then its menu; "kustuta see kõigi jaoks" is the menu entry Kustuta / Delete, then the choice "Kustuta kõigi jaoks" / "Delete for everyone", then the confirming button.
 
 # One step at a time
 
 - One action ("ava vaata hiljem", "kirjuta Marile"): do it, done:true.
-- Several in one breath ("mine youtube'i ja otsi kassivideod ja mängi esimene", "ava Mari ja kirjuta et tulen homme"): the first now, done:false. On the next ask the steps show what is done; do the next part on the page you now see; the last part gets done:true. Words meant as a message ("kirjuta et tulen homme") become dictate once the box is armed.
+- Several in one breath ("mine youtube'i ja otsi kassivideod ja mängi esimene", "ava Mari ja kirjuta et tulen homme"): the first goal now, with plan for the rest (see "Several goals in one breath"). The engine asks you again for each goal in turn on the page it then sees. Words meant as a message ("kirjuta et tulen homme") become dictate once the box is armed.
 - He names something that should be on this page but is not among the items: scroll down with done:false, so the engine looks again and asks you. If the steps show you already scrolled and it is still missing, do not scroll again: siteSearch for it when the page has a search field, else unclear.
 - A step marked failed: try one different way (clickItem failed: siteSearch or scroll; switchTab failed: goTo; openConversation failed: siteSearch the name). Never repeat the identical failed action. When the second way also failed, unclear with one line saying what did not work.
-- When the steps show everything the utterance asked for is done, answer unclear with say "Valmis" (en: "Done"), done:true.
+- When the steps show everything the utterance (or the chain goal) asked for is done, answer unclear with say "Valmis" (en: "Done"), done:true.
 
 # Choosing among the items
 
@@ -98,6 +106,9 @@ const COMMAND = {
     kind('openConversation', { name: { type: 'string', description: 'The name in its base form, as the chat list would show it.' } }),
     kind('clickItem', { id: ID }),
     kind('focusItem', { id: ID }),
+    kind('hover', { id: { ...ID, description: 'The id of an item to move the pointer onto, so its hidden controls appear. Answer done:false with it.' } }),
+    kind('contextMenu', { id: { ...ID, description: 'The id of an item to open the right-click menu of. Answer done:false with it.' } }),
+    kind('scrollTo', { id: { ...ID, description: 'The id of an item to scroll into view.' } }),
     kind('siteSearch', { query: STRING }),
     kind('media', { action: { type: 'string', enum: [...MEDIA_ACTIONS] } }),
     kind('pressKey', { key: { type: 'string', enum: [...PRESSABLE_KEYS] }, times: { anyOf: [{ type: 'integer' }, { type: 'null' }], description: 'How many times, or null for once.' } }),
@@ -136,7 +147,7 @@ const INTENT = {
 /** The one tool the model calls. Its input is an IntentAnswer (with null where the core has undefined). */
 export const ANSWER_TOOL: Anthropic.Tool = {
   name: 'answer',
-  description: 'The one next action for the utterance on this page, a short line saying what you took it to be, and whether it completes the utterance.',
+  description: 'The one next action for the utterance on this page, a short line saying what you took it to be, whether it completes the goal, and the goals that come after this one.',
   // Not strict: with this many command shapes the API answers 400 "The compiled grammar is too large"
   // (seen 2026-10-05 on every call). The schema stays closed and fully required as guidance, and
   // pageIntentFrom validates the answer against the page anyway, so a malformed call becomes unclear.
@@ -147,10 +158,15 @@ export const ANSWER_TOOL: Anthropic.Tool = {
       say: { type: 'string', description: 'At most 8 words in the request language, or an empty string.' },
       done: {
         type: 'boolean',
-        description: 'true when this one action completes the utterance; false when more is needed after it and the engine must ask again.',
+        description: 'true when this one action completes the goal (the utterance, or the chain goal); false when more is needed after it and the engine must ask again.',
+      },
+      plan: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'The goals AFTER the one this action serves, in his own words, in order; [] when the utterance is one goal or the chain already lists what comes next.',
       },
     },
-    required: ['intent', 'say', 'done'],
+    required: ['intent', 'say', 'done', 'plan'],
     additionalProperties: false,
   },
 }
@@ -179,6 +195,18 @@ export function intentUserMessage(request: IntentRequest): string {
   const tabs = request.tabs.map((t) => `${t.index}${t.active ? '*' : ''}. ${t.title}`).join(' | ')
   const items = page.items.map((item) => `${item.id}. [${item.role}] ${item.text}`).join('\n')
   const steps = (request.steps ?? []).map((step, i) => stepLine(i + 1, step)).join('\n')
+  const chain = request.chain
+  const quoted = (goals: string[]): string => (goals.length > 0 ? goals.map((g) => JSON.stringify(g)).join(' | ') : 'none')
+  const chainLines =
+    chain === undefined
+      ? ['chain: none']
+      : [
+          `chain: ${chain.completed.length + 1}/${chain.completed.length + 1 + chain.remaining.length}`,
+          `chain original: ${JSON.stringify(chain.original)}`,
+          `chain done: ${quoted(chain.completed)}`,
+          `chain goal: ${JSON.stringify(chain.goal)}`,
+          `chain next: ${quoted(chain.remaining)}`,
+        ]
   const lines = [
     `lang: ${request.lang}`,
     `url: ${page.url}`,
@@ -188,6 +216,7 @@ export function intentUserMessage(request: IntentRequest): string {
     `hints: ${page.hints}`,
     `tabs: ${tabs || 'none'}`,
     `recent: ${request.recent.length > 0 ? request.recent.map((r) => JSON.stringify(r)).join(' | ') : 'none'}`,
+    ...chainLines,
     `steps: ${steps || 'none (first ask)'}`,
     `items:\n${items || '(none)'}`,
     `utterance: ${JSON.stringify(request.utterance)}`,

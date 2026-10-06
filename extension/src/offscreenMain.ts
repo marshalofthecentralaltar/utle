@@ -5,6 +5,7 @@
 import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
 import { IntentAnswerSchema } from '../../src/core/pageIntent.ts'
 import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
+import { STRINGS } from '../../src/core/strings.ts'
 import { browserSocket, createLocalRecognizer } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
@@ -101,6 +102,9 @@ export async function serverStatus(statusUrl: string): Promise<'live' | 'no_key'
  */
 export const FLUSH_STOP_MS = 800
 
+/** Round 4: the "someone else spoke" line stays on the strip this long. */
+export const FOREIGN_SHOWN_MS = 3000
+
 /** The speech model's address with the engine chosen on the options page: ?engine=soniox asks the dev server for Soniox (round 3). */
 export function asrAddress(base: string, engine: string | null): string {
   if (engine !== 'soniox') return base
@@ -137,6 +141,24 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     return answer?.result ?? { ok: false, code: 'failed', message: 'The extension did not answer.' }
   }
 
+  // The owner's voice (round 4, VOICE lane): the foreign line and the enrolment lines go straight
+  // to the strip; the engine's own handlers run first (review: it takes back the foreign preview
+  // and ignores what he says while the server learns his voice).
+  const stripText = STRINGS.et.strip
+  const onlyOwner = params.get('onlyOwner') === '1'
+  let foreignTimer: ReturnType<typeof setTimeout> | null = null
+  const onForeign = (): void => {
+    publish({ foreign: stripText.foreign })
+    if (foreignTimer !== null) clearTimeout(foreignTimer)
+    foreignTimer = setTimeout(() => {
+      foreignTimer = null
+      publish({ foreign: '' })
+    }, FOREIGN_SHOWN_MS)
+  }
+  const onEnrolled = (ok: boolean): void => {
+    publish({ line: ok ? stripText.enrolDone : stripText.enrolFailed })
+  }
+
   const engine = createEngine({
     logic,
     lang: 'et',
@@ -144,17 +166,32 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     publish,
     // The handlers go through whole, onLag (round 3) with them: the recogniser reports its lag to the engine, the engine to the strip.
     recognizer: (handlers, isInstant, onUnavailable) =>
-      createLocalRecognizer(handlers, isInstant, {
-        onUnavailable,
-        address,
-        holdMs: options.holdMs ?? INPAGE_HOLD_MS,
-        connect: (events) => {
-          connects += 1
-          publish({ connects })
-          return browserSocket(events, address)
+      createLocalRecognizer(
+        {
+          ...handlers,
+          onForeign: () => {
+            handlers.onForeign()
+            onForeign()
+          },
+          onEnrolled: (ok, seconds) => {
+            handlers.onEnrolled(ok, seconds)
+            onEnrolled(ok)
+          },
         },
-        audio: microphone,
-      }),
+        isInstant,
+        {
+          onUnavailable,
+          address,
+          holdMs: options.holdMs ?? INPAGE_HOLD_MS,
+          onlyOwner,
+          connect: (events) => {
+            connects += 1
+            publish({ connects })
+            return browserSocket(events, address)
+          },
+          audio: microphone,
+        },
+      ),
     micBlocked: () => {
       void tell({ type: 'utle-mic-blocked' })
     },
@@ -186,6 +223,12 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
         break
       case 'flush':
         engine.flush()
+        break
+      case 'enrol':
+        // Round 4: listening starts when it was off; the line tells him to speak, the server answers through onEnrolled.
+        cancelStop()
+        engine.enrol(message.seconds)
+        publish({ line: stripText.enrolStart(message.seconds) })
         break
       case 'stop':
         cancelStop()

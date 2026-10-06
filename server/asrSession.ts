@@ -1,5 +1,6 @@
 import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
+import type { Judgement, SpeakerGate } from './speaker.ts'
 
 /** The parts of sherpa-onnx-node's OnlineStream this server uses. */
 export interface OnlineStreamLike {
@@ -16,6 +17,8 @@ export interface OnlineRecognizerLike<S extends OnlineStreamLike = OnlineStreamL
   reset(stream: S): void
 }
 
+const frameMs = (samples: Float32Array): number => (samples.length * 1000) / ASR_SAMPLE_RATE
+
 /** What one frame of audio made of the utterance so far. On an endpoint the stream has already been reset. */
 export interface DecodeResult {
   text: string
@@ -31,11 +34,73 @@ export interface Decoder {
   /** Forgets the utterance in progress. */
   reset(): void
   close(): void
+  /**
+   * Round 4: who spoke the utterance that has just ended (the accept that returned the endpoint)
+   * or the one in progress (before a flush's reset). Null when the server has no voice profile.
+   */
+  judge?(): Judgement | null | Promise<Judgement | null>
+  /** Round 4: learns the owner's voice from the next `seconds` of speech. Resolves once learnt, or false once given up. */
+  enrol?(seconds: number): Promise<boolean>
 }
 
-/** The recogniser's stream, decoded on the calling thread. */
-export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRecognizerLike<S>): Decoder {
+/**
+ * The frames of an utterance kept for the speaker gate: at most this much (the newest). Review:
+ * 8 s, not 20: an embedding of the newest eight seconds tells the voice as well, and the judgement
+ * holds the decoder (the worker, or the server thread) for its length.
+ */
+export const MAX_KEPT_MS = 8_000
+/** Enrolment gives up when this many times the asked seconds of audio have passed with too little speech in them. */
+export const ENROL_PATIENCE = 4
+
+interface Enrolment {
+  frames: Float32Array[]
+  speechMs: number
+  totalMs: number
+  seconds: number
+  resolve(ok: boolean): void
+}
+
+/**
+ * The recogniser's stream, decoded on the calling thread. With a speaker gate (round 4) it also
+ * keeps the frames of the utterance in progress (the newest MAX_KEPT_MS) for judge, and feeds an
+ * enrolment the speech frames (RMS at or above SILENCE_RMS) until it has its seconds.
+ */
+export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRecognizerLike<S>, gate: SpeakerGate | null = null): Decoder {
   const stream = recognizer.createStream()
+  let kept: Float32Array[] = []
+  let keptMs = 0
+  /** The frames of the utterance the last accept ended, until the next frame arrives. */
+  let ended: Float32Array[] | null = null
+  let enrolling: Enrolment | null = null
+
+  const keep = (samples: Float32Array): void => {
+    kept.push(samples)
+    keptMs += frameMs(samples)
+    while (keptMs > MAX_KEPT_MS && kept.length > 1) {
+      const oldest = kept.shift()
+      if (oldest) keptMs -= frameMs(oldest)
+    }
+  }
+
+  const finishEnrolment = (ok: boolean): void => {
+    const e = enrolling
+    enrolling = null
+    e?.resolve(ok)
+  }
+
+  const feedEnrolment = (samples: Float32Array, g: SpeakerGate): void => {
+    const e = enrolling
+    if (!e) return
+    const ms = frameMs(samples)
+    e.totalMs += ms
+    if (rms(samples) >= SILENCE_RMS) {
+      e.frames.push(samples)
+      e.speechMs += ms
+    }
+    if (e.speechMs >= e.seconds * 1000) finishEnrolment(g.enrol(e.frames))
+    else if (e.totalMs >= e.seconds * 1000 * ENROL_PATIENCE) finishEnrolment(false)
+  }
+
   return {
     accept(samples) {
       stream.acceptWaveform({ samples, sampleRate: ASR_SAMPLE_RATE })
@@ -43,13 +108,37 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       const text = recognizer.getResult(stream).text.trim()
       const endpoint = recognizer.isEndpoint(stream)
       if (endpoint) recognizer.reset(stream)
+      if (gate) {
+        keep(samples)
+        feedEnrolment(samples, gate)
+        if (endpoint) {
+          ended = kept
+          kept = []
+          keptMs = 0
+        } else ended = null
+      }
       return { text, endpoint }
     },
     reset() {
       recognizer.reset(stream)
+      kept = []
+      keptMs = 0
+      ended = null
     },
     close() {
       // sherpa frees the stream with its object.
+      finishEnrolment(false)
+    },
+    judge() {
+      if (!gate) return null
+      return gate.judge(ended ?? kept)
+    },
+    enrol(seconds) {
+      if (!gate) return Promise.resolve(false)
+      finishEnrolment(false)
+      return new Promise<boolean>((resolve) => {
+        enrolling = { frames: [], speechMs: 0, totalMs: 0, seconds, resolve }
+      })
     },
   }
 }
@@ -73,7 +162,11 @@ export interface AsrSession {
   close(): void
   /** Audio queued and not yet decoded. */
   backlogMs(): number
-  stats(): { receivedMs: number; decodedMs: number; droppedMs: number }
+  stats(): { receivedMs: number; decodedMs: number; droppedMs: number; foreignFinals: number }
+  /** Round 4: learns the owner's voice from the next `seconds` of speech, then sends `enrolled`. */
+  enrol(seconds: number): void
+  /** Round 4: the client wants only the owner's words. Finals of others are still sent, with their speaker; this only counts them. */
+  onlyOwner(on: boolean): void
 }
 
 export interface AsrSessionOptions {
@@ -93,8 +186,6 @@ interface QueuedFrame {
 
 type Queued = QueuedFrame | 'flush'
 
-const frameMs = (samples: Float32Array): number => (samples.length * 1000) / ASR_SAMPLE_RATE
-
 /** Root mean square of a frame: how loud it is, cheaply. */
 export function rms(samples: Float32Array): number {
   if (samples.length === 0) return 0
@@ -113,7 +204,10 @@ export function rms(samples: Float32Array): number {
  * to KEEP_MS (the cut moved on to a quiet frame when one is within CUT_SEARCH_MS) and a lag message
  * says how far behind it was; a lag of 0 follows once the queue has emptied, at most every
  * LAG_REPORT_MS. A flush decodes the queue, sends the utterance so far as a final and resets the
- * stream. Reports the text as it changes, and a final at each endpoint. Never logs: the text is the user's.
+ * stream. Reports the text as it changes, and a final at each endpoint. Round 4: before a final
+ * goes, the decoder judges whose voice it was (when the server has a profile) and the final carries
+ * `speaker`; nothing is sent until the judgement is in, so the final and its speaker are one frame.
+ * Never logs: the text is the user's.
  */
 export function createAsrSession(decoder: Decoder, send: (message: AsrServerMessage) => void, options: AsrSessionOptions = {}): AsrSession {
   const schedule = options.schedule ?? ((step: () => void) => setImmediate(step))
@@ -128,6 +222,8 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   let draining = false
   let lagging = false
   let lastReport = -Infinity
+  let onlyOwner = false
+  let foreignFinals = 0
 
   const report = (ms: number): void => {
     send({ type: 'lag', ms })
@@ -175,14 +271,47 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     if (!lagging || now() - lastReport >= LAG_REPORT_MS) report(backlog)
   }
 
-  const finish = (result: DecodeResult): void => {
+  const failed = (error: unknown): void => {
+    draining = false
+    options.onError?.(error)
+  }
+
+  /**
+   * Sends text as a final, with the speaker when the decoder can judge one, then goes on. A judge
+   * that fails (review) loses the verdict, not the words: the final goes without a speaker.
+   */
+  const sendFinal = (text: string, then: () => void): void => {
+    const deliver = (judgement: Judgement | null | undefined): void => {
+      if (closed) return
+      if (judgement) {
+        send({ type: 'final', text, speaker: judgement.speaker })
+        if (onlyOwner && judgement.speaker === 'other') foreignFinals += 1
+      } else send({ type: 'final', text })
+      then()
+    }
+    let judged: Judgement | null | Promise<Judgement | null> | undefined
+    try {
+      judged = decoder.judge?.()
+    } catch {
+      deliver(null)
+      return
+    }
+    if (judged instanceof Promise) judged.then(deliver, () => deliver(null))
+    else deliver(judged)
+  }
+
+  /** The partial for a frame's result, then the final when it ended the utterance; `then` once the final is away. */
+  const finish = (result: DecodeResult, then: () => void): void => {
     const text = result.text.trim()
     if (text !== last && text !== '') send({ type: 'partial', text })
     last = text
-    if (result.endpoint) {
-      if (text !== '') send({ type: 'final', text })
-      last = ''
+    if (!result.endpoint) {
+      then()
+      return
     }
+    last = ''
+    if (text === '') then()
+    else sendFinal(text, then)
   }
 
   const step = (): void => {
@@ -197,22 +326,22 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       return
     }
     if (item === 'flush') {
-      if (last !== '') send({ type: 'final', text: last })
+      const text = last
       last = ''
-      decoder.reset()
-      schedule(step)
+      const next = (): void => {
+        decoder.reset()
+        schedule(step)
+      }
+      // Judged before the reset: the frames of the utterance in progress are still the decoder's.
+      if (text !== '') sendFinal(text, next)
+      else next()
       return
     }
     queuedMs -= item.ms
     const done = (result: DecodeResult): void => {
       if (closed) return
       decodedMs += item.ms
-      finish(result)
-      schedule(step)
-    }
-    const failed = (error: unknown): void => {
-      draining = false
-      options.onError?.(error)
+      finish(result, () => schedule(step))
     }
     try {
       const result = decoder.accept(item.samples)
@@ -254,7 +383,26 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       return queuedMs
     },
     stats() {
-      return { receivedMs, decodedMs, droppedMs }
+      return { receivedMs, decodedMs, droppedMs, foreignFinals }
+    },
+    enrol(seconds) {
+      if (closed) return
+      const learning = decoder.enrol?.(seconds)
+      if (!learning) {
+        send({ type: 'enrolled', ok: false, seconds })
+        return
+      }
+      learning.then(
+        (ok) => {
+          if (!closed) send({ type: 'enrolled', ok, seconds })
+        },
+        () => {
+          if (!closed) send({ type: 'enrolled', ok: false, seconds })
+        },
+      )
+    },
+    onlyOwner(on) {
+      onlyOwner = on
     },
   }
 }

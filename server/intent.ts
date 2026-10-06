@@ -54,8 +54,22 @@ function toIntentError(error: unknown): InterpretError {
   return new InterpretError('upstream_unavailable', 'The assistant is unreachable.')
 }
 
+/** Round 4: the model may plan this many goals after the one it acts on, each this long (IntentAnswerSchema). */
+export const MAX_PLAN_GOALS = 12
+const GOAL_CHARS = 200
+
+/** The plan as a clean list: strings only, trimmed, no empties, at most MAX_PLAN_GOALS. */
+function planFrom(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((goal): goal is string => typeof goal === 'string')
+    .map((goal) => goal.trim().slice(0, GOAL_CHARS))
+    .filter((goal) => goal !== '')
+    .slice(0, MAX_PLAN_GOALS)
+}
+
 /** The answer tool's input, as the model sent it. */
-function answerFrom(reply: ModelReply): { intent: unknown; say: string; done: boolean } | null {
+function answerFrom(reply: ModelReply): { intent: unknown; say: string; done: boolean; plan: string[] } | null {
   if (reply.stop_reason === 'refusal' || reply.stop_reason === 'max_tokens') return null
   const call = reply.content.find((block) => block.type === 'tool_use' && block.name === ANSWER_TOOL.name)
   if (!call || typeof call.input !== 'object' || call.input === null) return null
@@ -65,6 +79,8 @@ function answerFrom(reply: ModelReply): { intent: unknown; say: string; done: bo
     say: typeof input.say === 'string' ? input.say.slice(0, 120) : '',
     // M7.2: absent means the one action completes the utterance.
     done: input.done !== false,
+    // Round 4: the goals after this one, in his words.
+    plan: planFrom(input.plan),
   }
 }
 
@@ -99,7 +115,7 @@ export async function pageIntent(input: unknown, deps: { client: MessagesClient;
 
   const raw = answerFrom(reply)
   const intent = raw ? pageIntentFrom(raw.intent, request) : null
-  const answer: IntentAnswer = intent && raw ? { intent, say: raw.say, done: raw.done } : unclear(request)
-  console.info(`[intent] kind=${answer.intent.kind} done=${answer.done !== false} ms=${Date.now() - started}`)
+  const answer: IntentAnswer = intent && raw ? { intent, say: raw.say, done: raw.done, ...(raw.plan.length > 0 ? { plan: raw.plan } : {}) } : unclear(request)
+  console.info(`[intent] kind=${answer.intent.kind} done=${answer.done !== false} plan=${answer.plan?.length ?? 0} ms=${Date.now() - started}`)
   return answer
 }

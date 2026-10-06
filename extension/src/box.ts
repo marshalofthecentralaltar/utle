@@ -39,6 +39,10 @@ export function hitTest(el: Element, r: DOMRect): boolean {
  * (Gmail's compose, a chat widget) sits under the strip; it is still there, and a synthetic click
  * reaches it, so it must be listed and clickable by voice.
  */
+export function elementAt(x: number, y: number): Element | null {
+  return throughStrip(x, y)
+}
+
 function throughStrip(x: number, y: number): Element | null {
   const hit = document.elementFromPoint(x, y)
   if (!hit || !(hit instanceof HTMLElement) || !OURS.has(hit.tagName)) return hit

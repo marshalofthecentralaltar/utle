@@ -23,6 +23,10 @@ export interface StripState {
   modelProblem: string
   /** How far behind the speech server is, in ms (round 3). 0 when caught up. */
   lag: number
+  /** Round 4: progress through a chain of goals, e.g. "2/4 · otsin kassivideod", or ''. */
+  chain: string
+  /** Round 4: a line when speech was dropped as someone else's voice, or ''. Cleared on the next owner utterance. */
+  foreign: string
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -33,7 +37,7 @@ export interface StripState {
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, connects: 0, micOpens: 0, micOpenedAt: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, chain: '', foreign: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
 
 /** To the service worker. */
 export type ToBackground =
@@ -60,6 +64,8 @@ export type ToBackground =
    * with flush delivers the words said so far before the microphone closes.
    */
   | { type: 'utle-listen'; on: boolean; flush?: boolean }
+  /** From the options page (round 4): learn the owner's voice from the next `seconds` of speech. Listening starts if it was off. */
+  | { type: 'utle-enrol'; seconds: number }
 
 /** To the offscreen document. stop with flush: deliver the words said so far, then stop. */
 export type ToOffscreen =
@@ -67,6 +73,8 @@ export type ToOffscreen =
   | { target: 'offscreen'; type: 'start' }
   | { target: 'offscreen'; type: 'stop'; flush?: boolean }
   | { target: 'offscreen'; type: 'flush' }
+  /** Round 4: learn the owner's voice (the strip tells him to speak). */
+  | { target: 'offscreen'; type: 'enrol'; seconds: number }
 
 /**
  * To the extension's new-tab page, from the service worker: run one page command there (21.3). The

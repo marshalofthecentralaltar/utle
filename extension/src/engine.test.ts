@@ -3,8 +3,8 @@ import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../..
 import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
 import { pageIntentFrom } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { ASK_TIMEOUT_MS, INTENT_LOOP_BUDGET_MS, LAG_SHOWN_MS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, createEngine } from './engine.ts'
-import { MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
+import { ASK_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, LAG_SHOWN_MS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, createEngine } from './engine.ts'
+import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
 
@@ -104,6 +104,8 @@ function setup(options: Options = {}) {
   const lags: number[] = []
   const thinking: boolean[] = []
   const modelProblems: string[] = []
+  const chains: string[] = []
+  const enrols: number[] = []
   const used = options.logic ?? logic
   const engine = createEngine({
     logic: {
@@ -139,13 +141,14 @@ function setup(options: Options = {}) {
       if (patch.thinking !== undefined) thinking.push(patch.thinking)
       if (patch.modelProblem !== undefined) modelProblems.push(patch.modelProblem)
       if (patch.lag !== undefined) lags.push(patch.lag)
+      if (patch.chain !== undefined) chains.push(patch.chain)
       Object.assign(state, patch)
     },
     recognizer: (h, isInstant, onUnavailable) => {
       handlers = h
       instant = isInstant
       unavailable = onUnavailable
-      return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined }
+      return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined, enrol: (seconds) => enrols.push(seconds) }
     },
     micBlocked: () => blocked++,
     ask: (request, signal) => {
@@ -157,6 +160,11 @@ function setup(options: Options = {}) {
     status: () => Promise.resolve(options.status ?? 'live'),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
+  /** Round 4: the recogniser continues the last utterance ("siis ..."). */
+  const continued = (text: string, added: string): void => handlers?.onUtteranceContinued(text, added)
+  /** Round 4 (review): the recogniser dropped someone else's final; the server answered an enrolment. */
+  const foreign = (): void => handlers?.onForeign()
+  const enrolled = (ok: boolean): void => handlers?.onEnrolled(ok, 8)
   const partial = (text: string): void => handlers?.onInterim(text)
   const lag = (ms: number): void => handlers?.onLag(ms)
   /** The page changes the box on its own (the site, or a click with the eye tracker). */
@@ -170,6 +178,7 @@ function setup(options: Options = {}) {
     heard,
     boxes,
     say,
+    continued,
     partial,
     lag,
     edit,
@@ -185,6 +194,10 @@ function setup(options: Options = {}) {
     lags,
     thinking,
     modelProblems,
+    chains,
+    enrols,
+    foreign,
+    enrolled,
   }
 }
 
@@ -516,8 +529,10 @@ describe('understanding by meaning (M7)', () => {
   it('does not ask about a long utterance into an armed box: that is a sentence', async () => {
     const t = setup({ logic: asking, box: armed })
     t.engine.start()
-    expect(SENTENCE.split(' ').length).toBeGreaterThanOrEqual(LONG_UTTERANCE_WORDS)
-    t.say(SENTENCE)
+    // Round 4: the limit is high (a chain of commands can be long), so a very long sentence is built here.
+    const long = Array.from({ length: LONG_UTTERANCE_WORDS + 1 }, (_, i) => (i % 2 ? 'homme' : 'tulen')).join(' ')
+    expect(long.split(' ').length).toBeGreaterThanOrEqual(LONG_UTTERANCE_WORDS)
+    t.say(long)
     await t.engine.idle()
     expect(t.asked).toHaveLength(0)
     expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'setText'])
@@ -1119,5 +1134,374 @@ describe('the queue keeps up (round 3)', () => {
     expect(t.lags).toEqual([LAG_SHOWN_MS + 500, LAG_SHOWN_MS + 900, 0])
     t.lag(0)
     expect(t.lags).toEqual([LAG_SHOWN_MS + 500, LAG_SHOWN_MS + 900, 0])
+  })
+})
+
+describe('chains of goals (round 4)', () => {
+  const unarmed: BoxState = { present: false, text: '', armed: false }
+  const goTo = (url: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'goTo', url } })
+  const click = (id: number): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'clickItem', id } })
+  const search = (query: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'siteSearch', query } })
+  const SCROLL: IntentAnswer['intent'] = { kind: 'command', command: { kind: 'scroll', direction: 'down' } }
+  const planned = (intent: IntentAnswer['intent'], say: string, done: boolean, plan: string[]): IntentAnswer => ({ intent, say, done, plan })
+  const script = (...answers: IntentAnswer[]) => {
+    let i = 0
+    return () => Promise.resolve(answers[Math.min(i++, answers.length - 1)] as IntentAnswer)
+  }
+  /** The first answer, then a question that never answers (the engine must give it up). */
+  const thenHang = (first: IntentAnswer) => {
+    let n = 0
+    return (): Promise<IntentAnswer | AskFailure> => (n++ === 0 ? Promise.resolve(first) : new Promise(() => undefined))
+  }
+  /** Answers in order, then hangs until the test resolves it. */
+  const thenWait = (...answers: IntentAnswer[]) => {
+    let i = 0
+    let release: ((a: IntentAnswer) => void) | null = null
+    const ask = (): Promise<IntentAnswer | AskFailure> =>
+      i < answers.length
+        ? Promise.resolve(answers[i++] as IntentAnswer)
+        : new Promise<IntentAnswer>((resolve) => {
+            release = resolve
+          })
+    return { ask, resolve: (a: IntentAnswer) => release?.(a) }
+  }
+  const UTTERANCE = "mine youtube'i otsi kassivideod ja mängi esimene"
+
+  it('works through the goals one by one: the first ask has no chain, each later one its goal and the chain, steps reset', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: script(planned(goTo('https://www.youtube.com/'), 'lähen youtube', true, ['otsi kassivideod', 'mängi esimene']), answer(search('kassivideod'), 'otsin', true), answer(click(3), 'mängin', true)),
+    })
+    t.engine.start()
+    t.say(UTTERANCE)
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage', 'siteSearch', 'readPage', 'clickItem'])
+    expect(t.asked).toHaveLength(3)
+    expect(t.asked[0]?.chain).toBeUndefined()
+    expect(t.asked[0]?.utterance).toBe(UTTERANCE)
+    expect(t.asked[1]?.utterance).toBe('otsi kassivideod')
+    expect(t.asked[1]?.steps).toBeUndefined()
+    expect(t.asked[1]?.chain).toEqual({ original: UTTERANCE, completed: ["mine youtube'i"], goal: 'otsi kassivideod', remaining: ['mängi esimene'] })
+    expect(t.asked[2]?.utterance).toBe('mängi esimene')
+    expect(t.asked[2]?.chain).toEqual({ original: UTTERANCE, completed: ["mine youtube'i", 'otsi kassivideod'], goal: 'mängi esimene', remaining: [] })
+    expect(t.chains).toEqual(["1/3 · mine youtube'i", '2/3 · otsi kassivideod', '3/3 · mängi esimene', ''])
+    expect(t.state.chain).toBe('')
+    expect(t.state.line).toBe('tehtud')
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('a goal may take several steps: the steps go back to the model with the chain, and the next goal starts afresh', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => {
+        if (request.chain === undefined) return Promise.resolve(planned(goTo('https://web.whatsapp.com/'), 'lähen whatsappi', true, ['ava Karini viimane sõnum', 'kustuta see']))
+        if (request.chain.goal === 'ava Karini viimane sõnum') return Promise.resolve(request.steps === undefined ? answer(SCROLL, 'kerin', false) : answer(click(2), 'avan', true))
+        return Promise.resolve(answer(click(1), 'kustutan', true))
+      },
+    })
+    t.engine.start()
+    t.say('mine whatsappi, ava Karini viimane sõnum, kustuta see')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage', 'scroll', 'readPage', 'clickItem', 'readPage', 'clickItem'])
+    expect(t.asked[2]?.steps).toEqual([{ action: 'command scroll', say: 'kerin', ok: true, message: '' }])
+    expect(t.asked[2]?.chain?.goal).toBe('ava Karini viimane sõnum')
+    expect(t.asked[3]?.steps).toBeUndefined()
+    expect(t.asked[3]?.chain).toEqual({ original: 'mine whatsappi, ava Karini viimane sõnum, kustuta see', completed: ['mine whatsappi', 'ava Karini viimane sõnum'], goal: 'kustuta see', remaining: [] })
+    expect(t.chains).toEqual(['1/3 · mine whatsappi', '2/3 · ava Karini viimane sõnum', '3/3 · kustuta see', ''])
+  })
+
+  it('stops on unclear, clears the chain line, and never asks for the goals left', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: script(planned(goTo('https://www.youtube.com/'), 'lähen', true, ['otsi kassivideod', 'mängi esimene']), answer({ kind: 'unclear', say: 'Ei leia otsingut.' })),
+    })
+    t.engine.start()
+    t.say(UTTERANCE)
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(2)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage'])
+    expect(t.state.line).toBe('Ei leia otsingut.')
+    expect(t.chains).toEqual(["1/3 · mine youtube'i", '2/3 · otsi kassivideod', ''])
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('an unclear "Valmis" after a good step counts the goal as done and the chain goes on', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => {
+        if (request.chain === undefined) return Promise.resolve(planned(goTo('https://www.youtube.com/'), 'lähen', false, ['mängi esimene']))
+        if (request.chain.goal === "mine youtube'i") return Promise.resolve(answer({ kind: 'unclear', say: 'Valmis.' }))
+        return Promise.resolve(answer(click(3), 'mängin', true))
+      },
+    })
+    t.engine.start()
+    t.say("mine youtube'i ja mängi esimene")
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage', 'readPage', 'clickItem'])
+    expect(t.asked.map((r) => r.utterance)).toEqual(["mine youtube'i ja mängi esimene", "mine youtube'i", 'mängi esimene'])
+    expect(t.chains.at(-1)).toBe('')
+  })
+
+  it('stops after two failed steps for one goal', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      answers: (c) => (c.kind === 'clickItem' ? { ok: false, code: 'not_found', message: 'gone' } : { ok: true }),
+      ask: script(planned(goTo('https://www.youtube.com/'), 'lähen', true, ['mängi esimene', 'pane heli vaiksemaks']), answer(click(1), 'mängin', true)),
+    })
+    t.engine.start()
+    t.say("mine youtube'i mängi esimene ja pane heli vaiksemaks")
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'clickItem')).toHaveLength(MAX_STEP_FAILURES)
+    expect(t.asked).toHaveLength(1 + MAX_STEP_FAILURES)
+    expect(t.asked.at(-1)?.chain?.goal).toBe('mängi esimene')
+    expect(t.chains.at(-1)).toBe('')
+  })
+
+  it('stops at MAX_CHAIN_STEPS page steps in all, however many goals are left', async () => {
+    const plan = Array.from({ length: 12 }, (_, i) => `keri ${i + 1}`)
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => Promise.resolve(request.chain === undefined ? planned(SCROLL, 'kerin', false, plan) : answer(SCROLL, 'kerin', request.steps !== undefined)),
+    })
+    t.engine.start()
+    t.say('keri alla ' + plan.join(' ja '))
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'scroll')).toHaveLength(MAX_CHAIN_STEPS)
+    expect(t.asked).toHaveLength(MAX_CHAIN_STEPS)
+    expect(t.asked.at(-1)?.chain?.remaining.length).toBeGreaterThan(0)
+    expect(t.chains.at(-1)).toBe('')
+    expect(t.state.thinking).toBe(false)
+  })
+
+  it('takes no further goal once MAX_CHAIN_MS has passed since the utterance arrived', async () => {
+    vi.useFakeTimers()
+    const slow = Math.ceil(MAX_CHAIN_MS / 2) + 1
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      goToMs: slow,
+      ask: (request) => Promise.resolve(request.chain === undefined ? planned(goTo('https://a.ee/'), 'a', true, ['b', 'c', 'd']) : answer(goTo('https://b.ee/'), 'b', true)),
+    })
+    t.engine.start()
+    t.say('a ja b ja c ja d')
+    await vi.advanceTimersByTimeAsync(MAX_CHAIN_MS * 3)
+    expect(t.ran.filter((c) => c.kind === 'goTo')).toHaveLength(2)
+    expect(t.asked).toHaveLength(2)
+    expect(t.chains.at(-1)).toBe('')
+  })
+
+  it('barge-in: a new utterance cancels the chain, aborts the question in flight, and publishes an empty chain line', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, ask: thenHang(planned(goTo('https://www.youtube.com/'), 'lähen', true, ['otsi kassivideod', 'mängi esimene'])) })
+    t.engine.start()
+    t.say(UTTERANCE)
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 100)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage'])
+    expect(t.state.chain).toBe('2/3 · otsi kassivideod')
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(t.signals[1]?.aborted).toBe(true)
+    expect(t.asked).toHaveLength(2)
+    expect(t.chains).toEqual(["1/3 · mine youtube'i", '2/3 · otsi kassivideod', ''])
+    expect(t.state.line).toBe('midagi')
+    await vi.advanceTimersByTimeAsync(ASK_TIMEOUT_MS * 2)
+    expect(t.asked).toHaveLength(2)
+  })
+
+  it('a plain send does not cancel a chain: it waits and sends after it', async () => {
+    vi.useFakeTimers()
+    const model = thenWait(planned(goTo('https://www.youtube.com/'), 'lähen', true, ['otsi kassivideod']))
+    const t = setup({ logic: asking, box: unarmed, ask: model.ask })
+    t.engine.start()
+    t.say("mine youtube'i ja otsi kassivideod")
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 100)
+    expect(t.state.chain).toBe('2/2 · otsi kassivideod')
+    t.say('saada')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(t.signals[1]?.aborted).toBe(false)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage'])
+    model.resolve(answer(search('kassivideod'), 'otsin', true))
+    await vi.advanceTimersByTimeAsync(100)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage', 'siteSearch', 'readBox', 'pressSend'])
+    expect(t.chains.at(-1)).toBe('')
+  })
+
+  it('a continued utterance appends its goals to what was just done, and does not barge in', async () => {
+    vi.useFakeTimers()
+    const model = thenWait()
+    const t = setup({ logic: asking, box: unarmed, ask: model.ask })
+    t.engine.start()
+    t.say("mine youtube'i")
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.asked).toHaveLength(1)
+    // The continuation arrives while the first question is in flight: nothing is given up.
+    t.continued("mine youtube'i siis otsi kassivideod", 'siis otsi kassivideod')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.signals[0]?.aborted).toBe(false)
+    expect(t.state.heard).toBe("mine youtube'i siis otsi kassivideod")
+    model.resolve(answer(goTo('https://www.youtube.com/'), 'lähen', true))
+    await vi.advanceTimersByTimeAsync(10)
+    model.resolve(answer(search('kassivideod'), 'otsin', true))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readBox', 'readPage', 'siteSearch'])
+    expect(t.asked[1]?.utterance).toBe('siis otsi kassivideod')
+    expect(t.asked[1]?.chain).toEqual({ original: "mine youtube'i siis otsi kassivideod", completed: ["mine youtube'i"], goal: 'siis otsi kassivideod', remaining: [] })
+    expect(t.chains).toEqual(['2/2 · siis otsi kassivideod', ''])
+  })
+
+  it('a continued utterance that holds several goals plans them after the goals already done', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => {
+        if (request.chain === undefined) return Promise.resolve(planned(goTo('https://web.whatsapp.com/'), 'lähen', true, ['ava Karin']))
+        if (request.chain.goal === 'ava Karin') return Promise.resolve(answer({ kind: 'command', command: { kind: 'openConversation', name: 'Karin' } }, 'avan', true))
+        if (request.chain.goal === 'siis kustuta see ja saada') return Promise.resolve(planned(click(1), 'kustutan', true, ['saada']))
+        return Promise.resolve(answer({ kind: 'unclear', say: 'Ütle „saada“.' }))
+      },
+    })
+    t.engine.start()
+    t.say('mine whatsappi ja ava Karin')
+    await t.engine.idle()
+    t.continued('mine whatsappi ja ava Karin siis kustuta see ja saada', 'siis kustuta see ja saada')
+    await t.engine.idle()
+    expect(t.asked.map((r) => r.utterance)).toEqual(['mine whatsappi ja ava Karin', 'ava Karin', 'siis kustuta see ja saada', 'saada'])
+    expect(t.asked[3]?.chain).toEqual({ original: 'mine whatsappi ja ava Karin siis kustuta see ja saada', completed: ['mine whatsappi', 'ava Karin', 'siis kustuta see'], goal: 'saada', remaining: [] })
+    // The continued goal is shown whole first, then narrowed to its first part once the model has planned the rest.
+    expect(t.chains).toEqual(['1/2 · mine whatsappi', '2/2 · ava Karin', '', '3/3 · siis kustuta see ja saada', '3/4 · siis kustuta see', '4/4 · saada', ''])
+  })
+
+  it('a continued utterance that waited is still asked: it is not stale', async () => {
+    vi.useFakeTimers()
+    const model = thenWait()
+    const t = setup({ logic: asking, box: unarmed, ask: model.ask })
+    t.engine.start()
+    t.say("mine youtube'i")
+    await vi.advanceTimersByTimeAsync(10)
+    t.continued("mine youtube'i siis otsi kassivideod", 'siis otsi kassivideod')
+    await vi.advanceTimersByTimeAsync(STALE_MS + 1000)
+    model.resolve(answer(goTo('https://www.youtube.com/'), 'lähen', true))
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.asked).toHaveLength(2)
+    expect(t.asked[1]?.utterance).toBe('siis otsi kassivideod')
+  })
+
+  it('names the hovered item in the step it reports', async () => {
+    const t = setup({ logic: asking, box: unarmed, ask: script(answer({ kind: 'command', command: { kind: 'hover', id: 3 } }, 'hõljun', false), answer({ kind: 'unclear', say: 'Valmis.' })) })
+    t.engine.start()
+    t.say('ava viimane sõnum')
+    await t.engine.idle()
+    expect(t.asked[1]?.steps).toEqual([{ action: 'command hover 3', say: 'hõljun', ok: true, message: '' }])
+  })
+})
+
+describe('review of round 4', () => {
+  const unarmed: BoxState = { present: false, text: '', armed: false }
+  const goTo = (url: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'goTo', url } })
+
+  it("a foreign final takes back the preview its partials typed, without waiting for the owner's next words", async () => {
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
+    t.engine.start()
+    t.partial('pane')
+    t.partial('pane telekas kinni')
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere. pane telekas kinni')
+    t.foreign()
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere.')
+    // The owner's next utterance starts from the base, as a new one.
+    t.partial('ma')
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere. ma')
+  })
+
+  it('a plan that only repeats the utterance or the goal starts no chain, so the same goal is never asked twice', async () => {
+    const t = setup({ logic: asking, box: unarmed, ask: () => Promise.resolve({ intent: goTo('https://www.youtube.com/'), say: 'lähen youtube', done: true, plan: ["Mine YouTube'i.", 'lähen youtube', "mine youtube'i"] }) })
+    t.engine.start()
+    t.say("mine youtube'i")
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo'])
+    expect(t.chains).toEqual([])
+  })
+
+  it('a plan on a later goal adds only goals the chain does not know, and duplicates once', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => {
+        if (request.chain === undefined) return Promise.resolve({ intent: goTo('https://www.youtube.com/'), say: '', done: true, plan: ['otsi kassivideod', 'mängi esimene'] })
+        if (request.chain.goal === 'otsi kassivideod') return Promise.resolve({ intent: { kind: 'command', command: { kind: 'siteSearch', query: 'kassivideod' } } as const, say: '', done: true, plan: ['otsi kassivideod', "mine youtube'i", 'mängi esimene', 'pane heli maha', 'pane heli maha'] })
+        return Promise.resolve({ intent: { kind: 'unclear', say: 'x' } as const, say: '' })
+      },
+    })
+    t.engine.start()
+    t.say("mine youtube'i otsi kassivideod ja mängi esimene")
+    await t.engine.idle()
+    expect(t.asked.map((r) => r.utterance)).toEqual(["mine youtube'i otsi kassivideod ja mängi esimene", 'otsi kassivideod', 'pane heli maha'])
+    expect(t.asked[2]?.chain?.remaining).toEqual(['mängi esimene'])
+  })
+
+  it('a continued utterance after a long one carries goals clipped to what the request schema takes', async () => {
+    const long = Array.from({ length: 60 }, (_, i) => `sõna${i}`).join(' ')
+    const t = setup({ logic: asking, box: unarmed, ask: () => Promise.resolve({ intent: { kind: 'unclear', say: 'x' }, say: '' }) })
+    t.engine.start()
+    t.say(long)
+    await t.engine.idle()
+    t.continued(`${long} siis saada`, 'siis saada')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(2)
+    expect(t.asked[0]?.utterance.length).toBeLessThanOrEqual(500)
+    expect(t.asked[1]?.chain?.completed.map((g) => g.length)).toEqual([200])
+    expect(t.asked[1]?.chain?.original.length).toBeLessThanOrEqual(1000)
+  })
+
+  it('a plain send reads the box after what it waited for, not the base from before', async () => {
+    const t = setup({ logic: previewing, box: { present: true, text: 'x', armed: true } })
+    t.engine.start()
+    t.partial('saa')
+    await t.engine.idle()
+    // The page (or a chain) changed the box since the send's partials began.
+    t.edit('uus')
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.boxes.at(-1)?.text).toBe('uus')
+    expect(t.ran.filter((c) => c.kind === 'pressSend')).toHaveLength(1)
+  })
+
+  it('while the server learns his voice nothing he says is typed or run, until the answer comes', async () => {
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
+    t.engine.enrol(8)
+    expect(t.starts()).toBe(1)
+    expect(t.enrols).toEqual([8])
+    t.partial('tere')
+    t.say('tere mina olen')
+    t.continued('tere mina olen siis räägin', 'siis räägin')
+    await t.engine.idle()
+    expect(t.ran).toEqual([])
+    expect(t.heard).toEqual([])
+    t.enrolled(true)
+    t.say('ma jõuan')
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere.ma jõuan')
+  })
+
+  it('an enrolment the server never answers ends on its own', async () => {
+    vi.useFakeTimers()
+    const t = setup({ box: unarmed })
+    t.engine.enrol(8)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.ran).toEqual([])
+    await vi.advanceTimersByTimeAsync(8 * 1000 * ENROL_TIMEOUT_FACTOR + 10)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.state.line).toBe('midagi')
   })
 })

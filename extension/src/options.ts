@@ -6,7 +6,7 @@
 
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
-import type { ToPage } from './messages.ts'
+import type { ToBackground, ToPage } from './messages.ts'
 import { BAR_HEIGHTS, SETTING_KEYS, mountStrip, settingsFrom } from './strip.ts'
 import type { StripSettings } from './strip.ts'
 
@@ -59,7 +59,12 @@ interface Group {
   note?: string
   /** The group is shown only while this holds (the gaze target needs gaze mode). */
   when?(settings: StripSettings): boolean
+  /** A button before the choices that does something instead of choosing (round 4: "Õpeta mu hääl"). */
+  action?: { label: string; sub: string; run(): void }
 }
+
+/** Round 4: how long the owner speaks for the server to learn his voice. */
+export const ENROL_SECONDS = 8
 
 const GROUPS: Group[] = [
   {
@@ -120,6 +125,26 @@ const GROUPS: Group[] = [
       { value: 'soniox', label: text.engineSoniox, sub: text.engineSonioxEn },
     ],
   },
+  // The owner's voice (round 4, VOICE lane): teach the server his voice, then obey only it.
+  {
+    key: 'onlyOwner',
+    title: text.myVoice,
+    titleEn: text.myVoiceEn,
+    note: `${text.voiceNote} ${text.voiceNoteEn}`,
+    action: {
+      label: text.teachVoice,
+      sub: text.teachVoiceEn,
+      run: () => {
+        const message: ToBackground = { type: 'utle-enrol', seconds: ENROL_SECONDS }
+        chrome.runtime.sendMessage(message).catch(() => undefined)
+        say(text.enrolStart(ENROL_SECONDS))
+      },
+    },
+    choices: [
+      { value: true, label: text.onlyOwner, sub: text.onlyOwnerEn },
+      { value: false, label: text.everyone, sub: text.everyoneEn },
+    ],
+  },
 ]
 
 let current: StripSettings = settingsFrom({})
@@ -155,6 +180,22 @@ for (const group of GROUPS) {
   const grid = document.createElement('div')
   grid.className = 'choices'
   const list: { value: Choice['value']; button: HTMLButtonElement }[] = []
+  if (group.action) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'choice action'
+    const fill = document.createElement('span')
+    fill.className = 'fill'
+    const name = document.createElement('span')
+    name.textContent = group.action.label
+    const small = document.createElement('span')
+    small.className = 'sub'
+    small.textContent = group.action.sub
+    b.append(fill, name, small)
+    const { run } = group.action
+    dwellable(b, run)
+    grid.append(b)
+  }
   for (const choice of group.choices) {
     const b = document.createElement('button')
     b.type = 'button'

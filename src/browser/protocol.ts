@@ -51,6 +51,13 @@ export type BrowserCommand =
   | { kind: 'clickItem'; id: number }
   /** Focuses the item's text field and arms it for dictation. */
   | { kind: 'focusItem'; id: number }
+  // Round 4: things on the page he refers to, and controls that only appear on hover.
+  /** Moves the pointer over an item (hover) so controls that appear on hover show; then readPage again. */
+  | { kind: 'hover'; id: number }
+  /** Opens the item's context menu (a right click), for sites whose actions live there. */
+  | { kind: 'contextMenu'; id: number }
+  /** Scrolls the item into the middle of the view. */
+  | { kind: 'scrollTo'; id: number }
   /** Types the query into the site's own search field and presses Enter. Arms nothing. */
   | { kind: 'siteSearch'; query: string }
   /** Acts on the largest visible video or audio element. */
@@ -118,7 +125,7 @@ export type MediaAction =
 /** One visible actionable element of the page, as the model sees it (readPage). */
 export interface PageItem {
   id: number
-  /** link, button, field, tab, option, row, other. */
+  /** link, button, field, tab, option, row, video, text (a message, a heading, a paragraph he may refer to), other. */
   role: string
   /** Its visible text or label, at most 60 characters. */
   text: string
