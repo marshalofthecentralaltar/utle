@@ -7,8 +7,9 @@
       /* A YouTube-like page: a header search that auto-focuses (like Google), an icon button named
          by aria-labelledby, a player, a comment box with its button, a sidebar with "Vaata hiljem"
          and a card that is clickable only by its cursor, ten video cards (thumbnail link, title
-         link and channel link, the first two sharing an address) of which the last ones are below
-         the fold, a tile that reacts to Enter only, and a cookie banner that is there first. */
+         link and channel link, the first two sharing an address, a menu button that shows on hover
+         only) of which the last ones are below the fold, a tile that reacts to Enter only, and a
+         cookie banner that is there first. */
       body { margin: 0; font: 16px system-ui, sans-serif; }
       header { display: flex; gap: 16px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #ddd; }
       header form { display: flex; gap: 8px; }
@@ -31,7 +32,9 @@
       .thumb .duration { position: absolute; right: 4px; bottom: 4px; background: #000; color: #fff; font-size: 12px; padding: 1px 4px; }
       .meta a { display: block; color: #111; text-decoration: none; }
       .meta .channel { color: #606060; font-size: 14px; margin-top: 4px; }
-      .menu { margin-left: auto; align-self: flex-start; }
+      /* The card's menu button shows only while the pointer rests on the card, as YouTube's does. */
+      .menu { margin-left: auto; align-self: flex-start; visibility: hidden; }
+      .item:hover .menu, .item.hover .menu { visibility: visible; }
       #cookies { position: fixed; left: 0; right: 0; bottom: 0; height: 45vh; background: #fff; border-top: 2px solid #333;
                  padding: 24px; box-sizing: border-box; z-index: 10; }
       #cookies .buttons { display: flex; gap: 12px; margin-top: 16px; }
@@ -118,6 +121,8 @@
         item.innerHTML = `<a class="thumb" href="watch?v=${n}"><img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" /><span class="duration">${n}:3${n % 10}</span></a>
           <div class="meta"><a id="video-title-${n}" class="title" href="watch?v=${n}">${name}</a><a class="channel" href="channel/${channels[i].toLowerCase()}">${channels[i]}</a></div>
           <button class="menu" type="button" aria-label="Toimingute menüü">⋮</button>`
+        item.addEventListener('mouseover', () => item.classList.add('hover'))
+        item.addEventListener('mouseleave', () => item.classList.remove('hover'))
         list.append(item)
       })
       // Like YouTube, a click on a video link changes the address in place instead of loading a page.
