@@ -1646,3 +1646,213 @@ describe('Round 3 editing: the box, the undo texts and the labels', () => {
     expect(step.line).toBe(`${ET.inpage.understood('mine algusesse')} ${ET.browserDoing({ kind: 'caret', to: 'start' })}`)
   })
 })
+
+// ---------------------------------------------------------------------------------------------
+// Round 5 (the fields lane): form fields, number words as digits, careful one-line boxes.
+
+/** A one-line form field he armed (a real click or a number). */
+function field(text: string, fieldKind: BoxState['fieldKind'], label = ''): BoxState {
+  return { present: true, text, armed: true, kind: 'field', fieldKind, single: true, label }
+}
+
+describe('Round 5 fields: dictation into a kind of field is converted and appended as it is', () => {
+  it.each([
+    ['code', '', 'kolm üheksa null kaks', '3902'],
+    ['code', '3902', 'üks null null null üks', '390210001'],
+    ['code', '', 'Kolm üheksa null kaks.', '3902'],
+    ['tel', '', 'pluss kolm seitse kaks', '+372'],
+    ['tel', '+372', 'viis üks kaks kolm neli viis kuus seitse', '+37251234567'],
+    ['email', '', 'ralf punkt sepp ät gmail punkt com', 'ralf.sepp@gmail.com'],
+    ['email', 'ralf', 'ät gmail punkt com', 'ralf@gmail.com'],
+    ['number', '', 'viis koma kaks', '5.2'],
+    ['password', '', 'suur ess a l a üks kaks kolm', 'Sala123'],
+  ] as const)('%s field %j + "%s" is %j', (kind, before, u, after) => {
+    const step = inpageStep(session(), u, field(before, kind))
+    expect(step.commands).toEqual(only({ kind: 'setText', text: after }))
+    expect(step.session.undo).toEqual([before])
+    expect(step.ask).toBe(true)
+  })
+
+  it('a single text field keeps the sentence rules (a name field)', () => {
+    const step = inpageStep(session(), 'ralf sepp', field('', 'text', 'Nimi'))
+    expect(setTextOf(step.commands)).toBe('Ralf sepp')
+  })
+
+  it('in a composer three or more number words in a row become digits, fewer stay words', () => {
+    expect(setTextOf(inpageStep(session(), 'minu kood on viis kolm kaheksa neli kaks', box('')).commands)).toBe('Minu kood on 53842.')
+    expect(setTextOf(inpageStep(session(), 'tulen kell viis', box('')).commands)).toBe('Tulen kell viis.')
+    expect(setTextOf(inpageStep(session(), 'kakskümmend kolm', box('Tere')).commands)).toBe('Tere kakskümmend kolm')
+  })
+
+  it('the step line of a single field reads back what it now holds', () => {
+    const step = inpageStep(session(), 'kolm üheksa null kaks', field('', 'code', 'Isikukood'))
+    expect(step.line).toBe(ET.inpage.typedInto('3902'))
+    expect(step.line).toBe('Kirjutasin: 3902 (ütle „edasi“ või „valmis“)')
+    expect(inpageStep(session({ lang: 'en' }), 'three nine zero two', field('', 'code')).line).toBe(EN.inpage.typedInto('3902'))
+  })
+
+  it('a password is read back as dots, never as its text', () => {
+    const step = inpageStep(session(), 'üks kaks kolm neli', field('', 'password', 'PIN1'))
+    expect(setTextOf(step.commands)).toBe('1234')
+    expect(step.line).toBe(ET.inpage.typedInto('••••'))
+    expect(step.line).not.toContain('1234')
+  })
+
+  it('inpageResult after a setText into a single field reads the field back too', () => {
+    const commands: BrowserCommand[] = [{ kind: 'setText', text: '3902' }]
+    const done = inpageResult(session({ undo: [''] }), commands, { ok: true, box: field('3902', 'code') })
+    expect(done.line).toBe(ET.inpage.typedInto('3902'))
+    const secret = inpageResult(session({ undo: [''] }), commands, { ok: true, box: field('3902', 'password') })
+    expect(secret.line).toBe(ET.inpage.typedInto('••••'))
+    expect(inpageResult(session({ undo: [''] }), commands, { ok: true, box: box('Tere') }).line).toBe(ET.inpage.written)
+  })
+
+  it('the model\'s dictate goes through the same conversion', () => {
+    const intent: PageIntent = { kind: 'dictate', text: 'kolm üheksa null kaks' }
+    const step = applyIntent(session(), intent, page(field('', 'code')))
+    expect(step.commands).toEqual(only({ kind: 'setText', text: '3902' }))
+  })
+
+  it('an unarmed single field still refuses dictation', () => {
+    const step = inpageStep(session(), 'kolm üheksa null kaks', { present: true, text: '', armed: false, kind: 'field', fieldKind: 'code', single: true })
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.noPlaceToWrite)
+  })
+})
+
+describe('Round 5 fields: "numbritena" and "tavaliselt"', () => {
+  it.each(['numbritena', 'numbrid', 'kirjuta numbritena', 'Numbritena.', 'as digits', 'digits'])('"%s" writes as digits from now on', (u) => {
+    const step = inpageStep(session(), u, box('Tere'))
+    expect(step.session.spell).toBe('code')
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.spellDigits)
+    expect(step.ask).toBeUndefined()
+  })
+
+  it.each(['tähtedena', 'tavaliselt', 'kirjuta tavaliselt', 'sõnadena', 'as words', 'normally'])('"%s" writes as words again', (u) => {
+    const step = inpageStep(session({ spell: 'code' }), u, box('Tere'))
+    expect(step.session.spell).toBeNull()
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.spellWords)
+  })
+
+  it('the mode converts dictation in a composer and in a text field', () => {
+    const s = inpageStep(session(), 'numbritena', box('Kood:')).session
+    expect(setTextOf(inpageStep(s, 'viis kolm', box('Kood:')).commands)).toBe('Kood:53')
+    expect(setTextOf(inpageStep(s, 'kakskümmend kolm', field('', 'text')).commands)).toBe('23')
+    const back = inpageStep(s, 'tavaliselt', box('Kood:53')).session
+    expect(setTextOf(inpageStep(back, 'tulen kell viis', box('Kood:53')).commands)).toBe('Kood:53 tulen kell viis.')
+  })
+
+  it('the mode overrides the field\'s own kind and survives other steps', () => {
+    const s = inpageStep(session(), 'numbritena', field('', 'email')).session
+    expect(setTextOf(inpageStep(s, 'üks kaks kolm', field('', 'email')).commands)).toBe('123')
+    const after = inpageStep(s, 'keri alla', field('', 'email')).session
+    expect(after.spell).toBe('code')
+  })
+
+  it('the preview follows the mode too', () => {
+    const s = session({ spell: 'code' })
+    expect(inpagePreview(s, 'viis kolm kaheksa', box('Kood:'))).toBe('Kood:538')
+  })
+
+  it('inpageInstant agrees: the modes are commands', () => {
+    expect(inpageInstant(session(), 'numbritena')).toBe(true)
+    expect(inpageInstant(session(), 'tavaliselt')).toBe(true)
+  })
+})
+
+describe('Round 5 fields: "kirjuta kood X" converts X for that kind, this utterance only', () => {
+  it.each([
+    ['kirjuta kood kolm üheksa null kaks', '3902'],
+    ['kirjuta number kakskümmend kolm', '23'],
+    ['kirjuta e-post ralf ät gmail punkt com', 'ralf@gmail.com'],
+    ['kirjuta meil ralf ät gmail punkt com', 'ralf@gmail.com'],
+    ['kirjuta telefon pluss kolm seitse kaks viis üks', '+37251'],
+    ['sisesta kood üks kaks kolm neli', '1234'],
+    ['kirjuta parool suur a bee üks', 'Ab1'],
+    ['type code three nine zero two', '3902'],
+    ['write email ralf at gmail dot com', 'ralf@gmail.com'],
+  ])('"%s" types %j', (u, typed) => {
+    const step = inpageStep(session(), u, box(''))
+    expect(step.commands).toEqual(only({ kind: 'setText', text: typed }))
+    expect(step.ask).toBeUndefined()
+    expect(step.session.spell).toBeNull()
+  })
+
+  it('appends to what the box holds without a space', () => {
+    expect(setTextOf(inpageStep(session(), 'kirjuta kood viis kuus', box('Kood: ')).commands)).toBe('Kood: 56')
+  })
+
+  it('is not a conversation, not typing at the caret, and needs an armed box', () => {
+    const step = inpageStep(session(), 'kirjuta kood üks kaks', unarmed(''))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.noPlaceToWrite)
+    expect(inpageStep(session(), 'kirjuta Marile', EMPTY).commands).toEqual(only({ kind: 'openConversation', name: 'Mari' }))
+    expect(inpageStep(session(), 'sisesta siia tere', box('Tere')).commands).toEqual(only({ kind: 'typeText', text: 'tere' }))
+  })
+
+  it('never previews', () => {
+    expect(inpagePreview(session(), 'kirjuta kood üks kaks', box(''))).toBeNull()
+  })
+})
+
+describe('Round 5 fields: a one-line form field is never typed into live', () => {
+  it.each(['kolm üheksa null kaks', 'Ma jõuan homme kell kolm', 'ralf punkt sepp ät gmail'])('preview of "%s" is null in a single field', (u) => {
+    expect(inpagePreview(session(), u, field('', 'code'))).toBeNull()
+    expect(inpagePreview(session(), u, field('', 'text'))).toBeNull()
+    expect(inpagePreview(session(), u, { present: true, text: '', armed: true, kind: 'search', fieldKind: 'text', single: true })).toBeNull()
+  })
+
+  it('a composer and a textarea still preview', () => {
+    expect(inpagePreview(session(), 'Ma jõuan homme kell kolm', box(''))).toBe('Ma jõuan homme kell kolm')
+    expect(inpagePreview(session(), 'Ma jõuan homme kell kolm', { present: true, text: '', armed: true, kind: 'field', single: false })).toBe('Ma jõuan homme kell kolm')
+  })
+
+  it('the step into a single field asks the model (the engine waits for it before typing)', () => {
+    expect(inpageStep(session(), 'kolm üheksa null kaks', field('', 'code')).ask).toBe(true)
+    expect(inpageStep(session(), 'ralf', field('', 'text')).ask).toBe(true)
+  })
+})
+
+describe('Round 5 fields: "valmis", "edasi", "kinnita" in a form', () => {
+  it.each(['valmis', 'Valmis.', 'olen valmis', 'edasi', 'done', 'next'])('"%s" in an armed single field is Tab', (u) => {
+    const step = inpageStep(session(), u, field('3902', 'code'))
+    expect(step.commands).toEqual(only({ kind: 'pressKey', key: 'Tab' }))
+    expect(step.line).toBe(ET.browserDoing({ kind: 'pressKey', key: 'Tab' }))
+    expect(step.ask).toBeUndefined()
+    expect(inpageStep(session(), u, field('', 'email')).commands).toEqual(only({ kind: 'pressKey', key: 'Tab' }))
+  })
+
+  it.each(['kinnita', 'sisesta', 'enter', 'logi sisse', 'saada vorm', 'submit', 'log in', 'confirm'])('"%s" in an armed single field is Enter', (u) => {
+    const step = inpageStep(session(), u, field('1234', 'password'))
+    expect(step.commands).toEqual(only({ kind: 'pressKey', key: 'Enter' }))
+    expect(step.ask).toBeUndefined()
+  })
+
+  it('outside a single field the words keep their meaning', () => {
+    expect(inpageStep(session(), 'edasi', EMPTY).commands).toEqual(only({ kind: 'history', direction: 'forward' }))
+    expect(inpageStep(session(), 'edasi', box('Tere')).commands).toEqual(only({ kind: 'setText', text: 'Tere edasi' }))
+    expect(inpageStep(session(), 'kinnita', box('Tere')).commands).toEqual(only({ kind: 'setText', text: 'Tere kinnita' }))
+    expect(inpageStep(session(), 'kinnita', EMPTY).commands).toEqual(only({ kind: 'pressKey', key: 'Enter' }))
+    expect(setTextOf(inpageStep(session(), 'valmis', box('Tere')).commands)).toBe('Tere valmis')
+    expect(inpageStep(session(), 'logi sisse', EMPTY).ask).toBe(true)
+  })
+
+  it('an unarmed single field (focused by the page) is not a form he is filling', () => {
+    const search: BoxState = { present: true, text: '', armed: false, kind: 'search', fieldKind: 'text', single: true }
+    expect(inpageStep(session(), 'edasi', search).commands).toEqual(only({ kind: 'history', direction: 'forward' }))
+  })
+
+  it('"tühjenda" and "kustuta kõik" on a single field still clear it, and asleep nothing happens', () => {
+    expect(inpageStep(session(), 'tühjenda', field('3902', 'code')).commands).toEqual(only({ kind: 'setText', text: '' }))
+    expect(inpageStep(session(), 'kustuta kõik', field('ralf@', 'email')).commands).toEqual(only({ kind: 'setText', text: '' }))
+    expect(inpageStep(session({ asleep: true }), 'valmis', field('3902', 'code')).commands).toEqual([])
+  })
+
+  it('the form keys leave the box: the undo texts and the labels go with it', () => {
+    const step = inpageStep(session({ undo: ['a'], hints: true }), 'valmis', field('3902', 'code'))
+    expect(step.session.undo).toEqual([])
+    expect(step.session.hints).toBe(false)
+  })
+})

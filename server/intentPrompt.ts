@@ -56,6 +56,10 @@ Messages, headings and paragraphs are "text" items. A text item can be hovered (
 
 When the box is armed and he asks to change what is in it, edit in place with the editing commands; never retype the whole box for a small change. caret moves the caret: start, end, lineStart, lineEnd, sentenceStart, sentenceEnd, wordBack, wordForward, or { find: "word", where: "before" | "after" } for the nearest match of a word in the box text (use the word as it stands in the text, not the spoken case ending). select selects: all, word, sentence, line, lastWord, lastSentence, or { find: "word" }; the next typeText or Backspace acts on the selection. typeText { text } types at the caret with the spaces and the capital worked out there. pressKey with Backspace, Delete, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Home, End, Undo, Redo, SelectAll, Tab, and times for a count. One step at a time, done:false until the last: "lisa pärast sõna homme kell viis" is caret { find: "homme", where: "after" } then typeText "kell viis"; "kustuta sõna ilus" is select { find: "ilus" } then pressKey Backspace; "muuda teine lause" is caret find of that sentence's first word then select sentence, and the new words he says next replace it; "mine lause algusesse ja kirjuta ..." is caret sentenceStart then typeText. A single word swap ("ilus asemel kena") is edit replace. "võta tagasi" is edit undo. On Google Docs (docs.google.com) there is no box text: only the keys and typeText work there (pressKey ArrowLeft, Home, Backspace, Undo; typeText), never caret or select by a word.
 
+# Form fields
+
+A box with single=true is a one-line form field (a login, an ID code, a phone number, an address); its fieldKind says what it is for: email, tel, code, number, password or text. Into email, tel, code, number and password fields the extension itself converts his words (number words to digits, "ät" to @, "punkt" to a dot, letters said by name): answer dictate with the words AS HE SAID THEM ("kolm üheksa null kaks", "ralf punkt sepp ät gmail punkt com"), never pre-converted and never tidied into a sentence. Spoken number words that are a value for the field are dictation, not a hint number. After a value, "valmis" / "edasi" / "done" is pressKey Tab (the next field) and "kinnita" / "logi sisse" / "sisesta" / "submit" is pressKey Enter; "numbritena" and "tavaliselt" are handled by the rules.
+
 # Dictation
 
 dictate ONLY when the box is armed AND the words read as message text to the person he is writing to ("tulen kell viis", "jah sobib", "homme ei saa"), not as an instruction to the browser. A sentence with a first-person verb is text; a short imperative aimed at the page is a command. When the box is not armed, never dictate: pick an action, or unclear with one short line like "Ütle „kirjuta siia“ või „näita numbreid“." A search bar the page focused by itself is not a place for his words.
@@ -188,7 +192,7 @@ function stepLine(n: number, step: IntentStep): string {
 export function intentUserMessage(request: IntentRequest): string {
   const { page } = request
   const box = page.box.present
-    ? `present armed=${page.box.armed} kind=${page.box.kind ?? 'field'} label=${JSON.stringify(page.box.label ?? '')} text=${JSON.stringify(clip(page.box.text, BOX_TEXT_MAX))}`
+    ? `present armed=${page.box.armed} kind=${page.box.kind ?? 'field'}${page.box.single === true ? ` single=true fieldKind=${page.box.fieldKind ?? 'text'}` : ''} label=${JSON.stringify(page.box.label ?? '')} text=${JSON.stringify(page.box.fieldKind === 'password' ? '•'.repeat(page.box.text.length) : clip(page.box.text, BOX_TEXT_MAX))}`
     : 'none'
   const media = page.media
     ? `playing=${page.media.playing} muted=${page.media.muted} volume=${page.media.volume.toFixed(2)} fullscreen=${page.media.fullscreen}`

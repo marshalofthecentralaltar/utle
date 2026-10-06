@@ -120,6 +120,12 @@ export interface Strings {
     catchingUp: string
     /** A verification came back as a command after the box had changed: nothing was touched. */
     lateCommand(say: string): string
+    // Round 5 (fields).
+    /** "numbritena": dictation is written as digits until "tavaliselt". */
+    spellDigits: string
+    spellWords: string
+    /** What a one-line form field holds after typing, read back, with what to say next. */
+    typedInto(text: string): string
   }
 
   // The interpreter.
@@ -576,6 +582,9 @@ const ET: Strings = {
     noPlaceToWrite: 'Siin pole kuhu kirjutada. Ütle „kirjuta siia“ kasti peal, „näita numbreid“ ja number, või ava vestlus.',
     catchingUp: 'Jõuan järele…',
     lateCommand: (say) => `Hiljem: see oli käsk „${say}“, teksti ei muutnud.`,
+    spellDigits: 'Kirjutan numbritena.',
+    spellWords: 'Kirjutan tavaliselt.',
+    typedInto: (text) => `Kirjutasin: ${text} (ütle „edasi“ või „valmis“)`,
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -951,6 +960,9 @@ const EN: Strings = {
     noPlaceToWrite: 'There is nowhere to write here. Say "write here" on a field, "show numbers" and a number, or open a conversation.',
     catchingUp: 'Catching up…',
     lateCommand: (say) => `Later: "${say}" was a command, text left as is.`,
+    spellDigits: 'Writing as digits.',
+    spellWords: 'Writing as words.',
+    typedInto: (text) => `Typed: ${text} (say "next" or "done")`,
   },
 
   stillWorks: 'Yes, no and undo still work.',
