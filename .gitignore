@@ -37,3 +37,6 @@ extension/test/.baseline
 check.log
 extension/test/out
 run.log
+
+# The store zip (npm run ext:pack)
+extension/out

@@ -15,6 +15,7 @@ import { chromium } from 'playwright'
 import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
+import { createUtleServer } from '../../server/app.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const extensionDir = resolve(here, '..')
@@ -27,6 +28,9 @@ const T = `http://127.0.0.1:${PORT}/fixtures`
 // The messaging site: another origin on the same server (IPv6 loopback).
 const M = `http://[::1]:${PORT}/fixtures`
 const ESTONIAN = 'Tere! Jõuan homme kell kolm.'
+/** The hosted server's stand-in (27.3): `PORT=5197 UTLE_TOKEN=t1 npm run serve` when it runs, else the same server in this process. */
+const SERVE_PORT = 5197
+const SERVE_TOKEN = 't1'
 // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
 const headed = true
 
@@ -1059,6 +1063,64 @@ async function main(): Promise<void> {
     const kinds = [...contract.matchAll(/kind: '(\w+)'/g)].map((m) => m[1] ?? '')
     const missing = kinds.filter((k) => !kindsSeen.has(k))
     check(`every protocol kind exercised (${kinds.length})`, missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : kinds.join(' '))
+
+    // ---------- the settings page's Server section (round 6, HOST lane, 27.3) ----------
+    // Against `npm run serve` on 5197 when it is running; otherwise the same server (server/app.ts) is started here.
+    const external = await reachable(`http://localhost:${SERVE_PORT}/healthz`)
+    const hosted = external ? null : createUtleServer({ root: repoRoot, asr: false, env: { ...process.env, UTLE_TOKEN: SERVE_TOKEN } })
+    if (hosted) await new Promise<void>((ok) => hosted.listen(SERVE_PORT, ok))
+    try {
+      const extensionId = new URL(sw.url()).host
+      const options = await ctx.newPage()
+      await options.goto(`chrome-extension://${extensionId}/options.html`)
+      const section = options.locator('#server')
+      await section.waitFor()
+      const fieldsThere = (await options.locator('#server #asrUrl').count()) === 1 && (await options.locator('#server #serverToken').getAttribute('type')) === 'password'
+      check('settings: Server section with the address, a password token field and the test button', fieldsThere && (await options.locator('#serverTest').count()) === 1)
+      // A dwell reaches the field: resting the pointer on it for over a second focuses it.
+      await options.locator('#asrUrl').hover()
+      await options.waitForTimeout(1300)
+      check('settings: a dwell on the address field focuses it', await options.evaluate(() => document.activeElement?.id === 'asrUrl'))
+      const result = async (): Promise<string> => (await options.locator('#serverResult').textContent()) ?? ''
+      const testWith = async (token: string): Promise<string> => {
+        await options.fill('#asrUrl', `ws://localhost:${SERVE_PORT}/api/asr`)
+        await options.fill('#serverToken', token)
+        await options.evaluate(() => {
+          const el = document.getElementById('serverResult')
+          if (el) el.textContent = ''
+        })
+        // One click per hover acts (the dwell rule): the pointer leaves the button between tests, as a hand would.
+        await options.mouse.move(0, 0)
+        await options.click('#serverTest')
+        await waitUntil(async () => !['', 'Proovin…'].includes(await result()), 5000)
+        return result()
+      }
+      const wrong = await testWith('vale')
+      check('settings: a wrong token reads "Vale võti"', wrong.startsWith('Vale võti'), JSON.stringify(wrong))
+      const right = await testWith(SERVE_TOKEN)
+      check(`settings: the right token reads "Ühendus töötab" (${external ? 'npm run serve' : 'in-process server'})`, right.startsWith('Ühendus töötab'), JSON.stringify(right))
+      const saved = await sw.evaluate(() => chrome.storage.local.get(['asrUrl', 'serverToken']))
+      check('settings: the address and the token are stored', saved.asrUrl === `ws://localhost:${SERVE_PORT}/api/asr` && saved.serverToken === SERVE_TOKEN, JSON.stringify({ asrUrl: saved.asrUrl, token: saved.serverToken === SERVE_TOKEN ? '(right)' : '(other)' }))
+      await mkdir(join(here, 'out'), { recursive: true })
+      // Centred, so the strip along the bottom of the window does not cover the result line.
+      await section.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+      await section.screenshot({ path: join(here, 'out/server-settings.png') })
+      await options.fill('#asrUrl', 'ws://localhost:6/api/asr')
+      await options.evaluate(() => {
+          const el = document.getElementById('serverResult')
+          if (el) el.textContent = ''
+        })
+        // One click per hover acts (the dwell rule): the pointer leaves the button between tests, as a hand would.
+        await options.mouse.move(0, 0)
+        await options.click('#serverTest')
+      await waitUntil(async () => !['', 'Proovin…'].includes(await result()), 6000)
+      const down = await result()
+      check('settings: no server reads "Ei saa ühendust"', down.startsWith('Ei saa ühendust'), JSON.stringify(down))
+      await sw.evaluate(() => chrome.storage.local.remove(['asrUrl', 'serverToken']))
+      await options.close()
+    } finally {
+      hosted?.close()
+    }
   } finally {
     await context?.close()
     server.close()

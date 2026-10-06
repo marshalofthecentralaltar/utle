@@ -5,7 +5,7 @@
  * buildExtension({ outRoot, offscreenEntry }) builds a complete copy elsewhere (manifest, pages and
  * dist/), which the end-to-end test uses with a stand-in for src/core/inpage.ts.
  */
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, cpSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
@@ -25,7 +25,11 @@ export async function buildExtension(options: BuildOptions = {}): Promise<string
   const outRoot = options.outRoot ?? extensionDir
   const outdir = join(outRoot, 'dist')
   mkdirSync(outdir, { recursive: true })
-  if (outRoot !== extensionDir) for (const file of STATIC) copyFileSync(join(extensionDir, file), join(outRoot, file))
+  if (outRoot !== extensionDir) {
+    for (const file of STATIC) copyFileSync(join(extensionDir, file), join(outRoot, file))
+    // The manifest names the icons (27.5): a copy without them does not load.
+    cpSync(join(extensionDir, 'icons'), join(outRoot, 'icons'), { recursive: true })
+  }
   const src = join(extensionDir, 'src')
   await build({
     entryPoints: {

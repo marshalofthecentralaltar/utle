@@ -15,7 +15,10 @@
     "preview": "vite preview",
     "rehearse": "vite --mode rehearsal",
     "model": "tsx scripts/model.ts",
-    "ext": "tsx scripts/ext.ts"
+    "ext": "tsx scripts/ext.ts",
+    "serve": "tsx server/serve.ts",
+    "ext:pack": "tsx scripts/pack.ts",
+    "icons": "tsx scripts/icons.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

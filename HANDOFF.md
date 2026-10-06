@@ -190,6 +190,32 @@ single utterances), real forms, and Tom using the form.
 
 What to try first: say `lisa uus e-post`, spell the address, `gmail`, `loe ette`, `valmis`; then on
 `http://localhost:5193/extension/test/fixtures/login.html` click E-post and say `minu e-post`.
+## 1f. Round 6, HOST lane (2026-10-06): a hosted server, the store zip
+
+The real user's work laptop allows nothing to be installed. Built on branch `r6-host`
+(`docs/ARCHITECTURE.md` 27; `extension/README.md` "Hosted server", "Install on a locked computer",
+"The store zip"):
+
+- `npm run serve` (`server/serve.ts`): the same API as the dev server on plain Node, no Vite;
+  `/healthz` and `/` without a token. The dev server and `serve.ts` share `server/app.ts`.
+- `UTLE_TOKEN`: bearer header on `/api`, `?token=` on the speech socket, 401 otherwise;
+  `"auth":"on"|"off"` in `/api/status` (`server/auth.ts`).
+- The settings page's **Server** section: address, token, **Proovi ühendust** (works / cannot
+  connect / wrong token). The extension sends the token on the socket and every fetch; a 401 shows
+  "Serveri võti on vale." on the strip.
+- `Dockerfile` (Node 22.20, both models in the image), `.dockerignore`, `railway.json` (health
+  check `/healthz`). The service needs at least 1 GB of memory.
+- `npm run ext:pack` writes `extension/out/utle-0.3.0.zip` for the store; icons; manifest 0.3.0;
+  `docs/PRIVACY.md` is the privacy policy's text.
+
+**The audio leaves the machine** when the server is hosted. Not verified: the Docker image was never
+built (no Docker on the machine that wrote it; the sherpa addon's Linux libraries and
+`LD_LIBRARY_PATH` are the likeliest thing to need a fix), no Railway deploy, no store upload, no real
+voice over the network (latency over the internet is unknown). The voice profile is lost on a
+redeploy without a volume.
+
+What Ralf must do: create the Railway service (README "Hosted server"), set the variables, read the
+first deploy's log for `[asr] model loaded`, then the store listing (README "The store zip").
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 

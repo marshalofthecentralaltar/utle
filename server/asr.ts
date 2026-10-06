@@ -68,10 +68,12 @@ export interface AttachOptions {
   startWorker?: (root: string, entry: string) => Promise<HostStart>
   /** The speaker gate for in-thread decoding (round 4). Default: over models/speaker/. Tests pass null or a fake. */
   speaker?: ReturnType<typeof openSpeakerGate> | null
+  /** The server token's check on the upgrade (27.2). False: the upgrade is answered 401. Default: every upgrade passes. */
+  authorize?: (req: IncomingMessage) => boolean
 }
 
 /**
- * Serves the local recogniser at /api/asr on the dev server's own http server. Only upgrades to
+ * Serves the local recogniser at /api/asr on the server's own http server (Vite's, or serve.ts's). Only upgrades to
  * that path are taken, so Vite's HMR socket is untouched. The model loads once, when the server
  * starts listening: on a worker thread when one can start, else on this thread. Logs counts,
  * durations and reason codes; never audio, never text.
@@ -124,6 +126,12 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const path = (req.url ?? '').split('?')[0]
     if (path !== ASR_PATH) return
+    // The server token (27.2): a wrong or missing ?token= never reaches a recogniser.
+    if (options.authorize && !options.authorize(req)) {
+      socket.once('finish', () => socket.destroy())
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      return
+    }
     sockets.handleUpgrade(req, socket, head, (ws) => {
       // Soniox (ARCHITECTURE 23.4): `?engine=soniox` on the socket address, or UTLE_ASR=soniox for every
       // connection, hands the socket to the second recogniser. Everything below is the local model.

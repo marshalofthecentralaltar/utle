@@ -10,6 +10,7 @@ import { entryChips, entryStep, startEntry } from '../../src/core/savedEntry.ts'
 import type { EntryResult, EntryState } from '../../src/core/savedEntry.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
+import { CONNECTION_KEYS, connectionFrom, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
 import type { ToBackground, ToPage } from './messages.ts'
 import { BAR_HEIGHTS, SETTING_KEYS, mountStrip, settingsFrom } from './strip.ts'
 import type { StripSettings } from './strip.ts'
@@ -32,7 +33,6 @@ setText('help', text.optionsHelp)
 setText('helpEn', text.optionsHelpEn)
 setText('advancedTitle', text.advanced)
 setText('advancedEn', en.advanced)
-setText('asrLabel', `${text.asrUrl} · ${en.asrUrl}`)
 setText('utleLabel', `${text.utleUrl} · ${en.utleUrl}`)
 setText('saveLabel', text.save)
 
@@ -245,9 +245,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   reflect()
 })
 
-// ---------- the addresses (section 20) ----------
+// ---------- the page address (section 20); the speech address moved to the Server section (27.3) ----------
 
-const URL_KEYS = ['utleUrl', 'asrUrl'] as const
+const URL_KEYS = ['utleUrl'] as const
 
 for (const key of URL_KEYS) {
   const input = document.getElementById(key)
@@ -523,6 +523,102 @@ function savedEntryAnswer(utterance: string): { ok: true } | { ok: false; code: 
   applyEntry(entryStep(entry, utterance, savedItems, 'et'))
   return { ok: true }
 }
+// ---------- the server (round 6, HOST lane, ARCHITECTURE 27.3) ----------
+// A self-contained block: the address and the token of the server, and "Proovi ühendust", which
+// saves both and calls /api/status through the same code as the offscreen page (connection.ts).
+// The carer fills the fields with the keyboard; a dwell on a field focuses it.
+
+function serverSection(): void {
+  const section = document.createElement('section')
+  section.id = 'server'
+  const h2 = document.createElement('h2')
+  h2.textContent = text.serverTitle
+  const sub = document.createElement('p')
+  sub.className = 'en'
+  sub.textContent = en.serverTitle
+  const field = (id: string, label: string, type: string, placeholder: string): HTMLInputElement => {
+    const el = document.createElement('label')
+    el.htmlFor = id
+    el.textContent = label
+    const input = document.createElement('input')
+    input.id = id
+    input.type = type
+    input.placeholder = placeholder
+    input.autocomplete = 'off'
+    input.spellcheck = false
+    dwellable(input, () => input.focus())
+    section.append(el, input)
+    return input
+  }
+  section.append(h2, sub)
+  const address = field('asrUrl', `${text.serverAddress} · ${en.serverAddress}`, 'url', 'ws://localhost:5173/api/asr')
+  const help = document.createElement('p')
+  help.className = 'note'
+  help.textContent = `${text.serverAddressHelp} ${en.serverAddressHelp}`
+  section.append(help)
+  const token = field('serverToken', `${text.serverToken} · ${en.serverToken}`, 'password', '')
+  const grid = document.createElement('div')
+  grid.className = 'choices'
+  const test = document.createElement('button')
+  test.type = 'button'
+  test.id = 'serverTest'
+  test.className = 'choice action'
+  const fill = document.createElement('span')
+  fill.className = 'fill'
+  const name = document.createElement('span')
+  name.textContent = text.serverTest
+  const small = document.createElement('span')
+  small.className = 'sub'
+  small.textContent = en.serverTest
+  test.append(fill, name, small)
+  grid.append(test)
+  const result = document.createElement('p')
+  result.id = 'serverResult'
+  result.setAttribute('role', 'status')
+  section.append(grid, result)
+  groups?.append(section)
+
+  const show = (line: string, ok = false): void => {
+    result.textContent = line
+    result.classList.toggle('ok', ok)
+  }
+
+  /** Stores both fields; false when the address is not a ws:// or wss:// address. */
+  const store = async (): Promise<boolean> => {
+    const value = address.value.trim()
+    if (value !== '' && !isSocketAddress(value)) {
+      show(text.notAnAddress(value))
+      return false
+    }
+    if (value === '') await chrome.storage.local.remove('asrUrl')
+    else await chrome.storage.local.set({ asrUrl: value })
+    const secret = token.value.trim()
+    if (secret === '') await chrome.storage.local.remove('serverToken')
+    else await chrome.storage.local.set({ serverToken: secret })
+    return true
+  }
+
+  address.addEventListener('change', () => void store())
+  token.addEventListener('change', () => void store())
+
+  dwellable(test, () => {
+    void (async () => {
+      if (!(await store())) return
+      show(text.serverChecking)
+      const connection = connectionFrom(await chrome.storage.local.get([...CONNECTION_KEYS]))
+      const check = await serverCheck(serverUrl(connection.asrUrl, '/api/status'), connection.token)
+      if (check.state === 'bad_token') show(text.serverWrongToken)
+      else if (check.state === 'unreachable') show(text.serverUnreachable)
+      else show(text.serverOk(check.speech ?? { local: false, soniox: false }, check.state === 'live'), true)
+    })()
+  })
+
+  void chrome.storage.local.get([...CONNECTION_KEYS]).then((stored) => {
+    address.value = typeof stored.asrUrl === 'string' ? stored.asrUrl : ''
+    token.value = typeof stored.serverToken === 'string' ? stored.serverToken : ''
+  })
+}
+serverSection()
 
 // ---------- the strip and page commands ----------
 
