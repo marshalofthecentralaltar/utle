@@ -128,6 +128,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     if (path !== ASR_PATH) return
     // The server token (27.2): a wrong or missing ?token= never reaches a recogniser.
     if (options.authorize && !options.authorize(req)) {
+      socket.once('finish', () => socket.destroy())
       socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
       return
     }
