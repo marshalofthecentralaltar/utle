@@ -6,7 +6,8 @@ the bottom of every page, and of the new-tab page, shows the microphone, the wor
 was done. Nothing opens a separate window. Design: `docs/ARCHITECTURE.md` sections 21.2 and 21.3 (the strip and
 live words), 22 (understanding by meaning), 23 (round 3: speed, push-to-talk by looking, sound-alike
 commands, editing, Soniox), 24 (round 4: chains of goals, only your own voice, everything on the page) and 25
-(round 5: numbers and form fields, care for the model and never stuck, the page's size).
+(round 5: numbers and form fields, care for the model and never stuck, the page's size) and 27
+(round 6: a hosted server behind a token, the store zip).
 
 ## Build
 
@@ -26,8 +27,8 @@ From the repository root:
 2. Open `chrome://extensions`, turn on **Developer mode** (top right).
 3. **Load unpacked**, choose the `extension/` folder (not `dist/`).
 4. Pin the Ütle icon (puzzle piece, then the pin).
-5. If the speech model runs at another address, set it under **Details → Extension options**, then
-   reload the extension.
+5. If the server runs at another address, set it on the settings page under **Server** (see "Hosted
+   server" below); it takes effect the next time listening is turned on.
 
 ## Soniox instead of the local model (optional)
 
@@ -60,6 +61,75 @@ Without the speaker model (`npm run model` not run, or the download failed) the 
 `[asr] no speaker model (npm run model fetches it; loudness only until then); …`, and "Kuula ainult mind" only skips speech clearly fainter than yours was
 at enrolment: distance from the microphone, not the voice. Nobody has tried this with a real voice;
 the thresholds are in `server/speaker.ts`.
+
+## Hosted server (round 6)
+
+For a computer where nothing may be installed, the server runs on a hosted machine and the extension
+is told its address and a token. **The audio then leaves the computer**: say so to the user;
+`docs/PRIVACY.md` is the plain-words version. Design: `docs/ARCHITECTURE.md` 27.
+
+`npm run serve` is the production server: the same API as `npm run dev` without Vite, on `PORT`
+(default 8787); `/healthz` answers `ok` for a health check and `/` answers `Ütle server`. With
+`UTLE_TOKEN` set, every `/api` request needs `Authorization: Bearer <token>` and the speech socket
+`?token=<token>` (the extension does both); `/api/status` then says `"auth":"on"`. Locally:
+`PORT=8787 UTLE_TOKEN=some-long-secret npm run serve`.
+
+Deploy on Railway (the repository holds `Dockerfile` and `railway.json`):
+
+1. railway.com → **New project → Deploy from GitHub repo**, pick this repository and the branch.
+   Railway finds `railway.json` and builds the `Dockerfile` (it installs, then downloads both
+   models into the image: the first build takes several minutes).
+2. **Variables**: `ANTHROPIC_API_KEY` (understanding), `UTLE_TOKEN` (a long random string, e.g.
+   `node -e "console.log(crypto.randomBytes(24).toString('base64url'))"`), optionally
+   `SONIOX_API_KEY` and `UTLE_MODEL`. `PORT` is set by Railway; do not set it.
+3. **Settings → Resources**: at least **1 GB** of memory. The model loads on a worker thread and
+   took about 600 MB RSS locally.
+4. **Settings → Networking → Generate domain**. Railway gives `<name>.up.railway.app` with HTTPS.
+   `https://<domain>/healthz` must answer `ok`, and
+   `curl https://<domain>/api/status -H "Authorization: Bearer <token>"` shows `"auth":"on"` and
+   `"speech":{"local":true,...}`.
+5. On the computer: the Ütle settings page → **Server**: address `wss://<domain>/api/asr`, the token
+   from step 2, press **Proovi ühendust**. It must say "Ühendus töötab: …". "Vale võti" is a wrong
+   token; "Ei saa ühendust" is a wrong address or a server that is down.
+6. Turn listening on. Right after a deploy the first connection may wait while the model loads; the
+   deploy log says `[asr] model loaded on a worker thread in N ms` when it is ready.
+
+The owner's voice profile ("Õpeta mu hääl") is kept on the server's disk and is lost on every
+redeploy unless a volume is mounted at `/app/models/speaker` (with the speaker model copied into it);
+teach it again after a deploy. One server has one owner.
+
+## Install on a locked computer
+
+1. Install Ütle from the Chrome Web Store: *(store link once published, unlisted)*. No developer
+   mode, nothing else on the computer.
+2. Open its settings (right-click the icon → **Options**) and fill **Server** as in step 5 above.
+3. Allow the microphone when the permission page asks.
+
+If the organisation's policy blocks the Chrome Web Store or extensions, nothing here works without
+IT: they must allow this one extension (by its store id) in the Chrome policy. There is no way
+around that from the user's side.
+
+## The store zip
+
+`npm run ext:pack` builds the extension and writes `extension/out/utle-<version>.zip` (manifest,
+pages, `dist/`, `relay.js`, `icons/`, nothing else). Upload that in the Chrome Web Store developer
+dashboard. Bump `version` in `extension/manifest.json` for every upload. The icons are drawn by
+`npm run icons` (committed; run it only to change them).
+
+What the listing needs that the repository cannot hold:
+
+- **Privacy policy URL**: publish `docs/PRIVACY.md` somewhere public (the file's page on GitHub
+  works) and paste its address.
+- **Screenshots**: 1280×800 or 640×400, at least one: the strip on WhatsApp Web, the settings page.
+- **Single purpose**: "Lets a person who cannot use their hands write messages and move the browser
+  by speaking Estonian."
+- **Host permission (`<all_urls>`) justification**: "The user speaks to whatever site they are on:
+  the extension must find the message box and the buttons on that page, type the spoken words into
+  it, and show its status bar there. It reads the page only when the user speaks a command."
+- **Remote code**: none; all code is in the package. **Data**: audio and page text go to the server
+  the user configured and, through it, to Anthropic (declare "website content" and "personal
+  communications"; not sold, not used for anything else).
+- Visibility **Unlisted**, so only people with the link find it.
 
 ## After pulling a change
 
