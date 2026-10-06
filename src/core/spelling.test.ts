@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { typedFromSpoken } from './spelling.ts'
+import { spokenValueOnly, typedFromSpoken } from './spelling.ts'
 
 describe('numbers spoken one digit at a time become digit runs', () => {
   it.each([
@@ -167,5 +167,45 @@ describe('never reads an inherited name as a word of the tables', () => {
   it.each(['constructor', 'toString', 'hasOwnProperty', '__proto__'])('"%s" is a plain word', (word) => {
     expect(typedFromSpoken(word, 'code')).toBe(word.toLocaleLowerCase() === word ? word : word.charAt(0).toLocaleLowerCase() + word.slice(1))
     expect(typedFromSpoken(`${word} kolm`, 'text')).toBe(`${word} kolm`)
+  })
+})
+
+describe('review of round 5', () => {
+  it.each([
+    ['Kell viis, kuus, seitse.', 'Kell viis, kuus, seitse.'],
+    ['Ma lähen kell üks, kaks, kolm.', 'Ma lähen kell üks, kaks, kolm.'],
+    ['Oota üks, kaks, kolm sekundit.', 'Oota üks, kaks, kolm sekundit.'],
+    ['Kell viis või kuus või seitse.', 'Kell viis või kuus või seitse.'],
+    ['Üks kaks kolm, kas kuulete?', '123, kas kuulete?'],
+    ['Helista viis üks kaks kolm neli viis kuus seitse, palun.', 'Helista 51234567, palun.'],
+  ])('counting with commas stays words: "%s" is "%s"', (spoken, typed) => {
+    expect(typedFromSpoken(spoken, 'text')).toBe(typed)
+  })
+
+  it('a code never ends in the full stop of the sentence', () => {
+    expect(typedFromSpoken('kolm üheksa null kaks punkt', 'code')).toBe('3902')
+    expect(typedFromSpoken('kolm üheksa null kaks.', 'code')).toBe('3902')
+    expect(typedFromSpoken('salasõna punkt', 'password')).toBe('salasõna.')
+  })
+
+  it('an address keeps a name that sounds like a letter, and its ending', () => {
+    expect(typedFromSpoken('teet ät mail punkt ee', 'email')).toBe('teet@mail.ee')
+    expect(typedFromSpoken('mari koma tamm ät hot punkt ee', 'email')).toBe('marikomatamm@hot.ee')
+  })
+
+  it.each([
+    ['kolm üheksa null kaks', true],
+    ['3902', true],
+    ['pluss kolm seitse kaks viis', true],
+    ['viis koma kaks', true],
+    ['kakskümmend kolm', true],
+    ['null', true],
+    ['kolm sõpra', false],
+    ['ava youtube', false],
+    ['kolm', true],
+    ['punkt', false],
+    ['', false],
+  ])('spokenValueOnly("%s") is %s', (text, value) => {
+    expect(spokenValueOnly(text)).toBe(value)
   })
 })

@@ -1707,7 +1707,8 @@ describe('Round 5 fields: dictation into a kind of field is converted and append
     const step = inpageStep(session(), u, field(before, kind))
     expect(step.commands).toEqual(only({ kind: 'setText', text: after }))
     expect(step.session.undo).toEqual([before])
-    expect(step.ask).toBe(true)
+    // Review of round 5: a value of digits alone, and anything into a password field, is typed without a verdict.
+    expect(step.ask).toBe(kind === 'email' ? true : undefined)
   })
 
   it('a single text field keeps the sentence rules (a name field)', () => {
@@ -1846,8 +1847,9 @@ describe('Round 5 fields: a one-line form field is never typed into live', () =>
     expect(inpagePreview(session(), 'Ma jõuan homme kell kolm', { present: true, text: '', armed: true, kind: 'field', single: false })).toBe('Ma jõuan homme kell kolm')
   })
 
-  it('the step into a single field asks the model (the engine waits for it before typing)', () => {
-    expect(inpageStep(session(), 'kolm üheksa null kaks', field('', 'code')).ask).toBe(true)
+  it('the step into a single field asks the model (the engine waits for it before typing), unless the words are a value of digits (review)', () => {
+    expect(inpageStep(session(), 'kolm üheksa null kaks', field('', 'code')).ask).toBeUndefined()
+    expect(inpageStep(session(), 'kood kolm üheksa null kaks', field('', 'code')).ask).toBe(true)
     expect(inpageStep(session(), 'ralf', field('', 'text')).ask).toBe(true)
   })
 })
@@ -1891,5 +1893,41 @@ describe('Round 5 fields: "valmis", "edasi", "kinnita" in a form', () => {
     const step = inpageStep(session({ undo: ['a'], hints: true }), 'valmis', field('3902', 'code'))
     expect(step.session.undo).toEqual([])
     expect(step.session.hints).toBe(false)
+  })
+})
+
+describe('review of round 5', () => {
+  it('"katkesta" after held words is still the cancel: "tulen homme ja katkesta", "keri alla siis cancel"', () => {
+    for (const u of ['tulen homme ja katkesta', 'Tulen homme ja katkesta.', 'keri alla siis cancel', 'mine whatsappi ja siis tühista kõik']) {
+      const step = inpageStep(session(), u, box('Tere'))
+      expect(step.cancel, u).toBe(true)
+      expect(step.commands, u).toEqual([])
+    }
+    expect(inpageStep(session(), 'ma tahan katkesta', box('Tere')).cancel).toBeUndefined()
+  })
+
+  it('digits into a code, phone or number field he armed are typed without a verdict; words are still asked', () => {
+    for (const kind of ['code', 'tel', 'number'] as const) {
+      const digits = inpageStep(session(), 'kolm üheksa null kaks', field('', kind))
+      expect(digits.ask, kind).toBeUndefined()
+      expect(digits.commands[0]?.kind, kind).toBe('setText')
+      expect(inpageStep(session(), 'kood on kolm üheksa null kaks', field('', kind)).ask, kind).toBe(true)
+    }
+    expect(inpageStep(session(), 'kolm üheksa null kaks', field('', 'text')).ask).toBe(true)
+    expect(inpageStep(session(), 'kolm üheksa null kaks', field('', 'email')).ask).toBe(true)
+    // "numbritena" makes a text field a value field for digits.
+    expect(inpageStep(session({ spell: 'code' }), 'kolm üheksa null kaks', field('', 'text')).ask).toBeUndefined()
+    // A chat box keeps type first, verify after.
+    expect(inpageStep(session(), 'kolm üheksa null kaks', box('')).ask).toBe(true)
+  })
+
+  it('a password field never sends its words to the model, and reads back dots whatever the spelling mode', () => {
+    const step = inpageStep(session(), 'salasõna üks kaks', field('', 'password'))
+    expect(step.ask).toBeUndefined()
+    expect(step.commands).toEqual(only({ kind: 'setText', text: 'salasõna12' }))
+    expect(step.line).toBe(ET.inpage.typedInto('••••••••••'))
+    const digits = inpageStep(session({ spell: 'code' }), 'üks kaks kolm neli', field('', 'password'))
+    expect(digits.commands).toEqual(only({ kind: 'setText', text: '1234' }))
+    expect(digits.line).toBe(ET.inpage.typedInto('••••'))
   })
 })

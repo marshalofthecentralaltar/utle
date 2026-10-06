@@ -253,12 +253,14 @@ function asText(text: string): string {
       i++
       continue
     }
-    // A run of number tokens, separated by whitespace tokens.
+    // A run of number tokens, separated by whitespace tokens. A mark on a token ends the run:
+    // "üks, kaks, kolm" is counting, not 123 (review of round 5).
     const run: string[] = []
     let j = i
     while (j < tokens.length && isNumberToken(key(tokens[j] ?? ''))) {
       run.push(tokens[j] ?? '')
       j += 2
+      if (TRAILING_MARKS.test(run.at(-1) ?? '')) break
     }
     const last = run.at(-1) ?? ''
     const end = i + run.length * 2 - 1
@@ -340,8 +342,20 @@ export function typedFromSpoken(text: string, kind: SpellKind): string {
     case 'number':
       return asNumber(parts, text)
     case 'code':
+      // A spoken "punkt" at the end is the sentence's full stop, never part of a code (review of round 5).
+      return parts.map((p) => p.text).join('').replace(/\s+/gu, '').replace(/\.$/u, '')
     case 'password':
       return parts.map((p) => p.text).join('').replace(/\s+/gu, '')
   }
+}
+
+/**
+ * Review of round 5: true when the utterance is nothing but a value for a number, code or phone
+ * field: number words or digits, with symbol words at most ("pluss kolm seitse kaks", "viis koma
+ * kaks"), and at least one number. Such words are never a command, so the model need not be asked.
+ */
+export function spokenValueOnly(text: string): boolean {
+  const keys = tokenise(text).map(key).filter((k) => k !== '')
+  return keys.some(isNumberToken) && keys.every((k) => isNumberToken(k) || get(SYMBOLS, k) !== undefined)
 }
 

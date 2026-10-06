@@ -293,11 +293,11 @@ describe('pageIntent', () => {
       expect(INTENT_TIMEOUT_MS).toBe(7000)
     })
 
-    it('a careful ask gets high effort, 800 tokens, 12 s, and the careful paragraph as a second block after the unchanged cached one', async () => {
+    it('a careful ask gets high effort, 2000 tokens, 12 s, and the careful paragraph as a second block after the unchanged cached one', async () => {
       const { client, calls, timeouts } = fakeClient(CLICK_LATER)
       await pageIntent(request({ care: 'careful', utterance: 'mine youtube ja otsi kassivideod ja mängi esimene' }), { client, model: 'm' })
       const params = calls[0]
-      expect(params?.max_tokens).toBe(800)
+      expect(params?.max_tokens).toBe(2000)
       expect(params?.output_config).toEqual({ effort: 'high' })
       expect(timeouts).toEqual([INTENT_TIMEOUT_CAREFUL_MS])
       expect(INTENT_TIMEOUT_CAREFUL_MS).toBe(12_000)
@@ -311,7 +311,7 @@ describe('pageIntent', () => {
       expect(Array.isArray(system) && system[0]?.cache_control?.type).toBe('ephemeral')
       expect(Array.isArray(system) && system[1]?.cache_control).toBeUndefined()
       expect(careSettings('quick')).toEqual({ effort: 'low', maxTokens: 400, timeoutMs: 7000 })
-      expect(careSettings('careful')).toEqual({ effort: 'high', maxTokens: 800, timeoutMs: 12_000 })
+      expect(careSettings('careful')).toEqual({ effort: 'high', maxTokens: 2000, timeoutMs: 12_000 })
     })
 
     it('logs the care, never the words', async () => {

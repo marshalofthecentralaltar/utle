@@ -1776,4 +1776,21 @@ describe('round 5, BRAIN lane: care, never stuck, single fields', () => {
     await vi.advanceTimersByTimeAsync(10)
     expect(t.state.line).toBe('midagi')
   })
+
+  it('review: a single-line field he armed types the rules\' words when the model cannot tell', async () => {
+    const t = setup({ logic: asking, box: single, ask: () => Promise.resolve(answer({ kind: 'unclear', say: 'Mida?' })) })
+    t.engine.start()
+    t.say('mari maasikas')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['readPage', 'mari maasikas'])
+    expect(t.state.line).toBe('tehtud')
+  })
+
+  it('review: an unarmed box with an unclear verdict still gets nothing', async () => {
+    const t = setup({ logic: asking, box: { ...single, armed: false }, ask: () => Promise.resolve(answer({ kind: 'unclear', say: 'Mida?' })) })
+    t.engine.start()
+    t.say('mari maasikas')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['readPage'])
+  })
 })
