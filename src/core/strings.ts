@@ -346,6 +346,9 @@ export interface Strings {
     abandoned: string
     stepTitle: string
     suffixLabel: string
+    /** The flow's two buttons, for the eyes. */
+    done: string
+    cancel: string
   }
 }
 
@@ -852,6 +855,8 @@ const ET: Strings = {
     abandoned: 'Katkestatud, midagi ei salvestatud.',
     stepTitle: 'Lisan häälega',
     suffixLabel: 'lõpp',
+    done: 'Valmis',
+    cancel: 'Katkesta',
   },
 }
 
@@ -1280,6 +1285,8 @@ const EN: Strings = {
     abandoned: 'Cancelled, nothing was saved.',
     stepTitle: 'Adding by voice',
     suffixLabel: 'ending',
+    done: 'Done',
+    cancel: 'Cancel',
   },
 }
 
