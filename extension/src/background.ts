@@ -3,6 +3,8 @@
 
 import type { BrowserCommand, BrowserFailure, BrowserResult } from '../../src/browser/protocol.ts'
 import type { TabSummary } from '../../src/core/pageIntent.ts'
+import { CONNECTION_KEYS, connectionFrom } from './connection.ts'
+import type { Connection } from './connection.ts'
 import { INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
 import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.ts'
 import type { PageCommand } from './page.ts'
@@ -11,7 +13,6 @@ import type { SiteName, SiteSettings } from './sites.ts'
 
 /** Where the section 20 development page runs unless the options page says otherwise. */
 const DEFAULT_UTLE_URL = 'http://localhost:5173'
-const DEFAULT_ASR_URL = 'ws://localhost:5173/api/asr'
 const LOAD_TIMEOUT_MS = 8000
 /** After openConversation clicks, how long the address may take to change. */
 const SETTLE_TIMEOUT_MS = 3000
@@ -36,9 +37,9 @@ async function utleOrigin(): Promise<string> {
   }
 }
 
-async function asrUrl(): Promise<string> {
-  const value = await stored('asrUrl')
-  return typeof value === 'string' && value !== '' ? value : DEFAULT_ASR_URL
+/** The server's address and token from the settings page (27.3). */
+async function connection(): Promise<Connection> {
+  return connectionFrom(await chrome.storage.local.get([...CONNECTION_KEYS]))
 }
 
 async function siteSettings(): Promise<SiteSettings> {
@@ -489,8 +490,11 @@ async function onlyOwner(): Promise<boolean> {
 
 async function ensureOffscreen(): Promise<void> {
   const base = chrome.runtime.getURL('offscreen.html')
-  // The engine and the only-owner mode are in the address, so a changed setting makes a new document on the next start.
-  const wanted = `${base}?asr=${encodeURIComponent(await asrUrl())}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}`
+  // The engine, the only-owner mode and the server (27.3) are in the address, so a changed setting makes a new document on the next start.
+  // The token rides here because an offscreen document can only use chrome.runtime, not the storage.
+  const server = await connection()
+  const token = server.token === '' ? '' : `&token=${encodeURIComponent(server.token)}`
+  const wanted = `${base}?asr=${encodeURIComponent(server.asrUrl)}${token}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}`
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
   const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
   if (existing && existing.documentUrl === wanted) return

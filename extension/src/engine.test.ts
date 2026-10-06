@@ -73,7 +73,7 @@ interface Options {
   /** The page's readPage answer. Default: the box, three items, no media. */
   page?: (box: BoxState) => PageContext
   tabs?: TabSummary[]
-  status?: 'live' | 'no_key' | 'unreachable'
+  status?: 'live' | 'no_key' | 'bad_token' | 'unreachable'
 }
 
 const ITEMS = [
@@ -756,6 +756,16 @@ describe('understanding by meaning (M7)', () => {
     const live = setup({ status: 'live' })
     await live.engine.idle()
     expect(live.state.modelProblem).toBe('')
+  })
+
+  it('says the server token is wrong when the server answers 401, and asks no model (27.3)', async () => {
+    const t = setup({ status: 'bad_token' })
+    await t.engine.idle()
+    expect(t.state.modelProblem).toBe(STRINGS.et.strip.badToken)
+    // The socket's upgrade fails with the same 401: the strip names the token, not a missing model.
+    t.engine.start()
+    t.unavailable()
+    expect(t.state.problem).toBe(STRINGS.et.strip.badToken)
   })
 })
 

@@ -62,8 +62,8 @@ export interface EngineDeps {
   ask(request: IntentRequest, signal: AbortSignal): Promise<IntentAnswer | AskFailure>
   /** M7: the tabs of the window being driven, left to right. */
   tabs(): Promise<TabSummary[]>
-  /** M7: whether the server has a model, checked once when the engine starts. */
-  status(): Promise<'live' | 'no_key' | 'unreachable'>
+  /** M7: whether the server has a model, checked once when the engine starts. bad_token (27.3): it answered 401. */
+  status(): Promise<'live' | 'no_key' | 'bad_token' | 'unreachable'>
 }
 
 export interface Engine {
@@ -189,6 +189,8 @@ export function createEngine(deps: EngineDeps): Engine {
   let recent: string[] = []
   /** The server has said it has no model. A standing state: published on change only. */
   let modelOff = false
+  /** 27.3: the server refused the token. The standing line and the socket's failure name it. */
+  let badToken = false
   /**
    * Round 4: the goals the last utterance finished, in his words, so a continued utterance
    * ("siis ava Karin") can carry them as `completed`.
@@ -972,15 +974,16 @@ export function createEngine(deps: EngineDeps): Engine {
     () => {
       listening = false
       endEnrolment()
-      deps.publish({ listening: false, problem: text.modelUnreachable })
+      deps.publish({ listening: false, problem: badToken ? text.badToken : text.modelUnreachable })
     },
   )
 
   // Once: the strip tells him before he speaks when the server has no model.
   queue = queue.then(async () => {
     const status = await deps.status().catch((): 'unreachable' => 'unreachable')
-    modelOff = status === 'no_key'
-    deps.publish({ modelProblem: modelOff ? inpageText.modelOff : '' })
+    badToken = status === 'bad_token'
+    modelOff = status === 'no_key' || badToken
+    deps.publish({ modelProblem: badToken ? text.badToken : modelOff ? inpageText.modelOff : '' })
   })
 
   const start = (): void => {

@@ -294,6 +294,20 @@ export interface Strings {
     enrolDone: string
     enrolFailed: string
     foreign: string
+    // The hosted server (round 6, HOST lane, ARCHITECTURE 27.3).
+    /** The settings page's section and its fields. */
+    serverTitle: string
+    serverAddress: string
+    serverAddressHelp: string
+    serverToken: string
+    serverTest: string
+    serverChecking: string
+    /** The test answered: what the server has (the speech engines, understanding on or off). */
+    serverOk(speech: { local: boolean; soniox: boolean }, understanding: boolean): string
+    serverUnreachable: string
+    serverWrongToken: string
+    /** The strip's standing line when the server answers 401. */
+    badToken: string
   }
 }
 
@@ -755,6 +769,20 @@ const ET: Strings = {
     enrolDone: 'Hääl on õpitud.',
     enrolFailed: 'Hääle õppimine ei õnnestunud.',
     foreign: 'Keegi teine rääkis, jätsin vahele.',
+    // The hosted server (round 6, HOST lane).
+    serverTitle: 'Server',
+    serverAddress: 'Serveri aadress',
+    serverAddressHelp: 'Jäta tühjaks, kui server jookseb samas arvutis.',
+    serverToken: 'Serveri võti',
+    serverTest: 'Proovi ühendust',
+    serverChecking: 'Proovin…',
+    serverOk: (speech, understanding) => {
+      const engines = [speech.local ? 'TalTechi kõnemudel' : '', speech.soniox ? 'Soniox' : ''].filter((x) => x !== '')
+      return `Ühendus töötab: ${engines.length > 0 ? engines.join(' ja ') : 'kõnemudelit pole'}, mõistmine ${understanding ? 'sees' : 'väljas'}.`
+    },
+    serverUnreachable: 'Ei saa ühendust.',
+    serverWrongToken: 'Vale võti.',
+    badToken: 'Serveri võti on vale.',
   },
 }
 
@@ -1138,6 +1166,20 @@ const EN: Strings = {
     enrolDone: 'Your voice is learnt.',
     enrolFailed: 'Learning your voice did not work.',
     foreign: 'Someone else spoke; skipped it.',
+    // The hosted server (round 6, HOST lane).
+    serverTitle: 'Server',
+    serverAddress: 'Server address',
+    serverAddressHelp: 'Leave empty when the server runs on this computer.',
+    serverToken: 'Server token',
+    serverTest: 'Test the connection',
+    serverChecking: 'Testing…',
+    serverOk: (speech, understanding) => {
+      const engines = [speech.local ? "TalTech's speech model" : '', speech.soniox ? 'Soniox' : ''].filter((x) => x !== '')
+      return `Connected: ${engines.length > 0 ? engines.join(' and ') : 'no speech model'}, understanding ${understanding ? 'on' : 'off'}.`
+    },
+    serverUnreachable: 'Cannot connect.',
+    serverWrongToken: 'Wrong token.',
+    badToken: 'The server token is wrong.',
   },
 }
 

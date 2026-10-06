@@ -41,6 +41,8 @@
       #save > span { position: relative; z-index: 1; }
       #save .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--amber); opacity: .35; }
       #save.dwelling .fill { height: 100%; transition: height 1s linear; }
+      #serverResult { min-height: 1.4em; margin: 16px 0 0; font-size: 24px; color: var(--amber); }
+      #serverResult.ok { color: var(--green); }
       #status { min-height: 1.4em; margin: 20px 0 0; color: var(--amber); font-size: 24px; }
     </style>
   </head>
@@ -53,8 +55,6 @@
       <details id="advanced">
         <summary id="advancedTitle"></summary>
         <p class="en" id="advancedEn"></p>
-        <label for="asrUrl" id="asrLabel"></label>
-        <input id="asrUrl" type="url" placeholder="ws://localhost:5173/api/asr" />
         <label for="utleUrl" id="utleLabel"></label>
         <input id="utleUrl" type="url" placeholder="http://localhost:5173" />
         <button id="save" type="button"><span class="fill"></span><span id="saveLabel"></span></button>
