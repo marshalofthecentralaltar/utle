@@ -396,6 +396,8 @@ function renderEntry(): void {
   panel.hidden = entry === null
   if (entry === null) return
   setText('entryKind', entry.kind === null ? '' : `${A.kindName(entry.kind)}${entry.name === '' ? '' : ` · ${entry.name}`}`)
+  // The step line stays in view whatever the last line said: what to say now.
+  setText('entryStep', entry.step === 'kind' ? A.askKind : entry.step === 'name' ? A.askName : entry.kind === 'email' ? `${A.stepValue} ${A.suffixHint}` : A.stepValue)
   const chips = el<HTMLDivElement>('entryChips')
   if (!chips) return
   chips.replaceChildren()

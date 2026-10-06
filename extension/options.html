@@ -57,7 +57,8 @@
       #entry[hidden] { display: none; }
       #entry h3 { margin: 0; font-size: 26px; }
       #entryKind { color: var(--dim); font-size: 20px; margin: 4px 0 0; }
-      #entryLine { font-size: 24px; margin: 10px 0 0; }
+      #entryStep { font-size: 24px; margin: 10px 0 0; color: var(--amber); }
+      #entryLine { font-size: 24px; margin: 8px 0 0; }
       .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; min-height: 56px; }
       .chip { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 52px; padding: 0 8px; box-sizing: border-box; border: 2px solid var(--dim); border-radius: 10px; font: 700 30px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--panel); }
       .chip.suffix { border: 3px dashed var(--amber); color: var(--amber); padding: 0 14px; }
@@ -85,6 +86,7 @@
         <div id="entry" hidden>
           <h3 id="entryTitle"></h3>
           <p id="entryKind"></p>
+          <p id="entryStep"></p>
           <p id="entryLine" role="status"></p>
           <div class="chips" id="entryChips"></div>
           <div id="entryButtons"></div>
