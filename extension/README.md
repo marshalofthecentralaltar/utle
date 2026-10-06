@@ -168,6 +168,12 @@ the thresholds are in `server/speaker.ts`.
     field), `tühjenda otsing`, `sulge aken` / `välja` (Escape), `enter`, `mängi`, `paus`, `vaiksemaks`,
     `täisekraan`;
   - the bar: `peida riba` folds it to the pill, `näita riba` brings it back;
+  - the page's size (round 5): `suurenda`, `tee suuremaks`, `suurem kiri`, `suumi sisse` zoom in one step
+    (100 → 110 → 125 → 150 → 175 → 200 %), `vähenda`, `tee väiksemaks`, `väiksem kiri`, `suumi välja` zoom out,
+    `tavaline suurus`, `algne suurus`, `suumi tagasi` go back to 100 %; English `zoom in`, `make it bigger`,
+    `larger text`, `zoom out`, `make it smaller`, `reset zoom`, `normal size`. It is Chrome's own tab zoom, so the
+    setting sticks for the site, and the bar zooms with the page: at 200 % the bar is also twice as big, which
+    is intended (it is drawn in the page's pixels);
   - `puhka` stops typing, `ärka üles` resumes.
   - push-to-talk by looking: nothing to say; look at the microphone (or the whole bar) and speak, look
     away and the words are delivered. Set it on the settings page (**Kuulamine: Vaatamisega**).

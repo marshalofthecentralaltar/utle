@@ -270,7 +270,7 @@ const PRONOUNS = new Set(['Mul', 'Sul', 'Tal', 'Mei', 'Tei', 'Nei', 'Enda'])
 
 /** Commands that leave the numbered labels on the page (20.2; M7 adds the ones that touch nothing the labels sit on). */
 const KEEPS_HINTS = new Set<BrowserCommand['kind']>([
-  'showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend', 'readPage', 'media', 'bar', 'arm', 'clearField',
+  'showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend', 'readPage', 'media', 'bar', 'arm', 'clearField', 'zoom',
 ])
 /** Commands that leave the same message box in front, so the undo texts still belong to it. */
 const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints'])

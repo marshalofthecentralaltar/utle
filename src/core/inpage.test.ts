@@ -536,6 +536,9 @@ const COMMAND_PHRASES = [
   'mängi', 'esita', 'play', 'paus', 'peata', 'pause', 'stop the video', 'vaigista', 'heli maha', 'mute', 'heli tagasi', 'heli peale',
   'unmute', 'heli valjemaks', 'valjemaks', 'kõvemaks', 'louder', 'volume up', 'heli vaiksemaks', 'vaiksemaks', 'quieter', 'volume down',
   'pane heli vaiksemaks', 'täisekraan', 'full screen', 'välju täisekraanist', 'exit full screen', 'keri edasi', 'keri tagasi',
+  // Round 5: the page's size.
+  'suurenda', 'suurenda lehte', 'suumi sisse', 'tee suuremaks', 'suurem tekst', 'tee tekst suuremaks', 'zoom in', 'make it bigger',
+  'vähenda', 'suumi välja', 'tee väiksemaks', 'väiksem kiri', 'zoom out', 'make it smaller', 'tavaline suurus', 'suumi tagasi', 'reset zoom',
   // Round 3 (editing): the fixed phrases and the counted ones; the ones with a word need that word in the box (below).
   'mine algusesse', 'teksti lõppu', 'rea algusesse', 'rea lõppu', 'lause algusesse', 'lause lõppu', 'sõna tagasi', 'sõna edasi',
   'go to the start', 'go to the end', 'word back', 'vali kõik', 'vali see sõna', 'vali see lause', 'vali viimane sõna', 'vali viimane lause',
@@ -1110,6 +1113,16 @@ describe('M7 the new phrases', () => {
     ['exit full screen', { kind: 'media', action: 'exitFullscreen' }],
     ['keri edasi', { kind: 'media', action: 'forward' }],
     ['keri tagasi', { kind: 'media', action: 'back' }],
+    // Round 5: the page's size.
+    ['suurenda', { kind: 'zoom', direction: 'in' }],
+    ['Tee suuremaks.', { kind: 'zoom', direction: 'in' }],
+    ['suurem kiri', { kind: 'zoom', direction: 'in' }],
+    ['zoom in', { kind: 'zoom', direction: 'in' }],
+    ['vähenda', { kind: 'zoom', direction: 'out' }],
+    ['tee väiksemaks', { kind: 'zoom', direction: 'out' }],
+    ['zoom out', { kind: 'zoom', direction: 'out' }],
+    ['tavaline suurus', { kind: 'zoom', direction: 'reset' }],
+    ['reset zoom', { kind: 'zoom', direction: 'reset' }],
   ])('"%s"', (u, command) => {
     // An empty armed box: with words in it the soft one-word phrases are dictation (below).
     const step = inpageStep(session({ undo: ['Tere'] }), u, box(''))
@@ -1125,9 +1138,9 @@ describe('M7 the new phrases', () => {
     expect(inpageStep(session(), 'paus', unarmed('')).commands).toEqual(only({ kind: 'media', action: 'pause' }))
   })
 
-  it('media, bar and arm leave the labels and the undo texts; a search or a key does not', () => {
+  it('media, bar, arm and zoom leave the labels and the undo texts; a search or a key does not', () => {
     const s = session({ hints: true, undo: ['a'] })
-    for (const u of ['paus', 'heli valjemaks', 'peida riba', 'kirjuta siia', 'tühjenda kast']) {
+    for (const u of ['paus', 'heli valjemaks', 'peida riba', 'kirjuta siia', 'tühjenda kast', 'suurenda', 'tavaline suurus']) {
       const step = inpageStep(s, u, box(''))
       expect(step.session.hints, u).toBe(true)
       expect(step.session.undo, u).toEqual(['a'])
@@ -1236,6 +1249,7 @@ describe('M7 applyIntent: the model\'s intent goes through the same act as the r
     { kind: 'siteSearch', query: 'kassid' },
     { kind: 'newTab' },
     { kind: 'bar', show: false },
+    { kind: 'zoom', direction: 'in' },
   ])('command %j is one browser command with its line', (command) => {
     const step = applyIntent(session({ hints: true }), intent({ kind: 'command', command }), page(unarmed('')))
     expect(step.commands).toEqual(only(command))

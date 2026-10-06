@@ -867,6 +867,38 @@ async function main(): Promise<void> {
     r = await send({ kind: 'bar', show: true })
     line('bar', 'show true: stripState.hidden false', r !== 'timeout' && r.ok && !(await stripHidden()), describe(r))
 
+    // ---------- zoom: Chrome's tab zoom, stepped by the worker; the strip scales with the page ----------
+    const zoomNow = async (): Promise<number> =>
+      sw.evaluate(async (windowId) => {
+        const [t] = await chrome.tabs.query({ active: true, windowId })
+        return t?.id === undefined ? -1 : Math.round((await chrome.tabs.getZoom(t.id)) * 100) / 100
+      }, targetWindowId)
+    const stripSize = async (): Promise<{ height: number; heardPx: number } | null> =>
+      sw.evaluate(async (windowId) => {
+        const [t] = await chrome.tabs.query({ active: true, windowId })
+        if (t?.id === undefined) return null
+        const m = (await chrome.tabs.sendMessage(t.id, { type: 'utle-strip-measure' }).catch(() => null)) as { strip: { height: number }; heardPx: number } | null
+        return m ? { height: m.strip.height, heardPx: m.heardPx } : null
+      }, targetWindowId)
+    const sizeAtOne = await stripSize()
+    r = await send({ kind: 'zoom', direction: 'in' })
+    line('zoom', 'in from 100% -> 110%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.1, `${describe(r)} zoom=${await zoomNow()}`)
+    r = await send({ kind: 'zoom', direction: 'in' })
+    line('zoom', 'in again -> 125%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.25, `${describe(r)} zoom=${await zoomNow()}`)
+    r = await send({ kind: 'zoom', direction: 'in' })
+    line('zoom', 'in again -> 150%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.5, `${describe(r)} zoom=${await zoomNow()}`)
+    const sizeAtOneAndAHalf = await stripSize()
+    // The strip is drawn in the page's CSS pixels, so it zooms with the page: the same CSS size, 1.5 times as big on screen.
+    check(
+      'strip still measures at 150% (same CSS size as at 100%)',
+      sizeAtOne !== null && sizeAtOneAndAHalf !== null && sizeAtOneAndAHalf.height === sizeAtOne.height && sizeAtOneAndAHalf.heardPx === sizeAtOne.heardPx && sizeAtOne.height > 0,
+      `at 100%=${JSON.stringify(sizeAtOne)} at 150%=${JSON.stringify(sizeAtOneAndAHalf)}`,
+    )
+    r = await send({ kind: 'zoom', direction: 'out' })
+    line('zoom', 'out from 150% -> 125%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.25, `${describe(r)} zoom=${await zoomNow()}`)
+    r = await send({ kind: 'zoom', direction: 'reset' })
+    line('zoom', 'reset -> 100%', r !== 'timeout' && r.ok && (await zoomNow()) === 1, `${describe(r)} zoom=${await zoomNow()}`)
+
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })
     const attacker = pageAt(`${T}/attacker.html`)
