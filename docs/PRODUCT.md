@@ -14,8 +14,8 @@ web by speaking Estonian, inside the sites they already use.
 
 ## Who it is for
 
-People who cannot type or use a mouse comfortably because of a motor disability, an injury, an illness
-or a stroke. Many of them already use an eye tracker to move a pointer by looking.
+People who cannot type or use a mouse comfortably because of a motor disability, an injury or an
+illness. Many of them already use an eye tracker to move a pointer by looking.
 
 The product changed direction after the team talked to an eye-tracker user with a motor disability
 on the first day of the hackathon. He said three things, and they are the brief:

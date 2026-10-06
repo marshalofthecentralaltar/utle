@@ -13,8 +13,9 @@ and send messages and move around the web by speaking Estonian. Read, in this or
 pulls and tests with a real voice and reports what misses. Nothing on the laptop is yours to merge.
 
 Standing rules, in addition to `CLAUDE.md`:
-- Never name the user's medical condition anywhere: write "a motor disability". Never mention the
-  name "Prince-Nothing". No `.env` files; keys live only in the environment of the terminal that runs
+- Never name the user's medical condition anywhere: write "a motor disability". A private project
+  name the owner mentioned to the first session must never appear either; it is not written here
+  on purpose, so a fresh session cannot repeat it. No `.env` files; keys live only in the environment of the terminal that runs
   `npm run dev`.
 - The owner cannot run commands for you, cannot read code, and will test tomorrow morning by voice.
   Everything you ship must be green on `npm run check` and on
