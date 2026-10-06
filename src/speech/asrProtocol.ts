@@ -67,6 +67,7 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
       return { type: 'unavailable', reason: 'load_failed' }
     }
     case 'partial':
+      return typeof record.text === 'string' ? { type: 'partial', text: record.text } : null
     case 'final': {
       if (typeof record.text !== 'string') return null
       const speaker = record.speaker === 'owner' || record.speaker === 'other' || record.speaker === 'unknown' ? record.speaker : undefined

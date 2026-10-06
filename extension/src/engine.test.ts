@@ -516,8 +516,10 @@ describe('understanding by meaning (M7)', () => {
   it('does not ask about a long utterance into an armed box: that is a sentence', async () => {
     const t = setup({ logic: asking, box: armed })
     t.engine.start()
-    expect(SENTENCE.split(' ').length).toBeGreaterThanOrEqual(LONG_UTTERANCE_WORDS)
-    t.say(SENTENCE)
+    // Round 4: the limit is high (a chain of commands can be long), so a very long sentence is built here.
+    const long = Array.from({ length: LONG_UTTERANCE_WORDS + 1 }, (_, i) => (i % 2 ? 'homme' : 'tulen')).join(' ')
+    expect(long.split(' ').length).toBeGreaterThanOrEqual(LONG_UTTERANCE_WORDS)
+    t.say(long)
     await t.engine.idle()
     expect(t.asked).toHaveLength(0)
     expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'setText'])
