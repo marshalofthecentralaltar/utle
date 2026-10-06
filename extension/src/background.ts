@@ -345,6 +345,9 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     case 'pressSend':
     case 'readPage':
     case 'focusItem':
+    case 'hover':
+    case 'contextMenu':
+    case 'scrollTo':
     case 'media':
     case 'pressKey':
     case 'caret':

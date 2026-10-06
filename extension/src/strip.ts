@@ -36,9 +36,11 @@ export interface StripSettings {
   listenMode: ListenMode
   gazeTarget: GazeTarget
   speechEngine: SpeechEngine
+  /** Round 4: only the owner's voice is obeyed (needs an enrolled voice on the dev server). */
+  onlyOwner: boolean
 }
-export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local' }
-export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine'] as const
+export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local', onlyOwner: false }
+export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine', 'onlyOwner'] as const
 
 /** Reads the strip's settings out of a chrome.storage.local answer, defaults for anything missing. */
 export function settingsFrom(stored: Record<string, unknown>): StripSettings {
@@ -52,6 +54,7 @@ export function settingsFrom(stored: Record<string, unknown>): StripSettings {
     listenMode: stored.listenMode === 'gaze' ? 'gaze' : 'toggle',
     gazeTarget: stored.gazeTarget === 'bar' ? 'bar' : 'mic',
     speechEngine: stored.speechEngine === 'soniox' ? 'soniox' : 'local',
+    onlyOwner: stored.onlyOwner === true,
   }
 }
 

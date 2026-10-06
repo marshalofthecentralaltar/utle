@@ -428,6 +428,12 @@ const ET: Strings = {
         return 'Vajutan.'
       case 'focusItem':
         return 'Valin kasti.'
+      case 'hover':
+        return 'Näitan valikuid.'
+      case 'contextMenu':
+        return 'Avan menüü.'
+      case 'scrollTo':
+        return 'Kerin selle juurde.'
       case 'siteSearch':
         return `Otsin siit: ${command.query}`
       case 'media':
@@ -492,7 +498,7 @@ const ET: Strings = {
         if (command.kind === 'switchTab') return 'Sellist vahelehte ei ole.'
         if (command.kind === 'openConversation') return `Vestlust „${command.name}“ ei leitud.`
         if (command.kind === 'insertText') return 'Sõnumikasti ei leitud.'
-        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'Seda ei ole enam lehel. Ütle uuesti.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem' || command.kind === 'hover' || command.kind === 'contextMenu' || command.kind === 'scrollTo') return 'Seda ei ole enam lehel. Ütle uuesti.'
         if (command.kind === 'siteSearch') return 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.'
         if (command.kind === 'media') return 'Siin ei ole videot.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'Ühtegi kasti ei ole valitud. Ütle „näita numbreid“ ja number.'
@@ -781,6 +787,12 @@ const EN: Strings = {
         return 'Clicking.'
       case 'focusItem':
         return 'Picking the field.'
+      case 'hover':
+        return 'Showing its options.'
+      case 'contextMenu':
+        return 'Opening the menu.'
+      case 'scrollTo':
+        return 'Scrolling to it.'
       case 'siteSearch':
         return `Searching here: ${command.query}`
       case 'media':
@@ -845,7 +857,7 @@ const EN: Strings = {
         if (command.kind === 'switchTab') return 'There is no such tab.'
         if (command.kind === 'openConversation') return `No conversation with ${command.name} was found.`
         if (command.kind === 'insertText') return 'No message box was found.'
-        if (command.kind === 'clickItem' || command.kind === 'focusItem') return 'That is no longer on the page. Say it again.'
+        if (command.kind === 'clickItem' || command.kind === 'focusItem' || command.kind === 'hover' || command.kind === 'contextMenu' || command.kind === 'scrollTo') return 'That is no longer on the page. Say it again.'
         if (command.kind === 'siteSearch') return 'This page has no search. Say "search google for".'
         if (command.kind === 'media') return 'There is no video here.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'No field is picked. Say "show numbers" and a number.'

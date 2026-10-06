@@ -23,6 +23,22 @@ export interface IntentRequest {
    * or absent on the first ask.
    */
   steps?: IntentStep[]
+  /**
+   * Round 4: a chain of goals from one or more utterances ("mine whatsappi, ava Karini viimane sõnum,
+   * kustuta see"). The engine works through it goal by goal; `goal` is the one being worked on now.
+   */
+  chain?: IntentChain
+}
+
+export interface IntentChain {
+  /** Everything he said, as heard, joined. */
+  original: string
+  /** Goals already finished, in his words. */
+  completed: string[]
+  /** The goal being worked on now. */
+  goal: string
+  /** Goals still to do after this one. */
+  remaining: string[]
 }
 
 /** One step the engine took for the utterance: what the model answered, and how it went on the page. */
@@ -73,6 +89,12 @@ export interface IntentAnswer {
    * Absent means true.
    */
   done?: boolean
+  /**
+   * Round 4: when the utterance holds several goals, the goals AFTER the one this action serves, in
+   * his words, in order. The engine keeps them and asks again for each once the current one is done.
+   * Absent or empty: this utterance is one goal.
+   */
+  plan?: string[]
 }
 
 const Id = z.number().int().nonnegative()
@@ -100,6 +122,9 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('openConversation'), name: Short.min(1) }),
   z.object({ kind: z.literal('clickItem'), id: Id }),
   z.object({ kind: z.literal('focusItem'), id: Id }),
+  z.object({ kind: z.literal('hover'), id: Id }),
+  z.object({ kind: z.literal('contextMenu'), id: Id }),
+  z.object({ kind: z.literal('scrollTo'), id: Id }),
   z.object({ kind: z.literal('siteSearch'), query: Text }),
   z.object({ kind: z.literal('media'), action: z.enum(MEDIA_ACTIONS) }),
   z.object({ kind: z.literal('pressKey'), key: z.enum(PRESSABLE_KEYS), times: z.number().int().min(1).max(50).optional() }),
@@ -132,7 +157,11 @@ export const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kin
   z.object({ kind: z.literal('unclear'), say: Short }),
 ])
 
-export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: PageIntentSchema, say: Short, done: z.boolean().optional() })
+export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: PageIntentSchema, say: Short, done: z.boolean().optional(), plan: z.array(z.string().max(200)).max(12).optional() })
+
+/** Round 4: a chain of goals may take this many steps in all, and this long. */
+export const MAX_CHAIN_STEPS = 16
+export const MAX_CHAIN_MS = 90_000
 
 /** The engine stops a multi-step utterance after this many steps, whatever the model says. */
 export const MAX_INTENT_STEPS = 4
@@ -163,6 +192,9 @@ export const IntentRequestSchema: z.ZodType<IntentRequest> = z.object({
   tabs: z.array(z.object({ index: z.number().int().min(1), title: z.string().max(300), active: z.boolean() })).max(60),
   recent: z.array(z.string().max(200)).max(3),
   steps: z.array(IntentStepSchema).max(MAX_INTENT_STEPS).optional(),
+  chain: z
+    .object({ original: z.string().max(1000), completed: z.array(z.string().max(200)).max(12), goal: z.string().max(200), remaining: z.array(z.string().max(200)).max(12) })
+    .optional(),
 })
 
 function webAddress(url: string): boolean {
@@ -185,6 +217,9 @@ export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'pag
   switch (c.kind) {
     case 'clickItem':
     case 'focusItem':
+    case 'hover':
+    case 'contextMenu':
+    case 'scrollTo':
       return ids.has(c.id) ? intent : null
     case 'goTo':
       return webAddress(c.url) ? intent : null

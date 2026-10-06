@@ -74,7 +74,8 @@ const NO_BOX: BoxState = { present: false, text: '', armed: false }
 export const SEND_PROBE_BOX: BoxState = { present: true, text: 'x', armed: true }
 
 /** The model is not asked about an utterance this long when the box is armed: a sentence is dictation. */
-export const LONG_UTTERANCE_WORDS = 14
+/** Round 4: a chain of commands can be long, so almost every dictation is verified (type first, verify after). */
+export const LONG_UTTERANCE_WORDS = 60
 /** The model must answer within this time, or the rules' step stands. */
 /** Longer than the server's own 7 s, so a slow model answers 504 and the engine sees it rather than giving up first. */
 export const ASK_TIMEOUT_MS = 9000

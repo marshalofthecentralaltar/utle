@@ -29,12 +29,22 @@ export type AsrServerMessage =
   | { type: 'ready' }
   | { type: 'unavailable'; reason: AsrUnavailableReason }
   | { type: 'partial'; text: string }
-  | { type: 'final'; text: string }
+  | { type: 'final'; text: string; speaker?: Speaker }
+  /** Round 4: the voice profile was learnt (or not). */
+  | { type: 'enrolled'; ok: boolean; seconds: number }
   /** The server is this many ms behind the audio it has received (it drops audio to catch up). 0 when caught up. */
   | { type: 'lag'; ms: number }
 
+/** Who spoke an utterance, when the server has a voice profile: the owner, someone else, or it cannot tell. */
+export type Speaker = 'owner' | 'other' | 'unknown'
+
 /** Text frames the browser sends. flush: end the utterance now and send its final (push-to-talk released). */
-export type AsrClientMessage = { type: 'flush' }
+export type AsrClientMessage =
+  | { type: 'flush' }
+  /** Round 4: learn the owner's voice from the next `seconds` of speech (the server stores an embedding, never audio). */
+  | { type: 'enrol'; seconds: number }
+  /** Round 4: only the owner's utterances are delivered; others are dropped (finals still carry speaker). */
+  | { type: 'onlyOwner'; on: boolean }
 
 /** Reads one text frame from the server; null for anything that is not a known message. */
 export function parseAsrMessage(raw: string): AsrServerMessage | null {
@@ -57,8 +67,13 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
       return { type: 'unavailable', reason: 'load_failed' }
     }
     case 'partial':
-    case 'final':
-      return typeof record.text === 'string' ? { type: record.type, text: record.text } : null
+    case 'final': {
+      if (typeof record.text !== 'string') return null
+      const speaker = record.speaker === 'owner' || record.speaker === 'other' || record.speaker === 'unknown' ? record.speaker : undefined
+      return speaker === undefined ? { type: 'final', text: record.text } : { type: 'final', text: record.text, speaker }
+    }
+    case 'enrolled':
+      return typeof record.ok === 'boolean' ? { type: 'enrolled', ok: record.ok, seconds: typeof record.seconds === 'number' ? record.seconds : 0 } : null
     default:
       return null
   }
