@@ -90,6 +90,23 @@ Known, not fixed (docs/REVIEW-R3.md has the details): a queued utterance that ha
 cancelled by a barge-in and typed unverified; a one-word "kustuta see" with nothing selected deletes
 one letter; after 4 s on Google Docs the next sentence is glued to the last; Soniox has no lag path.
 
+## 1c. Round 4, VOICE lane (2026-10-06): the server knows his voice
+
+Ralf's words after the demo: the microphone picks up background conversations. Built on
+`r4-voice`, green on typecheck, lint, 2526 tests and the extension build; nothing tried with a real
+voice (this machine has no model files):
+
+- `npm run model` now also fetches a 29 MB speaker model (WeSpeaker CAM++, VoxCeleb) into
+  `models/speaker/`. The settings page has **Minu hääl**: **Õpeta mu hääl** (speak 8 s; the server
+  stores an embedding in `models/speaker/owner.json`, never audio) and **Kuula ainult mind** /
+  **Kuula kõiki** (`onlyOwner`, takes effect the next time listening starts).
+- Every final then carries `speaker: owner | other | unknown` (cosine similarity 0.55 / 0.35 in
+  `server/speaker.ts`); the client drops `other` while the mode is on and the bar says "Keegi teine
+  rääkis, jätsin vahele." `unknown` is obeyed, so a bad profile never locks him out.
+- Without the model the mode only drops speech fainter than his was at enrolment (40 % of its RMS).
+- Known: the other voice's partials are typed as a preview before its final is judged; the preview
+  goes when he next speaks. Thresholds unmeasured on an Estonian voice. See ARCHITECTURE 24.2.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
@@ -123,6 +140,11 @@ on which to keep, per file.**
    `UTLE_MODEL=claude-sonnet-5-5` (or `claude-haiku-4-5`) and run the eval again.
 4. Try the demo path on the real sites and note what misses. Selectors for YouTube and Google
    (`extension/src/sites.ts`, `SEARCH_FIELDS`) and the player shortcuts are UNVERIFIED.
+5. Round 4: `npm run model` again (the speaker model), restart `npm run dev` and look for
+   `[asr] speaker model loaded`; on the settings page press **Õpeta mu hääl**, speak 8 s, then
+   **Kuula ainult mind**; turn listening off and on. Have someone else speak: the bar should say
+   "Keegi teine rääkis, jätsin vahele." If your own words are skipped, lower `OWNER_THRESHOLD` in
+   `server/speaker.ts`; if a stranger gets through, raise `OTHER_THRESHOLD`.
 
 ## 3. Not verified by anyone
 

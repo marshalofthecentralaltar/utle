@@ -5,12 +5,12 @@ import type { Duplex } from 'node:stream'
 import { WebSocketServer } from 'ws'
 import type { RawData, WebSocket } from 'ws'
 import { ASR_PATH } from '../src/speech/asrProtocol.ts'
-import type { AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
+import type { AsrClientMessage, AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
 import { loadModel } from './asrModel.ts'
 import type { ModelLoad } from './asrModel.ts'
 import { createAsrSession, samplesFromFrame } from './asrSession.ts'
-import { hostInThread, startWorkerHost } from './asrWorker.ts'
-import type { DecoderHost, HostStart } from './asrWorker.ts'
+import { hostInThread, openSpeakerGate, startWorkerHost } from './asrWorker.ts'
+import type { DecoderHost, HostStart, SpeakerStatus } from './asrWorker.ts'
 import { attachSonioxSession } from './soniox.ts'
 
 export { MODEL_DIR, MODEL_FILES, loadModel } from './asrModel.ts'
@@ -30,15 +30,35 @@ const send = (socket: WebSocket, message: AsrServerMessage): void => {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
 }
 
+/** Enrolment may ask for this many seconds of speech at most (the owner's button asks for 8). */
+export const MAX_ENROL_SECONDS = 30
+
 /** One text frame from the browser, or null for anything else. */
-function parseClientFrame(data: RawData): 'flush' | null {
+export function parseClientFrame(data: RawData | string): AsrClientMessage | null {
   let value: unknown
   try {
     value = JSON.parse(data.toString())
   } catch {
     return null
   }
-  return typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'flush' ? 'flush' : null
+  if (typeof value !== 'object' || value === null) return null
+  const record = value as Record<string, unknown>
+  switch (record.type) {
+    case 'flush':
+      return { type: 'flush' }
+    case 'enrol':
+      return typeof record.seconds === 'number' && record.seconds >= 1 && record.seconds <= MAX_ENROL_SECONDS ? { type: 'enrol', seconds: Math.round(record.seconds) } : null
+    case 'onlyOwner':
+      return typeof record.on === 'boolean' ? { type: 'onlyOwner', on: record.on } : null
+    default:
+      return null
+  }
+}
+
+/** The log line about the speaker gate (round 4): what it has, never whose voice. */
+export function speakerLine(status: SpeakerStatus): string {
+  const model = status.model ? 'speaker model loaded' : 'no speaker model (npm run model fetches it; loudness only until then)'
+  return `[asr] ${model}; owner's voice ${status.profile ? 'learnt' : 'not learnt yet'}`
 }
 
 export interface AttachOptions {
@@ -46,6 +66,8 @@ export interface AttachOptions {
   load?: (root: string) => ModelLoad
   /** Starts the worker. Tests pass a fake or one that always fails. */
   startWorker?: (root: string, entry: string) => Promise<HostStart>
+  /** The speaker gate for in-thread decoding (round 4). Default: over models/speaker/. Tests pass null or a fake. */
+  speaker?: ReturnType<typeof openSpeakerGate> | null
 }
 
 /**
@@ -65,6 +87,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     const worker = await startWorker(root, join(root, WORKER_ENTRY))
     if (worker.ok) {
       console.info(`[asr] model loaded on a worker thread in ${worker.host.ms} ms`)
+      console.info(speakerLine(worker.host.speaker))
       worker.host.onExit((code) => {
         console.warn(`[asr] decode worker exited with ${code}; the next connection loads the model again`)
         host = null
@@ -82,7 +105,10 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
       return loaded
     }
     console.info(`[asr] model loaded on the server thread in ${loaded.ms} ms`)
-    return { ok: true, host: hostInThread(loaded.recognizer, loaded.ms) }
+    const speaker = options.speaker === undefined ? openSpeakerGate(root) : options.speaker
+    const inThread = hostInThread(loaded.recognizer, loaded.ms, speaker)
+    console.info(speakerLine(inThread.speaker))
+    return { ok: true, host: inThread }
   }
 
   const ensureHost = (): Promise<HostStart> => {
@@ -123,7 +149,10 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
         send(ws, { type: 'ready' })
         ws.on('message', (data: RawData, isBinary: boolean) => {
           if (!isBinary) {
-            if (parseClientFrame(data) === 'flush') session.flush()
+            const frame = parseClientFrame(data)
+            if (frame?.type === 'flush') session.flush()
+            else if (frame?.type === 'enrol') session.enrol(frame.seconds)
+            else if (frame?.type === 'onlyOwner') session.onlyOwner(frame.on)
             return
           }
           if (!Buffer.isBuffer(data)) return
@@ -131,10 +160,10 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
           if (samples) session.audio(samples)
         })
         ws.on('close', (code: number) => {
-          const { receivedMs, droppedMs } = session.stats()
+          const { receivedMs, droppedMs, foreignFinals } = session.stats()
           session.close()
           open -= 1
-          console.info(`[asr] connection closed, code ${code}: ${Math.round(receivedMs / 1000)} s received, ${Math.round(droppedMs / 1000)} s dropped (${open} open)`)
+          console.info(`[asr] connection closed, code ${code}: ${Math.round(receivedMs / 1000)} s received, ${Math.round(droppedMs / 1000)} s dropped, ${foreignFinals} finals of other voices (${open} open)`)
         })
       })
     })

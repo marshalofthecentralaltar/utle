@@ -472,10 +472,15 @@ async function speechEngine(): Promise<'local' | 'soniox'> {
   return value === 'soniox' ? 'soniox' : 'local'
 }
 
+/** Round 4: only the owner's voice is obeyed (the options page's "Kuula ainult mind"). */
+async function onlyOwner(): Promise<boolean> {
+  return (await stored('onlyOwner')) === true
+}
+
 async function ensureOffscreen(): Promise<void> {
   const base = chrome.runtime.getURL('offscreen.html')
-  // The engine is in the address, so a changed setting makes a new document on the next start.
-  const wanted = `${base}?asr=${encodeURIComponent(await asrUrl())}&engine=${await speechEngine()}`
+  // The engine and the only-owner mode are in the address, so a changed setting makes a new document on the next start.
+  const wanted = `${base}?asr=${encodeURIComponent(await asrUrl())}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}`
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
   const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
   if (existing && existing.documentUrl === wanted) return
@@ -550,6 +555,10 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       return false
     case 'utle-open-options':
       void chrome.runtime.openOptionsPage()
+      return false
+    case 'utle-enrol':
+      // Round 4: the offscreen document starts listening if it must and asks the server to learn the voice.
+      void sendOffscreen({ target: 'offscreen', type: 'enrol', seconds: message.seconds })
       return false
     case 'utle-mic-blocked':
       void chrome.storage.session.set({ wantListening: true }).then(openPermissionPage)

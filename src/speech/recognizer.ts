@@ -8,6 +8,8 @@ export interface Recognizer {
   readonly supported: boolean
   /** Ends the utterance being spoken now and delivers its words at once (push-to-talk released). Optional. */
   flush?(): void
+  /** Round 4: learns the owner's voice from the next `seconds` of speech; answered through onEnrolled. Optional. */
+  enrol?(seconds: number): void
 }
 
 export interface RecognizerHandlers {
@@ -27,6 +29,10 @@ export interface RecognizerHandlers {
   onNotice?(message: string): void
   /** The recogniser is this many ms behind the speech (it drops audio to catch up); 0 once caught up. */
   onLag?(ms: number): void
+  /** Round 4: an utterance was someone else's voice and was dropped (only-owner mode). */
+  onForeign?(): void
+  /** Round 4: the server has learnt the owner's voice, or could not. */
+  onEnrolled?(ok: boolean, seconds: number): void
 }
 
 export const LANGUAGES = [

@@ -12,7 +12,9 @@ commands, editing, Soniox).
 From the repository root:
 
 1. `npm ci` (once).
-2. `npm run model` (once): downloads the Estonian speech model into `models/`.
+2. `npm run model` (once): downloads the Estonian speech model into `models/`, and the small
+   speaker model (29 MB) for "Kuula ainult mind" into `models/speaker/` (optional; a failure there
+   is a warning).
 3. `npm run ext`: bundles `extension/src/` into `extension/dist/`. Run it again after any change.
 
 ## Load
@@ -36,6 +38,26 @@ page choose **Kõnemudel: Soniox (pilves)**; the choice takes effect the next ti
 on. `UTLE_ASR=soniox` in the same environment sends every connection to Soniox whatever the setting.
 Without the key the bar says the speech model is not reachable and the server logs
 `[soniox] SONIOX_API_KEY is not set`. Nobody has run this with a real key (see "Unverified").
+
+## Only your own voice (round 4, optional)
+
+Background conversations are typed as if you said them. Two things stop that: push-to-talk by
+looking (below), and the server knowing your voice. On the settings page, group **Minu hääl**:
+
+1. **Õpeta mu hääl**: listening starts if it was off and the bar says "Räägi 8 sekundit tavalisel
+   häälel…"; speak normally for eight seconds (pauses are skipped). The bar then says "Hääl on
+   õpitud." or "Hääle õppimine ei õnnestunud." (too little speech within about 30 s). The server
+   keeps `models/speaker/owner.json`: a voice embedding and a loudness, never audio. Press the
+   button again to replace it.
+2. **Kuula ainult mind**: from the next time listening starts, an utterance the server judges to be
+   another voice is dropped and the bar says "Keegi teine rääkis, jätsin vahele." for three seconds.
+   An utterance it cannot place is obeyed. Words the other voice typed as a preview go away when
+   you next speak. **Kuula kõiki** turns it off.
+
+Without the speaker model (`npm run model` not run, or the download failed) the server logs
+`[asr] no speaker model`, and "Kuula ainult mind" only skips speech clearly fainter than yours was
+at enrolment: distance from the microphone, not the voice. Nobody has tried this with a real voice;
+the thresholds are in `server/speaker.ts`.
 
 ## After pulling a change
 

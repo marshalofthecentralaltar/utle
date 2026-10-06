@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
-import { KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
+import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
+import type { Judgement, SpeakerGate } from './speaker.ts'
 
 /** A recogniser that "hears" one word per frame and ends the utterance on a silent frame. */
 class FakeStream implements OnlineStreamLike {
@@ -94,7 +95,7 @@ describe('local recogniser session', () => {
       { type: 'partial', text: 'ava' },
     ])
     expect(recognizer.resets).toBe(1)
-    expect(session.stats()).toEqual({ receivedMs: 500, decodedMs: 500, droppedMs: 0 })
+    expect(session.stats()).toEqual({ receivedMs: 500, decodedMs: 500, droppedMs: 0, foreignFinals: 0 })
   })
 
   it('decodes one frame per turn of the event loop, never on the receiving call', () => {
@@ -293,5 +294,202 @@ describe('audio frames', () => {
     expect(rms(new Float32Array([0, 0, 0]))).toBe(0)
     expect(rms(new Float32Array([0.5, -0.5]))).toBeCloseTo(0.5)
     expect(rms(new Float32Array(0))).toBe(0)
+  })
+})
+
+/** A speaker gate that answers what the test sets and records the frames it was given. */
+class FakeGate implements SpeakerGate {
+  answer: Judgement | null = { speaker: 'owner', score: 0.9 }
+  judged: Float32Array[][] = []
+  enrolled: Float32Array[][] = []
+  enrolOk = true
+  hasProfile(): boolean {
+    return this.answer !== null
+  }
+  hasModel(): boolean {
+    return true
+  }
+  enrol(frames: Float32Array[]): boolean {
+    this.enrolled.push(frames)
+    return this.enrolOk
+  }
+  judge(frames: Float32Array[]): Judgement | null {
+    this.judged.push(frames)
+    return this.answer
+  }
+}
+
+/** Feeds frames one by one, each decoded before the next arrives (no backlog, no drop). */
+const feed = (session: ReturnType<typeof setup>['session'], loop: Loop, values: number[]): void => {
+  for (const value of values) {
+    session.audio(frame(value))
+    loop.settle()
+  }
+}
+/** The enrolled message follows the decoder's promise, a microtask after the frame that completed it. */
+const microtasks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+const setupWithGate = (): ReturnType<typeof setup> & { gate: FakeGate } => {
+  const recognizer = new FakeRecognizer()
+  const gate = new FakeGate()
+  const sent: AsrServerMessage[] = []
+  const loop = new Loop()
+  const clock = { now: 1000 }
+  const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now })
+  return { recognizer, gate, sent, loop, clock, session }
+}
+
+describe('the speaker on a final (round 4)', () => {
+  it('judges the frames of the utterance that ended, and the final carries the speaker', () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    for (const value of [1, 2, 3, 0, 1, 0]) session.audio(frame(value))
+    loop.settle()
+    expect(sent.filter((message) => message.type === 'final')).toEqual([
+      { type: 'final', text: 'ava uus vaheleht', speaker: 'owner' },
+      { type: 'final', text: 'ava', speaker: 'owner' },
+    ])
+    // Each utterance's own frames, the silent endpoint frame included, nothing of the one before.
+    expect(gate.judged.map((frames) => frames.length)).toEqual([4, 2])
+    expect(session.stats().foreignFinals).toBe(0)
+  })
+
+  it('sends a final without a speaker when there is no profile', () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    gate.answer = null
+    for (const value of [1, 0]) session.audio(frame(value))
+    loop.settle()
+    expect(sent.at(-1)).toEqual({ type: 'final', text: 'ava' })
+  })
+
+  it("judges a flush on the frames since the last reset, and sends the other voice's final too", () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    gate.answer = { speaker: 'other', score: 0.1 }
+    session.onlyOwner(true)
+    session.audio(frame(1))
+    session.audio(frame(2))
+    session.flush()
+    session.audio(frame(3))
+    loop.settle()
+    expect(sent.filter((message) => message.type === 'final')).toEqual([{ type: 'final', text: 'ava uus', speaker: 'other' }])
+    expect(gate.judged.map((frames) => frames.length)).toEqual([2])
+    expect(sent.at(-1)).toEqual({ type: 'partial', text: 'vaheleht' })
+    expect(session.stats().foreignFinals).toBe(1)
+  })
+
+  it('counts finals of other voices only while onlyOwner is on', () => {
+    const { gate, loop, session } = setupWithGate()
+    gate.answer = { speaker: 'other', score: 0.1 }
+    for (const value of [1, 0]) session.audio(frame(value))
+    loop.settle()
+    expect(session.stats().foreignFinals).toBe(0)
+  })
+
+  it('keeps at most MAX_KEPT_MS of an utterance for the judgement', () => {
+    const { gate, loop, session } = setupWithGate()
+    const frames = MAX_KEPT_MS / 100 + 50
+    feed(session, loop, Array.from({ length: frames }, () => 1))
+    feed(session, loop, [0])
+    expect(gate.judged).toHaveLength(1)
+    expect(gate.judged[0]).toHaveLength(MAX_KEPT_MS / 100)
+  })
+
+  it('holds the final until an asynchronous judge (the worker) answers, and keeps the order', async () => {
+    const sent: AsrServerMessage[] = []
+    let judges = 0
+    const decoder: Decoder = {
+      accept(samples) {
+        const value = samples[0] ?? 0
+        return Promise.resolve<DecodeResult>(value === 0 ? { text: 'ava', endpoint: true } : { text: 'ava', endpoint: false })
+      },
+      reset() {},
+      close() {},
+      judge() {
+        judges += 1
+        return new Promise((resolve) => setTimeout(() => resolve({ speaker: 'unknown', score: 0 }), 10))
+      },
+    }
+    const session = createAsrSession(decoder, (message) => sent.push(message))
+    session.audio(frame(1))
+    session.audio(frame(0))
+    session.audio(frame(1))
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(judges).toBe(1)
+    expect(sent).toEqual([
+      { type: 'partial', text: 'ava' },
+      { type: 'final', text: 'ava', speaker: 'unknown' },
+      { type: 'partial', text: 'ava' },
+    ])
+  })
+
+  it('closes the connection when the judge fails', () => {
+    const sent: AsrServerMessage[] = []
+    const errors: unknown[] = []
+    const loop = new Loop()
+    const decoder: Decoder = {
+      accept: () => ({ text: 'ava', endpoint: true }),
+      reset() {},
+      close() {},
+      judge() {
+        throw new Error('no embedding')
+      },
+    }
+    const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule, onError: (error) => errors.push(error) })
+    session.audio(frame(1))
+    loop.settle()
+    expect(errors).toHaveLength(1)
+    expect(sent.filter((message) => message.type === 'final')).toEqual([])
+  })
+})
+
+describe('enrolment (round 4)', () => {
+  it('learns from the next seconds of speech, skipping silence, and answers enrolled', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrol(2)
+    feed(session, loop, Array.from({ length: 10 }, () => 0))
+    feed(session, loop, Array.from({ length: 19 }, () => 1))
+    await microtasks()
+    expect(sent.filter((message) => message.type === 'enrolled')).toEqual([])
+    feed(session, loop, [1])
+    await microtasks()
+    expect(sent.filter((message) => message.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: true, seconds: 2 }])
+    expect(gate.enrolled).toHaveLength(1)
+    expect(gate.enrolled[0]).toHaveLength(20)
+    expect(gate.enrolled[0]?.every((f) => rms(f) > 0)).toBe(true)
+  })
+
+  it('gives up after ENROL_PATIENCE times the asked seconds with too little speech', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrol(1)
+    feed(session, loop, Array.from({ length: ENROL_PATIENCE * 10 - 1 }, (_, i) => (i % 10 === 0 ? 1 : 0)))
+    await microtasks()
+    expect(sent.filter((message) => message.type === 'enrolled')).toEqual([])
+    feed(session, loop, [0])
+    await microtasks()
+    expect(sent.filter((message) => message.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: false, seconds: 1 }])
+    expect(gate.enrolled).toEqual([])
+  })
+
+  it('answers ok: false when the gate cannot learn, and without waiting when there is no gate', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    gate.enrolOk = false
+    session.enrol(1)
+    feed(session, loop, Array.from({ length: 10 }, () => 1))
+    await microtasks()
+    expect(sent.filter((message) => message.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: false, seconds: 1 }])
+
+    const plain = setup()
+    plain.session.enrol(8)
+    await microtasks()
+    expect(plain.sent).toEqual([{ type: 'enrolled', ok: false, seconds: 8 }])
+  })
+
+  it('replaces an enrolment in progress with a new one, and ends one with the stream', async () => {
+    const recognizer = new FakeRecognizer()
+    const decoder = decoderInThread(recognizer, new FakeGate())
+    const first = decoder.enrol?.(8)
+    const second = decoder.enrol?.(8)
+    expect(await first).toBe(false)
+    decoder.close()
+    expect(await second).toBe(false)
   })
 })
