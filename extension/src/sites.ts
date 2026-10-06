@@ -25,6 +25,15 @@ export interface Site {
   composer: string
   /** Clicked when Enter did not send (the box still holds the text after a moment). */
   sendButton: string
+  // Round 4: the messages of the open conversation, listed by readPage as "[sõnum] …" text items.
+  /** The containers of the messages in the open conversation, one per message (outermost wins). */
+  messageRows?: string
+  /** Inside a message: the element that holds its text (the first non-empty match; else the message's own text). */
+  messageText?: string
+  /** Inside a message: the control that opens its menu; on WhatsApp it appears on hover only. */
+  messageMenu?: string
+  /** A message container that is his own message: listed as "[sõnum] mina: …" so the other side's last message is findable. */
+  messageMine?: string
 }
 
 export const SITES: Record<SiteName, Site> = {
@@ -59,6 +68,30 @@ export const SITES: Record<SiteName, Site> = {
       '#main footer [data-icon="send"]', // UNVERIFIED: page.ts clicks the closest button around it
       '#main footer [data-icon="wa-wds-send"]', // UNVERIFIED
     ].join(', '),
+    // The messages of the open chat. All UNVERIFIED 2026-10-06: guessed from WhatsApp Web's DOM of
+    // earlier builds (a row per message, div[data-id] inside it with .message-in or .message-out,
+    // the text in span.selectable-text.copyable-text, the hover arrow span[data-icon="down-context"]
+    // inside a div[role="button"] labelled "Context menu"). If messages are missing or misnamed at
+    // the demo, this is the one place to fix.
+    messageRows: [
+      '#main [role="row"] [data-id]', // UNVERIFIED 2026-10-06
+      '#main [data-id].message-in, #main [data-id].message-out', // UNVERIFIED 2026-10-06
+      '#main .message-in, #main .message-out', // UNVERIFIED 2026-10-06: older builds
+    ].join(', '),
+    messageText: [
+      '.selectable-text.copyable-text', // UNVERIFIED 2026-10-06
+      '.copyable-text .selectable-text', // UNVERIFIED 2026-10-06
+      '.selectable-text', // UNVERIFIED 2026-10-06 (not the div.copyable-text around it: that holds the time too)
+    ].join(', '),
+    messageMenu: [
+      '[role="button"][aria-label="Context menu"]', // UNVERIFIED 2026-10-06
+      '[role="button"][aria-label="Context Menu"]', // UNVERIFIED 2026-10-06
+      '[role="button"][aria-label="Kontekstimenüü"]', // UNVERIFIED 2026-10-06 (Estonian interface)
+      '[data-icon="down-context"]', // UNVERIFIED 2026-10-06: page.ts names the button around it
+    ].join(', '),
+    messageMine: [
+      '.message-out', // UNVERIFIED 2026-10-06
+    ].join(', '),
   },
 
   messenger: {
@@ -84,6 +117,20 @@ export const SITES: Record<SiteName, Site> = {
       'div[role="button"][aria-label="Send"]', // UNVERIFIED
       'div[role="button"][aria-label="Saada"]', // UNVERIFIED
       'div[role="button"][aria-label="Vajuta saatmiseks sisestusklahvi"]', // UNVERIFIED
+    ].join(', '),
+    // The messages of the open conversation. All UNVERIFIED 2026-10-06: Messenger lays the thread
+    // out as a grid of rows under the main landmark; the text sits in a div[dir="auto"]; the
+    // hover-only menu is a "More" button beside the message.
+    messageRows: [
+      '[role="main"] [role="grid"] [role="row"]', // UNVERIFIED 2026-10-06
+      '[role="main"] [role="row"]', // UNVERIFIED 2026-10-06
+    ].join(', '),
+    messageText: [
+      '[dir="auto"]', // UNVERIFIED 2026-10-06
+    ].join(', '),
+    messageMenu: [
+      '[role="button"][aria-label="More"]', // UNVERIFIED 2026-10-06
+      '[role="button"][aria-label="Rohkem"]', // UNVERIFIED 2026-10-06
     ].join(', '),
   },
 }

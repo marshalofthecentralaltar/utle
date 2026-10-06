@@ -19,6 +19,29 @@
       #main footer { display: flex; gap: 8px; padding: 10px; background: #f0f2f5; }
       #main footer [role="textbox"] { flex: 1; background: #fff; padding: 8px; min-height: 22px; border-radius: 6px; }
       #main footer [role="textbox"] p { margin: 0; }
+      /* The open chat's messages, laid out as WhatsApp Web does (round 4, UNVERIFIED against the real
+         site): a role=row per message, div[data-id] inside with .message-in or .message-out, the text in
+         span.selectable-text.copyable-text, and an arrow (role=button "Context menu") that only shows
+         while the pointer rests on the message. */
+      #main .msgs { list-style: none; margin: 0; }
+      #main .msgs [role="row"] { margin: 6px 0; }
+      [data-id] { display: flex; position: relative; }
+      [data-id].message-out { justify-content: flex-end; }
+      [data-id] .bubble { position: relative; max-width: 65%; padding: 6px 28px 6px 10px; border-radius: 8px; background: #fff; box-shadow: 0 1px 1px rgba(0,0,0,.15); }
+      [data-id].message-out .bubble { background: #d9fdd3; }
+      [data-id].selected .bubble { outline: 2px solid #0a7; }
+      [data-id] .time { font-size: 11px; color: #667; margin-left: 8px; }
+      [data-id] .arrow { position: absolute; top: 2px; right: 4px; width: 20px; height: 20px; line-height: 18px; text-align: center; border-radius: 4px; cursor: pointer; display: none; }
+      [data-id]:hover .arrow, [data-id].hover .arrow { display: block; }
+      .divider { text-align: center; color: #667; font-size: 12px; }
+      .divider .gap { height: 0; }
+      [role="menu"] { position: absolute; z-index: 5; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.3); border-radius: 6px; padding: 6px 0; min-width: 160px; }
+      [role="menuitem"] { padding: 8px 16px; cursor: pointer; }
+      #backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 20; }
+      [role="dialog"] { position: fixed; top: 30%; left: 50%; transform: translateX(-50%); width: 400px; background: #fff; border-radius: 8px; padding: 20px; z-index: 21; }
+      [role="dialog"] h2 { margin: 0 0 8px; font-size: 17px; }
+      [role="dialog"] .buttons { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-top: 16px; }
+      [role="dialog"] [role="button"] { padding: 8px 16px; border-radius: 20px; border: 1px solid #0a7; cursor: pointer; }
     </style>
   </head>
   <body>
@@ -32,7 +55,19 @@
     <script type="module">
       import { createEditor, $getRoot, KEY_ENTER_COMMAND, COMMAND_PRIORITY_HIGH, registerPlainText } from '../vendor/lexical.js'
       // Kalle Kuusk is not in the visible list: only a search finds him.
-      const people = [['Mari Maasikas', 'Homme sobib.'], ['Jaan Tamm', 'Jah.'], ['Peeter Kask', 'Aitäh!'], ['Kalle Kuusk', 'Tere']]
+      // Karin Mägi is not in the visible list either (round 4: the message chain opens her chat by search).
+      const people = [['Mari Maasikas', 'Homme sobib.'], ['Jaan Tamm', 'Jah.'], ['Peeter Kask', 'Aitäh!'], ['Kalle Kuusk', 'Tere'], ['Karin Mägi', 'Võta sülearvuti kaasa, palun.']]
+      // Every chat shows the same six messages: theirs (in) and mine (out). The first two are from
+      // yesterday, above a gap the size of a screen of pictures, so only the last ones are in view.
+      const thread = [
+        ['in', 'Tere! Kas sa jõuad homme?', '18:02'],
+        ['out', 'Jõuan küll, umbes kell kolm.', '18:05'],
+        ['in', 'Väga hea, siis kohtume Mektorys.', '09:10'],
+        ['out', 'Sobib. Kas võtan midagi kaasa?', '09:12'],
+        ['in', 'Võta sülearvuti kaasa, palun.', '09:14'],
+        ['out', 'Selge, teen nii.', '09:15'],
+      ]
+      window.events = { menus: 0, contextMenus: 0, replies: 0, deleted: [] }
       const sent = new Map(people.map(([name]) => [name, []]))
       window.sentTo = (name) => [...(sent.get(name) ?? [])]
       const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
@@ -58,13 +93,117 @@
         timer = setTimeout(() => rows(e.target.value.trim()), 300)
       })
 
+      function closeMenus() {
+        for (const m of document.querySelectorAll('[role="menu"]')) m.remove()
+      }
+      function closeDialog() {
+        document.getElementById('backdrop')?.remove()
+        document.querySelector('[role="dialog"]')?.remove()
+      }
+      // The message menu, as the arrow and a right click open it.
+      function openMenu(row, x, y) {
+        closeMenus()
+        window.events.menus++
+        const menu = document.createElement('div')
+        menu.setAttribute('role', 'menu')
+        menu.style.left = `${Math.min(x, window.innerWidth - 180)}px`
+        menu.style.top = `${y + window.scrollY}px`
+        for (const label of ['Vasta', 'Edasta', 'Kustuta sõnum']) {
+          const item = document.createElement('div')
+          item.setAttribute('role', 'menuitem')
+          item.textContent = label
+          item.addEventListener('click', () => {
+            closeMenus()
+            if (label === 'Vasta') window.events.replies++
+            if (label === 'Kustuta sõnum') openDeleteDialog(row)
+          })
+          menu.append(item)
+        }
+        document.body.append(menu)
+      }
+      // The confirmation: a dialog whose buttons are div[role=button], as WhatsApp's are.
+      function openDeleteDialog(row) {
+        closeDialog()
+        const backdrop = document.createElement('div')
+        backdrop.id = 'backdrop'
+        const dialog = document.createElement('div')
+        dialog.setAttribute('role', 'dialog')
+        dialog.setAttribute('aria-modal', 'true')
+        dialog.innerHTML = '<h2>Kustuta sõnum?</h2><p>Sa saad selle sõnumi kustutada kõigi jaoks või ainult enda jaoks.</p><div class="buttons"></div>'
+        for (const label of ['Kustuta minu jaoks', 'Kustuta kõigi jaoks', 'Tühista']) {
+          const button = document.createElement('div')
+          button.setAttribute('role', 'button')
+          button.setAttribute('tabindex', '0')
+          button.innerHTML = `<div><span>${label}</span></div>`
+          button.addEventListener('click', () => {
+            closeDialog()
+            if (label === 'Kustuta kõigi jaoks') {
+              window.events.deleted.push(row.querySelector('.selectable-text').textContent)
+              row.remove()
+            }
+          })
+          dialog.querySelector('.buttons').append(button)
+        }
+        document.body.append(backdrop, dialog)
+      }
+      function renderThread(list, name) {
+        list.innerHTML = ''
+        thread.forEach(([side, text, time], i) => {
+          if (i === 2) {
+            const divider = document.createElement('div')
+            divider.className = 'divider'
+            divider.innerHTML = '<div class="gap"></div><span>Täna</span>'
+            list.append(divider)
+          }
+          const row = document.createElement('div')
+          row.setAttribute('role', 'row')
+          row.innerHTML = `<div data-id="${side === 'in' ? 'false' : 'true'}_${name}_${i + 1}" class="message-${side} focusable-list-item">
+              <div class="bubble"><div class="copyable-text" data-pre-plain-text="[${time}] ${side === 'in' ? name : 'Mina'}: ">
+                <span class="selectable-text copyable-text"><span>${text}</span></span><span class="time">${time}</span></div>
+                <div role="button" aria-label="Context menu" class="arrow" tabindex="0"><span data-icon="down-context">⌄</span></div></div></div>`
+          const msg = row.firstElementChild
+          // The arrow shows while the pointer rests on the message (React tracks hover through mouseover/mouseout).
+          msg.addEventListener('mouseover', () => msg.classList.add('hover'))
+          msg.addEventListener('mouseleave', () => msg.classList.remove('hover'))
+          msg.addEventListener('click', (e) => {
+            if (e.target.closest('.arrow')) return
+            for (const other of list.querySelectorAll('.selected')) other.classList.remove('selected')
+            msg.classList.add('selected')
+          })
+          msg.querySelector('.arrow').addEventListener('click', (e) => {
+            const r = e.currentTarget.getBoundingClientRect()
+            openMenu(row, r.left, r.bottom)
+          })
+          // A right click on the message opens the same menu.
+          msg.addEventListener('contextmenu', (e) => {
+            e.preventDefault()
+            window.events.contextMenus++
+            openMenu(row, e.clientX, e.clientY)
+          })
+          list.append(row)
+        })
+        // The gap: the last four messages fill the pane, the second one is cut off at its top by a
+        // third, the first is above. Measured after a scroll to the bottom, so it holds whatever the window is.
+        const rows = [...list.querySelectorAll('[role="row"]')]
+        const gap = list.querySelector('.gap')
+        gap.style.height = `${list.clientHeight}px`
+        list.scrollTop = list.scrollHeight
+        const second = rows[1].getBoundingClientRect()
+        const wanted = list.getBoundingClientRect().top - second.height / 3
+        gap.style.height = `${Math.max(list.clientHeight + (second.top - wanted), 0)}px`
+        list.scrollTop = list.scrollHeight
+      }
+
       function open(name) {
         const right = document.getElementById('right')
         right.innerHTML = ''
+        closeMenus()
+        closeDialog()
         setTimeout(() => {
-          right.innerHTML = `<div id="main"><header><span dir="auto" title="${name}">${name}</span></header><ul class="msgs"></ul>
+          right.innerHTML = `<div id="main"><header><span dir="auto" title="${name}">${name}</span></header><div class="msgs" tabindex="0"></div>
             <footer><div contenteditable="true" role="textbox" aria-label="Type a message"></div>
             <button type="button" aria-label="Send"><span data-icon="send">&gt;</span></button></footer></div>`
+          renderThread(right.querySelector('.msgs'), name)
           const box = right.querySelector('[role="textbox"]')
           const editor = createEditor({ namespace: 'wa', onError: (e) => { throw e } })
           editor.setRootElement(box)
@@ -74,9 +213,12 @@
             const t = text().trim()
             if (t === '') return
             sent.get(name).push(t)
-            const li = document.createElement('li')
-            li.textContent = t
-            right.querySelector('.msgs').append(li)
+            const row = document.createElement('div')
+            row.setAttribute('role', 'row')
+            row.innerHTML = `<div data-id="true_${name}_sent" class="message-out"><div class="bubble"><span class="selectable-text copyable-text"><span>${t}</span></span></div></div>`
+            const list = right.querySelector('.msgs')
+            list.append(row)
+            list.scrollTop = list.scrollHeight
             editor.update(() => $getRoot().clear())
           }
           // Only a real key press sends; a synthetic Enter falls through to the editor (a new line),

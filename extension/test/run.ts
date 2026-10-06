@@ -475,6 +475,108 @@ async function main(): Promise<void> {
     const waOpen = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
     line('readPage', 'WhatsApp: the open chat is an item "[vestlus] Peeter Kask"', r !== 'timeout' && r.ok && waOpen.some((i) => i.role === 'other' && i.text === '[vestlus] Peeter Kask') && r.page?.box.kind === 'composer' && r.page.box.armed === true, `${describe(r)} items=${JSON.stringify(waOpen.map((i) => i.text))}`)
 
+    // ---------- Round 4 on the WhatsApp stand-in: messages as text items, hover, the message menu, the dialog ----------
+    ;[r, ms] = await timed({ kind: 'openConversation', name: 'Karin' })
+    line('openConversation', 'WhatsApp: "Karin" found by search, the chat opens', r !== 'timeout' && r.ok && (await waHeader()) === 'Karin Mägi', `${describe(r)} (${ms} ms) header=${await waHeader()}`)
+    await wa.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    r = await send({ kind: 'readPage' })
+    let chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const messages = (): { id: number; role: string; text: string }[] => chat.filter((i) => i.text.startsWith('[sõnum] '))
+    const lastActionable = (): number => Math.max(0, ...chat.filter((i) => i.role !== 'text' && i.role !== 'other').map((i) => i.id))
+    const karinLast = messages().filter((i) => !i.text.startsWith('[sõnum] mina: ')).at(-1)
+    line(
+      'readPage',
+      'WhatsApp: the open chat\'s messages are "[sõnum] …" text items, last ones in view, mine marked',
+      r !== 'timeout' &&
+        r.ok &&
+        messages().length === 5 &&
+        messages().every((i) => i.role === 'text' && i.id > lastActionable()) &&
+        messages().at(-1)?.text === '[sõnum] mina: Selge, teen nii.' &&
+        karinLast?.text === '[sõnum] Võta sülearvuti kaasa, palun.' &&
+        messages()[0]?.text === '[sõnum] mina: Jõuan küll, umbes kell kolm.' &&
+        !chat.some((i) => i.role === 'row' && /Selge|sülearvuti/.test(i.text)) &&
+        chat.some((i) => i.role === 'other' && i.text === '[vestlus] Karin Mägi'),
+      `${describe(r)} items=${JSON.stringify(chat.map((i) => `${i.id}:${i.role}:${i.text}`))}`,
+    )
+    check('readPage: the hover-only arrow is not listed before a hover', !chat.some((i) => i.text === 'sõnumi menüü'), JSON.stringify(chat.filter((i) => i.role === 'button').map((i) => i.text)))
+    const cutOff = messages()[0]
+    const paneScroll = async (): Promise<number> => wa.evaluate(() => document.querySelector('#main .msgs')?.scrollTop ?? -1)
+    const cutOffPlace = async (): Promise<{ top: number; paneTop: number; paneBottom: number }> =>
+      wa.evaluate(() => {
+        const pane = document.querySelector('#main .msgs')?.getBoundingClientRect()
+        const row = [...document.querySelectorAll('#main .msgs [role="row"]')].find((r) => r.textContent?.includes('Jõuan küll'))?.getBoundingClientRect()
+        return { top: row?.top ?? -1, paneTop: pane?.top ?? -1, paneBottom: pane?.bottom ?? -1 }
+      })
+    const placeBefore = await cutOffPlace()
+    const scrollBefore = await paneScroll()
+    r = await send({ kind: 'scrollTo', id: cutOff?.id ?? -1 })
+    const placeAfter = await cutOffPlace()
+    line(
+      'scrollTo',
+      'WhatsApp: the message cut off at the top of the pane is scrolled to the middle',
+      r !== 'timeout' && r.ok && cutOff?.text === '[sõnum] mina: Jõuan küll, umbes kell kolm.' && placeBefore.top < placeBefore.paneTop && placeAfter.top > placeAfter.paneTop && placeAfter.top < (placeAfter.paneTop + placeAfter.paneBottom) / 2 && (await paneScroll()) < scrollBefore,
+      `${describe(r)} before=${JSON.stringify(placeBefore)} after=${JSON.stringify(placeAfter)} scrollTop ${scrollBefore}->${await paneScroll()}`,
+    )
+    r = await send({ kind: 'readPage' })
+    chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    check('readPage: after the scroll the first message is in view too', messages()[0]?.text === '[sõnum] Tere! Kas sa jõuad homme?', JSON.stringify(messages().map((i) => i.text)))
+    r = await send({ kind: 'clickItem', id: messages()[0]?.id ?? -1 })
+    const selected = await wa.evaluate(() => document.querySelector('#main .selected .selectable-text')?.textContent ?? '')
+    line('clickItem', 'WhatsApp: a click on a message selects it', r !== 'timeout' && r.ok && selected === 'Tere! Kas sa jõuad homme?', `${describe(r)} selected=${JSON.stringify(selected)}`)
+    // Back to the latest messages, as he would scroll (or WhatsApp would on a new message).
+    await wa.evaluate(() => {
+      const pane = document.querySelector('#main .msgs')
+      if (pane) pane.scrollTop = pane.scrollHeight
+    })
+    r = await send({ kind: 'readPage' })
+    chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const karinLastAgain = messages().filter((i) => !i.text.startsWith('[sõnum] mina: ')).at(-1)
+    check('readPage: scrolled back to the bottom, Karin\'s last message is listed again', karinLastAgain?.text === '[sõnum] Võta sülearvuti kaasa, palun.', JSON.stringify(messages().map((i) => i.text)))
+    const waEvents = async (): Promise<{ menus: number; contextMenus: number; replies: number; deleted: string[] }> => wa.evaluate(() => (window as unknown as { events: { menus: number; contextMenus: number; replies: number; deleted: string[] } }).events)
+    const rowCount = async (): Promise<number> => wa.evaluate(() => document.querySelectorAll('#main .msgs [role="row"]').length)
+    r = await send({ kind: 'hover', id: karinLastAgain?.id ?? -1 })
+    line('hover', 'WhatsApp: resting on Karin\'s last message', r !== 'timeout' && r.ok, describe(r))
+    r = await send({ kind: 'readPage' })
+    chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const arrows = chat.filter((i) => i.text === 'sõnumi menüü')
+    line('readPage', 'WhatsApp: after the hover the message\'s arrow is a button "sõnumi menüü"', r !== 'timeout' && r.ok && arrows.length === 1 && arrows[0]?.role === 'button', `${describe(r)} buttons=${JSON.stringify(chat.filter((i) => i.role === 'button').map((i) => i.text))}`)
+    r = await send({ kind: 'clickItem', id: arrows[0]?.id ?? -1 })
+    r = await send({ kind: 'readPage' })
+    chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const menuItems = chat.filter((i) => i.role === 'option').map((i) => i.text)
+    line('clickItem', 'WhatsApp: the arrow opens the menu; its items are listed', r !== 'timeout' && r.ok && (await waEvents()).menus === 1 && ['Vasta', 'Edasta', 'Kustuta sõnum'].every((t) => menuItems.includes(t)), `${describe(r)} options=${JSON.stringify(menuItems)}`)
+    r = await send({ kind: 'clickItem', id: chat.find((i) => i.role === 'option' && i.text === 'Kustuta sõnum')?.id ?? -1 })
+    r = await send({ kind: 'readPage' })
+    chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const dialogButtons = chat.filter((i) => i.text.startsWith('[dialog] ')).map((i) => i.text)
+    const dialogFirstWa = chat.length > 0 && chat.every((i, k) => i.text.startsWith('[dialog] ') === k < dialogButtons.length)
+    line(
+      'readPage',
+      'WhatsApp: the confirmation dialog first, its div[role=button]s named by their text',
+      r !== 'timeout' && r.ok && dialogFirstWa && ['[dialog] Kustuta minu jaoks', '[dialog] Kustuta kõigi jaoks', '[dialog] Tühista'].every((t) => chat.some((i) => i.role === 'button' && i.text === t)) && messages().length === 0,
+      `${describe(r)} items=${JSON.stringify(chat.map((i) => `${i.role}:${i.text}`))}`,
+    )
+    r = await send({ kind: 'clickItem', id: chat.find((i) => i.text === '[dialog] Kustuta kõigi jaoks')?.id ?? -1 })
+    const deleted = (await waEvents()).deleted
+    line('clickItem', 'WhatsApp: "Kustuta kõigi jaoks" removes Karin\'s last message', r !== 'timeout' && r.ok && deleted.length === 1 && deleted[0] === 'Võta sülearvuti kaasa, palun.' && (await rowCount()) === 5, `${describe(r)} deleted=${JSON.stringify(deleted)} rows=${await rowCount()}`)
+    r = await send({ kind: 'readPage' })
+    chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    check('readPage: the deleted message is gone from the items, the dialog too', !chat.some((i) => i.text.includes('sülearvuti') || i.text.startsWith('[dialog] ')), JSON.stringify(messages().map((i) => i.text)))
+    const mine = messages().find((i) => i.text === '[sõnum] mina: Sobib. Kas võtan midagi kaasa?')
+    r = await send({ kind: 'contextMenu', id: mine?.id ?? -1 })
+    const afterContext = await waEvents()
+    line('contextMenu', 'WhatsApp: a right click on a message opens the page\'s own menu', r !== 'timeout' && r.ok && afterContext.contextMenus === 1 && afterContext.menus === 2, `${describe(r)} events=${JSON.stringify(afterContext)}`)
+    r = await send({ kind: 'readPage' })
+    chat = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    r = await send({ kind: 'clickItem', id: chat.find((i) => i.role === 'option' && i.text === 'Vasta')?.id ?? -1 })
+    check('clickItem: "Vasta" in the context menu', r !== 'timeout' && r.ok && (await waEvents()).replies === 1, describe(r))
+    r = await send({ kind: 'hover', id: 999 })
+    line('hover', '999 -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    r = await send({ kind: 'contextMenu', id: 999 })
+    line('contextMenu', '999 -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    r = await send({ kind: 'scrollTo', id: 999 })
+    line('scrollTo', '999 -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+
     // ---------- M7: a video page (YouTube-like stand-in) ----------
     await send({ kind: 'goTo', url: `${T}/video.html` })
     const video = pageAt(`${T}/video.html`)
@@ -606,6 +708,17 @@ async function main(): Promise<void> {
     line('media', 'exitFullscreen when not fullscreen is fine', r !== 'timeout' && r.ok, describe(r))
     r = await send({ kind: 'readPage' })
     check('readPage: media state follows the element', r !== 'timeout' && r.ok && r.page?.media?.playing === true && r.page.media.muted === false && Math.abs(r.page.media.volume - 1) < 0.01, describe(r))
+
+    // Round 4: a card's menu button shows on hover only; the page's heading is a marker, not a text item twice.
+    r = await send({ kind: 'readPage' })
+    const cards = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    check('readPage: the cards\' hover-only menu buttons are not listed before a hover', !cards.some((i) => i.text === 'Toimingute menüü'), JSON.stringify(cards.filter((i) => i.role === 'button').map((i) => i.text)))
+    check('readPage: the heading is listed once (as [pealkiri], not again as text)', cards.filter((i) => i.text.includes('Kevad Mektorys')).length === 1, JSON.stringify(cards.filter((i) => i.role === 'text' || i.role === 'other').map((i) => i.text)))
+    r = await send({ kind: 'hover', id: cards.find((i) => i.role === 'video' && i.text === 'Esimene video')?.id ?? -1 })
+    r = await send({ kind: 'readPage' })
+    const hoveredCards = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+    const menus = hoveredCards.filter((i) => i.text === 'Toimingute menüü')
+    line('hover', 'a video card: its menu button appears, one only', r !== 'timeout' && r.ok && menus.length === 1 && menus[0]?.role === 'button', `${describe(r)} buttons=${JSON.stringify(hoveredCards.filter((i) => i.role === 'button').map((i) => i.text))}`)
 
     // The search leaves the page (a hash change here): last on this page.
     ;[r, ms] = await timed({ kind: 'siteSearch', query: 'kassid' })

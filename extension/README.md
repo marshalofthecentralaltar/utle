@@ -196,6 +196,42 @@ accessibility tree would, on any site, without site-specific paths:
 - **Scrolling.** `scroll` moves the largest scrollable container under the middle of the screen,
   then the next one, then the document; when nothing moved it answers `failed`, so the model can do
   something else.
+- **Text items (round 4).** After the actionable items and the markers come the things he may refer
+  to that are not clickable, role `text`: on a messaging site the open chat's messages as
+  `[sõnum] …` (his own as `[sõnum] mina: …`, so "Karini viimane sõnum" is the last one without
+  `mina:`), then headings `h1` to `h3`, list items and paragraphs of 12 to 160 characters. Visible
+  only, deduplicated by text, top to bottom, 60 characters each, at most 40, and at most 150 items
+  in all. Over the cap a chat keeps the bottom-most (the latest messages), any other page the
+  top-most. Text inside or around a clickable thing is not repeated (it is that thing's name), nor
+  is the `h1` that is already `[pealkiri]`. The numbers never label text items; their ids continue
+  after the actionable ids. A message container (and WhatsApp's `role=row` around it) is not an
+  actionable item, so a chat is not listed twice; a control inside a message (the hover arrow, a
+  link) still is. The message selectors are `messageRows`, `messageText`, `messageMenu` and
+  `messageMine` in `sites.ts`; the arrow named by `messageMenu` is listed as the button
+  `sõnumi menüü`.
+- **hover, contextMenu, scrollTo (round 4).** `hover {id}` rests the pointer on an item: `pointerover`,
+  `mouseover`, `pointerenter` and `mouseenter` on the element and each ancestor, then `pointermove`
+  and `mousemove` at its centre, repeated every 200 ms for 3 s, so a control that shows on hover
+  only (WhatsApp's message arrow, YouTube's card menu, Gmail's row actions) is still there when the
+  page is read again and clicked. The next `hover` on an unrelated element sends the leave events to
+  the old one. `contextMenu {id}` is a right click at the centre (`pointerdown` and `mousedown` with
+  button 2, then `contextmenu`, bubbling and cancelable), for sites whose actions live in their own
+  context menu. `scrollTo {id}` scrolls the item to the middle of its pane and waits 200 ms. All three
+  take a text item as well as an actionable one; an id that is gone answers `not_found`. Every click
+  (`clickItem`, `clickHint`) now starts with the hover sequence, so a control that needs hover state
+  reacts; `clickItem` on a text item is a click at its centre with no fallbacks (on WhatsApp it
+  selects the message). The events land on the element at the item's centre (a message's text
+  span), as a real pointer's would, and bubble from there.
+- **Unverified on real WhatsApp.** The message selectors in `sites.ts` (`messageRows`,
+  `messageText`, `messageMenu`, `messageMine`) are guesses from WhatsApp Web's DOM of earlier
+  builds, marked UNVERIFIED 2026-10-06; so is whether its arrow shows on synthetic `mouseover`
+  (React tracks hover through `mouseover`/`mouseout`, which is what is sent). If the demo shows no
+  `[sõnum]` items or no `sõnumi menüü` after a hover, those four lines are the place to fix. The
+  stand-in `extension/test/fixtures/whatsapp.html` has the guessed structure: a `role=row` per
+  message, `div[data-id].message-in|out`, the text in `span.selectable-text.copyable-text`, an
+  arrow `div[role=button][aria-label="Context menu"]` shown on hover, a menu (Vasta, Edasta,
+  Kustuta sõnum), a confirmation dialog with `div[role=button]`s (Kustuta minu jaoks, Kustuta kõigi
+  jaoks, Tühista), and a `contextmenu` handler that opens the same menu.
 
 ## Test
 

@@ -6,7 +6,7 @@
 import type { BoxState, BrowserCommand, BrowserResult, CaretTarget, MediaAction, MediaState, PageContext, PageItem, PressableKey, ScrollMode, SelectTarget } from '../../src/browser/protocol.ts'
 import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
-import { armElement, armedElement, boxState, disarm, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
+import { armElement, armedElement, boxState, disarm, elementAt, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
 
 /** What background.ts sends: a command plus which messaging site the page is. */
 export type PageCommand = BrowserCommand & { site: SiteName | null }
@@ -100,6 +100,24 @@ const NAME_MAX = 60
 const NEAR_PREFIX = '[allpool] '
 /** The text of readPage's items inside an open dialog begins with this. */
 const DIALOG_PREFIX = '[dialog] '
+/** The text of readPage's message items (the open chat's messages) begins with this. */
+const MESSAGE_PREFIX = '[sõnum] '
+/** His own messages (sites.ts messageMine) are "[sõnum] mina: …". */
+const MINE_PREFIX = 'mina: '
+/** readPage lists at most this many text items (messages, headings, paragraphs) after the actionable ones. */
+const TEXT_MAX = 40
+/** readPage lists at most this many items in all: the intent schema's cap. */
+const TOTAL_MAX = 150
+/** The things he may refer to that are not clickable: headings, list items and paragraphs. */
+const TEXTUAL = 'h1, h2, h3, p, li, [role="listitem"]'
+/** A list item or paragraph shorter than this is a label or a crumb; longer than TEXT_LONG, an article. */
+const TEXT_MIN = 12
+const TEXT_LONG = 160
+/** hover re-sends the pointer this often, for this long, so hover-only controls stay while the page is read again. */
+const HOVER_REPEAT_MS = 200
+const HOVER_HOLD_MS = 3000
+/** The name of a message's menu control (sites.ts messageMenu): WhatsApp's arrow that appears on hover. */
+const MESSAGE_MENU_NAME = 'sõnumi menüü'
 
 let hintLayer: HTMLElement | null = null
 /** The visible elements of the last showHints, by number (1-based). */
@@ -112,6 +130,11 @@ let hinted: HTMLElement[] = []
 let pageItems: HTMLElement[] = []
 /** The elements of pageItems that are below the fold: clickItem scrolls to them first. */
 let nearItems = new Set<HTMLElement>()
+/** The elements of pageItems that are text items (round 4): clickItem clicks at their centre, nothing more. */
+let textItems = new Set<HTMLElement>()
+/** The element the pointer rests on (hover), while the page may still react to it. */
+let hovered: HTMLElement | null = null
+let hoverTimer: ReturnType<typeof setInterval> | null = null
 
 interface Box {
   left: number
@@ -255,6 +278,7 @@ function nameOfItem(el: HTMLElement, site: Site | null): string {
     const titled = clean(el.querySelector(site.rowName)?.getAttribute('title'))
     if (titled) return cut(titled)
   }
+  if (site?.messageMenu && (el.matches(site.messageMenu) || el.querySelector(site.messageMenu) !== null) && site.messageRows && el.closest(site.messageRows) !== null) return MESSAGE_MENU_NAME
   const by = labelledBy(el)
   if (by) return cut(by)
   const own = el instanceof HTMLInputElement ? '' : firstLine(el.innerText || '')
@@ -358,7 +382,7 @@ function rank(c: Candidate): number {
 }
 
 /** Top to bottom in bands of 12 px, then left to right. */
-function byPosition(a: Candidate, b: Candidate): number {
+function byPosition(a: { rect: DOMRect }, b: { rect: DOMRect }): number {
   const band = (r: DOMRect): number => Math.round(r.top / 12)
   return band(a.rect) - band(b.rect) || a.rect.left - b.rect.left
 }
@@ -378,7 +402,7 @@ function collect(site: Site | null): { visible: Candidate[]; near: Candidate[] }
   const video = mainVideo()
   const raw: Array<{ el: HTMLElement; rect: DOMRect; near: boolean }> = []
   for (const el of document.querySelectorAll<HTMLElement>(ACTIONABLE)) {
-    if (isOurs(el) || isDisabled(el)) continue
+    if (isOurs(el) || isDisabled(el) || isMessagePart(el, site)) continue
     const on = onScreenRect(el)
     if (on && (el === video || hitTest(el, on))) raw.push({ el, rect: on, near: false })
     else if (!on) {
@@ -386,7 +410,9 @@ function collect(site: Site | null): { visible: Candidate[]; near: Candidate[] }
       if (below) raw.push({ el, rect: below, near: true })
     }
   }
-  for (const el of pointerTargets()) raw.push({ el, rect: el.getBoundingClientRect(), near: false })
+  for (const el of pointerTargets()) {
+    if (!isMessagePart(el, site)) raw.push({ el, rect: el.getBoundingClientRect(), near: false })
+  }
   // A nested element with nearly the same box as an actionable ancestor is the same target; a cell
   // or a plain element inside a listed row is part of the row.
   const kept = raw.filter((c) => {
@@ -443,6 +469,85 @@ function collect(site: Site | null): { visible: Candidate[]; near: Candidate[] }
     .sort(byPosition)
     .slice(0, Math.max(Math.min(NEAR_MAX, MAX_ITEMS - visible.length), 0))
   return { visible, near }
+}
+
+// ----- the text items (round 4): what he may refer to that is not clickable -----
+
+/**
+ * A message of the open chat, or a plain part of one (sites.ts messageRows): the text items list
+ * it as "[sõnum] …", so the actionable list leaves it out. A control inside a message (the hover
+ * arrow, a link, a button) stays actionable.
+ */
+function isMessagePart(el: HTMLElement, site: Site | null): boolean {
+  if (!site?.messageRows) return false
+  const role = roleOf(el)
+  if (role !== 'row' && role !== 'other') return false
+  // Inside a message, or a row that wraps one (WhatsApp's role=row around each message).
+  return el.closest(site.messageRows) !== null || el.querySelector(site.messageRows) !== null
+}
+
+/** One text item as the collector sees it. */
+interface TextItem {
+  el: HTMLElement
+  rect: DOMRect
+  text: string
+}
+
+/** The text of a message: its text element (sites.ts messageText), else its own text. */
+function messageText(el: HTMLElement, site: Site | null): string {
+  if (site?.messageText) {
+    for (const part of el.querySelectorAll<HTMLElement>(site.messageText)) {
+      const text = clean(part.innerText || part.textContent)
+      if (text !== '') return text
+    }
+  }
+  return clean(el.innerText || el.textContent)
+}
+
+/**
+ * The things he may refer to that are not clickable: the open chat's messages ("[sõnum] …"), then
+ * headings, list items and paragraphs. Visible, deduplicated, top to bottom, at most limit. In a
+ * chat the last messages matter most, so over the limit the bottom-most are kept; elsewhere the
+ * top-most. skip holds the elements already listed as markers (the page's heading).
+ */
+function collectText(site: Site | null, skip: Set<Element>, limit: number): TextItem[] {
+  if (limit <= 0) return []
+  const found: TextItem[] = []
+  const seen = new Set<string>()
+  let chat = false
+  if (site?.messageRows) {
+    for (const el of document.querySelectorAll<HTMLElement>(site.messageRows)) {
+      // Nested matches (a row and the bubble inside it) are one message: the outermost.
+      if (isOurs(el) || el.parentElement?.closest(site.messageRows)) continue
+      const rect = onScreenRect(el)
+      if (!rect || !hitTest(el, rect)) continue
+      const text = messageText(el, site)
+      if (text === '') continue
+      chat = true
+      seen.add(text.toLowerCase())
+      const mine = site.messageMine !== undefined && (el.matches(site.messageMine) || el.querySelector(site.messageMine) !== null)
+      found.push({ el, rect, text: `${MESSAGE_PREFIX}${mine ? MINE_PREFIX : ''}${cut(text)}` })
+    }
+  }
+  for (const el of document.querySelectorAll<HTMLElement>(TEXTUAL)) {
+    if (isOurs(el) || skip.has(el)) continue
+    if (site?.messageRows && el.closest(site.messageRows) !== null) continue
+    // Text inside or around a clickable thing is that thing's name already; a block holding
+    // smaller blocks is listed through them.
+    if (el.closest(ACTIONABLE) !== null || el.querySelector(ACTIONABLE) !== null || el.querySelector(TEXTUAL) !== null) continue
+    const rect = onScreenRect(el)
+    if (!rect || !hitTest(el, rect)) continue
+    const text = clean(el.innerText || el.textContent)
+    const heading = /^h[1-3]$/.test(el.localName)
+    if (text.length < (heading ? 2 : TEXT_MIN) || text.length > TEXT_LONG) continue
+    const key = text.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    found.push({ el, rect, text: cut(text) })
+  }
+  found.sort(byPosition)
+  if (found.length <= limit) return found
+  return chat ? found.slice(found.length - limit) : found.slice(0, limit)
 }
 
 function hideHints(): void {
@@ -548,14 +653,81 @@ function pick(el: HTMLElement): void {
   armElement(el)
 }
 
-/** The pointer sequence and a click, as a mouse would send them. */
-function activate(el: HTMLElement): void {
+/** The centre of the element's box, clamped to the screen, as event coordinates. */
+function centreOf(el: HTMLElement): { clientX: number; clientY: number } {
   const r = el.getBoundingClientRect()
-  const init = { bubbles: true, cancelable: true, composed: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 }
-  el.dispatchEvent(new PointerEvent('pointerdown', { ...init, pointerType: 'mouse', isPrimary: true }))
-  el.dispatchEvent(new MouseEvent('mousedown', init))
-  el.dispatchEvent(new PointerEvent('pointerup', { ...init, pointerType: 'mouse', isPrimary: true }))
-  el.dispatchEvent(new MouseEvent('mouseup', init))
+  return {
+    clientX: (Math.max(r.left, 0) + Math.min(r.right, window.innerWidth)) / 2,
+    clientY: (Math.max(r.top, 0) + Math.min(r.bottom, window.innerHeight)) / 2,
+  }
+}
+
+function mouseInit(el: HTMLElement, button = 0): MouseEventInit {
+  return { bubbles: true, cancelable: true, composed: true, view: window, ...centreOf(el), button, buttons: button === 2 ? 2 : 1 }
+}
+
+function pointerInit(el: HTMLElement, button = 0): PointerEventInit {
+  return { ...mouseInit(el, button), pointerType: 'mouse', isPrimary: true }
+}
+
+/** The element at el's centre when it is inside el (a span of a message), else el: where a real pointer would land. */
+function targetAt(el: HTMLElement): HTMLElement {
+  const { clientX, clientY } = centreOf(el)
+  const hit = elementAt(clientX, clientY)
+  return hit instanceof HTMLElement && el.contains(hit) ? hit : el
+}
+
+/** The pointer and mouse moves, as a pointer resting on el sends them. */
+function move(el: HTMLElement): void {
+  el.dispatchEvent(new PointerEvent('pointermove', { ...pointerInit(el), buttons: 0 }))
+  el.dispatchEvent(new MouseEvent('mousemove', { ...mouseInit(el), buttons: 0 }))
+}
+
+/**
+ * The events a mouse sends when it arrives over el: over (bubbling) and enter (on el and on each
+ * ancestor, as the browser fires them) for pointer and mouse, then a move. Hover-only controls
+ * (WhatsApp's message arrow, YouTube's card menu, Gmail's row actions) show on these.
+ */
+function arrive(el: HTMLElement): void {
+  const pointer = { ...pointerInit(el), buttons: 0 }
+  const mouse = { ...mouseInit(el), buttons: 0 }
+  el.dispatchEvent(new PointerEvent('pointerover', pointer))
+  el.dispatchEvent(new MouseEvent('mouseover', mouse))
+  const chain: HTMLElement[] = []
+  for (let node: HTMLElement | null = el; node && node !== document.documentElement; node = node.parentElement) chain.unshift(node)
+  for (const node of chain) {
+    node.dispatchEvent(new PointerEvent('pointerenter', { ...pointer, bubbles: false }))
+    node.dispatchEvent(new MouseEvent('mouseenter', { ...mouse, bubbles: false }))
+  }
+  move(el)
+}
+
+/** The events a mouse sends when it leaves el. */
+function leave(el: HTMLElement): void {
+  const pointer = { ...pointerInit(el), buttons: 0 }
+  const mouse = { ...mouseInit(el), buttons: 0 }
+  el.dispatchEvent(new PointerEvent('pointerout', pointer))
+  el.dispatchEvent(new MouseEvent('mouseout', mouse))
+  for (let node: HTMLElement | null = el; node && node !== document.documentElement; node = node.parentElement) {
+    node.dispatchEvent(new PointerEvent('pointerleave', { ...pointer, bubbles: false }))
+    node.dispatchEvent(new MouseEvent('mouseleave', { ...mouse, bubbles: false }))
+  }
+}
+
+/** The pointer comes to rest on el: whatever it rested on before (hover) is left, unless el is inside it. */
+function restOn(el: HTMLElement): void {
+  stopHover(el)
+  hovered = el
+}
+
+/** The hover sequence, the pointer sequence and a click, as a mouse would send them. */
+function activate(el: HTMLElement): void {
+  restOn(el)
+  arrive(el)
+  el.dispatchEvent(new PointerEvent('pointerdown', pointerInit(el)))
+  el.dispatchEvent(new MouseEvent('mousedown', mouseInit(el)))
+  el.dispatchEvent(new PointerEvent('pointerup', { ...pointerInit(el), buttons: 0 }))
+  el.dispatchEvent(new MouseEvent('mouseup', { ...mouseInit(el), buttons: 0 }))
   el.click()
 }
 
@@ -689,15 +861,20 @@ function markers(site: Site | null): Array<{ el: HTMLElement; text: string }> {
 function readPage(site: Site | null): BrowserResult {
   const { visible, near } = collect(site)
   const extra = markers(site)
-  pageItems = [...visible.map((c) => c.el), ...near.map((c) => c.el), ...extra.map((m) => m.el)]
+  const actionable = [...visible, ...near]
+  // The text items come last, so the numbers (showHints) and the ids agree on the actionable ones.
+  const texts = collectText(site, new Set(extra.map((m) => m.el)), Math.min(TEXT_MAX, TOTAL_MAX - actionable.length - extra.length))
+  pageItems = [...actionable.map((c) => c.el), ...extra.map((m) => m.el), ...texts.map((t) => t.el)]
   nearItems = new Set(near.map((c) => c.el))
+  textItems = new Set(texts.map((t) => t.el))
   const items: PageItem[] = []
-  for (const [i, c] of [...visible, ...near].entries()) {
+  for (const [i, c] of actionable.entries()) {
     if (c.text === '' && c.role !== 'field' && c.role !== 'video') continue
     const text = c.near ? `${NEAR_PREFIX}${c.text}` : c.dialog ? `${DIALOG_PREFIX}${c.text}` : c.text
     items.push({ id: i + 1, role: c.role, text })
   }
-  for (const [i, m] of extra.entries()) items.push({ id: visible.length + near.length + i + 1, role: 'other', text: m.text })
+  for (const [i, m] of extra.entries()) items.push({ id: actionable.length + i + 1, role: 'other', text: m.text })
+  for (const [i, t] of texts.entries()) items.push({ id: actionable.length + extra.length + i + 1, role: 'text', text: t.text })
   const page: PageContext = {
     url: location.href,
     title: document.title,
@@ -728,6 +905,11 @@ async function clickItem(id: number, site: Site | null): Promise<PageResult> {
   if (!(el instanceof HTMLElement)) return el
   hideHints()
   await bringIntoView(el)
+  // A text item (a message) is not a control: the click lands at its centre, with no fallbacks.
+  if (textItems.has(el)) {
+    activate(targetAt(el))
+    return ok()
+  }
   const typeable: boolean = isTextField(el)
   if (typeable) {
     pick(el)
@@ -735,6 +917,67 @@ async function clickItem(id: number, site: Site | null): Promise<PageResult> {
   }
   if (site?.conversationRows && el.matches(site.conversationRows)) return clickRow(el, site)
   await press(el)
+  return ok()
+}
+
+/** The pointer leaves what it rested on. Leaving a parent of the next target would hide what he is after, so that is kept. */
+function stopHover(next: HTMLElement | null = null): void {
+  if (hoverTimer !== null) clearInterval(hoverTimer)
+  hoverTimer = null
+  const old = hovered
+  hovered = null
+  if (old && old.isConnected && old !== next && !(next && old.contains(next))) leave(old)
+}
+
+/**
+ * Rests the pointer on an item (round 4): the hover sequence at its centre, then a move every
+ * HOVER_REPEAT_MS for HOVER_HOLD_MS, so a control that shows on hover only (WhatsApp's message
+ * arrow) is there when the page is read again and clicked.
+ */
+async function hover(id: number): Promise<BrowserResult> {
+  const el = itemOf(id)
+  if (!(el instanceof HTMLElement)) return el
+  hideHints()
+  await bringIntoView(el)
+  restOn(el)
+  const target = targetAt(el)
+  arrive(target)
+  const until = Date.now() + HOVER_HOLD_MS
+  hoverTimer = setInterval(() => {
+    if (hovered !== el || !el.isConnected || Date.now() > until) {
+      if (hoverTimer !== null) clearInterval(hoverTimer)
+      hoverTimer = null
+      return
+    }
+    move(target.isConnected ? target : el)
+  }, HOVER_REPEAT_MS)
+  return ok()
+}
+
+/** A right click at the item's centre (round 4): the page's own context menu, for sites whose actions live there. */
+async function contextMenu(id: number): Promise<BrowserResult> {
+  const el = itemOf(id)
+  if (!(el instanceof HTMLElement)) return el
+  hideHints()
+  await bringIntoView(el)
+  const target = targetAt(el)
+  restOn(el)
+  arrive(target)
+  target.dispatchEvent(new PointerEvent('pointerdown', pointerInit(target, 2)))
+  target.dispatchEvent(new MouseEvent('mousedown', mouseInit(target, 2)))
+  target.dispatchEvent(new MouseEvent('contextmenu', mouseInit(target, 2)))
+  target.dispatchEvent(new PointerEvent('pointerup', { ...pointerInit(target, 2), buttons: 0 }))
+  target.dispatchEvent(new MouseEvent('mouseup', { ...mouseInit(target, 2), buttons: 0 }))
+  return ok()
+}
+
+/** Scrolls the item to the middle of the view (round 4). */
+async function scrollToItem(id: number): Promise<BrowserResult> {
+  const el = itemOf(id)
+  if (!(el instanceof HTMLElement)) return el
+  hideHints()
+  el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' })
+  await sleep(SCROLL_SETTLE_MS)
   return ok()
 }
 
@@ -2105,6 +2348,12 @@ async function run(command: PageCommand): Promise<PageResult> {
         return await clickItem(Number(command.id), site)
       case 'focusItem':
         return await focusItem(Number(command.id), site)
+      case 'hover':
+        return await hover(Number(command.id))
+      case 'contextMenu':
+        return await contextMenu(Number(command.id))
+      case 'scrollTo':
+        return await scrollToItem(Number(command.id))
       case 'siteSearch':
         return await siteSearch(String(command.query), site)
       case 'media':
@@ -2140,6 +2389,10 @@ function onNavigation(): void {
   hideHints()
   disarm()
   pageItems = []
+  textItems = new Set()
+  // The pointer still rests where it was (a same-document navigation keeps the element); only the repeat stops.
+  if (hoverTimer !== null) clearInterval(hoverTimer)
+  hoverTimer = null
 }
 
 if (!globalThis.__utle) {
