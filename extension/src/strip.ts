@@ -113,6 +113,9 @@ button { font-family: ${FONT}; }
 .notice.on { display: block; }
 .lag { display: none; font-size: var(--notice); line-height: 1.25; color: var(--dim); border-top: 1px solid var(--edge); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lag.on { display: block; }
+/* Round 4: someone else's utterance was skipped (only-owner mode). */
+.foreign { display: none; font-size: var(--notice); line-height: 1.25; color: var(--dim); border-top: 1px solid var(--edge); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.foreign.on { display: block; }
 /* Gaze mode (round 3): the target listens while the pointer rests on it. A quick amber fill says the rest was
    seen (arming); a green inner outline says it listens; the fill growing again over the grace says it is about to stop. */
 .bar > * { position: relative; z-index: 1; }
@@ -247,7 +250,9 @@ export function mountStrip(): void {
   notice.className = 'notice'
   const lag = document.createElement('div')
   lag.className = 'lag'
-  words.append(heard, row, notice, lag)
+  const foreign = document.createElement('div')
+  foreign.className = 'foreign'
+  words.append(heard, row, notice, lag, foreign)
   const ctls = document.createElement('div')
   ctls.className = 'ctls'
   const hide = control('hide', text.hide)
@@ -394,6 +399,8 @@ export function mountStrip(): void {
     lagOn = lagShown(state.lag, lagOn)
     lag.textContent = lagOn ? text.lagLine(Math.round(state.lag / 1000)) : ''
     lag.classList.toggle('on', lagOn)
+    foreign.textContent = state.foreign
+    foreign.classList.toggle('on', state.foreign !== '')
     bar.hidden = state.hidden
     pill.hidden = !state.hidden
     if (state.hidden) {

@@ -64,6 +64,8 @@ export type ToBackground =
    * with flush delivers the words said so far before the microphone closes.
    */
   | { type: 'utle-listen'; on: boolean; flush?: boolean }
+  /** From the options page (round 4): learn the owner's voice from the next `seconds` of speech. Listening starts if it was off. */
+  | { type: 'utle-enrol'; seconds: number }
 
 /** To the offscreen document. stop with flush: deliver the words said so far, then stop. */
 export type ToOffscreen =
@@ -71,6 +73,8 @@ export type ToOffscreen =
   | { target: 'offscreen'; type: 'start' }
   | { target: 'offscreen'; type: 'stop'; flush?: boolean }
   | { target: 'offscreen'; type: 'flush' }
+  /** Round 4: learn the owner's voice (the strip tells him to speak). */
+  | { target: 'offscreen'; type: 'enrol'; seconds: number }
 
 /**
  * To the extension's new-tab page, from the service worker: run one page command there (21.3). The

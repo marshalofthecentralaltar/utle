@@ -258,6 +258,25 @@ export interface Strings {
     engineSonioxEn: string
     engineNote: string
     engineNoteEn: string
+    // The owner's voice (round 4, VOICE lane).
+    /** The group on the options page. */
+    myVoice: string
+    myVoiceEn: string
+    /** The button that starts enrolment. */
+    teachVoice: string
+    teachVoiceEn: string
+    /** The two choices of the only-owner setting. */
+    onlyOwner: string
+    onlyOwnerEn: string
+    everyone: string
+    everyoneEn: string
+    voiceNote: string
+    voiceNoteEn: string
+    /** The strip's lines: speak now, learnt, failed; and someone else's utterance was skipped. */
+    enrolStart(seconds: number): string
+    enrolDone: string
+    enrolFailed: string
+    foreign: string
   }
 }
 
@@ -695,6 +714,20 @@ const ET: Strings = {
     engineSonioxEn: 'Soniox (in the cloud)',
     engineNote: 'Soniox vajab võtit arendusserveris (SONIOX_API_KEY). Valik hakkab kehtima järgmisel sisselülitamisel.',
     engineNoteEn: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
+    myVoice: 'Minu hääl',
+    myVoiceEn: 'My voice',
+    teachVoice: 'Õpeta mu hääl',
+    teachVoiceEn: 'Teach it my voice: speak for 8 seconds',
+    onlyOwner: 'Kuula ainult mind',
+    onlyOwnerEn: 'Listen only to me',
+    everyone: 'Kuula kõiki',
+    everyoneEn: 'Listen to everyone',
+    voiceNote: '„Kuula ainult mind“ vajab õpitud häält ja häälemudelit arendusserveris (npm run model). Ilma mudelita jäetakse vahele ainult vaiksem kõne. Valik hakkab kehtima järgmisel sisselülitamisel.',
+    voiceNoteEn: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model only fainter speech is skipped. The choice takes effect the next time listening starts.',
+    enrolStart: (seconds) => `Räägi ${seconds} sekundit tavalisel häälel…`,
+    enrolDone: 'Hääl on õpitud.',
+    enrolFailed: 'Hääle õppimine ei õnnestunud.',
+    foreign: 'Keegi teine rääkis, jätsin vahele.',
   },
 }
 
@@ -1054,6 +1087,20 @@ const EN: Strings = {
     engineSonioxEn: 'Soniox (in the cloud)',
     engineNote: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
     engineNoteEn: '',
+    myVoice: 'My voice',
+    myVoiceEn: '',
+    teachVoice: 'Teach it my voice',
+    teachVoiceEn: 'Speak for 8 seconds',
+    onlyOwner: 'Listen only to me',
+    onlyOwnerEn: '',
+    everyone: 'Listen to everyone',
+    everyoneEn: '',
+    voiceNote: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model only fainter speech is skipped. The choice takes effect the next time listening starts.',
+    voiceNoteEn: '',
+    enrolStart: (seconds) => `Speak for ${seconds} seconds in your usual voice…`,
+    enrolDone: 'Your voice is learnt.',
+    enrolFailed: 'Learning your voice did not work.',
+    foreign: 'Someone else spoke; skipped it.',
   },
 }
 
