@@ -9,7 +9,6 @@ import { STRINGS } from '../../src/core/strings.ts'
 import { browserSocket, createLocalRecognizer } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
-import type { Recognizer } from '../../src/speech/recognizer.ts'
 import { ASK_TIMEOUT_MS, createEngine } from './engine.ts'
 import type { AskFailure, InpageLogic } from './engine.ts'
 import type { RunAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
@@ -142,11 +141,11 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     return answer?.result ?? { ok: false, code: 'failed', message: 'The extension did not answer.' }
   }
 
-  // The owner's voice (round 4, VOICE lane): the recogniser is kept so enrolment can reach it
-  // without the engine; the foreign line and the enrolment lines go straight to the strip.
+  // The owner's voice (round 4, VOICE lane): the foreign line and the enrolment lines go straight
+  // to the strip; the engine's own handlers run first (review: it takes back the foreign preview
+  // and ignores what he says while the server learns his voice).
   const stripText = STRINGS.et.strip
   const onlyOwner = params.get('onlyOwner') === '1'
-  let recognizer: Recognizer | null = null
   let foreignTimer: ReturnType<typeof setTimeout> | null = null
   const onForeign = (): void => {
     publish({ foreign: stripText.foreign })
@@ -166,9 +165,19 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     run,
     publish,
     // The handlers go through whole, onLag (round 3) with them: the recogniser reports its lag to the engine, the engine to the strip.
-    recognizer: (handlers, isInstant, onUnavailable) => {
-      recognizer = createLocalRecognizer(
-        { ...handlers, onForeign, onEnrolled },
+    recognizer: (handlers, isInstant, onUnavailable) =>
+      createLocalRecognizer(
+        {
+          ...handlers,
+          onForeign: () => {
+            handlers.onForeign()
+            onForeign()
+          },
+          onEnrolled: (ok, seconds) => {
+            handlers.onEnrolled(ok, seconds)
+            onEnrolled(ok)
+          },
+        },
         isInstant,
         {
           onUnavailable,
@@ -182,9 +191,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
           },
           audio: microphone,
         },
-      )
-      return recognizer
-    },
+      ),
     micBlocked: () => {
       void tell({ type: 'utle-mic-blocked' })
     },
@@ -220,8 +227,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
       case 'enrol':
         // Round 4: listening starts when it was off; the line tells him to speak, the server answers through onEnrolled.
         cancelStop()
-        if (!engine.listening) engine.start()
-        recognizer?.enrol?.(message.seconds)
+        engine.enrol(message.seconds)
         publish({ line: stripText.enrolStart(message.seconds) })
         break
       case 'stop':

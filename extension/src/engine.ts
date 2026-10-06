@@ -35,7 +35,14 @@ export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' | 'aborted'
  * The recogniser's handlers as the engine gives them: onLag (round 3) and onUtteranceContinued
  * (round 4) are always there, whether or not the recogniser calls them.
  */
-export type EngineHandlers = RecognizerHandlers & { onLag(ms: number): void; onUtteranceContinued(text: string, added: string): void }
+export type EngineHandlers = RecognizerHandlers & {
+  onLag(ms: number): void
+  onUtteranceContinued(text: string, added: string): void
+  /** Round 4 (review): a foreign final takes back the preview its partials typed. */
+  onForeign(): void
+  /** Round 4 (review): enrolment is over; utterances are handled again. */
+  onEnrolled(ok: boolean, seconds: number): void
+}
 
 export interface EngineDeps {
   logic: InpageLogic
@@ -66,6 +73,12 @@ export interface Engine {
   readonly listening: boolean
   /** Push-to-talk released: the words spoken so far are delivered now, listening stays as it is. */
   flush(): void
+  /**
+   * Round 4 (review): learns the owner's voice from the next `seconds` of speech. Listening starts
+   * if it was off; what he says meanwhile is neither typed nor run, until the server answers (or
+   * ENROL_TIMEOUT_FACTOR × seconds have passed).
+   */
+  enrol(seconds: number): void
   /** Resolves when every utterance so far, and every preview being typed, has been handled. For tests. */
   idle(): Promise<void>
 }
@@ -105,6 +118,10 @@ export const SETTLE_MS = 300
 /** Round 4: the model may plan this many goals after the one it acts on (IntentAnswerSchema: 12). */
 const MAX_PLAN_GOALS = 12
 const GOAL_CHARS = 200
+/** IntentRequestSchema's utterance limit: a longer one would be a 400, and the words never judged. */
+const UTTERANCE_CHARS = 500
+/** Round 4 (review): an enrolment with no answer from the server ends after this many times its seconds. */
+export const ENROL_TIMEOUT_FACTOR = 5
 const RECENT_LINE_CHARS = 200
 /** The request's limits in IntentRequestSchema: a page beyond them would be a 400, and the model never asked. */
 const URL_CHARS = 2000
@@ -112,6 +129,10 @@ const TITLE_CHARS = 300
 const BOX_CHARS = 4000
 
 const wordCount = (utterance: string): number => utterance.trim().split(/\s+/).filter((w) => w !== '').length
+/** Lower case, letters and digits only: for telling one goal from another however the model spelt it. */
+const sameGoal = (a: string, b: string): boolean => a.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === b.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+/** Goals as the chain carries them: each clipped to the schema's length, at most MAX_PLAN_GOALS, the newest kept. */
+const clipGoals = (goals: readonly string[]): string[] => goals.map((g) => g.slice(0, GOAL_CHARS)).slice(-MAX_PLAN_GOALS)
 
 /** One utterance being spoken: its base (the box before it began) and the preview in the box. */
 interface Live {
@@ -371,7 +392,7 @@ export function createEngine(deps: EngineDeps): Engine {
     if (job.cancelled) return null
     // Round 4: in a chain the model is asked about the goal in hand, and told the chain.
     const chain = job.chain
-    const request: IntentRequest = { lang: deps.lang, utterance: chain === null ? job.utterance : chain.goal, page, tabs, recent: recentBefore }
+    const request: IntentRequest = { lang: deps.lang, utterance: (chain === null ? job.utterance : chain.goal).slice(0, UTTERANCE_CHARS), page, tabs, recent: recentBefore }
     if (steps.length > 0) request.steps = steps
     if (chain !== null) request.chain = chain
     const controller = new AbortController()
@@ -448,10 +469,18 @@ export function createEngine(deps: EngineDeps): Engine {
     if (heard.plan.length === 0 || !firstAskOfGoal) return
     const chain = job.chain
     if (chain === null) {
-      job.chain = { original: job.utterance, completed: [], goal: firstGoal(job.utterance, heard.plan, heard.say), remaining: heard.plan }
+      const goal = firstGoal(job.utterance, heard.plan, heard.say)
+      // Review: a plan that repeats the whole utterance or the goal in hand would ask the same thing
+      // again until MAX_CHAIN_STEPS; such goals, and duplicates, are not goals.
+      const remaining = heard.plan.filter((g, i) => !sameGoal(g, goal) && !sameGoal(g, job.utterance) && heard.plan.findIndex((h) => sameGoal(h, g)) === i)
+      if (remaining.length === 0) return
+      job.chain = { original: job.utterance.slice(0, 1000), completed: [], goal, remaining }
     } else {
-      const fresh = heard.plan.filter((goal) => !chain.remaining.includes(goal))
-      job.chain = { ...chain, goal: firstGoal(chain.goal, heard.plan, heard.say), remaining: [...fresh, ...chain.remaining].slice(0, MAX_PLAN_GOALS) }
+      const goal = firstGoal(chain.goal, heard.plan, heard.say)
+      const known = [...chain.completed, goal, chain.goal, chain.original, ...chain.remaining]
+      const fresh = heard.plan.filter((g, i) => !known.some((k) => sameGoal(k, g)) && heard.plan.findIndex((h) => sameGoal(h, g)) === i)
+      if (fresh.length === 0) return
+      job.chain = { ...chain, goal, remaining: [...fresh, ...chain.remaining].slice(0, MAX_PLAN_GOALS) }
     }
     showChain(job.chain)
   }
@@ -513,27 +542,31 @@ export function createEngine(deps: EngineDeps): Engine {
     let heard = first
     let since = job.arrived
     if (job.chain !== null) showChain(job.chain)
-    for (;;) {
-      const end = await runGoal(job, box, recentBefore, heard, u, since, Math.min(MAX_INTENT_STEPS, MAX_CHAIN_STEPS - taken.n), taken)
-      u = null
+    try {
+      for (;;) {
+        const end = await runGoal(job, box, recentBefore, heard, u, since, Math.min(MAX_INTENT_STEPS, MAX_CHAIN_STEPS - taken.n), taken)
+        u = null
+        const chain = job.chain
+        if (end !== 'done' || chain === null) break
+        const [goal, ...remaining] = chain.remaining
+        if (goal === undefined) break
+        if (taken.n >= MAX_CHAIN_STEPS || Date.now() - started > MAX_CHAIN_MS || job.interrupted) break
+        job.chain = { ...chain, completed: clipGoals([...chain.completed, chain.goal]), goal, remaining }
+        showChain(job.chain)
+        await settle()
+        if (job.interrupted) break
+        job.looping = true
+        since = Date.now()
+        const next = await askOnce(job, box, null, recentBefore, [])
+        if (next === null) break
+        heard = next
+      }
+    } finally {
+      // Review: the chain line goes on every exit, a thrown step included.
       const chain = job.chain
-      if (end !== 'done' || chain === null) break
-      const [goal, ...remaining] = chain.remaining
-      if (goal === undefined) break
-      if (taken.n >= MAX_CHAIN_STEPS || Date.now() - started > MAX_CHAIN_MS || job.interrupted) break
-      job.chain = { ...chain, completed: [...chain.completed, chain.goal], goal, remaining }
-      showChain(job.chain)
-      await settle()
-      if (job.interrupted) break
-      job.looping = true
-      since = Date.now()
-      const next = await askOnce(job, box, null, recentBefore, [])
-      if (next === null) break
-      heard = next
+      lastDone = clipGoals(chain === null ? [job.utterance] : [...chain.completed, chain.goal])
+      if (chain !== null) showChain(null)
     }
-    const chain = job.chain
-    lastDone = chain === null ? [job.utterance] : [...chain.completed, chain.goal]
-    if (chain !== null) showChain(null)
   }
 
   /**
@@ -592,7 +625,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // utterances do not interleave.
       await settled(job.send || job.continued ? pending : acting)
       // Round 4: a continued utterance carries what the last one finished as its completed goals.
-      if (job.continued && job.chain !== null) job.chain = { ...job.chain, completed: lastDone }
+      if (job.continued && job.chain !== null) job.chain = { ...job.chain, completed: clipGoals(lastDone) }
       let box: BoxState
       if (u === null) {
         box = await readBox()
@@ -600,8 +633,10 @@ export function createEngine(deps: EngineDeps): Engine {
         u.over = true
         await u.ready
         if (u.typing !== null) await u.typing
-        // The base, never the box as it reads now: that holds the preview.
-        box = u.base ?? NO_BOX
+        // The base, never the box as it reads now: that holds the preview. A plain send typed no
+        // preview and waited for the chain or verification before it, which may have armed or filled
+        // the box since the base was read (review): it reads the box as it is now.
+        box = job.send ? await readBox() : (u.base ?? NO_BOX)
       }
       const before = session
       const recentBefore = recent
@@ -613,7 +648,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const shouldAsk = rules.ask === true && (!box.armed || wordCount(job.utterance) < LONG_UTTERANCE_WORDS) && !stale && !job.cancelled
       if (!shouldAsk) {
         await perform(rules, u, stale ? inpageText.catchingUp : '')
-        lastDone = [job.utterance]
+        lastDone = clipGoals([job.utterance])
         return
       }
       if (box.armed) {
@@ -654,8 +689,30 @@ export function createEngine(deps: EngineDeps): Engine {
     return u
   }
 
+  /**
+   * Round 4 (review): while the server learns his voice he speaks eight seconds of anything; those
+   * words are neither typed nor run. Cleared by onEnrolled, or by a timer when no answer comes.
+   */
+  let enrolTimer: ReturnType<typeof setTimeout> | null = null
+  let enrolling = false
+  const endEnrolment = (): void => {
+    if (enrolTimer !== null) clearTimeout(enrolTimer)
+    enrolTimer = null
+    enrolling = false
+  }
+
+  /** The utterance in progress ends with no final: its preview goes, when it typed one. */
+  const dropLive = (): void => {
+    const u = live
+    live = null
+    if (u === null) return
+    u.over = true
+    queue = queue.then(() => takeBack(u))
+  }
+
   const handlers: EngineHandlers = {
     onUtterance(utterance) {
+      if (enrolling) return
       deps.publish({ heard: utterance })
       const u = live
       live = null
@@ -666,6 +723,7 @@ export function createEngine(deps: EngineDeps): Engine {
       queue = queue.then(() => handle(job, u)).catch(() => undefined)
     },
     onUtteranceContinued(text, added) {
+      if (enrolling) return
       // Round 4: "siis ava Karin" soon after the last utterance goes on from it: no barge-in, and
       // the new words are asked as the next goal of the chain the last utterance was.
       deps.publish({ heard: text })
@@ -679,7 +737,7 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     onInterim(interim) {
       // An empty interim keeps the last words on the strip until new speech arrives.
-      if (interim === '') return
+      if (interim === '' || enrolling) return
       deps.publish({ heard: interim })
       if (!listening) return
       const u = live ?? begin()
@@ -689,11 +747,20 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     onError() {
       listening = false
+      endEnrolment()
       deps.publish({ listening: false, problem: text.micBlocked })
       deps.micBlocked()
     },
     onNotice() {
       // The local recogniser has no fallback here; nothing to show.
+    },
+    onForeign() {
+      // Round 4 (review): someone else's final was dropped; the preview its partials typed must not
+      // sit in his box until he next speaks (he may not). Taken back like a stopped utterance.
+      dropLive()
+    },
+    onEnrolled() {
+      endEnrolment()
     },
     onLag(ms) {
       // Round 3: how far behind the speech server is. Shown from LAG_SHOWN_MS, cleared once it is below.
@@ -712,6 +779,7 @@ export function createEngine(deps: EngineDeps): Engine {
     (utterance) => deps.logic.inpageInstant(session, utterance),
     () => {
       listening = false
+      endEnrolment()
       deps.publish({ listening: false, problem: text.modelUnreachable })
     },
   )
@@ -735,12 +803,8 @@ export function createEngine(deps: EngineDeps): Engine {
     listening = false
     recognizer.stop()
     // Stopped in the middle of an utterance: no final will come, so its preview goes.
-    const u = live
-    live = null
-    if (u !== null) {
-      u.over = true
-      queue = queue.then(() => takeBack(u))
-    }
+    dropLive()
+    endEnrolment()
     // The server sends no lag of 0 once the socket is gone: the line is cleared here.
     if (lagShown) {
       lagShown = false
@@ -757,6 +821,15 @@ export function createEngine(deps: EngineDeps): Engine {
     stop,
     flush() {
       recognizer.flush?.()
+    },
+    enrol(seconds) {
+      if (!recognizer.enrol) return
+      if (!listening) start()
+      dropLive()
+      endEnrolment()
+      enrolling = true
+      enrolTimer = setTimeout(endEnrolment, seconds * 1000 * ENROL_TIMEOUT_FACTOR)
+      recognizer.enrol(seconds)
     },
     get listening() {
       return listening

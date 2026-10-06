@@ -43,8 +43,12 @@ export interface Decoder {
   enrol?(seconds: number): Promise<boolean>
 }
 
-/** The frames of an utterance kept for the speaker gate: at most this much (the newest). */
-export const MAX_KEPT_MS = 20_000
+/**
+ * The frames of an utterance kept for the speaker gate: at most this much (the newest). Review:
+ * 8 s, not 20: an embedding of the newest eight seconds tells the voice as well, and the judgement
+ * holds the decoder (the worker, or the server thread) for its length.
+ */
+export const MAX_KEPT_MS = 8_000
 /** Enrolment gives up when this many times the asked seconds of audio have passed with too little speech in them. */
 export const ENROL_PATIENCE = 4
 
@@ -272,7 +276,10 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     options.onError?.(error)
   }
 
-  /** Sends text as a final, with the speaker when the decoder can judge one, then goes on. */
+  /**
+   * Sends text as a final, with the speaker when the decoder can judge one, then goes on. A judge
+   * that fails (review) loses the verdict, not the words: the final goes without a speaker.
+   */
   const sendFinal = (text: string, then: () => void): void => {
     const deliver = (judgement: Judgement | null | undefined): void => {
       if (closed) return
@@ -285,11 +292,11 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     let judged: Judgement | null | Promise<Judgement | null> | undefined
     try {
       judged = decoder.judge?.()
-    } catch (error) {
-      failed(error)
+    } catch {
+      deliver(null)
       return
     }
-    if (judged instanceof Promise) judged.then(deliver, failed)
+    if (judged instanceof Promise) judged.then(deliver, () => deliver(null))
     else deliver(judged)
   }
 

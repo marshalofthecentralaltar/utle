@@ -125,9 +125,9 @@ export function normalised(vector: ArrayLike<number>): number[] {
   return Array.from(vector, (value) => value / length)
 }
 
-/** Cosine similarity of two vectors already of unit length. */
+/** Cosine similarity of two vectors already of unit length; NaN when they cannot be compared (review: never a score that reads as a stranger). */
 export function cosine(a: ArrayLike<number>, b: ArrayLike<number>): number {
-  if (a.length !== b.length || a.length === 0) return 0
+  if (a.length !== b.length || a.length === 0) return Number.NaN
   let dot = 0
   for (let i = 0; i < a.length; i += 1) dot += (a[i] ?? 0) * (b[i] ?? 0)
   return dot
@@ -172,7 +172,10 @@ function writeProfile(path: string, profile: SpeakerProfile): void {
  */
 export function createSpeakerGate(extractor: EmbeddingExtractor | null, options: SpeakerGateOptions): SpeakerGate {
   let profile = readProfile(options.profilePath)
-  // A profile made with the model cannot be compared without it; its loudness still can.
+  const modelName = options.modelName ?? SPEAKER_MODEL_FILE
+  // A profile made with the model cannot be compared without it, nor one made with another model
+  // (review: its embedding would score the owner as a stranger); its loudness still can.
+  const comparable = (p: SpeakerProfile): boolean => extractor !== null && p.embedding.length > 0 && (p.model === '' || p.model === modelName)
   return {
     hasProfile: () => profile !== null,
     hasModel: () => extractor !== null,
@@ -189,7 +192,7 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
           return false
         }
       }
-      const next: SpeakerProfile = { version: 1, model: extractor === null ? '' : (options.modelName ?? SPEAKER_MODEL_FILE), embedding, rms: level, seconds: Math.round(length * 10) / 10 }
+      const next: SpeakerProfile = { version: 1, model: extractor === null ? '' : modelName, embedding, rms: level, seconds: Math.round(length * 10) / 10 }
       try {
         writeProfile(options.profilePath, next)
       } catch {
@@ -201,7 +204,7 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
     judge(frames) {
       if (profile === null) return null
       if (seconds(frames) < MIN_JUDGE_SECONDS) return { speaker: 'unknown', score: 0 }
-      if (extractor === null || profile.embedding.length === 0) {
+      if (extractor === null || !comparable(profile)) {
         const level = speechRms(frames)
         return { speaker: profile.rms > 0 && level < profile.rms * ENERGY_OTHER_RATIO ? 'other' : 'unknown', score: 0 }
       }
