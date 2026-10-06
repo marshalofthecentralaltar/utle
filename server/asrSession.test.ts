@@ -421,23 +421,34 @@ describe('the speaker on a final (round 4)', () => {
     ])
   })
 
-  it('closes the connection when the judge fails', () => {
+  it('sends the final without a speaker when the judge fails, and goes on (review: the words outrank the verdict)', async () => {
     const sent: AsrServerMessage[] = []
     const errors: unknown[] = []
     const loop = new Loop()
+    let calls = 0
     const decoder: Decoder = {
       accept: () => ({ text: 'ava', endpoint: true }),
       reset() {},
       close() {},
       judge() {
-        throw new Error('no embedding')
+        calls += 1
+        if (calls === 1) throw new Error('no embedding')
+        return Promise.reject(new Error('worker gone'))
       },
     }
     const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule, onError: (error) => errors.push(error) })
     session.audio(frame(1))
     loop.settle()
-    expect(errors).toHaveLength(1)
-    expect(sent.filter((message) => message.type === 'final')).toEqual([])
+    session.audio(frame(1))
+    loop.settle()
+    await Promise.resolve()
+    await Promise.resolve()
+    loop.settle()
+    expect(errors).toEqual([])
+    expect(sent.filter((message) => message.type === 'final')).toEqual([
+      { type: 'final', text: 'ava' },
+      { type: 'final', text: 'ava' },
+    ])
   })
 })
 

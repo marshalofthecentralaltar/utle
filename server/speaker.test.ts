@@ -62,6 +62,21 @@ describe('the speaker gate', () => {
     expect(gate.judge(speech(0.65, 3))?.speaker).toBe('unknown')
   })
 
+  it('never calls the owner a stranger over a profile from another model or of another size (review)', () => {
+    const first = createSpeakerGate(fakeExtractor, { profilePath, modelName: 'old.onnx' })
+    expect(first.enrol(speech(0, 8))).toBe(true)
+    // The same file read by a server with a newer model: the embedding is not comparable, loudness still is.
+    const second = createSpeakerGate(fakeExtractor, { profilePath, modelName: 'new.onnx' })
+    expect(second.hasProfile()).toBe(true)
+    expect(second.judge(speech(0.8, 3))?.speaker).toBe('unknown')
+    expect(second.judge(speech(0, 3))?.speaker).toBe('unknown')
+    expect(second.judge(speech(0, 3, 0.02))?.speaker).toBe('other')
+    // An extractor of another size over a profile that names this model: no score, so unknown.
+    const wide: EmbeddingExtractor = { embed: () => new Float32Array([1, 0, 0]) }
+    const third = createSpeakerGate(wide, { profilePath, modelName: 'old.onnx' })
+    expect(third.judge(speech(0.8, 3))).toEqual({ speaker: 'unknown', score: 0 })
+  })
+
   it('calls an utterance shorter than MIN_JUDGE_SECONDS unknown, whatever it sounds like', () => {
     const gate = createSpeakerGate(fakeExtractor, { profilePath })
     gate.enrol(speech(0, 8))
@@ -85,7 +100,8 @@ describe('the speaker gate', () => {
     expect(stored.rms).toBeCloseTo(0.2, 2)
     expect(JSON.stringify(stored).length).toBeLessThan(500)
 
-    const again = createSpeakerGate(fakeExtractor, { profilePath })
+    // The same model reads it back (another model's name would make the embedding incomparable: see below).
+    const again = createSpeakerGate(fakeExtractor, { profilePath, modelName: 'fake.onnx' })
     expect(again.hasProfile()).toBe(true)
     expect(again.judge(speech(0, 3))?.speaker).toBe('owner')
     expect(again.judge(speech(1, 3))?.speaker).toBe('other')
@@ -150,7 +166,9 @@ describe('the arithmetic', () => {
     expect(normalised([0, 0])).toEqual([0, 0])
     expect(cosine([1, 0], [1, 0])).toBe(1)
     expect(cosine([1, 0], [0, 1])).toBe(0)
-    expect(cosine([1, 0], [1])).toBe(0)
+    // Vectors that cannot be compared give no score at all, never one that reads as a stranger (review).
+    expect(cosine([1, 0], [1])).toBeNaN()
+    expect(cosine([], [])).toBeNaN()
   })
 
   it('draws the lines at the thresholds', () => {

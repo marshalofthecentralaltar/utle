@@ -46,13 +46,14 @@ looking (below), and the server knowing your voice. On the settings page, group 
 
 1. **Õpeta mu hääl**: listening starts if it was off and the bar says "Räägi 8 sekundit tavalisel
    häälel…"; speak normally for eight seconds (pauses are skipped). The bar then says "Hääl on
-   õpitud." or "Hääle õppimine ei õnnestunud." (too little speech within about 30 s). The server
+   õpitud." or "Hääle õppimine ei õnnestunud." (too little speech within about 30 s). What you say
+   meanwhile is neither typed nor run. The server
    keeps `models/speaker/owner.json`: a voice embedding and a loudness, never audio. Press the
    button again to replace it.
 2. **Kuula ainult mind**: from the next time listening starts, an utterance the server judges to be
    another voice is dropped and the bar says "Keegi teine rääkis, jätsin vahele." for three seconds.
-   An utterance it cannot place is obeyed. Words the other voice typed as a preview go away when
-   you next speak. **Kuula kõiki** turns it off.
+   An utterance it cannot place is obeyed. Words the other voice typed as a preview are taken back
+   the moment its final is dropped. **Kuula kõiki** turns it off.
 
 Without the speaker model (`npm run model` not run, or the download failed) the server logs
 `[asr] no speaker model (npm run model fetches it; loudness only until then); …`, and "Kuula ainult mind" only skips speech clearly fainter than yours was

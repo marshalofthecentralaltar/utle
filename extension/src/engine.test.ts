@@ -3,7 +3,7 @@ import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../..
 import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
 import { pageIntentFrom } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { ASK_TIMEOUT_MS, INTENT_LOOP_BUDGET_MS, LAG_SHOWN_MS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, createEngine } from './engine.ts'
+import { ASK_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, LAG_SHOWN_MS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, createEngine } from './engine.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
@@ -105,6 +105,7 @@ function setup(options: Options = {}) {
   const thinking: boolean[] = []
   const modelProblems: string[] = []
   const chains: string[] = []
+  const enrols: number[] = []
   const used = options.logic ?? logic
   const engine = createEngine({
     logic: {
@@ -147,7 +148,7 @@ function setup(options: Options = {}) {
       handlers = h
       instant = isInstant
       unavailable = onUnavailable
-      return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined }
+      return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined, enrol: (seconds) => enrols.push(seconds) }
     },
     micBlocked: () => blocked++,
     ask: (request, signal) => {
@@ -161,6 +162,9 @@ function setup(options: Options = {}) {
   const say = (text: string): void => handlers?.onUtterance(text)
   /** Round 4: the recogniser continues the last utterance ("siis ..."). */
   const continued = (text: string, added: string): void => handlers?.onUtteranceContinued(text, added)
+  /** Round 4 (review): the recogniser dropped someone else's final; the server answered an enrolment. */
+  const foreign = (): void => handlers?.onForeign()
+  const enrolled = (ok: boolean): void => handlers?.onEnrolled(ok, 8)
   const partial = (text: string): void => handlers?.onInterim(text)
   const lag = (ms: number): void => handlers?.onLag(ms)
   /** The page changes the box on its own (the site, or a click with the eye tracker). */
@@ -191,6 +195,9 @@ function setup(options: Options = {}) {
     thinking,
     modelProblems,
     chains,
+    enrols,
+    foreign,
+    enrolled,
   }
 }
 
@@ -1391,5 +1398,110 @@ describe('chains of goals (round 4)', () => {
     t.say('ava viimane sõnum')
     await t.engine.idle()
     expect(t.asked[1]?.steps).toEqual([{ action: 'command hover 3', say: 'hõljun', ok: true, message: '' }])
+  })
+})
+
+describe('review of round 4', () => {
+  const unarmed: BoxState = { present: false, text: '', armed: false }
+  const goTo = (url: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'goTo', url } })
+
+  it("a foreign final takes back the preview its partials typed, without waiting for the owner's next words", async () => {
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
+    t.engine.start()
+    t.partial('pane')
+    t.partial('pane telekas kinni')
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere. pane telekas kinni')
+    t.foreign()
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere.')
+    // The owner's next utterance starts from the base, as a new one.
+    t.partial('ma')
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere. ma')
+  })
+
+  it('a plan that only repeats the utterance or the goal starts no chain, so the same goal is never asked twice', async () => {
+    const t = setup({ logic: asking, box: unarmed, ask: () => Promise.resolve({ intent: goTo('https://www.youtube.com/'), say: 'lähen youtube', done: true, plan: ["Mine YouTube'i.", 'lähen youtube', "mine youtube'i"] }) })
+    t.engine.start()
+    t.say("mine youtube'i")
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo'])
+    expect(t.chains).toEqual([])
+  })
+
+  it('a plan on a later goal adds only goals the chain does not know, and duplicates once', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => {
+        if (request.chain === undefined) return Promise.resolve({ intent: goTo('https://www.youtube.com/'), say: '', done: true, plan: ['otsi kassivideod', 'mängi esimene'] })
+        if (request.chain.goal === 'otsi kassivideod') return Promise.resolve({ intent: { kind: 'command', command: { kind: 'siteSearch', query: 'kassivideod' } } as const, say: '', done: true, plan: ['otsi kassivideod', "mine youtube'i", 'mängi esimene', 'pane heli maha', 'pane heli maha'] })
+        return Promise.resolve({ intent: { kind: 'unclear', say: 'x' } as const, say: '' })
+      },
+    })
+    t.engine.start()
+    t.say("mine youtube'i otsi kassivideod ja mängi esimene")
+    await t.engine.idle()
+    expect(t.asked.map((r) => r.utterance)).toEqual(["mine youtube'i otsi kassivideod ja mängi esimene", 'otsi kassivideod', 'pane heli maha'])
+    expect(t.asked[2]?.chain?.remaining).toEqual(['mängi esimene'])
+  })
+
+  it('a continued utterance after a long one carries goals clipped to what the request schema takes', async () => {
+    const long = Array.from({ length: 60 }, (_, i) => `sõna${i}`).join(' ')
+    const t = setup({ logic: asking, box: unarmed, ask: () => Promise.resolve({ intent: { kind: 'unclear', say: 'x' }, say: '' }) })
+    t.engine.start()
+    t.say(long)
+    await t.engine.idle()
+    t.continued(`${long} siis saada`, 'siis saada')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(2)
+    expect(t.asked[0]?.utterance.length).toBeLessThanOrEqual(500)
+    expect(t.asked[1]?.chain?.completed.map((g) => g.length)).toEqual([200])
+    expect(t.asked[1]?.chain?.original.length).toBeLessThanOrEqual(1000)
+  })
+
+  it('a plain send reads the box after what it waited for, not the base from before', async () => {
+    const t = setup({ logic: previewing, box: { present: true, text: 'x', armed: true } })
+    t.engine.start()
+    t.partial('saa')
+    await t.engine.idle()
+    // The page (or a chain) changed the box since the send's partials began.
+    t.edit('uus')
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.boxes.at(-1)?.text).toBe('uus')
+    expect(t.ran.filter((c) => c.kind === 'pressSend')).toHaveLength(1)
+  })
+
+  it('while the server learns his voice nothing he says is typed or run, until the answer comes', async () => {
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true } })
+    t.engine.enrol(8)
+    expect(t.starts()).toBe(1)
+    expect(t.enrols).toEqual([8])
+    t.partial('tere')
+    t.say('tere mina olen')
+    t.continued('tere mina olen siis räägin', 'siis räägin')
+    await t.engine.idle()
+    expect(t.ran).toEqual([])
+    expect(t.heard).toEqual([])
+    t.enrolled(true)
+    t.say('ma jõuan')
+    await t.engine.idle()
+    expect(t.page().text).toBe('Tere.ma jõuan')
+  })
+
+  it('an enrolment the server never answers ends on its own', async () => {
+    vi.useFakeTimers()
+    const t = setup({ box: unarmed })
+    t.engine.enrol(8)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.ran).toEqual([])
+    await vi.advanceTimersByTimeAsync(8 * 1000 * ENROL_TIMEOUT_FACTOR + 10)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.state.line).toBe('midagi')
   })
 })

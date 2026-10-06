@@ -104,8 +104,9 @@ voice (this machine has no model files):
   `server/speaker.ts`); the client drops `other` while the mode is on and the bar says "Keegi teine
   rääkis, jätsin vahele." `unknown` is obeyed, so a bad profile never locks him out.
 - Without the model the mode only drops speech fainter than his was at enrolment (40 % of its RMS).
-- Known: the other voice's partials are typed as a preview before its final is judged; the preview
-  goes when he next speaks. Thresholds unmeasured on an Estonian voice. See ARCHITECTURE 24.2.
+- The other voice's partials are typed as a preview before its final is judged; the review made the
+  engine take the preview back the moment the final is dropped. Thresholds unmeasured on an
+  Estonian voice. See ARCHITECTURE 24.2 and `docs/REVIEW-R4.md` (what was fixed, what is proposed).
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
