@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="et">
+<head>
+<meta charset="utf-8" />
+<title>Ütle poster</title>
+<style>
+  @font-face { font-family: 'Bricolage'; src: url('BricolageGrotesque-Bold.ttf'); font-weight: 700; }
+  @font-face { font-family: 'Bricolage'; src: url('BricolageGrotesque-Regular.ttf'); font-weight: 400; }
+  @font-face { font-family: 'Instrument'; src: url('InstrumentSans-Regular.ttf'); font-weight: 400; }
+  @font-face { font-family: 'Instrument'; src: url('InstrumentSans-Bold.ttf'); font-weight: 700; }
+  @font-face { font-family: 'Mono'; src: url('JetBrainsMono-Regular.ttf'); }
+  :root {
+    --bg: #121212; --ink: #f5f1e8; --dim: #9a958b; --line: #2a2a2a; --panel: #1c1c1c;
+    --green: #3ddc84; --amber: #f0b429;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1240px; height: 1754px; background: var(--bg); color: var(--ink); font-family: 'Instrument', sans-serif; }
+  .page { position: relative; width: 1240px; height: 1754px; padding: 84px 92px 0; overflow: hidden; }
+
+  /* header */
+  .brand { display: flex; align-items: flex-end; justify-content: space-between; }
+  .wordmark { font-family: 'Bricolage'; font-weight: 700; font-size: 236px; line-height: 0.82; letter-spacing: -0.03em; position: relative; }
+  .wordmark .u { position: relative; display: inline-block; }
+  .wordmark .u .dots { position: absolute; left: 12px; top: -14px; display: flex; gap: 22px; }
+  .wordmark .u .dots i { width: 34px; height: 34px; border-radius: 50%; background: var(--green); display: block; }
+  .wordmark .u .glyph { visibility: visible; }
+  .meta { text-align: right; font-size: 15px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--dim); line-height: 1.9; padding-bottom: 14px; }
+  .meta b { color: var(--ink); font-weight: 400; }
+
+  .tagline { margin-top: 64px; display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  .tagline h1 { font-family: 'Bricolage'; font-weight: 400; font-size: 44px; line-height: 1.12; letter-spacing: -0.01em; }
+  .tagline p { font-size: 19px; line-height: 1.5; color: var(--dim); max-width: 470px; padding-top: 8px; }
+  .tagline p b { color: var(--ink); font-weight: 400; }
+
+  .rule { height: 1px; background: var(--line); margin: 56px 0 0; }
+
+  /* transcript */
+  .label { font-size: 12px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--dim); }
+  .transcript { margin-top: 28px; display: grid; grid-template-columns: 56px 1fr; column-gap: 24px; }
+  .transcript .n { font-family: 'Mono'; font-size: 13px; color: var(--dim); padding-top: 9px; letter-spacing: 0.1em; }
+  .row { display: contents; }
+  .said { font-family: 'Mono'; font-size: 27px; line-height: 1.25; color: var(--ink); padding: 4px 0 2px; }
+  .said::before { content: '„'; color: var(--dim); } .said::after { content: '“'; color: var(--dim); }
+  .done { font-size: 17px; color: var(--amber); letter-spacing: 0.02em; padding: 0 0 26px; grid-column: 2; }
+  .done::before { content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--amber); margin-right: 12px; vertical-align: 1px; }
+
+  /* three facts */
+  .facts { margin-top: 26px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .fact { border-top: 1px solid var(--line); padding-top: 18px; }
+  .fact .k { font-family: 'Bricolage'; font-weight: 700; font-size: 26px; letter-spacing: -0.01em; }
+  .fact .v { font-size: 16px; line-height: 1.5; color: var(--dim); margin-top: 8px; }
+  .fact .v b { color: var(--ink); font-weight: 400; }
+
+  /* wave of dots */
+  .wave { margin-top: 64px; display: flex; align-items: flex-end; gap: 9px; height: 64px; }
+  .wave i { display: block; width: 7px; border-radius: 4px; background: var(--line); }
+
+  /* the bar: the product itself */
+  .bar { position: absolute; left: 0; right: 0; bottom: 104px; height: 152px; background: #141414; border-top: 4px solid var(--amber);
+    display: flex; align-items: center; gap: 28px; padding: 0 92px; }
+  .mic { width: 112px; height: 112px; border-radius: 18px; background: var(--green); color: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; font-weight: 700; font-size: 19px; }
+  .mic i { width: 28px; height: 28px; border-radius: 50%; background: #000; display: block; }
+  .words { flex: 1; }
+  .heard { font-weight: 700; font-size: 30px; letter-spacing: -0.01em; }
+  .line { color: var(--amber); font-size: 21px; margin-top: 8px; }
+  .ctl { display: flex; flex-direction: column; gap: 10px; }
+  .ctl span { border: 2px solid #3a3a3a; border-radius: 10px; padding: 8px 18px; font-size: 15px; color: var(--ink); text-align: center; }
+
+  .foot { position: absolute; left: 92px; right: 92px; bottom: 40px; display: flex; justify-content: space-between; gap: 40px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); line-height: 1.7; }
+  .foot span { white-space: nowrap; }
+  .foot b { color: var(--ink); font-weight: 400; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="brand">
+    <div class="wordmark"><span class="u"><span class="dots"><i></i><i></i></span><span class="glyph">u</span></span>tle</div>
+    <div class="meta"><b>Ütle</b> · eesti keeles „say“<br />hääl juhib brauserit<br />the voice drives the browser</div>
+  </div>
+
+  <div class="tagline">
+    <h1>Räägi eesti keeles.<br />Brauser teeb ära.</h1>
+    <p><b>For people who cannot use their hands.</b> Speak Estonian; the words land in WhatsApp's own box, a wrong word is fixed in a sentence, the message goes on „saada“. The same voice opens sites, clicks, scrolls, searches and edits. <b>It understands what you mean, not a list of phrases.</b></p>
+  </div>
+
+  <div class="rule"></div>
+
+  <div class="label" style="margin-top:34px">Protokoll · one afternoon, as heard</div>
+  <div class="transcript">
+    <div class="row"><div class="n">01</div><div class="said">kirjuta Marile, et jõuan kell viis</div><div class="done">Avatud vestlus Mariga. Kirjutatud.</div></div>
+    <div class="row"><div class="n">02</div><div class="said">mitte viis, vaid kuus</div><div class="done">Parandatud. Saada?</div></div>
+    <div class="row"><div class="n">03</div><div class="said">saada</div><div class="done">Saadetud.</div></div>
+    <div class="row"><div class="n">04</div><div class="said">mine juutuubi ja otsi kassivideod</div><div class="done">Otsin YouTube'ist: kassivideod.</div></div>
+    <div class="row"><div class="n">05</div><div class="said">ava esimene ja pane vaiksemaks</div><div class="done">Mängin. Heli vaiksemaks.</div></div>
+  </div>
+
+  <div class="facts">
+    <div class="fact"><div class="k">Kõne jääb arvutisse</div><div class="v"><b>Speech never leaves the laptop.</b> TalTech's Estonian model runs locally; no audio is sent anywhere.</div></div>
+    <div class="fact"><div class="k">Sinu lehtedel</div><div class="v"><b>Inside the sites you already use.</b> WhatsApp, YouTube, Gmail, news, forms. No new app to move your friends to.</div></div>
+    <div class="fact"><div class="k">Vaata ja räägi</div><div class="v"><b>Look at the bar and speak.</b> Made for an eye tracker: it listens while your gaze rests, stops when you look away.</div></div>
+  </div>
+
+  <div class="wave" id="wave"></div>
+
+  <div class="bar">
+    <div class="mic"><i></i><span>Kuulan</span></div>
+    <div class="words">
+      <div class="heard">kirjuta Marile, et jõuan kell kuus</div>
+      <div class="line">Sain aru: kirjutan Marile. Saadetud.</div>
+    </div>
+    <div class="ctl"><span>Peida</span><span>Seaded</span></div>
+  </div>
+
+  <div class="foot">
+    <span><b>NewWorkTech</b> · TalTech Mektory · 6. oktoober 2026</span>
+    <span>Kõnemudel: TalTech keeletehnoloogia labor · MIT</span>
+  </div>
+</div>
+<script>
+  // A quiet waveform: bars of deterministic heights, a pulse that reads as speech.
+  const wave = document.getElementById('wave');
+  const n = 66; let seed = 7;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  for (let i = 0; i < n; i++) {
+    const env = Math.sin((i / n) * Math.PI) ** 0.7;
+    const burst = 0.35 + 0.65 * Math.abs(Math.sin(i * 0.9) * Math.cos(i * 0.23));
+    const h = 6 + Math.round(56 * env * burst * (0.6 + 0.4 * rnd()));
+    const b = document.createElement('i'); b.style.height = h + 'px';
+    if (i > 24 && i < 42) b.style.background = '#3ddc84';
+    wave.appendChild(b);
+  }
+</script>
+</body>
+</html>
