@@ -108,6 +108,46 @@ describe('pageIntent', () => {
     expect(single.done).toBe(true)
   })
 
+  it('passes the plan through, cleaned and clipped to twelve goals, and leaves it out when empty (round 4)', async () => {
+    const plan = Array.from({ length: 15 }, (_, i) => `  samm ${i + 1} `)
+    const first = answer({ intent: { kind: 'command', command: { kind: 'goTo', url: 'https://www.youtube.com/' } }, say: 'lähen youtube', done: true, plan: [...plan, '', 7] })
+    const { client } = fakeClient(first, CLICK_LATER)
+    const chained = await pageIntent(request({ utterance: "mine youtube'i otsi kassivideod ja mängi esimene" }), { client, model: 'm' })
+    expect(chained.plan).toHaveLength(12)
+    expect(chained.plan?.[0]).toBe('samm 1')
+    expect(chained.plan?.[11]).toBe('samm 12')
+    const single = await pageIntent(request(), { client, model: 'm' })
+    expect(single).toEqual({ intent: { kind: 'command', command: { kind: 'clickItem', id: 2 } }, say: 'ava Vaata hiljem', done: true })
+    expect('plan' in single).toBe(false)
+  })
+
+  it('tells the model the chain in the user turn: what is done, the goal, what comes next (round 4)', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    const chain = { original: 'mine whatsappi, ava Karini viimane sõnum, kustuta see kõigi jaoks', completed: ['mine whatsappi'], goal: 'ava Karini viimane sõnum', remaining: ['kustuta see kõigi jaoks'] }
+    await pageIntent(request({ utterance: 'ava Karini viimane sõnum', chain }), { client, model: 'm' })
+    const text = String(calls[0]?.messages[0]?.content)
+    expect(text).toContain('chain: 2/3')
+    expect(text).toContain('chain original: "mine whatsappi, ava Karini viimane sõnum, kustuta see kõigi jaoks"')
+    expect(text).toContain('chain done: "mine whatsappi"')
+    expect(text).toContain('chain goal: "ava Karini viimane sõnum"')
+    expect(text).toContain('chain next: "kustuta see kõigi jaoks"')
+    const { client: fresh, calls: freshCalls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client: fresh, model: 'm' })
+    expect(String(freshCalls[0]?.messages[0]?.content)).toContain('chain: none')
+  })
+
+  it('offers hover, contextMenu and scrollTo in the tool, and the prompt says what a text item is (round 4)', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client, model: 'm' })
+    const tool = calls[0]?.tools?.[0]
+    const kinds = JSON.stringify(tool && 'input_schema' in tool ? tool.input_schema : {})
+    for (const kind of ['hover', 'contextMenu', 'scrollTo']) expect(kinds).toContain(`"${kind}"`)
+    const system = calls[0]?.system
+    const systemText = typeof system === 'string' ? system : (system ?? []).map((block) => (block.type === 'text' ? block.text : '')).join('')
+    expect(systemText).toContain('Several goals in one breath')
+    expect(systemText).toContain('hover')
+  })
+
   it('lists the earlier steps in the user turn, as ok or failed lines', async () => {
     const { client, calls } = fakeClient(CLICK_LATER)
     const steps = [
@@ -128,7 +168,7 @@ describe('pageIntent', () => {
     await pageIntent(request(), { client, model: 'm' })
     const tool = calls[0]?.tools?.[0]
     const schema = tool && 'input_schema' in tool ? tool.input_schema : undefined
-    expect(schema?.required).toEqual(['intent', 'say', 'done'])
+    expect(schema?.required).toEqual(['intent', 'say', 'done', 'plan'])
     expect(schema?.additionalProperties).toBe(false)
     const loose: string[] = []
     const walk = (node: unknown, path: string): void => {
@@ -222,7 +262,7 @@ describe('pageIntent', () => {
     const { client } = fakeClient(CLICK_LATER)
     await pageIntent(request({ utterance: 'mine vaata hiljem palun' }), { client, model: 'm' })
     const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
-    expect(logged.some((line) => /^\[intent\] kind=command done=true ms=\d+$/.test(line))).toBe(true)
+    expect(logged.some((line) => /^\[intent\] kind=command done=true plan=0 ms=\d+$/.test(line))).toBe(true)
     const all = logged.join('\n')
     expect(all).not.toContain('vaata hiljem')
     expect(all).not.toContain('Kassid')

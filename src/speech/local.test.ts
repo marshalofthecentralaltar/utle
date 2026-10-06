@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS } from './asrProtocol.ts'
 import { MAX_BUFFERED_BYTES, createLocalRecognizer } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
@@ -444,6 +445,67 @@ describe('local recogniser (browser side)', () => {
       r.flush?.()
       expect(FakeSocket.made).toHaveLength(0)
       expect(utterances).toEqual([])
+    })
+  })
+
+  describe('chains across pauses (round 4)', () => {
+    let continued: Array<[string, string]>
+    const chaining = () =>
+      createLocalRecognizer(
+        { ...handlers, onUtteranceContinued: (text: string, added: string) => continued.push([text, added]) },
+        isInstant,
+        { onUnavailable: () => (unavailable += 1), connect: (events) => new FakeSocket(events), audio: () => new FakeAudio() },
+      )
+
+    beforeEach(() => {
+      continued = []
+    })
+
+    it('holds a final that ends with a connective for CONNECTIVE_HOLD_MS and joins the next one', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'mine whatsappi ja' })
+      vi.advanceTimersByTime(CONNECTIVE_HOLD_MS - 1)
+      expect(utterances).toEqual([])
+      socket().says({ type: 'final', text: 'ava Karin' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi ja ava Karin'])
+    })
+
+    it('a partial that is a command ending with a connective is not released early', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      // isInstant says no for "keri alla ja" (inpageInstant: a connective-ending text is never instant).
+      socket().says({ type: 'partial', text: 'keri alla ja' })
+      vi.advanceTimersByTime(INSTANT_SETTLE_MS * 2)
+      expect(utterances).toEqual([])
+    })
+
+    it('a final starting with a connective soon after an utterance continues it through onUtteranceContinued', () => {
+      const r = chaining()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'mine whatsappi' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi'])
+      vi.advanceTimersByTime(1000)
+      socket().says({ type: 'final', text: 'siis ava Karin' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi'])
+      expect(continued).toEqual([['mine whatsappi siis ava Karin', 'siis ava Karin']])
+    })
+
+    it('without the handler, a connective-led final is an utterance of its own', () => {
+      const r = make()
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'mine whatsappi' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      socket().says({ type: 'final', text: 'siis ava Karin' })
+      vi.advanceTimersByTime(LOCAL_HOLD_MS)
+      expect(utterances).toEqual(['mine whatsappi', 'siis ava Karin'])
     })
   })
 })

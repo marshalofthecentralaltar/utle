@@ -577,6 +577,13 @@ describe('inpageInstant agrees with inpageStep', () => {
     expect(step.commands[0]?.kind).toBe('setText')
   })
 
+  it('a command that ends with a connective is not instant: more is coming (round 4)', () => {
+    expect(inpageInstant(session(), 'keri alla ja')).toBe(false)
+    expect(inpageInstant(session(), 'mine whatsappi ja siis')).toBe(false)
+    expect(inpageInstant(session(), 'scroll down then')).toBe(false)
+    expect(inpageInstant(session(), 'keri alla')).toBe(true)
+  })
+
   it('the one-breath form is not instant', () => {
     expect(inpageInstant(session(), 'kirjuta Marile, et ma jõuan homme')).toBe(false)
     expect(inpageInstant(session(), 'tell Mari that I am late')).toBe(false)

@@ -4,8 +4,9 @@
 
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
-import type { IntentAnswer, IntentRequest, IntentStep, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
-import { MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
+import { chainLine, firstGoal } from '../../src/core/chain.ts'
+import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
+import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
@@ -30,8 +31,11 @@ export interface InpageLogic {
  */
 export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' | 'aborted' }
 
-/** The recogniser's handlers as the engine gives them: onLag (round 3) is always there, whether or not the recogniser calls it. */
-export type EngineHandlers = RecognizerHandlers & { onLag(ms: number): void }
+/**
+ * The recogniser's handlers as the engine gives them: onLag (round 3) and onUtteranceContinued
+ * (round 4) are always there, whether or not the recogniser calls them.
+ */
+export type EngineHandlers = RecognizerHandlers & { onLag(ms: number): void; onUtteranceContinued(text: string, added: string): void }
 
 export interface EngineDeps {
   logic: InpageLogic
@@ -98,6 +102,9 @@ export const LAG_SHOWN_MS = 1000
 export const MAX_STEP_FAILURES = 2
 /** M7.2: how long the page gets to render after a step before it is read again (a goTo already waited for the load). */
 export const SETTLE_MS = 300
+/** Round 4: the model may plan this many goals after the one it acts on (IntentAnswerSchema: 12). */
+const MAX_PLAN_GOALS = 12
+const GOAL_CHARS = 200
 const RECENT_LINE_CHARS = 200
 /** The request's limits in IntentRequestSchema: a page beyond them would be a 400, and the model never asked. */
 const URL_CHARS = 2000
@@ -133,6 +140,11 @@ export function createEngine(deps: EngineDeps): Engine {
   let recent: string[] = []
   /** The server has said it has no model. A standing state: published on change only. */
   let modelOff = false
+  /**
+   * Round 4: the goals the last utterance finished, in his words, so a continued utterance
+   * ("siis ava Karin") can carry them as `completed`.
+   */
+  let lastDone: string[] = []
 
   const setModelOff = (off: boolean): void => {
     if (off === modelOff) return
@@ -233,6 +245,16 @@ export function createEngine(deps: EngineDeps): Engine {
     verifying: boolean
     /** A verification whose verdict was a command: it is putting the box back and running it. */
     acting: boolean
+    /**
+     * Round 4: the chain of goals this utterance is working through, once the model has planned
+     * one (or, for a continued utterance, from the start). Null for a single goal.
+     */
+    chain: IntentChain | null
+    /**
+     * Round 4: a continued utterance ("siis ava Karin" soon after the last one): it does not barge
+     * in, waits for every verification like a send, and is never stale.
+     */
+    continued: boolean
   }
 
   /** Every job not finished: the one in its turn of the queue, those waiting for it, the verifications. */
@@ -255,9 +277,14 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   const newJob = (utterance: string, send: boolean): Job => {
-    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false }
+    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false }
     jobs.add(job)
     return job
+  }
+
+  /** Round 4: the strip's chain line while a chain runs, '' once it is over. */
+  const showChain = (chain: IntentChain | null): void => {
+    deps.publish({ chain: chain === null ? '' : chainLine(chain) })
   }
 
   /** The rules alone say whether an utterance is a plain send, before its turn comes. Pure: the probe box is never typed into. */
@@ -279,6 +306,8 @@ export function createEngine(deps: EngineDeps): Engine {
     for (const job of jobs) {
       if (job === newcomer) continue
       if (newcomer.send && job.verifying && !job.acting) continue
+      // Round 4: a plain send does not cancel a chain of goals; it waits its turn behind it.
+      if (newcomer.send && job.chain !== null) continue
       job.interrupted = true
       if (!newcomer.send || job.looping) {
         job.cancelled = true
@@ -316,8 +345,18 @@ export function createEngine(deps: EngineDeps): Engine {
     say: string
     /** The model says the utterance asks for more after this step. */
     more: boolean
+    /** Round 4: the goals after the one this step serves, in his words. Empty for one goal. */
+    plan: string[]
     page: PageContext
   }
+
+  /** The model's plan as a clean list: strings only, trimmed, no empties, clipped to the schema's limits. */
+  const planFrom = (answer: IntentAnswer): string[] =>
+    (Array.isArray(answer.plan) ? answer.plan : [])
+      .filter((goal): goal is string => typeof goal === 'string')
+      .map((goal) => goal.trim().slice(0, GOAL_CHARS))
+      .filter((goal) => goal !== '')
+      .slice(0, MAX_PLAN_GOALS)
 
   /**
    * One question to the model: the page as it is now (with the box as it was before the utterance
@@ -330,8 +369,11 @@ export function createEngine(deps: EngineDeps): Engine {
     const page = await readPage(box, baseText)
     const tabs = await deps.tabs().catch((): TabSummary[] => [])
     if (job.cancelled) return null
-    const request: IntentRequest = { lang: deps.lang, utterance: job.utterance, page, tabs, recent: recentBefore }
+    // Round 4: in a chain the model is asked about the goal in hand, and told the chain.
+    const chain = job.chain
+    const request: IntentRequest = { lang: deps.lang, utterance: chain === null ? job.utterance : chain.goal, page, tabs, recent: recentBefore }
     if (steps.length > 0) request.steps = steps
+    if (chain !== null) request.chain = chain
     const controller = new AbortController()
     job.controller = controller
     const answer = await askWithTimeout(request, controller)
@@ -343,7 +385,7 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     setModelOff(false)
     const intent = deps.logic.pageIntentFrom(answer.intent, { page, tabs }) ?? { kind: 'unclear', say: '' }
-    return { intent, say: answer.say, more: answer.done === false, page }
+    return { intent, say: answer.say, more: answer.done === false, plan: planFrom(answer), page }
   }
 
   /** How one step went, for the strip and for the model's next look. */
@@ -383,7 +425,8 @@ export function createEngine(deps: EngineDeps): Engine {
     switch (intent.kind) {
       case 'command': {
         const c = intent.command
-        const detail = c.kind === 'clickItem' || c.kind === 'focusItem' ? ` ${c.id}` : c.kind === 'clickHint' ? ` ${c.number}` : ''
+        const withId = c.kind === 'clickItem' || c.kind === 'focusItem' || c.kind === 'hover' || c.kind === 'contextMenu' || c.kind === 'scrollTo'
+        const detail = withId ? ` ${c.id}` : c.kind === 'clickHint' ? ` ${c.number}` : ''
         return `command ${c.kind}${detail}`
       }
       case 'edit':
@@ -396,38 +439,101 @@ export function createEngine(deps: EngineDeps): Engine {
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
 
   /**
-   * M7.2: runs the model's step and, while the model says the utterance asks for more, looks at
-   * the page again and asks again with the steps taken so far. Bounded: MAX_INTENT_STEPS steps,
-   * INTENT_LOOP_BUDGET_MS since the utterance arrived, MAX_STEP_FAILURES failed steps, an
-   * unclear answer stops it, and so does a later utterance (round 3: the step in hand finishes,
-   * no further one is asked for; the strip keeps that step's line). Everything runs through
-   * perform, so the session stays true.
+   * Round 4: the model planned goals after the one its action serves. With no chain yet, the
+   * chain starts: the goal is the part of the utterance the action served (firstGoal). In a chain,
+   * a plan on a goal's first ask means the goal itself held several parts ("siis ava Karin ja
+   * kustuta see"): the goal narrows to its first part and the rest go before what remained.
    */
-  const follow = async (job: Job, box: BoxState, recentBefore: string[], first: Heard, u: Live | null): Promise<void> => {
+  const planChain = (job: Job, heard: Heard, firstAskOfGoal: boolean): void => {
+    if (heard.plan.length === 0 || !firstAskOfGoal) return
+    const chain = job.chain
+    if (chain === null) {
+      job.chain = { original: job.utterance, completed: [], goal: firstGoal(job.utterance, heard.plan, heard.say), remaining: heard.plan }
+    } else {
+      const fresh = heard.plan.filter((goal) => !chain.remaining.includes(goal))
+      job.chain = { ...chain, goal: firstGoal(chain.goal, heard.plan, heard.say), remaining: [...fresh, ...chain.remaining].slice(0, MAX_PLAN_GOALS) }
+    }
+    showChain(job.chain)
+  }
+
+  /** How one goal's loop ended: done (the chain may go on), or stopped for good. */
+  type GoalEnd = 'done' | 'stopped'
+
+  /**
+   * M7.2: runs the model's step and, while the model says the goal asks for more, looks at the
+   * page again and asks again with the steps taken so far. Bounded: maxSteps steps (MAX_INTENT_STEPS,
+   * or what the chain has left), INTENT_LOOP_BUDGET_MS since `since`, MAX_STEP_FAILURES failed
+   * steps, an unclear answer stops it, and so does a later utterance (round 3: the step in hand
+   * finishes, no further one is asked for; the strip keeps that step's line). Everything runs
+   * through perform, so the session stays true. Round 4: an unclear after a good step ("Valmis")
+   * ends the goal as done; `taken` counts the steps run, for the chain's total.
+   */
+  const runGoal = async (job: Job, box: BoxState, recentBefore: string[], first: Heard, u: Live | null, since: number, maxSteps: number, taken: { n: number }): Promise<GoalEnd> => {
     let heard = first
     let steps: IntentStep[] = []
     let failures = 0
     for (;;) {
+      planChain(job, heard, steps.length === 0)
       const step = deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
       const outcome = await perform(step, u)
       u = null
-      if (heard.intent.kind === 'unclear') return
+      if (heard.intent.kind === 'unclear') return steps.some((s) => s.ok) ? 'done' : 'stopped'
       // A step with nothing to run did nothing: the model hears that, not a success.
       const ok = outcome.ok && step.commands.length > 0
       if (!ok) failures += 1
+      taken.n += 1
       steps = [...steps, { action: kindSummary(heard.intent), say: heard.say, ok, message: ok ? '' : outcome.line }]
+      if (!heard.more && ok) return 'done'
       // A failed step is asked about once more even when the model thought it was done: the
       // model could not know the click would miss, and the steps now say so.
-      if ((!heard.more && ok) || steps.length >= MAX_INTENT_STEPS || failures >= MAX_STEP_FAILURES) return
-      if (job.interrupted) return
-      if (Date.now() - job.arrived > INTENT_LOOP_BUDGET_MS) return
+      if (steps.length >= maxSteps || failures >= MAX_STEP_FAILURES) return 'stopped'
+      if (job.interrupted) return 'stopped'
+      if (Date.now() - since > INTENT_LOOP_BUDGET_MS) return 'stopped'
       await settle()
-      if (job.interrupted) return
+      if (job.interrupted) return 'stopped'
       job.looping = true
       const next = await askOnce(job, box, null, recentBefore, steps)
-      if (next === null) return
+      if (next === null) return 'stopped'
       heard = next
     }
+  }
+
+  /**
+   * Round 4: works through the utterance's goals. The first goal runs as M7.2's loop; when the
+   * model's answer carried a plan the chain starts, and each goal done shifts to the next: asked
+   * afresh with that goal as the utterance, the chain in the request, and the steps reset. It
+   * stops when nothing remains, after MAX_CHAIN_STEPS page steps in all, after MAX_CHAIN_MS since
+   * the utterance arrived, on unclear, on two failed steps for one goal, when the model cannot be
+   * reached, and on barge-in (a later utterance; a plain send only waits). The chain line on the
+   * strip is published on every shift and cleared when the chain ends, however it ends.
+   */
+  const follow = async (job: Job, box: BoxState, recentBefore: string[], first: Heard, u: Live | null): Promise<void> => {
+    const started = job.arrived
+    const taken = { n: 0 }
+    let heard = first
+    let since = job.arrived
+    if (job.chain !== null) showChain(job.chain)
+    for (;;) {
+      const end = await runGoal(job, box, recentBefore, heard, u, since, Math.min(MAX_INTENT_STEPS, MAX_CHAIN_STEPS - taken.n), taken)
+      u = null
+      const chain = job.chain
+      if (end !== 'done' || chain === null) break
+      const [goal, ...remaining] = chain.remaining
+      if (goal === undefined) break
+      if (taken.n >= MAX_CHAIN_STEPS || Date.now() - started > MAX_CHAIN_MS || job.interrupted) break
+      job.chain = { ...chain, completed: [...chain.completed, chain.goal], goal, remaining }
+      showChain(job.chain)
+      await settle()
+      if (job.interrupted) break
+      job.looping = true
+      since = Date.now()
+      const next = await askOnce(job, box, null, recentBefore, [])
+      if (next === null) break
+      heard = next
+    }
+    const chain = job.chain
+    lastDone = chain === null ? [job.utterance] : [...chain.completed, chain.goal]
+    if (chain !== null) showChain(null)
   }
 
   /**
@@ -441,6 +547,8 @@ export function createEngine(deps: EngineDeps): Engine {
   const verify = (from: Job, box: BoxState, before: InpageSession, typedSession: InpageSession, typed: Outcome, expected: string | null, recentBefore: string[]): void => {
     const job = newJob(from.utterance, false)
     job.verifying = true
+    job.chain = from.chain
+    job.continued = from.continued
     let done = (): void => undefined
     const p = new Promise<void>((resolve) => {
       done = resolve
@@ -482,7 +590,9 @@ export function createEngine(deps: EngineDeps): Engine {
       // A send waits for every verification: nothing is sent while the box is being judged. Any
       // other utterance waits only for a verification running page commands, so commands of two
       // utterances do not interleave.
-      await settled(job.send ? pending : acting)
+      await settled(job.send || job.continued ? pending : acting)
+      // Round 4: a continued utterance carries what the last one finished as its completed goals.
+      if (job.continued && job.chain !== null) job.chain = { ...job.chain, completed: lastDone }
       let box: BoxState
       if (u === null) {
         box = await readBox()
@@ -496,12 +606,14 @@ export function createEngine(deps: EngineDeps): Engine {
       const before = session
       const recentBefore = recent
       const rules = deps.logic.inpageStep(session, job.utterance, box)
-      // Waited too long in the queue: the rules alone, and the strip says so (round 3).
-      const stale = Date.now() - job.arrived > STALE_MS
+      // Waited too long in the queue: the rules alone, and the strip says so (round 3). A continued
+      // utterance meant to wait for the chain before it (round 4) is never stale.
+      const stale = Date.now() - job.arrived > STALE_MS && !job.continued
       // Dictation by the rules: a short utterance, or one with no armed box, may mean something else.
       const shouldAsk = rules.ask === true && (!box.armed || wordCount(job.utterance) < LONG_UTTERANCE_WORDS) && !stale && !job.cancelled
       if (!shouldAsk) {
         await perform(rules, u, stale ? inpageText.catchingUp : '')
+        lastDone = [job.utterance]
         return
       }
       if (box.armed) {
@@ -551,6 +663,18 @@ export function createEngine(deps: EngineDeps): Engine {
       const job = newJob(utterance, isPlainSend(utterance))
       interrupt(job)
       // A step that throws must not stop every utterance after it: the queue stays a resolved promise.
+      queue = queue.then(() => handle(job, u)).catch(() => undefined)
+    },
+    onUtteranceContinued(text, added) {
+      // Round 4: "siis ava Karin" soon after the last utterance goes on from it: no barge-in, and
+      // the new words are asked as the next goal of the chain the last utterance was.
+      deps.publish({ heard: text })
+      const u = live
+      live = null
+      if (u !== null) u.over = true
+      const job = newJob(added, false)
+      job.continued = true
+      job.chain = { original: text.slice(0, 1000), completed: [], goal: added.slice(0, GOAL_CHARS), remaining: [] }
       queue = queue.then(() => handle(job, u)).catch(() => undefined)
     },
     onInterim(interim) {

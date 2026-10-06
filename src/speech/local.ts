@@ -1,4 +1,6 @@
+import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { createAssembler } from './assembler.ts'
+import type { AssemblerOptions } from './assembler.ts'
 import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, parseAsrMessage } from './asrProtocol.ts'
 import type { AsrClientMessage } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
@@ -92,7 +94,13 @@ export function createLocalRecognizer(
   isInstant: (text: string) => boolean,
   options: LocalOptions,
 ): Recognizer {
-  const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant })
+  // Round 4 (the chain lane): a final ending with a connective is held CONNECTIVE_HOLD_MS, and one
+  // starting with a connective soon after a delivery continues it. Only this block is the chain's.
+  const chained: Pick<AssemblerOptions, 'connectiveHoldMs' | 'onUtteranceContinued'> = {
+    connectiveHoldMs: CONNECTIVE_HOLD_MS,
+    ...(handlers.onUtteranceContinued ? { onUtteranceContinued: (text: string, added: string) => handlers.onUtteranceContinued?.(text, added) } : {}),
+  }
+  const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant, ...chained })
   const connect = options.connect ?? ((events: SocketEvents) => browserSocket(events, options.address))
   let running = false
   let served = false

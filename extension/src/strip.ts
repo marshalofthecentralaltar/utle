@@ -394,6 +394,16 @@ export function mountStrip(): void {
     lagOn = lagShown(state.lag, lagOn)
     lag.textContent = lagOn ? text.lagLine(Math.round(state.lag / 1000)) : ''
     lag.classList.toggle('on', lagOn)
+    // Round 4: a small dim line while a chain of goals runs ("2/4 · ava Karini viimane sõnum"),
+    // styled like the lag line and placed under it; made here so the edit stays in render.
+    let chainEl = words.querySelector<HTMLDivElement>('.chain')
+    if (chainEl === null) {
+      chainEl = document.createElement('div')
+      chainEl.className = 'lag chain'
+      words.append(chainEl)
+    }
+    chainEl.textContent = state.chain
+    chainEl.classList.toggle('on', state.chain !== '')
     bar.hidden = state.hidden
     pill.hidden = !state.hidden
     if (state.hidden) {

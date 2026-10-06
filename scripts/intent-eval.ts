@@ -13,7 +13,7 @@
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { writeFileSync } from 'node:fs'
-import type { IntentAnswer, IntentRequest, IntentStep, PageIntent, TabSummary } from '../src/core/pageIntent.ts'
+import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, PageIntent, TabSummary } from '../src/core/pageIntent.ts'
 import type { Lang } from '../src/core/strings.ts'
 import type { PageContext } from '../src/browser/protocol.ts'
 import { pageIntent } from '../server/intent.ts'
@@ -104,6 +104,64 @@ const WHATSAPP: PageContext = {
   ],
   media: null,
   hints: false,
+}
+
+/** The list with Karin in it, for the chain case. */
+const WHATSAPP_WITH_KARIN: PageContext = {
+  ...WHATSAPP,
+  items: [...WHATSAPP.items, { id: 8, role: 'row', text: 'Karin · Kas saad homme?' }],
+}
+
+/** Round 4: Karin's chat as readPage shows it: messages as text items, the composer, no menu yet. */
+const WHATSAPP_KARIN: PageContext = {
+  url: 'https://web.whatsapp.com/',
+  title: 'WhatsApp - Karin',
+  box: { present: true, text: '', armed: true, kind: 'composer', label: 'Kirjuta sõnum' },
+  items: [
+    { id: 1, role: 'field', text: 'Otsi või alusta uut vestlust' },
+    { id: 2, role: 'row', text: 'Mari · Tulen homme' },
+    { id: 3, role: 'row', text: 'Karin · Kas saad homme?' },
+    { id: 4, role: 'text', text: 'Tere Karin, kuidas läheb?' },
+    { id: 5, role: 'text', text: 'Hästi! Sina?' },
+    { id: 6, role: 'text', text: 'Kas saad homme?' },
+    { id: 7, role: 'text', text: 'Jah, kell kolm sobib' },
+    { id: 8, role: 'field', text: 'Kirjuta sõnum' },
+    { id: 9, role: 'button', text: 'Saada' },
+  ],
+  media: null,
+  hints: false,
+}
+
+/** After hovering the last message: its menu arrow and reaction button appeared. */
+const WHATSAPP_KARIN_HOVERED: PageContext = {
+  ...WHATSAPP_KARIN,
+  items: [...WHATSAPP_KARIN.items.slice(0, 7), { id: 10, role: 'button', text: 'Reageeri' }, { id: 11, role: 'button', text: 'Sõnumi menüü' }, ...WHATSAPP_KARIN.items.slice(7)],
+}
+
+/** The message menu is open. */
+const WHATSAPP_KARIN_MENU: PageContext = {
+  ...WHATSAPP_KARIN,
+  items: [
+    { id: 1, role: 'option', text: 'Sõnumi info' },
+    { id: 2, role: 'option', text: 'Vasta' },
+    { id: 3, role: 'option', text: 'Reageeri' },
+    { id: 4, role: 'option', text: 'Edasta' },
+    { id: 5, role: 'option', text: 'Kopeeri' },
+    { id: 6, role: 'option', text: 'Kustuta sõnum' },
+    ...WHATSAPP_KARIN.items,
+  ],
+}
+
+/** The delete choices. */
+const WHATSAPP_KARIN_DELETE: PageContext = {
+  ...WHATSAPP_KARIN,
+  items: [{ id: 1, role: 'button', text: 'Kustuta minu jaoks' }, { id: 2, role: 'button', text: 'Kustuta kõigi jaoks' }, { id: 3, role: 'button', text: 'Loobu' }, ...WHATSAPP_KARIN.items],
+}
+
+/** The confirmation. */
+const WHATSAPP_KARIN_CONFIRM: PageContext = {
+  ...WHATSAPP_KARIN,
+  items: [{ id: 1, role: 'other', text: 'Kustutada see sõnum kõigi jaoks?' }, { id: 2, role: 'button', text: 'Loobu' }, { id: 3, role: 'button', text: 'Kustuta' }, ...WHATSAPP_KARIN.items],
 }
 
 const WHATSAPP_CHAT: PageContext = {
@@ -280,6 +338,12 @@ interface Step {
   outcome?: { ok: boolean; message: string }
   /** When set, the answer's done must equal it. */
   done?: boolean
+  /** Round 4: the utterance of this ask when it is a chain goal (the engine asks with the goal as the utterance). */
+  utterance?: string
+  /** Round 4: the chain the engine would send. A new goal (different from the step before) resets the steps. */
+  chain?: IntentChain
+  /** Round 4: when set, the answer's plan must have exactly this many goals. */
+  plan?: number
 }
 
 interface Case {
@@ -295,15 +359,17 @@ interface OneOptions {
   recent?: string[]
   tabs?: TabSummary[]
   done?: boolean
+  plan?: number
 }
 
 function one(utterance: string, page: PageContext, expect: Expectation | Expectation[], options: OneOptions = {}): Case {
-  const { tabs, done, lang, recent } = options
-  return { name: utterance, utterance, lang, recent, steps: [{ page, tabs, expect, done }] }
+  const { tabs, done, lang, recent, plan } = options
+  return { name: utterance, utterance, lang, recent, steps: [{ page, tabs, expect, done, plan }] }
 }
 
 const click = (id: number): Expectation => ({ kind: 'command', command: 'clickItem', id })
 const focus = (id: number): Expectation => ({ kind: 'command', command: 'focusItem', id })
+const hover = (id: number): Expectation => ({ kind: 'command', command: 'hover', id })
 const goTo = (url: string): Expectation => ({ kind: 'command', command: 'goTo', url })
 const search = (query: string): Expectation => ({ kind: 'command', command: 'siteSearch', query })
 const media = (action: string): Expectation => ({ kind: 'command', command: 'media', media: action })
@@ -312,7 +378,48 @@ const scroll = (direction: string): Expectation => ({ kind: 'command', command: 
 const UNCLEAR: Expectation = { kind: 'unclear' }
 const DICTATE: Expectation = { kind: 'dictate' }
 
+/** Round 4: the chain the engine sends for goal n (1-based) of a list of goals. */
+const chainAt = (original: string, goals: string[], n: number): IntentChain => ({
+  original,
+  completed: goals.slice(0, n - 1),
+  goal: goals[n - 1] ?? '',
+  remaining: goals.slice(n),
+})
+
+const YT_CHAIN = "mine youtube'i otsi kassivideod mängi esimene ja pane heli vaiksemaks"
+const YT_GOALS = ["mine youtube'i", 'otsi kassivideod', 'mängi esimene', 'pane heli vaiksemaks']
+const WA_CHAIN = 'mine whatsappi, ava Karini viimane sõnum, kustuta see kõigi jaoks'
+const WA_GOALS = ['mine whatsappi', 'ava Karini viimane sõnum', 'kustuta see kõigi jaoks']
+
 const CASES: Case[] = [
+  // --- Round 4: chains of goals. The first ask has no chain and must plan the rest; each later ask
+  // --- is one goal with the chain, on the page the engine then sees. ----------------------------
+  {
+    name: 'chain: youtube, search, play, quieter',
+    utterance: YT_CHAIN,
+    steps: [
+      { page: NEW_TAB, expect: goTo('youtube'), done: true, plan: 3 },
+      { page: YOUTUBE_HOME, utterance: YT_GOALS[1], chain: chainAt(YT_CHAIN, YT_GOALS, 2), expect: search('kassi'), done: true, plan: 0 },
+      { page: YOUTUBE_RESULTS, utterance: YT_GOALS[2], chain: chainAt(YT_CHAIN, YT_GOALS, 3), expect: click(3), done: true, plan: 0 },
+      { page: YOUTUBE_WATCH, utterance: YT_GOALS[3], chain: chainAt(YT_CHAIN, YT_GOALS, 4), expect: media('volumeDown'), done: true, plan: 0 },
+    ],
+  },
+  {
+    name: 'chain: whatsapp, open the last message from Karin, delete for everyone',
+    utterance: WA_CHAIN,
+    steps: [
+      { page: NEW_TAB, expect: goTo('whatsapp'), done: true, plan: 2 },
+      { page: WHATSAPP_WITH_KARIN, utterance: WA_GOALS[1], chain: chainAt(WA_CHAIN, WA_GOALS, 2), expect: open('Karin'), done: false },
+      // The chat: the messages are text items; the last one must be hovered for its menu to appear.
+      { page: WHATSAPP_KARIN, utterance: WA_GOALS[1], chain: chainAt(WA_CHAIN, WA_GOALS, 2), expect: [hover(7), { kind: 'command', command: 'contextMenu', id: 7 }], done: false },
+      { page: WHATSAPP_KARIN_HOVERED, utterance: WA_GOALS[1], chain: chainAt(WA_CHAIN, WA_GOALS, 2), expect: click(11) },
+      { page: WHATSAPP_KARIN_MENU, utterance: WA_GOALS[2], chain: chainAt(WA_CHAIN, WA_GOALS, 3), expect: click(6), done: false },
+      { page: WHATSAPP_KARIN_DELETE, utterance: WA_GOALS[2], chain: chainAt(WA_CHAIN, WA_GOALS, 3), expect: click(2) },
+      { page: WHATSAPP_KARIN_CONFIRM, utterance: WA_GOALS[2], chain: chainAt(WA_CHAIN, WA_GOALS, 3), expect: click(3), done: true },
+    ],
+  },
+  one("mine youtube'i", NEW_TAB, goTo('youtube'), { plan: 0 }),
+
   // --- YouTube watch page: buttons, fields, media, similar links -------------------------------
   one('mine vaata hiljem', YOUTUBE_WATCH, click(6)),
   one('pane meeldib', YOUTUBE_WATCH, click(3)),
@@ -529,13 +636,17 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
   const steps: IntentStep[] = []
   let passed = true
   for (const [i, step] of c.steps.entries()) {
+    // Round 4: a new chain goal starts with no steps, as the engine asks it.
+    const previous = c.steps[i - 1]
+    if (step.chain !== undefined && step.chain.goal !== previous?.chain?.goal) steps.length = 0
     const request: IntentRequest = {
       lang: c.lang ?? 'et',
-      utterance: c.utterance,
+      utterance: step.utterance ?? c.utterance,
       page: step.page,
       tabs: step.tabs ?? oneTab(step.page),
       recent: c.recent ?? [],
       ...(steps.length > 0 ? { steps: [...steps] } : {}),
+      ...(step.chain !== undefined ? { chain: step.chain } : {}),
     }
     const site = siteOf(step.page)
     const started = Date.now()
@@ -552,6 +663,8 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
       problem = matches(answer.intent, step.expect)
       const done = answer.done !== false
       if (problem === null && step.done !== undefined && done !== step.done) problem = `done ${done}`
+      const planned = answer.plan?.length ?? 0
+      if (problem === null && step.plan !== undefined && planned !== step.plan) problem = `plan ${JSON.stringify(answer.plan ?? [])}`
     }
     const ok = problem === null
     const result: AskResult = {
@@ -571,8 +684,9 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
     asks.push(result)
     const label = c.steps.length > 1 ? `${c.name} [${i + 1}/${c.steps.length}]` : `"${c.utterance}"`
     const tail = problem ? ` (wanted ${JSON.stringify(step.expect)}, got ${problem})` : ''
+    const plan = answer?.plan && answer.plan.length > 0 ? ` plan=${JSON.stringify(answer.plan)}` : ''
     console.log(
-      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms  ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${tail}`,
+      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms  ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${plan}${tail}`,
     )
     if (!ok || !answer) {
       passed = false
@@ -581,7 +695,8 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
     // What the engine would report back: the step as taken, with the simulated outcome.
     const outcome = step.outcome ?? { ok: true, message: '' }
     steps.push({ action: actionOf(answer.intent), say: answer.say, ok: outcome.ok, message: outcome.message })
-    if (answer.done !== false && outcome.ok && i < c.steps.length - 1) {
+    const nextGoal = c.steps[i + 1]?.chain?.goal !== step.chain?.goal
+    if (answer.done !== false && outcome.ok && i < c.steps.length - 1 && !nextGoal) {
       // The model said it was done but the case expected more: the engine's loop would stop here.
       // (After a failed step the engine asks once more whatever done said, so that case goes on.)
       console.log(`FAIL             ${''.padEnd(18)} ${c.name}: done=true after step ${i + 1}, the loop stops`)
