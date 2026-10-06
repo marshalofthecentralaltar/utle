@@ -5,6 +5,8 @@ import { endsWithConnective } from './chain.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
+import { savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
+import type { SavedItem } from './saved.ts'
 import { spokenValueOnly, typedFromSpoken } from './spelling.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
@@ -33,6 +35,13 @@ export interface InpageSession {
    * the field in front (box.fieldKind), else text.
    */
   spell?: FieldKind | null
+  /**
+   * Round 6 (Minu andmed, 26.1): his saved values, as the engine was handed them. Never sent
+   * anywhere: the model is told the names only (savedNames).
+   */
+  saved?: readonly SavedItem[]
+  /** Round 6 (26.2): the ids of the saved items the bar just asked about ("Kumb: a või b?"), or null. */
+  choosing?: readonly string[] | null
 }
 
 export interface InpageStep {
@@ -63,7 +72,16 @@ export function initialInpage(lang: Lang): InpageSession {
  * utterance ended (present false when the page has no text field; armed false when the field is
  * one the page focused by itself, where nothing is typed, M7).
  */
-export function inpageStep(session: InpageSession, utterance: string, box: BoxState): InpageStep {
+export function inpageStep(previous: InpageSession, utterance: string, box: BoxState): InpageStep {
+  // Round 6 (26.2): a question about two saved values lasts one utterance.
+  const session: InpageSession = (previous.choosing ?? null) === null ? previous : { ...previous, choosing: null }
+  const saved = savedAction(previous, utterance, box)
+  if (saved !== null) return act(session, saved, box)
+  // A saved value named with no armed box ("minu meil" on a form): never a misheard command; the
+  // model is asked, and may pick the field first (26.3).
+  if (!session.asleep && (!box.present || !box.armed) && savedMatch(utterance, session.saved ?? [], false) !== null) {
+    return { ...act(session, { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }, box), ask: true }
+  }
   // Round 5: in a one-line form field he armed, "valmis" / "edasi" go to the next field and
   // "kinnita" / "logi sisse" submit, whatever the box holds; elsewhere the words keep their meaning.
   const formKey = box.present && box.armed && box.single === true && !session.asleep ? FORM_KEYS[normalise(utterance)] : undefined
@@ -97,6 +115,12 @@ export function inpageStep(session: InpageSession, utterance: string, box: BoxSt
 export function applyIntent(session: InpageSession, intent: PageIntent, page: PageContext, say = ''): InpageStep {
   const s = STRINGS[session.lang]
   const box = page.box
+  if (intent.kind === 'insertSaved') {
+    // Round 6 (26.3): the name is resolved here, on his machine; a name no longer saved types nothing.
+    const item = savedByName(session.saved ?? [], intent.name)
+    const step = item === undefined ? { session, commands: [], line: s.inpage.savedMissing } : act(session, { kind: 'insertSaved', item }, box)
+    return say === '' ? step : { ...step, line: `${s.inpage.understood(say)} ${step.line}` }
+  }
   const action = intentAction(intent)
   const step = action === null ? { session, commands: [], line: intent.kind === 'unclear' ? intent.say || s.inpage.notUnderstood : s.inpage.notUnderstood } : act(session, action, box)
   return say === '' ? step : { ...step, line: `${s.inpage.understood(say)} ${step.line}` }
@@ -115,6 +139,7 @@ function intentAction(intent: PageIntent): Action | null {
     case 'wake':
       return { kind: 'wake' }
     case 'unclear':
+    case 'insertSaved':
       return null
     case 'edit': {
       const e = intent.edit
@@ -150,8 +175,13 @@ export function inpageResult(
     let line: string
     if (last.kind === 'pressSend') line = s.inpage.sent
     else if (opened?.kind === 'openConversation') line = s.inpage.conversationOpen(opened.name)
-    else if (last.kind === 'setText') line = result.box?.single === true ? s.inpage.typedInto(readBack(result.box.text, result.box.fieldKind ?? 'text')) : s.inpage.written
-    else line = s.browserDone(last, result.tab?.title ?? null, result.hints ?? null)
+    else if (last.kind === 'setText') {
+      // Round 6: a saved value is read back with its name.
+      const item = typed?.kind === 'setText' && !wasUndo ? savedTyped(session.saved ?? [], typed.text) : undefined
+      const shown = result.box?.single === true ? readBack(result.box.text, result.box.fieldKind ?? 'text') : item?.value ?? ''
+      if (item !== undefined) line = s.inpage.insertedSaved(shown, item.name)
+      else line = result.box?.single === true ? s.inpage.typedInto(shown) : s.inpage.written
+    } else line = s.browserDone(last, result.tab?.title ?? null, result.hints ?? null) + (result.box ? savedHint(session.saved ?? [], result.box, session.lang) : '')
     return { session: { ...session, undo, hints }, line }
   }
 
@@ -176,6 +206,8 @@ function failureLine(s: Strings, command: BrowserCommand, code: BrowserFailure, 
 export function inpageInstant(session: InpageSession, utterance: string): boolean {
   // Round 4: "keri alla ja" promises more; it waits for the rest of the chain.
   if (endsWithConnective(utterance)) return false
+  // Round 6: a saved value named, or the answer to "Kumb?", needs no more words.
+  if (savedAction(session, utterance, SAVED_PROBE) !== null) return true
   const kind = classify(session, utterance).action.kind
   return kind !== 'dictate' && kind !== 'oneBreath' && kind !== 'empty'
 }
@@ -206,6 +238,9 @@ type Action =
   | { kind: 'dictate'; text: string; spell?: FieldKind }
   /** Round 5: "katkesta": the engine drops everything in flight. Instant, never previewed, never soft. */
   | { kind: 'cancel' }
+  /** Round 6 (26.2): one saved value typed whole; or the question which of several. */
+  | { kind: 'insertSaved'; item: SavedItem }
+  | { kind: 'whichSaved'; items: SavedItem[] }
 
 type Edit =
   | { kind: 'replace'; from: string; to: string; loose: boolean }
@@ -272,6 +307,8 @@ const SOFT_WORDS = new Set([
   'close', 'play', 'pause', 'forward', 'escape',
   // Round 3: "aitab" and "lõpeta" are chat replies too; "stopp", "seis" and "stop" always stop (a slow scroll must be stoppable in one word).
   'aitab', 'lõpeta',
+  // Round 6: "seaded" opens the settings only when he is not writing.
+  'seaded', 'settings',
 ])
 
 /** M7: "stopp" while the labels show hides them. */
@@ -324,6 +361,8 @@ const PRONOUNS = new Set(['Mul', 'Sul', 'Tal', 'Mei', 'Tei', 'Nei', 'Enda'])
 /** Commands that leave the numbered labels on the page (20.2; M7 adds the ones that touch nothing the labels sit on). */
 const KEEPS_HINTS = new Set<BrowserCommand['kind']>([
   'showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend', 'readPage', 'media', 'bar', 'arm', 'clearField', 'zoom',
+  // Round 6: the settings open in a tab of their own; the page in front is untouched.
+  'openSettings', 'savedEntry',
 ])
 /** Commands that leave the same message box in front, so the undo texts still belong to it. */
 const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints'])
@@ -470,6 +509,28 @@ function isCancelAll(utterance: string): boolean {
 }
 // ---- end of the cancel rule ----
 
+// ---- Round 6 (Minu andmed, 26.2): saved values by the rules. ----
+/** An armed box, for inpageInstant's question "does this name a saved value?". */
+const SAVED_PROBE: BoxState = { present: true, text: '', armed: true }
+/**
+ * The answer to "Kumb?", or a saved value the utterance names, while the box is armed and he is
+ * awake; null otherwise (with no armed box the words are dictation and the model may pick a field).
+ */
+function savedAction(session: InpageSession, utterance: string, box: BoxState): Action | null {
+  const items = session.saved ?? []
+  if (items.length === 0 || session.asleep || !box.present || !box.armed || isCancelAll(utterance)) return null
+  const choosing = session.choosing ?? []
+  if (choosing.length > 0) {
+    const candidates = choosing.map((id) => items.find((item) => item.id === id)).filter((item): item is SavedItem => item !== undefined)
+    const pick = savedChoice(utterance, candidates)
+    if (pick !== null) return { kind: 'insertSaved', item: pick }
+  }
+  const match = savedMatch(utterance, items, box.single === true)
+  if (match === null) return null
+  return match.kind === 'one' ? { kind: 'insertSaved', item: match.item } : { kind: 'whichSaved', items: match.items }
+}
+// ---- end of the saved values ----
+
 /** Fields where the rules' typing is final (review of round 5): see inpageStep. */
 const VALUE_FIELDS = new Set<FieldKind>(['code', 'tel', 'number'])
 /** A dictation whose words need no verdict: a secret into a password field, or only numbers into a code, phone or number field he armed. */
@@ -607,7 +668,7 @@ function editingPattern(clean: string): Action | null {
 // The one-letter rule (section 21.3): a short utterance one letter away from a command is that command.
 
 /** Never reached by a correction: a send, a sleep or a wake, an undo cannot be taken back (21.3); "back" may be an undo. */
-const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed', 'cancel'])
+const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed', 'cancel', 'insertSaved', 'whichSaved'])
 
 /** Words left out of the vocabulary: those of NEVER_CORRECTED, and the keywords of free-text patterns. */
 const LEFT_OUT = new Set([
@@ -816,6 +877,18 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       if (done.text === box.text) return none(done.line)
       return { session: pushUndo(session, box.text), commands: [{ kind: 'setText', text: done.text }], line: done.line }
     }
+    case 'insertSaved': {
+      // Round 6 (26.2): the value as saved, never converted; a one-line field is replaced whole, a composer gets it after a space.
+      const refused = armed()
+      if (refused) return refused
+      const { value, name } = action.item
+      const before = box.text.replace(/\s+$/u, '')
+      const text = box.single === true || before === '' ? value : `${before} ${value}`
+      const line = s.inpage.insertedSaved(readBack(value, box.fieldKind === 'password' ? 'password' : 'text'), name)
+      return { session: pushUndo(session, box.text), commands: [{ kind: 'setText', text }], line }
+    }
+    case 'whichSaved':
+      return { session: { ...session, choosing: action.items.map((item) => item.id) }, commands: [], line: s.inpage.whichSaved(action.items.map((item) => item.name)) }
     case 'spell':
       return { session: { ...session, spell: action.spell }, commands: [], line: action.spell === null ? s.inpage.spellWords : s.inpage.spellDigits }
     case 'dictate': {
@@ -945,6 +1018,8 @@ export function inpagePreview(session: InpageSession, partial: string, box: BoxS
   if (session.asleep || !box.present || !box.armed) return null
   // Round 5: a one-line form field (a login, an ID code) is never typed into live; the words are checked first.
   if (box.single === true) return null
+  // Round 6: a saved value named is typed whole at the end, never word by word.
+  if (savedAction(session, partial, box) !== null) return null
   const clean = normalise(partial)
   if (clean === '' || mayBeCommand(session, partial, clean)) return null
   return joinField(box.text, partial.trim().replace(/\s+/g, ' '), session.spell ?? box.fieldKind ?? 'text', false)

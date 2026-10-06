@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import type { BrowserCommand, PageContext } from '../browser/protocol.ts'
 import type { Lang } from './strings.ts'
+import { MAX_SAVED_NAMES, SAVED_NAME_CHARS, namedIn } from './saved.ts'
 
 /**
  * M7 (docs/plans/2026-10-05-m7-understanding.md): what the model may answer when the rules of
@@ -83,6 +84,11 @@ export type PageIntent =
   | { kind: 'wake' }
   /** The model could not tell. say is one short line in the request's language for the strip. */
   | { kind: 'unclear'; say: string }
+  /**
+   * Round 6 (26.3): type one of his saved values. name is one of page.saved, exactly as listed;
+   * the engine finds the value locally. The model never sees a value.
+   */
+  | { kind: 'insertSaved'; name: string }
 
 /** The answer of POST /api/intent: the intent, and one short line the strip shows while it runs. */
 export interface IntentAnswer {
@@ -162,6 +168,7 @@ export const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kin
   z.object({ kind: z.literal('sleep') }),
   z.object({ kind: z.literal('wake') }),
   z.object({ kind: z.literal('unclear'), say: Short }),
+  z.object({ kind: z.literal('insertSaved'), name: z.string().min(1).max(SAVED_NAME_CHARS + 20) }),
 ])
 
 export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: PageIntentSchema, say: Short, done: z.boolean().optional(), plan: z.array(z.string().max(200)).max(12).optional() })
@@ -197,6 +204,7 @@ export const IntentRequestSchema: z.ZodType<IntentRequest> = z.object({
     items: z.array(PageItemSchema).max(150),
     media: MediaSchema.nullable(),
     hints: z.boolean(),
+    saved: z.array(z.string().max(SAVED_NAME_CHARS)).max(MAX_SAVED_NAMES).optional(),
   }),
   tabs: z.array(z.object({ index: z.number().int().min(1), title: z.string().max(300), active: z.boolean() })).max(60),
   recent: z.array(z.string().max(200)).max(3),
@@ -221,6 +229,8 @@ export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'pag
   const parsed = PageIntentSchema.safeParse(input)
   if (!parsed.success) return null
   const intent = parsed.data
+  // Round 6: only a name he has saved, as the request listed it.
+  if (intent.kind === 'insertSaved') return namedIn(request.page.saved ?? [], intent.name) ? intent : null
   if (intent.kind !== 'command') return intent
   const c = intent.command
   const ids = new Set(request.page.items.map((item) => item.id))

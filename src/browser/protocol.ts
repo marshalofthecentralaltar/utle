@@ -80,6 +80,11 @@ export type BrowserCommand =
   // Round 5: the page's size.
   /** Chrome's tab zoom: in and out by one step, reset to 100%. Text grows with it. */
   | { kind: 'zoom'; direction: 'in' | 'out' | 'reset' }
+  // Round 6: Minu andmed (docs/ARCHITECTURE.md 26.4, 26.5).
+  /** Opens the options page (or brings it to the front), at the Minu andmed section; add starts the voice entry flow for that kind. */
+  | { kind: 'openSettings'; section?: 'andmed'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
+  /** One utterance for the entry flow on the options page; only that page answers it. */
+  | { kind: 'savedEntry'; utterance: string }
 
 export type FieldKind = 'email' | 'tel' | 'code' | 'number' | 'password' | 'text'
 
@@ -153,6 +158,8 @@ export interface PageContext {
   media: MediaState | null
   /** True while numbered labels show. */
   hints: boolean
+  /** Round 6 (26.1): the NAMES of his saved values, never the values. Added by the engine, not the page. */
+  saved?: string[]
 }
 
 /**
