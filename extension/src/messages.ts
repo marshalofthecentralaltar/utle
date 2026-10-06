@@ -2,6 +2,7 @@
 
 import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
 import type { TabSummary } from '../../src/core/pageIntent.ts'
+import type { SavedItem } from '../../src/core/saved.ts'
 import type { PageCommand } from './page.ts'
 
 /** Everything the strip shows. Kept by the service worker in chrome.storage.session under STATE_KEY. */
@@ -68,6 +69,10 @@ export type ToBackground =
   | { type: 'utle-listen'; on: boolean; flush?: boolean }
   /** From the options page (round 4): learn the owner's voice from the next `seconds` of speech. Listening starts if it was off. */
   | { type: 'utle-enrol'; seconds: number }
+  /** Round 6 (26.1): from the offscreen engine at start: his saved values and whether the entry flow runs. Answered with a SavedAnswer. */
+  | { type: 'utle-saved' }
+  /** Round 6 (26.5): from the options page: the voice entry flow started (on) or ended. */
+  | { type: 'utle-entry'; on: boolean }
 
 /** To the offscreen document. stop with flush: deliver the words said so far, then stop. */
 export type ToOffscreen =
@@ -77,6 +82,10 @@ export type ToOffscreen =
   | { target: 'offscreen'; type: 'flush' }
   /** Round 4: learn the owner's voice (the strip tells him to speak). */
   | { target: 'offscreen'; type: 'enrol'; seconds: number }
+  /** Round 6 (26.1): his saved values changed. They stay on this machine. */
+  | { target: 'offscreen'; type: 'saved'; items: SavedItem[] }
+  /** Round 6 (26.5): the options page's entry flow started or ended. */
+  | { target: 'offscreen'; type: 'entry'; on: boolean }
 
 /**
  * To the extension's new-tab page, from the service worker: run one page command there (21.3). The
@@ -107,3 +116,9 @@ export interface StripMeasure {
 export type RunAnswer = { result: BrowserResult }
 
 export type TabsAnswer = { tabs: TabSummary[] }
+
+/** Round 6: the answer to utle-saved. */
+export type SavedAnswer = { items: SavedItem[]; entry: boolean }
+
+/** Round 6: chrome.storage.session key: the options page's entry flow runs (kept for a new offscreen document). */
+export const ENTRY_KEY = 'savedEntryOn'

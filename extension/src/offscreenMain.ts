@@ -11,7 +11,8 @@ import type { AudioSource } from '../../src/speech/local.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { askTimeoutMs, createEngine } from './engine.ts'
 import type { AskFailure, InpageLogic } from './engine.ts'
-import type { RunAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
+import type { RunAnswer, SavedAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
+import { savedFrom } from '../../src/core/saved.ts'
 
 export const DEFAULT_ASR_URL = 'ws://localhost:5173/api/asr'
 
@@ -203,6 +204,13 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     status: () => serverStatus(statusUrl),
   })
 
+  // Round 6 (26.1, 26.5): his saved values and whether the entry flow runs, once at start; changes arrive as messages.
+  void tell({ type: 'utle-saved' }).then((answer) => {
+    const saved = answer as SavedAnswer | undefined
+    engine.setSaved(savedFrom(saved?.items))
+    engine.setEntry(saved?.entry === true)
+  })
+
   // Gaze mode (round 3): a stop with flush delivers the words said so far, then stops once the final has had time to arrive.
   let pendingStop: ReturnType<typeof setTimeout> | null = null
   const cancelStop = (): void => {
@@ -223,6 +231,12 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
         break
       case 'flush':
         engine.flush()
+        break
+      case 'saved':
+        engine.setSaved(savedFrom(message.items))
+        break
+      case 'entry':
+        engine.setEntry(message.on)
         break
       case 'enrol':
         // Round 4: listening starts when it was off; the line tells him to speak, the server answers through onEnrolled.

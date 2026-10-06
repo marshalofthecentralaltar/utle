@@ -7,6 +7,8 @@ import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
 import { chainLine, firstGoal, hasConnective } from '../../src/core/chain.ts'
 import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
+import { savedNames } from '../../src/core/saved.ts'
+import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
@@ -81,6 +83,16 @@ export interface Engine {
   enrol(seconds: number): void
   /** Resolves when every utterance so far, and every preview being typed, has been handled. For tests. */
   idle(): Promise<void>
+  /**
+   * Round 6 (26.1): his saved values, from the service worker. The rules and applyIntent find them
+   * on the session; the model is told the names only.
+   */
+  setSaved(items: readonly SavedItem[]): void
+  /**
+   * Round 6 (26.5): the options page runs the voice entry flow. While on, every final utterance
+   * goes to the page in front as savedEntry, never to the rules or the model.
+   */
+  setEntry(on: boolean): void
 }
 
 const NO_BOX: BoxState = { present: false, text: '', armed: false }
@@ -274,8 +286,10 @@ export function createEngine(deps: EngineDeps): Engine {
     const read = await runSafe({ kind: 'readPage' })
     const fallback: PageContext = { url: '', title: '', box: baseText === null ? box : { ...box, text: baseText }, items: [], media: null, hints: session.hints }
     const page = !read.ok || !read.page ? fallback : baseText === null ? read.page : { ...read.page, box: { ...read.page.box, text: baseText } }
+    // Round 6 (26.1): the names of his saved values, never a value.
+    const names = savedNames(session.saved ?? [])
     // Clipped to IntentRequestSchema's limits: a page beyond them would be a 400, and the model never asked.
-    return { ...page, url: page.url.slice(0, URL_CHARS), title: page.title.slice(0, TITLE_CHARS), box: { ...page.box, text: page.box.text.slice(0, BOX_CHARS) } }
+    return { ...page, url: page.url.slice(0, URL_CHARS), title: page.title.slice(0, TITLE_CHARS), box: { ...page.box, text: page.box.text.slice(0, BOX_CHARS) }, ...(names.length > 0 ? { saved: names } : {}) }
   }
 
   /**
@@ -896,10 +910,29 @@ export function createEngine(deps: EngineDeps): Engine {
     queue = queue.then(() => takeBack(u))
   }
 
+  /** Round 6 (26.5): the options page's entry flow is running; utterances go there. */
+  let entry = false
+  /** One utterance for the entry flow, in turn. A page that does not answer (not in front) ends entry mode. */
+  const toEntry = (utterance: string): void => {
+    queue = queue
+      .then(async () => {
+        const result = await runSafe({ kind: 'savedEntry', utterance })
+        if (!result.ok && entry) {
+          entry = false
+          say(inpageText.entryGone)
+        }
+      })
+      .catch(() => undefined)
+  }
+
   const handlers: EngineHandlers = {
     onUtterance(utterance) {
       if (enrolling) return
       deps.publish({ heard: utterance })
+      if (entry) {
+        toEntry(utterance)
+        return
+      }
       // Round 5: "katkesta" drops everything at once, in the handler, and asks nobody.
       if (isCancelAll(utterance)) {
         cancelAll()
@@ -931,7 +964,8 @@ export function createEngine(deps: EngineDeps): Engine {
       // An empty interim keeps the last words on the strip until new speech arrives.
       if (interim === '' || enrolling) return
       deps.publish({ heard: interim })
-      if (!listening) return
+      // Round 6: while saving by voice, partials are shown, never typed.
+      if (!listening || entry) return
       const u = live ?? begin()
       live = u
       u.partial = interim
@@ -968,7 +1002,8 @@ export function createEngine(deps: EngineDeps): Engine {
 
   const recognizer = deps.recognizer(
     handlers,
-    (utterance) => deps.logic.inpageInstant(session, utterance),
+    // Round 6: a spelled letter for the entry flow must not wait for the hold.
+    (utterance) => entry || deps.logic.inpageInstant(session, utterance),
     () => {
       listening = false
       endEnrolment()
@@ -1025,6 +1060,13 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     get listening() {
       return listening
+    },
+    setSaved(items) {
+      session = { ...session, saved: [...items] }
+    },
+    setEntry(on) {
+      entry = on
+      if (on) dropLive()
     },
     async idle() {
       for (;;) {

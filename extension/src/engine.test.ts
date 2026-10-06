@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
 import { pageIntentFrom } from '../../src/core/pageIntent.ts'
+import { applyIntent, initialInpage, inpageInstant, inpagePreview, inpageResult, inpageStep } from '../../src/core/inpage.ts'
+import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
@@ -1792,5 +1794,108 @@ describe('round 5, BRAIN lane: care, never stuck, single fields', () => {
     t.say('mari maasikas')
     await t.engine.idle()
     expect(texts(t.ran)).toEqual(['readPage'])
+  })
+})
+
+describe('round 6: saved values (Minu andmed: names only, insertSaved, entry mode)', () => {
+  const EMAIL: SavedItem = { id: 'e1', name: 'minu e-post', value: 'ralf.tamm@gmail.com', kind: 'email' }
+  const PHONE: SavedItem = { id: 't1', name: 'minu telefon', value: '+37251234567', kind: 'tel' }
+  const real: InpageLogic = { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom }
+  const nothing: BoxState = { present: false, text: '', armed: false }
+  const emailField: BoxState = { present: true, text: '', armed: true, kind: 'field', fieldKind: 'email', single: true, label: 'E-post' }
+  const FORM_ITEMS = [{ id: 3, role: 'field', text: 'E-post' }]
+
+  it('saved: the request for /api/intent carries the names only, never a value', async () => {
+    const t = setup({ logic: real, box: nothing, ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })) })
+    t.engine.setSaved([EMAIL, PHONE])
+    t.engine.start()
+    t.say('pane mu email sinna')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    const request = t.asked[0]
+    expect(request?.page.saved).toEqual(['minu e-post', 'minu telefon'])
+    const wire = JSON.stringify(request)
+    expect(wire).not.toContain('ralf.tamm@gmail.com')
+    expect(wire).not.toContain('+37251234567')
+    expect(wire).not.toContain('37251234567')
+  })
+
+  it('saved: with nothing saved the request has no saved field at all', async () => {
+    const t = setup({ logic: real, box: nothing, ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })) })
+    t.engine.start()
+    t.say('ava midagi huvitavat')
+    await t.engine.idle()
+    expect(t.asked[0]?.page.saved).toBeUndefined()
+  })
+
+  it('saved: the rules type a named value into an armed field at once, without asking the model', async () => {
+    const t = setup({ logic: real, box: emailField })
+    t.engine.setSaved([EMAIL])
+    t.engine.start()
+    expect(t.instant('minu meil')).toBe(true)
+    t.say('minu meil')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(0)
+    expect(texts(t.ran)).toEqual(['ralf.tamm@gmail.com'])
+    expect(t.state.line).toBe(STRINGS.et.inpage.insertedSaved('ralf.tamm@gmail.com', 'minu e-post'))
+  })
+
+  it('insertSaved: the model focuses the field, then names the saved value; the engine types the local value', async () => {
+    let focused = false
+    const answers = [answer({ kind: 'command', command: { kind: 'focusItem', id: 3 } }, 'valin e-posti', false), answer({ kind: 'insertSaved', name: 'minu e-post' }, '', true)]
+    const t = setup({
+      logic: real,
+      box: nothing,
+      answers: (c) => {
+        if (c.kind === 'focusItem') focused = true
+        return { ok: true }
+      },
+      page: (b) => ({ url: 'https://www.eesti.ee/et/taotlus', title: 'Taotlus', box: focused ? emailField : b, items: FORM_ITEMS, media: null, hints: false }),
+      ask: () => Promise.resolve(answers.shift() ?? { error: 'unreachable' }),
+    })
+    t.engine.setSaved([EMAIL])
+    t.engine.start()
+    t.say('täida see mu meiliga')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(2)
+    expect(t.asked[1]?.steps?.[0]?.action).toBe('command focusItem 3')
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([{ kind: 'setText', text: 'ralf.tamm@gmail.com' }])
+    expect(t.asked.every((r) => !JSON.stringify(r).includes('ralf.tamm'))).toBe(true)
+  })
+
+  it('insertSaved: a name the model made up is rejected by pageIntentFrom and nothing is typed', async () => {
+    const t = setup({ logic: real, box: nothing, ask: () => Promise.resolve(answer({ kind: 'insertSaved', name: 'ema telefon' }, '', true)) })
+    t.engine.setSaved([EMAIL])
+    t.engine.start()
+    t.say('pane siia see asi mis mul on')
+    await t.engine.idle()
+    expect(t.ran.some((c) => c.kind === 'setText')).toBe(false)
+  })
+
+  it('entry mode (saved values by voice): every utterance goes to the page as savedEntry, instant, never typed, never asked', async () => {
+    const t = setup({ logic: real, box: emailField })
+    t.engine.start()
+    t.engine.setEntry(true)
+    expect(t.instant('r')).toBe(true)
+    t.partial('ralf')
+    t.say('r')
+    t.say('katkesta')
+    await t.engine.idle()
+    expect(t.ran).toEqual([{ kind: 'savedEntry', utterance: 'r' }, { kind: 'savedEntry', utterance: 'katkesta' }])
+    expect(t.asked).toHaveLength(0)
+    t.engine.setEntry(false)
+    expect(t.instant('r')).toBe(false)
+  })
+
+  it('entry mode ends when the page does not answer (not in front), and the line says so', async () => {
+    const t = setup({ logic: real, box: emailField, answers: (c) => (c.kind === 'savedEntry' ? { ok: false, code: 'not_found', message: 'no page' } : { ok: true }) })
+    t.engine.start()
+    t.engine.setEntry(true)
+    t.say('r')
+    await t.engine.idle()
+    expect(t.state.line).toBe(STRINGS.et.inpage.entryGone)
+    t.say('a')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'savedEntry')).toHaveLength(1)
   })
 })
