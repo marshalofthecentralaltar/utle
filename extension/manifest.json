@@ -1,8 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Ütle",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Speak in Estonian: the words go into the message box of the page you are on, and the browser moves by voice.",
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
   "permissions": [
     "tabs",
     "scripting",
@@ -16,7 +21,12 @@
     "service_worker": "dist/background.js"
   },
   "action": {
-    "default_title": "Ütle: microphone on or off"
+    "default_title": "Ütle: microphone on or off",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
   },
   "options_page": "options.html",
   "chrome_url_overrides": {
