@@ -850,6 +850,12 @@ export function createEngine(deps: EngineDeps): Engine {
           await perform(rules, u)
           return
         }
+        // Review of round 5: in a field he armed himself, a model that cannot tell leaves the
+        // typing to the rules, as type-first does everywhere else; nothing is lost to "ei saanud aru".
+        if (single && box.armed && heard.intent.kind === 'unclear' && heard.plan.length === 0) {
+          await perform(rules, u, '', job)
+          return
+        }
         await follow(job, box, recentBefore, heard, u)
       } finally {
         think(false)

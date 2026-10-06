@@ -24,7 +24,12 @@ const MAX_TOKENS = 400
  * 1 s): quick 1 to 3 s, careful a few seconds more with the thinking it buys.
  */
 export const INTENT_TIMEOUT_CAREFUL_MS = 12_000
-const MAX_TOKENS_CAREFUL = 800
+/**
+ * Review of round 5: the model's thinking counts against max_tokens, and at effort high it may
+ * spend more than a few hundred tokens before the tool call; a cut-off answer (stop_reason
+ * max_tokens) is an `unclear`, so the budget is generous. The timeout still bounds the wait.
+ */
+const MAX_TOKENS_CAREFUL = 2000
 
 type Care = NonNullable<IntentRequest['care']>
 

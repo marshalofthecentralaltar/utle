@@ -107,6 +107,7 @@ voice (this machine has no model files):
 - The other voice's partials are typed as a preview before its final is judged; the review made the
   engine take the preview back the moment the final is dropped. Thresholds unmeasured on an
   Estonian voice. See ARCHITECTURE 24.2 and `docs/REVIEW-R4.md` (what was fixed, what is proposed).
+  Round 5 was reviewed the same way: `docs/REVIEW-R5.md`.
 
 ## 1d. Round 5 (2026-10-06): the demo with the real user
 
@@ -217,11 +218,12 @@ on which to keep, per file.**
 
 - Round 5 (BRAIN lane, 2026-10-06 afternoon, spec 25.2), after the owner's report that a long prompt
   was acted on too fast and that it once got stuck for minutes: the model is asked with `care`
-  (careful for eight words or more, a connective, or a chain: effort high, 800 tokens, 12 s on the
+  (careful for eight words or more, a connective, or a chain: effort high, 2000 tokens, 12 s on the
   server, 14 s in the engine, an extra system block; quick for everything else, unchanged), a 25 s
   watchdog per job and per goal, the elapsed seconds on the strip from 3 s, every page command cut
   at 20 s, and `katkesta` as a global escape. Single-line fields (`box.single`) are verified before
-  anything is typed. None of it has met a real voice; the latency of a careful ask on the real model
+  anything is typed, except digits into a code, phone or number field and anything into a password
+  field, which the rules type at once (review of round 5, `docs/REVIEW-R5.md`). None of it has met a real voice; the latency of a careful ask on the real model
   is unmeasured (the eval prints care per ask).
 - Round 5 (FIELDS lane, spec 25.1): the field kinds come from the markup of the test page and of
   what the lane knew of Smart-ID and bank forms, never from the real pages; a field the rules take

@@ -5,7 +5,7 @@ import { endsWithConnective } from './chain.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
-import { typedFromSpoken } from './spelling.ts'
+import { spokenValueOnly, typedFromSpoken } from './spelling.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
 
@@ -81,7 +81,9 @@ export function inpageStep(session: InpageSession, utterance: string, box: BoxSt
   const understood = soft || missing ? null : classified.understood
   const step = act(session, action, box)
   // "kirjuta kood X" named its kind: it is a command in its own right, not words to verify.
-  const asked = action.kind === 'dictate' && action.spell === undefined ? { ...step, ask: true } : step
+  // Review of round 5: nor are digits into a code, phone or number field, or anything into a
+  // password field (a secret is never sent to the model; "kolm üheksa null kaks" is never a tab).
+  const asked = action.kind === 'dictate' && action.spell === undefined && !directValue(session, utterance, box) ? { ...step, ask: true } : step
   if (understood === null) return asked
   return { ...asked, line: `${STRINGS[session.lang].inpage.understood(understood)} ${asked.line}` }
 }
@@ -453,11 +455,30 @@ function hintPick(clean: string): number | null {
 // ---- Round 5 (BRAIN lane): the global voice escape. Only this block is the cancel rule. ----
 /** "katkesta" and its kin: every job, chain and verification in flight is dropped, asleep or not. */
 const CANCEL_ALL = new Set(['katkesta', 'tühista kõik', 'lõpeta kõik', 'stopp kõik', 'cancel', 'cancel everything'])
-/** True for an utterance that is the global cancel, before anything else is tried. */
+/**
+ * True for an utterance that is the global cancel, before anything else is tried. Review of round
+ * 5: also one that ends in it after a connective ("tulen homme ja katkesta"): the recogniser held
+ * the words before the connective (24.1) and joined "katkesta" to them, so the whole is the cancel.
+ */
 function isCancelAll(utterance: string): boolean {
-  return CANCEL_ALL.has(normalise(utterance))
+  const clean = normalise(utterance)
+  if (CANCEL_ALL.has(clean)) return true
+  for (const phrase of CANCEL_ALL) {
+    if (clean.endsWith(` ${phrase}`) && endsWithConnective(clean.slice(0, -phrase.length))) return true
+  }
+  return false
 }
 // ---- end of the cancel rule ----
+
+/** Fields where the rules' typing is final (review of round 5): see inpageStep. */
+const VALUE_FIELDS = new Set<FieldKind>(['code', 'tel', 'number'])
+/** A dictation whose words need no verdict: a secret into a password field, or only numbers into a code, phone or number field he armed. */
+function directValue(session: InpageSession, utterance: string, box: BoxState): boolean {
+  if (!box.present || !box.armed || box.single !== true) return false
+  if (box.fieldKind === 'password') return true
+  const kind = session.spell ?? box.fieldKind ?? 'text'
+  return VALUE_FIELDS.has(kind) && spokenValueOnly(utterance)
+}
 
 function classifyExact(session: InpageSession, utterance: string): Classified {
   const plain = (action: Action): Classified => ({ action, understood: null })
@@ -802,8 +823,8 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       if (refused) return refused
       const kind = action.spell ?? session.spell ?? box.fieldKind ?? 'text'
       const command: BrowserCommand = { kind: 'setText', text: joinField(box.text, action.text, kind) }
-      // A one-line form field reads back what it now holds (a PIN is counted, not shown).
-      const line = box.single === true ? s.inpage.typedInto(readBack(command.text, kind)) : s.browserDoing(command)
+      // A one-line form field reads back what it now holds (a PIN is counted, not shown, whatever mode "numbritena" set).
+      const line = box.single === true ? s.inpage.typedInto(readBack(command.text, box.fieldKind === 'password' ? 'password' : kind)) : s.browserDoing(command)
       return { session: pushUndo(session, box.text), commands: [command], line }
     }
   }
