@@ -5,7 +5,8 @@ Messenger, any page) while you speak, and the browser scrolls and switches tabs 
 the bottom of every page, and of the new-tab page, shows the microphone, the words heard, and what
 was done. Nothing opens a separate window. Design: `docs/ARCHITECTURE.md` sections 21.2 and 21.3 (the strip and
 live words), 22 (understanding by meaning), 23 (round 3: speed, push-to-talk by looking, sound-alike
-commands, editing, Soniox) and 24 (round 4: chains of goals, only your own voice, everything on the page).
+commands, editing, Soniox), 24 (round 4: chains of goals, only your own voice, everything on the page) and 25
+(round 5: numbers and form fields, care for the model and never stuck, the page's size).
 
 ## Build
 
@@ -157,6 +158,22 @@ the thresholds are in `server/speaker.ts`.
     the page). `võta tagasi` stays the whole-box undo. On Google Docs only the keys and typing work (its editor is a
     canvas with no text to find in): `sõna tagasi`, `rea algusesse`, `kustuta täht`, `tee uuesti`, `kirjuta siia vahele …`;
     `võta tagasi` there needs the model to answer `pressKey Undo`. Tested on `fixtures/essay.html`, never on Docs itself.
+  - forms (round 5): an ID code, a phone number, an e-mail address or a PIN by voice. Click the field (or
+    `näita numbreid` and its number, or `kirjuta siia`), then say the digits one by one: `kolm üheksa null kaks
+    üks null null null null üks` becomes 39021000001; `kakskümmend kolm` is 23 too. Say `ät` for @, `punkt` for a
+    dot, `sidekriips` for -, `alakriips` for _, `pluss` for +, letters by name (`bee`, `ess`), `suur a` for A:
+    `ralf punkt sepp ät gmail punkt com` is ralf.sepp@gmail.com, `pluss kolm seitse kaks ...` is +372... The
+    field's own type says what it is for (e-post, telefon, isikukood, PIN, summa); into a one-line field nothing is
+    typed live: the words are checked first, then the field is filled whole and the bar reads it back,
+    "Kirjutasin: 39021000001 (ütle „edasi“ või „valmis“)", a PIN as dots. `numbritena` writes everything as
+    digits until `tavaliselt`; `kirjuta kood 3902`, `sisesta e-post ...`, `kirjuta telefon ...` name the kind for
+    one utterance and need no model. In a form field `valmis`, `olen valmis`, `edasi` (English `done`, `next`) go to
+    the next field, and `kinnita`, `logi sisse`, `sisesta` (`submit`, `log in`) submit it as Enter would, whatever
+    the field holds. A code said in two breaths joins up without a space. Tested on `fixtures/login.html`, a
+    Smart-ID-like page, not on the real one.
+  - `katkesta` (also `tühista kõik`, `lõpeta kõik`, `stopp kõik`, `cancel`): drops everything in flight at once,
+    the chain, the question to the model, the queued words, with "Katkestatud."; it works while resting too and
+    is never typed. `katkesta sõnum` still clears the box.
   - scrolling: `keri alla`, `keri üles` (80% of the view, smoothly), `keri natuke alla`, `natuke üles`,
     `veidi alla` (a third), `keri aeglaselt alla`, `keri tasa üles`, `aeglaselt alla` (a steady 90 px/s until
     stopped), `stopp`, `seis`, `aitab`, `lõpeta`, `lõpeta kerimine`, `kerimine seis` (stop), `lehe algusesse`,
@@ -173,11 +190,12 @@ the thresholds are in `server/speaker.ts`.
     `täisekraan`;
   - the bar: `peida riba` folds it to the pill, `näita riba` brings it back;
   - the page's size (round 5): `suurenda`, `tee suuremaks`, `suurem kiri`, `suumi sisse` zoom in one step
-    (100 → 110 → 125 → 150 → 175 → 200 %), `vähenda`, `tee väiksemaks`, `väiksem kiri`, `suumi välja` zoom out,
+    (the steps are 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300 %), `vähenda`, `tee väiksemaks`,
+    `väiksem kiri`, `suumi välja` zoom out one step,
     `tavaline suurus`, `algne suurus`, `suumi tagasi` go back to 100 %; English `zoom in`, `make it bigger`,
     `larger text`, `zoom out`, `make it smaller`, `reset zoom`, `normal size`. It is Chrome's own tab zoom, so the
     setting sticks for the site, and the bar zooms with the page: at 200 % the bar is also twice as big, which
-    is intended (it is drawn in the page's pixels);
+    is intended (it is drawn in the page's pixels). The labels and the undo stay as they were;
   - `puhka` stops typing, `ärka üles` resumes.
   - push-to-talk by looking: nothing to say; look at the microphone (or the whole bar) and speak, look
     away and the words are delivered. Set it on the settings page (**Kuulamine: Vaatamisega**).
@@ -295,7 +313,10 @@ accessibility tree would, on any site, without site-specific paths:
   a textarea), on a YouTube-like stand-in (`fixtures/video.html`: a cookie
   banner, ten video cards with thumbnail, title and channel links, some below the fold, an
   `aria-labelledby` button, a tile that reacts to Enter only), a Gmail-like compose window
-  (`fixtures/gmail.html`: `role=dialog`, fields named by `<label for>`, a send button) and a
+  (`fixtures/gmail.html`: `role=dialog`, fields named by `<label for>`, a send button), a Smart-ID-like
+  login (`fixtures/login.html`, round 5: one-line fields of every kind, Isikukood, Telefon, E-post, Summa,
+  PIN1 and a textarea; each field's kind read back, the converted values typed, Tab on, Enter submits
+  once), the tab zoom (round 5: 100 to 110, 125, 150 and back, the strip keeping its CSS size) and a
   WhatsApp stand-in page. Builds the extension first. Opens Chromium windows on screen for about a
   minute. The Messenger stand-in is served on the IPv6 loopback; where `[::1]` is unreachable (some
   containers) that part prints SKIP. Without a screen: `xvfb-run -a -s "-screen 0 1600x1000x24" npx tsx extension/test/run.ts`.
@@ -370,3 +391,15 @@ keys reach it, the whole-box repairs and "find a word" do not (see "What to say"
   - Hover on real sites: whether WhatsApp's arrow, YouTube's card menu and Gmail's row actions
     show on the synthetic pointer events (tested on stand-ins that react to `mouseover`).
   - The delete-for-everyone chain end to end on real WhatsApp: it runs on the stand-in only.
+- Round 5, all of it: nothing below has been tried with a real voice or on a real site.
+  - The real Smart-ID login page and real bank forms: how their fields are marked up (so which kind
+    `fieldKindOf` gives them), whether their scripts accept a value set by `setText` and a synthetic
+    Enter, and whether `valmis` lands where a real Tab would. Proven on `fixtures/login.html` only.
+  - The conversions on a real voice: how the recogniser writes `ät`, `punkt`, `pluss`, a string of digits
+    said one by one, and a letter name such as `ess`; the tables in `src/core/spelling.ts` come from
+    reasoning about its output, not from recordings.
+  - The latency of a careful ask (a sentence of eight words or more, or a chain) on the real model with
+    effort high: expected a few seconds, capped at 12 s on the server and 14 s in the engine, never
+    measured. `npx tsx scripts/intent-eval.ts` prints the care per ask.
+  - Whether the recogniser hears `katkesta` as one word, and how the 25 s watchdog feels in use.
+  - Zoom on a real site: whether the site's own layout and the strip stay usable at 200 % and above.

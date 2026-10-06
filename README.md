@@ -28,6 +28,13 @@ the server can learn your voice so that, with "Kuula ainult mind" on, other peop
 skipped; and the model sees the messages, headings and paragraphs on the page too, can rest the
 pointer on one so its hidden controls appear, and can open its menu.
 
+Since the afternoon of 6 October forms work by voice: an ID code, a phone number, an e-mail address
+or a PIN said as words ("kolm üheksa null kaks", "ralf punkt sepp ät gmail punkt com") is typed as
+digits and characters into a one-line field, read back by the bar, and "valmis" moves to the next
+field, "kinnita" submits. A long sentence or a chain makes the model think longer before it acts,
+a short command stays quick, nothing can wait more than 25 seconds, and "katkesta" stops everything
+at once. "Suurenda" and "vähenda" zoom the page.
+
 Nothing opens in a separate window. Ütle also replaces Chrome's new-tab page with the same bar and
 large tiles for common sites, so the bar is there on an empty tab too.
 
@@ -56,6 +63,9 @@ This is a hackathon prototype.
 - Everything from 6 October (chains of goals, only your own voice, the messages and hover on the
   page) is proven on stand-in pages and with fakes only: no real voice, no real site, and the
   speaker model never run on an Estonian voice. The WhatsApp message selectors are guesses.
+- Everything from the afternoon of 6 October (forms by voice, the model's care, the 25-second limit
+  and "katkesta", zoom) is proven on stand-in pages only: a Smart-ID-like test page, not the real
+  one; no real bank form; the conversions never heard from a real voice.
 - Built and tested on Windows 11 only.
 
 Known faults: if you keep talking straight after a short command, the command word can show in the
@@ -144,7 +154,7 @@ Anything that is not a command is typed into the message box. Commands are match
 utterance, in Estonian or English, whatever was said before. The bar's own lines are in Estonian.
 What no fixed phrase covers ("uus leht", "vajuta Mari", "pane vaiksemaks") is understood by meaning
 when the local server has an `ANTHROPIC_API_KEY`. The full list, with the English forms, is in
-`extension/README.md` ("What to say"); the rules are `docs/ARCHITECTURE.md` 21.1, 22, 23 and 24.
+`extension/README.md` ("What to say"); the rules are `docs/ARCHITECTURE.md` 21.1, 22, 23, 24 and 25.
 
 | Estonian | English | What happens |
 |---|---|---|
@@ -157,6 +167,11 @@ when the local server has an `ANTHROPIC_API_KEY`. The full list, with the Englis
 | mine algusesse, lause lõppu, sõna tagasi, kolm sõna edasi, mine sõna homme ette | go to the start, end of the sentence, word back, go before homme | Moves the caret inside the text. |
 | vali kõik, vali see lause, vali homme | select all, select the sentence, select homme | Selects inside the text. |
 | kirjuta siia vahele kell viis | insert at five | Types at the caret. |
+| kolm üheksa null kaks; ralf punkt sepp ät gmail punkt com | three nine zero two; ralf dot sepp at gmail dot com | Into a code, phone, e-mail or PIN field: typed as 3902, ralf.sepp@gmail.com. The bar reads the field back. |
+| valmis, edasi; kinnita, logi sisse | done, next; submit, log in | In a form field: the next field; submit the form. |
+| numbritena; tavaliselt; kirjuta kood 3902 | as digits; normally; type code 3902 | Writes everything as digits until told otherwise; one value as a code. |
+| katkesta | cancel | Stops everything in flight at once. |
+| suurenda, vähenda, tavaline suurus | zoom in, zoom out, normal size | The page's size, kept per site. |
 | kustuta täht, kustuta kolm tähte, kustuta sõna homme, vasakule, tee uuesti | delete a letter, delete three letters, delete the word homme, arrow left, redo | The editing keys. |
 | puhka, ära kuula | sleep, stop listening | Stops typing what it hears, until woken. |
 | ärka üles | wake up | Starts again. |

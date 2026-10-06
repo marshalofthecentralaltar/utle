@@ -89,6 +89,17 @@ to, not only the clickable things: the messages of the open chat, headings, para
 the pointer on one so its hidden menu appears, open a right-click menu, and scroll to it. All of it
 is proven on stand-in pages only.
 
+**What changed on 6 October, afternoon.** After the demo with the person it is for, five more
+things. Forms by voice: an ID code, a phone number, an e-mail address or a PIN said as words
+("kolm üheksa null kaks", "ralf punkt sepp ät gmail punkt com") becomes digits and characters in a
+one-line field, the bar reads the field back (a PIN as dots), "valmis" goes to the next field and
+"kinnita" submits, so a Smart-ID login can be done by voice. A long sentence or a chain makes the
+model read the whole thing and plan before it acts, while short commands stay as quick as before.
+It can no longer get stuck: nothing waits more than 25 seconds, the bar counts the seconds while it
+thinks, and "katkesta" stops everything at once. And "suurenda" / "vähenda" zoom the page, text and
+layout together, kept per site. All of it is proven on stand-in pages only: a Smart-ID-like test
+page, never the real one, and no real voice.
+
 **The first version, a document editor,** survives only as a development page at localhost: say
 "change the budget deadline to Friday", see the change marked in the text, say yes or no. Its edits
 need an Anthropic API key, and the key on the build machine is rejected. It is not part of what the
@@ -142,7 +153,7 @@ tracker.
 
 ## What is proven and what is not
 
-| Claim | Status on 6 October 2026, morning |
+| Claim | Status on 6 October 2026, afternoon |
 |---|---|
 | Dictating and sending in real WhatsApp Web | Done with the first version by the developer and one team member, both with ordinary voices |
 | Words typed while speaking, and the new-tab page | Done by recorded speech in automated tests in Chromium; not yet on real WhatsApp or in Google Chrome |
@@ -160,6 +171,9 @@ tracker.
 | Chains of goals in one breath (6 October) | Stand-in pages only: the engine with fakes, the real model against fake pages in the eval; not with a voice |
 | Only your own voice (6 October) | Stand-in pages only: a fake speaker model in the tests; the real model never run on an Estonian voice |
 | Everything on the page: messages, hover, the menu (6 October) | Stand-in pages only: the WhatsApp stand-in deletes a message for everyone; the real site's selectors are guesses |
+| Forms by voice: numbers as digits, e-mail, phone, PIN, "valmis", "kinnita" (6 October, afternoon) | Stand-in pages only: a Smart-ID-like test page in the browser suite and 99 unit cases for the conversion; not the real Smart-ID page, no bank form, no real voice |
+| The model thinks longer on a long sentence, never gets stuck, "katkesta" (6 October, afternoon) | Stand-in pages only: the engine with fakes, the server with a scripted model; the latency of a careful ask on the real model is unmeasured |
+| Zoom by voice (6 October, afternoon) | Stand-in pages only: the tab zoom stepped in the browser suite; not on a real site |
 
 ## What it is not, yet
 
@@ -230,7 +244,7 @@ he says.
 | What | Where |
 |---|---|
 | Screenshots of the product on test pages | `docs/proof/` |
-| Every phrase the product understands, in both languages | `extension/README.md` ("What to say"); the rules in `docs/ARCHITECTURE.md`, sections 20.3, 21.1, 22 and 23.4; a short table in `README.md` |
+| Every phrase the product understands, in both languages | `extension/README.md` ("What to say"); the rules in `docs/ARCHITECTURE.md`, sections 20.3, 21.1, 22, 23.4 and 25; a short table in `README.md` |
 | Every line the product says | `src/core/strings.ts` |
 | How to install and run it | `README.md` |
 | What is not ours, and its licence | `THIRD-PARTY.md` |
