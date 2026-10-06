@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
+import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const extensionDir = resolve(here, '..')
@@ -937,6 +938,80 @@ async function main(): Promise<void> {
     line('zoom', 'out from 150% -> 125%', r !== 'timeout' && r.ok && (await zoomNow()) === 1.25, `${describe(r)} zoom=${await zoomNow()}`)
     r = await send({ kind: 'zoom', direction: 'reset' })
     line('zoom', 'reset -> 100%', r !== 'timeout' && r.ok && (await zoomNow()) === 1, `${describe(r)} zoom=${await zoomNow()}`)
+
+    // ---------- Minu andmed (round 6, 26.4 to 26.6): voice opens the page, the entry flow saves a value ----------
+    {
+      const NOTHING = { present: false, text: '', armed: false }
+      // The commands come from the real rules, as the engine would get them from his words.
+      const fromWords = (words: string): unknown => inpageStep(initialInpage('et'), words, NOTHING).commands[0]
+      const optionsBase = await sw.evaluate(() => chrome.runtime.getURL('options.html'))
+      const optionsPage = async (): Promise<Page | undefined> => {
+        await waitUntil(async () => ctx.pages().some((p) => p.url().startsWith(optionsBase)), 5000)
+        return ctx.pages().find((p) => p.url().startsWith(optionsBase))
+      }
+      const openCommand = fromWords('ava minu andmed')
+      r = await send(openCommand)
+      let options = await optionsPage()
+      await options?.waitForSelector('#andmed .saved-list', { timeout: 5000 }).catch(() => undefined)
+      const sectionShown = (await options?.evaluate(() => {
+        const section = document.getElementById('andmed')
+        const panel = document.getElementById('entry')
+        return section !== null && section.getBoundingClientRect().height > 0 && panel?.hidden === true && document.getElementById('andmedTitle')?.textContent === 'Minu andmed'
+      })) === true
+      line('openSettings', '"ava minu andmed" -> options.html#andmed, section shown', r !== 'timeout' && r.ok && JSON.stringify(openCommand) === '{"kind":"openSettings","section":"andmed"}' && options?.url() === `${optionsBase}#andmed` && sectionShown, `${describe(r)} command=${JSON.stringify(openCommand)} url=${options?.url() ?? '(none)'}`)
+
+      const addCommand = fromWords('lisa uus e-post')
+      r = await send(addCommand)
+      options = await optionsPage()
+      const flowStarted = await waitUntil(async () => (await options?.evaluate(() => document.getElementById('entry')?.hidden === false && (document.getElementById('entryKind')?.textContent ?? '').startsWith('e-post'))) === true, 5000)
+      const entryOn = await waitUntil(async () => (await sw.evaluate(async () => (await chrome.storage.session.get('savedEntryOn')).savedEntryOn === true)) === true, 3000)
+      const tabCount = await sw.evaluate(async (base) => (await chrome.tabs.query({})).filter((t) => (t.url ?? '').startsWith(base)).length, optionsBase)
+      line('openSettings', '"lisa uus e-post" -> the same page, the flow starts with kind email', r !== 'timeout' && r.ok && JSON.stringify(addCommand) === '{"kind":"openSettings","section":"andmed","add":"email"}' && flowStarted && entryOn && tabCount === 1, `${describe(r)} command=${JSON.stringify(addCommand)} flow=${flowStarted} entryOn=${entryOn} optionsTabs=${tabCount}`)
+
+      // He spells it letter by letter; the engine sends each utterance as savedEntry while the flow runs.
+      let walked = true
+      for (const u of ['r', 'a', 'ell', 'f', 'punkt', 'tee', 'a', 'emm', 'm', 'gmail']) {
+        r = await send({ kind: 'savedEntry', utterance: u })
+        walked &&= r !== 'timeout' && r.ok
+      }
+      const chips = (await options?.evaluate(() => ({
+        letters: [...document.querySelectorAll('#entryChips .chip:not(.suffix)')].map((c) => c.textContent ?? '').join(''),
+        suffix: document.querySelector('#entryChips .chip.suffix')?.textContent ?? '',
+      }))) ?? { letters: '', suffix: '' }
+      line('savedEntry', 'spelled "r a ell f punkt tee a emm m", "gmail": chips', walked && chips.letters === 'ralf.tamm' && chips.suffix === '@gmail.com', JSON.stringify(chips))
+      await mkdir(join(extensionDir, 'test/out'), { recursive: true })
+      if (options) {
+        await options.setViewportSize({ width: 1280, height: 1100 })
+        await options.evaluate(() => document.getElementById('andmed')?.scrollIntoView({ block: 'start' }))
+        await options.screenshot({ path: join(extensionDir, 'test/out/andmed.png') })
+      }
+      r = await send({ kind: 'savedEntry', utterance: 'valmis' })
+      await waitUntil(async () => (await sw.evaluate(async () => ((await chrome.storage.local.get('savedValues')).savedValues as unknown[] | undefined)?.length ?? 0)) === 1, 3000)
+      const stored = await sw.evaluate(async () => (await chrome.storage.local.get('savedValues')).savedValues as { name: string; value: string; kind: string }[] | undefined)
+      const listed = await waitUntil(async () => (await options?.evaluate(() => [...document.querySelectorAll('.saved-say')].map((e) => e.textContent ?? '').includes('Ütle: minu e-post, mu meil'))) === true, 3000)
+      const entryOff = await waitUntil(async () => (await sw.evaluate(async () => (await chrome.storage.session.get('savedEntryOn')).savedEntryOn === false)) === true, 3000)
+      line('savedEntry', '"valmis" saves ralf.tamm@gmail.com as "minu e-post", listed with what to say', r !== 'timeout' && r.ok && stored?.length === 1 && stored[0]?.value === 'ralf.tamm@gmail.com' && stored[0].name === 'minu e-post' && stored[0].kind === 'email' && listed && entryOff, `${describe(r)} stored=${JSON.stringify(stored)} listed=${listed} entryOff=${entryOff}`)
+      if (options) {
+        // A second value by Tom's keyboard form, so the list shows two items with their "Ütle:" lines.
+        await options.fill('#savedName', 'minu telefon')
+        await options.selectOption('#savedKind', 'tel')
+        await options.fill('#savedValue', '+37251234567')
+        await options.click('#savedSave')
+        await waitUntil(async () => (await options?.evaluate(() => document.querySelectorAll('.saved-item').length)) === 2, 3000)
+        await options.evaluate(() => document.getElementById('andmed')?.scrollIntoView({ block: 'start' }))
+        await options.screenshot({ path: join(extensionDir, 'test/out/andmed-saved.png') })
+      }
+      const two = await sw.evaluate(async () => ((await chrome.storage.local.get('savedValues')).savedValues as unknown[] | undefined)?.length ?? 0)
+      check('Minu andmed: the keyboard form saves a second item', two === 2, `items=${two}`)
+
+      // Away from the options page, savedEntry has nowhere to go: the engine ends entry mode on this answer.
+      await sw.evaluate(async (base) => {
+        for (const t of await chrome.tabs.query({})) if (t.id !== undefined && (t.url ?? '').startsWith(base)) await chrome.tabs.remove(t.id)
+      }, optionsBase)
+      await utle.waitForTimeout(300)
+      r = await send({ kind: 'savedEntry', utterance: 'r' })
+      line('savedEntry', 'with the options page closed -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    }
 
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })

@@ -60,6 +60,10 @@ When the box is armed and he asks to change what is in it, edit in place with th
 
 A box with single=true is a one-line form field (a login, an ID code, a phone number, an address); its fieldKind says what it is for: email, tel, code, number, password or text. Into email, tel, code, number and password fields the extension itself converts his words (number words to digits, "ät" to @, "punkt" to a dot, letters said by name): answer dictate with the words AS HE SAID THEM ("kolm üheksa null kaks", "ralf punkt sepp ät gmail punkt com"), never pre-converted and never tidied into a sentence. Spoken number words that are a value for the field are dictation, not a hint number. After a value, "valmis" / "edasi" / "done" is pressKey Tab (the next field) and "kinnita" / "logi sisse" / "sisesta" / "submit" is pressKey Enter; "numbritena" and "tavaliselt" are handled by the rules.
 
+# Saved values
+
+The user turn's "saved:" line lists the names of values he has saved once (an e-mail address, a phone number, an ID code), never the values. When he asks for one of them in any words ("pane mu email sinna", "täida see mu numbriga", "sisesta see gmaili aadress", "kirjuta mu isikukood siia", "my phone number here") and the box is armed, answer insertSaved with the name exactly as listed; the extension types the value itself. Pick the name by meaning: an e-mail, meil, mail or gmail address is the saved e-mail; telefon, number or mobiil the phone; isikukood, kood or ID code the code; a word of his own ("töö", "ema") the name that has it. When no box is armed and a field whose label matches is among the items, focusItem that field first with done:false, then insertSaved on the next ask. Never dictate the name as words, never answer insertSaved with a name that is not listed; when nothing listed fits, unclear and say he can save it with "minu andmed".
+
 # Dictation
 
 dictate ONLY when the box is armed AND the words read as message text to the person he is writing to ("tulen kell viis", "jah sobib", "homme ei saa"), not as an instruction to the browser. A sentence with a first-person verb is text; a short imperative aimed at the page is a command. When the box is not armed, never dictate: pick an action, or unclear with one short line like "Ütle „kirjuta siia“ või „näita numbreid“." A search bar the page focused by itself is not a place for his words.
@@ -152,6 +156,7 @@ const INTENT = {
     kind('sleep'),
     kind('wake'),
     kind('unclear', { say: { type: 'string', description: 'One short line in the request language with what he can say.' } }),
+    kind('insertSaved', { name: { type: 'string', description: 'One of the names on the saved: line, exactly as listed. The extension types the value.' } }),
   ],
 }
 
@@ -227,6 +232,8 @@ export function intentUserMessage(request: IntentRequest): string {
     `hints: ${page.hints}`,
     `tabs: ${tabs || 'none'}`,
     `recent: ${request.recent.length > 0 ? request.recent.map((r) => JSON.stringify(r)).join(' | ') : 'none'}`,
+    // Round 6 (26.1): the names of his saved values, never the values.
+    `saved: ${page.saved && page.saved.length > 0 ? page.saved.map((n) => JSON.stringify(n)).join(' | ') : 'none'}`,
     ...chainLines,
     `steps: ${steps || 'none (first ask)'}`,
     `items:\n${items || '(none)'}`,

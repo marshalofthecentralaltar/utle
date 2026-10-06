@@ -272,6 +272,25 @@ phrases(
 )
 phrases({ kind: 'zoom', direction: 'reset' }, 'tavaline suurus', 'algne suurus', 'suumi tagasi', 'reset zoom', 'normal size')
 
+// Round 6 (26.4): the settings page and its Minu andmed section; "lisa uus e-post" starts saving one by voice.
+// Written as cleanForBrowser leaves them ("e-post" is "epost"). "lisa e-post" without "uus" is the saved e-mail (26.2).
+phrases({ kind: 'openSettings' }, 'ava seaded', 'seaded', 'ava sätted', 'sätted', 'open settings', 'open the settings', 'settings')
+phrases({ kind: 'openSettings', section: 'andmed' }, 'ava minu andmed', 'minu andmed', 'mu andmed', 'ava mu andmed', 'my details', 'open my details', 'my data')
+phrases(
+  { kind: 'openSettings', section: 'andmed', add: 'email' },
+  'lisa uus epost', 'lisa uus email', 'lisa uus meil', 'salvesta mu epost', 'salvesta minu epost', 'salvesta epost', 'salvesta mu meil', 'salvesta mu email',
+  'add an email', 'add a new email', 'save my email',
+)
+phrases(
+  { kind: 'openSettings', section: 'andmed', add: 'tel' },
+  'lisa uus telefon', 'lisa uus number', 'lisa uus telefoninumber', 'salvesta mu telefon', 'salvesta minu telefon', 'salvesta mu number', 'salvesta mu telefoninumber',
+  'add a phone number', 'save my phone', 'save my phone number',
+)
+phrases(
+  { kind: 'openSettings', section: 'andmed', add: 'code' },
+  'lisa uus isikukood', 'salvesta mu isikukood', 'salvesta minu isikukood', 'save my id code',
+)
+
 // Round 3, the edit lane (docs/ARCHITECTURE.md 21.1 "Editing"): the caret, a selection and the editing
 // keys inside the armed box, as whole phrases. The box-dependent forms ("mine sõna X ette", "vali X",
 // "kustuta kolm tähte", "kirjuta siia vahele X") are patterns in inpage.ts; act there refuses all of

@@ -7,6 +7,7 @@ import { inpagePreview } from './inpage.ts'
 import { browserIntent } from './browserIntent.ts'
 import { STRINGS } from './strings.ts'
 import { deepFreeze } from './testUtil.ts'
+import type { SavedItem } from './saved.ts'
 
 const ET = STRINGS.et
 const EN = STRINGS.en
@@ -1929,5 +1930,146 @@ describe('review of round 5', () => {
     const digits = inpageStep(session({ spell: 'code' }), 'üks kaks kolm neli', field('', 'password'))
     expect(digits.commands).toEqual(only({ kind: 'setText', text: '1234' }))
     expect(digits.line).toBe(ET.inpage.typedInto('••••'))
+  })
+})
+
+describe('round 6: Minu andmed, saved values by the rules (26.2)', () => {
+  const EMAIL: SavedItem = { id: 'e1', name: 'minu e-post', value: 'ralf.tamm@gmail.com', kind: 'email' }
+  const WORK: SavedItem = { id: 'e2', name: 'töö e-post', value: 'ralf@firma.ee', kind: 'email' }
+  const PHONE: SavedItem = { id: 't1', name: 'minu telefon', value: '+37251234567', kind: 'tel' }
+  const withSaved = (...saved: SavedItem[]): InpageSession => session({ saved })
+  const emailField = (text = ''): BoxState => ({ present: true, text, armed: true, kind: 'field', fieldKind: 'email', single: true, label: 'E-post' })
+
+  for (const phrase of ['pane mu email sinna', 'minu meil', 'kirjuta mu e-post', 'my email']) {
+    it(`"${phrase}" types the one saved e-mail whole into the armed e-mail field, without asking`, () => {
+      const step = inpageStep(withSaved(EMAIL, PHONE), phrase, emailField('vana'))
+      expect(step.commands).toEqual([{ kind: 'setText', text: 'ralf.tamm@gmail.com' }])
+      expect(step.ask).toBeUndefined()
+      expect(step.line).toBe(ET.inpage.insertedSaved('ralf.tamm@gmail.com', 'minu e-post'))
+      expect(step.line).toBe('Kirjutasin: ralf.tamm@gmail.com (minu e-post). Ütle „valmis“ või „edasi“.')
+      expect(step.session.undo).toEqual(['vana'])
+    })
+  }
+
+  it('is instant and never previewed', () => {
+    expect(inpageInstant(withSaved(EMAIL), 'minu meil')).toBe(true)
+    expect(inpagePreview(withSaved(EMAIL), 'kirjuta mu e-post', box('Tere'))).toBeNull()
+  })
+
+  it('in a composer the value is appended after a space', () => {
+    const step = inpageStep(withSaved(PHONE), 'kirjuta mu telefon', box('Mu number on'))
+    expect(setTextOf(step.commands)).toBe('Mu number on +37251234567')
+  })
+
+  it('"sisesta minu telefon" is the saved number, not "sisesta X" at the caret', () => {
+    const step = inpageStep(withSaved(PHONE), 'sisesta minu telefon', { ...emailField(), fieldKind: 'tel' })
+    expect(step.commands).toEqual([{ kind: 'setText', text: '+37251234567' }])
+  })
+
+  it('with no armed box the rules do not resolve it: dictation, so the model is asked', () => {
+    const step = inpageStep(withSaved(EMAIL), 'pane mu email sinna', unarmed(''))
+    expect(step.commands).toEqual([])
+    expect(step.ask).toBe(true)
+  })
+
+  it('nothing saved: the words are what they were before', () => {
+    const step = inpageStep(session(), 'minu telefon', box(''))
+    expect(step.ask).toBe(true)
+    expect(setTextOf(step.commands)).toBe('Minu telefon')
+  })
+
+  it('"minu meil" with an e-mail saved and no armed box is asked about, never taken for "mine meil" (Gmail)', () => {
+    const step = inpageStep(withSaved(EMAIL), 'minu meil', NO_BOX)
+    expect(step.commands).toEqual([])
+    expect(step.ask).toBe(true)
+  })
+
+  it('two e-mails and no name: nothing is typed, the bar asks which', () => {
+    const step = inpageStep(withSaved(EMAIL, WORK), 'pane mu email sinna', emailField())
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe('Kumb: minu e-post või töö e-post?')
+    expect(step.session.choosing).toEqual(['e1', 'e2'])
+    expect(step.ask).toBeUndefined()
+  })
+
+  it('the next utterance naming one answers: "töö e-post", "töö", "minu e-post", "esimene"', () => {
+    const asked = inpageStep(withSaved(EMAIL, WORK), 'pane mu email sinna', emailField()).session
+    expect(setTextOf(inpageStep(asked, 'töö e-post', emailField()).commands)).toBe('ralf@firma.ee')
+    expect(setTextOf(inpageStep(asked, 'töö', emailField()).commands)).toBe('ralf@firma.ee')
+    expect(setTextOf(inpageStep(asked, 'minu e-post', emailField()).commands)).toBe('ralf.tamm@gmail.com')
+    expect(setTextOf(inpageStep(asked, 'esimene', emailField()).commands)).toBe('ralf.tamm@gmail.com')
+    expect(inpageStep(asked, 'teine', emailField()).session.choosing ?? null).toBeNull()
+  })
+
+  it('any other utterance clears the question and is handled as usual', () => {
+    const asked = inpageStep(withSaved(EMAIL, WORK), 'pane mu email sinna', emailField()).session
+    const step = inpageStep(asked, 'keri alla', emailField())
+    expect(step.commands).toEqual([{ kind: 'scroll', direction: 'down' }])
+    expect(step.session.choosing ?? null).toBeNull()
+  })
+
+  it('the read-back after the page answered keeps the name', () => {
+    const s = withSaved(EMAIL)
+    const step = inpageStep(s, 'minu meil', emailField())
+    const after = inpageResult(step.session, step.commands, { ok: true, box: { ...emailField('ralf.tamm@gmail.com') } })
+    expect(after.line).toBe(ET.inpage.insertedSaved('ralf.tamm@gmail.com', 'minu e-post'))
+  })
+
+  it('the hint: a step that arms an e-mail field adds „minu e-post“ to its line', () => {
+    const s = withSaved(EMAIL, PHONE)
+    const after = inpageResult(s, [{ kind: 'focusItem', id: 3 }], { ok: true, box: emailField() })
+    expect(after.line).toBe(`${ET.browserDone({ kind: 'focusItem', id: 3 }, null, null)} Või ütle „minu e-post“.`)
+    const plain = inpageResult(session(), [{ kind: 'focusItem', id: 3 }], { ok: true, box: emailField() })
+    expect(plain.line).toBe(ET.browserDone({ kind: 'focusItem', id: 3 }, null, null))
+  })
+})
+
+describe('round 6: the model insertSaved (26.3)', () => {
+  const EMAIL: SavedItem = { id: 'e1', name: 'minu e-post', value: 'ralf.tamm@gmail.com', kind: 'email' }
+  const field: BoxState = { present: true, text: '', armed: true, kind: 'field', fieldKind: 'email', single: true }
+  it('resolves the name to the local value and types it', () => {
+    const step = applyIntent(session({ saved: [EMAIL] }), { kind: 'insertSaved', name: 'Minu e-post' }, page(field, { saved: ['minu e-post'] }))
+    expect(step.commands).toEqual([{ kind: 'setText', text: 'ralf.tamm@gmail.com' }])
+  })
+  it('a name no longer saved types nothing and says so', () => {
+    const step = applyIntent(session({ saved: [] }), { kind: 'insertSaved', name: 'minu e-post' }, page(field))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.savedMissing)
+  })
+  it('with no armed box it refuses as dictation does', () => {
+    const step = applyIntent(session({ saved: [EMAIL] }), { kind: 'insertSaved', name: 'minu e-post' }, page(unarmed('')))
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.noPlaceToWrite)
+  })
+})
+
+describe('round 6: opening the settings by voice (26.4)', () => {
+  const cases: [string, BrowserCommand][] = [
+    ['ava minu andmed', { kind: 'openSettings', section: 'andmed' }],
+    ['minu andmed', { kind: 'openSettings', section: 'andmed' }],
+    ['my details', { kind: 'openSettings', section: 'andmed' }],
+    ['ava seaded', { kind: 'openSettings' }],
+    ['open settings', { kind: 'openSettings' }],
+    ['lisa uus e-post', { kind: 'openSettings', section: 'andmed', add: 'email' }],
+    ['salvesta mu e-post', { kind: 'openSettings', section: 'andmed', add: 'email' }],
+    ['salvesta mu telefon', { kind: 'openSettings', section: 'andmed', add: 'tel' }],
+    ['lisa uus isikukood', { kind: 'openSettings', section: 'andmed', add: 'code' }],
+  ]
+  for (const [phrase, command] of cases) {
+    it(`"${phrase}" from any page`, () => {
+      for (const b of [NO_BOX, EMPTY, unarmed('')]) {
+        const step = inpageStep(session(), phrase, b)
+        expect(step.commands).toEqual([command])
+        expect(step.ask).toBeUndefined()
+      }
+      expect(inpageInstant(session(), phrase)).toBe(true)
+    })
+  }
+  it('the lines', () => {
+    expect(inpageStep(session(), 'ava minu andmed', NO_BOX).line).toBe('Avan minu andmed.')
+    expect(inpageStep(session(), 'ava seaded', NO_BOX).line).toBe('Avan seaded.')
+  })
+  it('"seaded" with words in the armed box is a word of the message', () => {
+    expect(inpageStep(session(), 'seaded', box('Need on mu')).ask).toBe(true)
   })
 })

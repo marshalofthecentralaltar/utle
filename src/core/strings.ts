@@ -1,4 +1,5 @@
 import type { BrowserCommand, BrowserFailure, MediaAction, PressableKey } from '../browser/protocol.ts'
+import type { SavedKind } from './saved.ts'
 
 /**
  * Every line a person can read in Ütle, in one table keyed by language, so a native speaker
@@ -137,6 +138,15 @@ export interface Strings {
     keptWords: string
     /** A single-line field waits for the model; it did not answer, so nothing was typed. */
     fieldUnverified: string
+    // Round 6 (Minu andmed, 26.2): a saved value typed, which one, gone, the hint, the settings page not in front.
+    /** "Kirjutasin: X (minu e-post). Ütle „valmis“ või „edasi“." */
+    insertedSaved(text: string, name: string): string
+    /** "Kumb: a või b?" (two), "Milline: a, b või c?" (more). */
+    whichSaved(names: readonly string[]): string
+    savedMissing: string
+    /** Added to the line when an armed field has a saved value of its kind: " Või ütle „minu e-post“." */
+    savedHint(names: readonly string[]): string
+    entryGone: string
   }
 
   // The interpreter.
@@ -294,6 +304,51 @@ export interface Strings {
     enrolDone: string
     enrolFailed: string
     foreign: string
+  }
+
+  // Round 6 (Minu andmed, 26.5 and 26.6): the settings section and the voice entry flow.
+  andmed: {
+    title: string
+    titleEn: string
+    help: string
+    helpEn: string
+    empty: string
+    /** "Ütle: minu e-post, mu meil" */
+    sayLine(phrases: readonly string[]): string
+    edit: string
+    forget: string
+    forgotten(name: string): string
+    /** The buttons that start the voice flow. */
+    add(kind: SavedKind): string
+    kindName(kind: SavedKind): string
+    /** The name a first item of a kind gets. */
+    defaultName(kind: SavedKind): string
+    formTitle: string
+    formName: string
+    formKind: string
+    formValue: string
+    formSave: string
+    formMissing: string
+    formSaved(name: string): string
+    askKind: string
+    askName: string
+    nameTaken(name: string): string
+    /** The value step's line. */
+    stepValue: string
+    suffixHint: string
+    /** After each utterance of the value step: what is there now. */
+    now(value: string, suffix: string): string
+    readBack(spoken: string, suffix: string): string
+    nothingYet: string
+    needAt: string
+    needDigit: string
+    savedOk(name: string): string
+    abandoned: string
+    stepTitle: string
+    suffixLabel: string
+    /** The flow's two buttons, for the eyes. */
+    done: string
+    cancel: string
   }
 }
 
@@ -490,6 +545,10 @@ const ET: Strings = {
         return command.show ? 'Näitan riba.' : 'Peidan riba.'
       case 'zoom':
         return command.direction === 'in' ? 'Suurendan.' : command.direction === 'out' ? 'Vähendan.' : 'Tavaline suurus.'
+      case 'openSettings':
+        return command.section === 'andmed' ? 'Avan minu andmed.' : 'Avan seaded.'
+      case 'savedEntry':
+        return ''
     }
   },
   browserDone(command, title, hints) {
@@ -601,6 +660,11 @@ const ET: Strings = {
     cancelled: 'Katkestatud.',
     keptWords: 'Pikk lause jäi kasti, käsku ei täitnud.',
     fieldUnverified: 'Abiline ei vastanud, välja ei kirjutanud.',
+    insertedSaved: (text, name) => `Kirjutasin: ${text} (${name}). Ütle „valmis“ või „edasi“.`,
+    whichSaved: (names) => (names.length <= 2 ? `Kumb: ${names.join(' või ')}?` : `Milline: ${names.slice(0, -1).join(', ')} või ${names.at(-1) ?? ''}?`),
+    savedMissing: 'Seda pole enam salvestatud. Ütle „minu andmed“.',
+    savedHint: (names) => ` Või ütle ${names.map((n) => `„${n}“`).join(' või ')}.`,
+    entryGone: 'Minu andmete leht pole ees. Ütle „minu andmed“.',
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -756,6 +820,44 @@ const ET: Strings = {
     enrolFailed: 'Hääle õppimine ei õnnestunud.',
     foreign: 'Keegi teine rääkis, jätsin vahele.',
   },
+
+  andmed: {
+    title: 'Minu andmed',
+    titleEn: 'My details: an e-mail, a phone number or an ID code, saved once and put into any field by voice.',
+    help: 'Salvesta e-post, telefon või isikukood üks kord. Ütle „lisa uus e-post“ või vaata nupule. Pärast ütle vormi väljal „minu e-post“.',
+    helpEn: 'Say “add a new email” or rest your eyes on a button. Afterwards say “my email” in a form field.',
+    empty: 'Veel pole midagi salvestatud.',
+    sayLine: (phrases) => `Ütle: ${phrases.join(', ')}`,
+    edit: 'Muuda',
+    forget: 'Unusta',
+    forgotten: (name) => `Unustasin: ${name}.`,
+    add: (kind) => `Lisa ${({ email: 'e-post', tel: 'telefon', code: 'isikukood', number: 'number', text: 'muu' } as const)[kind]}`,
+    kindName: (kind) => ({ email: 'e-post', tel: 'telefon', code: 'isikukood', number: 'number', text: 'muu' } as const)[kind],
+    defaultName: (kind) => ({ email: 'minu e-post', tel: 'minu telefon', code: 'minu isikukood', number: 'minu number', text: 'minu tekst' } as const)[kind],
+    formTitle: 'Klaviatuuriga (Tom)',
+    formName: 'Nimi',
+    formKind: 'Liik',
+    formValue: 'Väärtus',
+    formSave: 'Salvesta',
+    formMissing: 'Nimi ja väärtus on vaja.',
+    formSaved: (name) => `Salvestatud: ${name}.`,
+    askKind: 'Mida salvestada? Ütle „e-post“, „telefon“, „isikukood“ või „muu“.',
+    askName: 'Mis nimega? Ütle näiteks „töö e-post“.',
+    nameTaken: (name) => `„${name}“ on juba olemas. Ütle teine nimi.`,
+    stepValue: 'Ütle tähthaaval; „punkt“ on ., „ät“ on @; „valmis“ salvestab.',
+    suffixHint: 'Lõpu jaoks ütle „gmail“, „hotmail“ või „mail punkt ee“.',
+    now: (value, suffix) => `Praegu: ${value}${suffix}`,
+    readBack: (spoken, suffix) => `Praegu: ${spoken}${suffix === '' ? '' : `, lõpp ${suffix}`}.`,
+    nothingYet: 'Midagi pole veel. Ütle tähthaaval.',
+    needAt: 'Aadressis pole @. Ütle „ät“ või „gmail“.',
+    needDigit: 'Numbrit pole veel. Ütle numbrid.',
+    savedOk: (name) => `Salvestatud: ${name}. Ütle vormi väljal „${name}“.`,
+    abandoned: 'Katkestatud, midagi ei salvestatud.',
+    stepTitle: 'Lisan häälega',
+    suffixLabel: 'lõpp',
+    done: 'Valmis',
+    cancel: 'Katkesta',
+  },
 }
 
 const EN: Strings = {
@@ -873,6 +975,10 @@ const EN: Strings = {
         return command.show ? 'Showing the bar.' : 'Hiding the bar.'
       case 'zoom':
         return command.direction === 'in' ? 'Zooming in.' : command.direction === 'out' ? 'Zooming out.' : 'Normal size.'
+      case 'openSettings':
+        return command.section === 'andmed' ? 'Opening my details.' : 'Opening the settings.'
+      case 'savedEntry':
+        return ''
     }
   },
   browserDone(command, title, hints) {
@@ -984,6 +1090,11 @@ const EN: Strings = {
     cancelled: 'Cancelled.',
     keptWords: 'The long sentence stays in the box; no command was run.',
     fieldUnverified: 'The assistant did not answer; nothing was typed into the field.',
+    insertedSaved: (text, name) => `Typed: ${text} (${name}). Say "done" or "next".`,
+    whichSaved: (names) => (names.length <= 2 ? `Which one: ${names.join(' or ')}?` : `Which one: ${names.slice(0, -1).join(', ')} or ${names.at(-1) ?? ''}?`),
+    savedMissing: 'That is no longer saved. Say "my details".',
+    savedHint: (names) => ` Or say ${names.map((n) => `"${n}"`).join(' or ')}.`,
+    entryGone: 'The My details page is not in front. Say "my details".',
   },
 
   stillWorks: 'Yes, no and undo still work.',
@@ -1138,6 +1249,44 @@ const EN: Strings = {
     enrolDone: 'Your voice is learnt.',
     enrolFailed: 'Learning your voice did not work.',
     foreign: 'Someone else spoke; skipped it.',
+  },
+
+  andmed: {
+    title: 'My details',
+    titleEn: '',
+    help: 'Save an e-mail, a phone number or an ID code once. Say “add a new email” or rest your eyes on a button. Afterwards say “my email” in a form field.',
+    helpEn: '',
+    empty: 'Nothing is saved yet.',
+    sayLine: (phrases) => `Say: ${phrases.join(', ')}`,
+    edit: 'Change',
+    forget: 'Forget',
+    forgotten: (name) => `Forgot: ${name}.`,
+    add: (kind) => `Add ${({ email: 'e-mail', tel: 'phone', code: 'ID code', number: 'number', text: 'other' } as const)[kind]}`,
+    kindName: (kind) => ({ email: 'e-mail', tel: 'phone', code: 'ID code', number: 'number', text: 'other' } as const)[kind],
+    defaultName: (kind) => ({ email: 'minu e-post', tel: 'minu telefon', code: 'minu isikukood', number: 'minu number', text: 'minu tekst' } as const)[kind],
+    formTitle: 'By keyboard (Tom)',
+    formName: 'Name',
+    formKind: 'Kind',
+    formValue: 'Value',
+    formSave: 'Save',
+    formMissing: 'A name and a value are needed.',
+    formSaved: (name) => `Saved: ${name}.`,
+    askKind: 'What to save? Say "email", "phone", "ID code" or "other".',
+    askName: 'Under what name? Say for example "work email".',
+    nameTaken: (name) => `"${name}" exists already. Say another name.`,
+    stepValue: 'Spell it letter by letter; "dot" is ., "at" is @; "done" saves.',
+    suffixHint: 'For the ending say "gmail", "hotmail" or "mail dot ee".',
+    now: (value, suffix) => `Now: ${value}${suffix}`,
+    readBack: (spoken, suffix) => `Now: ${spoken}${suffix === '' ? '' : `, ending ${suffix}`}.`,
+    nothingYet: 'Nothing yet. Spell it letter by letter.',
+    needAt: 'The address has no @. Say "at" or "gmail".',
+    needDigit: 'No digits yet. Say the numbers.',
+    savedOk: (name) => `Saved: ${name}. Say "${name}" in a form field.`,
+    abandoned: 'Cancelled, nothing was saved.',
+    stepTitle: 'Adding by voice',
+    suffixLabel: 'ending',
+    done: 'Done',
+    cancel: 'Cancel',
   },
 }
 

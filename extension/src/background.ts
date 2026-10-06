@@ -3,7 +3,8 @@
 
 import type { BrowserCommand, BrowserFailure, BrowserResult } from '../../src/browser/protocol.ts'
 import type { TabSummary } from '../../src/core/pageIntent.ts'
-import { INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
+import { SAVED_KEY, savedFrom } from '../../src/core/saved.ts'
+import { ENTRY_KEY, INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
 import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.ts'
 import type { PageCommand } from './page.ts'
 import { SITES, siteOf } from './sites.ts'
@@ -230,6 +231,26 @@ async function runOnNewTab(tab: Tab, tabId: number, command: BrowserCommand): Pr
   return NOT_ALLOWED(tab)
 }
 
+/** Round 6 (26.4): the options page, or its Minu andmed section with the entry flow for a kind. */
+function optionsUrl(command: Extract<BrowserCommand, { kind: 'openSettings' }>): string {
+  const hash = command.section === 'andmed' ? `#andmed${command.add ? `:${command.add}` : ''}` : ''
+  return chrome.runtime.getURL(`options.html${hash}`)
+}
+
+/** Opens the options page in the target window, or brings an open one to the front at the new address. */
+async function openSettings(tab: Tab, command: Extract<BrowserCommand, { kind: 'openSettings' }>): Promise<BrowserResult> {
+  const url = optionsUrl(command)
+  const base = chrome.runtime.getURL('options.html')
+  const open = (await chrome.tabs.query({})).find((t) => (t.url ?? t.pendingUrl ?? '').startsWith(base))
+  if (open?.id !== undefined) {
+    const updated = await chrome.tabs.update(open.id, { url, active: true })
+    if (open.windowId !== undefined) await chrome.windows.update(open.windowId, { focused: true }).catch(() => undefined)
+    return ok({ tab: tabInfo(updated ?? open) })
+  }
+  const created = await chrome.tabs.create({ windowId: tab.windowId, active: true, url })
+  return ok({ tab: tabInfo(created) })
+}
+
 async function runInPage(tab: Tab, command: BrowserCommand): Promise<PageAnswer> {
   if (tab.id !== undefined && ourNewTab(tab.url ?? tab.pendingUrl)) return runOnNewTab(tab, tab.id, command)
   if (!scriptable(tab.url) || tab.id === undefined) return NOT_ALLOWED(tab)
@@ -380,6 +401,12 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     }
     case 'openConversation':
       return openConversation(tab, command)
+    case 'openSettings':
+      return openSettings(tab, command)
+    case 'savedEntry':
+      // Round 6 (26.5): only the options page holds the entry flow; anywhere else he has left it.
+      if (!(tab.url ?? tab.pendingUrl ?? '').startsWith(chrome.runtime.getURL('options.html'))) return fail('not_found', 'The Minu andmed page is not in front.')
+      return clean(await runOnNewTab(tab, tabId, command))
     case 'clickHint':
     case 'clickItem': {
       let result: PageAnswer = fail('failed', 'The page did not answer.')
@@ -537,6 +564,14 @@ async function openPermissionPage(): Promise<void> {
   await chrome.tabs.create({ url, active: true })
 }
 
+// Round 6 (26.1): a change to his saved values reaches the engine at once, when it runs.
+chrome.storage.onChanged.addListener((changes, area) => {
+  const change = changes[SAVED_KEY]
+  if (area !== 'local' || change === undefined) return
+  const message: ToOffscreen = { target: 'offscreen', type: 'saved', items: savedFrom(change.newValue) }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+})
+
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') void openPermissionPage()
 })
@@ -579,6 +614,19 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
         await chrome.storage.session.set({ wantListening: false })
         await toOffscreen('start')
       })
+      return false
+    case 'utle-saved': {
+      // Round 6 (26.1): the offscreen engine cannot read storage; it asks once at start.
+      void Promise.all([chrome.storage.local.get(SAVED_KEY), chrome.storage.session.get(ENTRY_KEY)]).then(
+        ([local, session]) => sendResponse({ items: savedFrom(local[SAVED_KEY]), entry: session[ENTRY_KEY] === true }),
+        () => sendResponse({ items: [], entry: false }),
+      )
+      return true
+    }
+    case 'utle-entry':
+      // Round 6 (26.5): kept for an offscreen document made later, and told to the one running now (never created for it).
+      void chrome.storage.session.set({ [ENTRY_KEY]: message.on })
+      chrome.runtime.sendMessage({ target: 'offscreen', type: 'entry', on: message.on } satisfies ToOffscreen).catch(() => undefined)
       return false
     case 'utle-tabs': {
       // From the offscreen engine (M7): the tabs of the window being driven, for the model.

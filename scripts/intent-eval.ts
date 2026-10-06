@@ -301,6 +301,20 @@ const FORM: PageContext = {
   hints: false,
 }
 
+/** Round 6 (26.3): the form with a phone and an ID code field, and three saved names (never values). */
+const SAVED_NAMES = ['minu e-post', 'minu telefon', 'minu isikukood']
+const FORM_SAVED_ITEMS = [
+  { id: 1, role: 'field', text: 'Eesnimi' },
+  { id: 2, role: 'field', text: 'Perekonnanimi' },
+  { id: 3, role: 'field', text: 'E-post' },
+  { id: 4, role: 'field', text: 'Telefon' },
+  { id: 5, role: 'field', text: 'Isikukood' },
+  { id: 7, role: 'button', text: 'Edasi' },
+]
+const savedForm = (box: PageContext['box']): PageContext => ({ ...FORM, items: FORM_SAVED_ITEMS, box, saved: SAVED_NAMES })
+const FORM_SAVED = savedForm({ present: true, text: '', armed: false, kind: 'field', label: 'Eesnimi' })
+const armedField = (label: string, fieldKind: 'email' | 'tel' | 'code'): PageContext => savedForm({ present: true, text: '', armed: true, kind: 'field', fieldKind, single: true, label })
+
 const oneTab = (page: PageContext): TabSummary[] => [{ index: 1, title: page.title, active: true }]
 const GOOGLE_AND_YOUTUBE: TabSummary[] = [
   { index: 1, title: 'ilm tallinnas - Google otsing', active: true },
@@ -330,6 +344,8 @@ interface Expectation {
   edit?: string
   /** For scroll: the direction. */
   direction?: string
+  /** Round 6: for insertSaved, the saved name. */
+  saved?: string
 }
 
 /** One ask of the simulated loop. */
@@ -534,6 +550,19 @@ const CASES: Case[] = [
   one('vali eesti', FORM, click(4)),
   one('näita numbreid', FORM, { kind: 'command', command: 'showHints' }),
 
+  // --- Round 6: saved values by free phrasing (names only in the request) -----------------------
+  one('pane mu email sinna', armedField('E-post', 'email'), { kind: 'insertSaved', saved: 'minu e-post' }),
+  {
+    name: 'täida telefon (focus the field, then the saved number)',
+    utterance: 'täida telefon',
+    steps: [
+      { page: FORM_SAVED, expect: [focus(4), click(4)], done: false },
+      { page: armedField('Telefon', 'tel'), expect: { kind: 'insertSaved', saved: 'minu telefon' } },
+    ],
+  },
+  one('sisesta see gmaili aadress', armedField('E-post', 'email'), { kind: 'insertSaved', saved: 'minu e-post' }),
+  one('kirjuta mu isikukood siia', armedField('Isikukood', 'code'), { kind: 'insertSaved', saved: 'minu isikukood' }),
+
   // --- New tab: sites, sleep, chit-chat --------------------------------------------------------
   one('whatsapp', NEW_TAB, goTo('whatsapp')),
   one('mina youtube', NEW_TAB, goTo('youtube')),
@@ -551,6 +580,7 @@ const CASES: Case[] = [
 function matchesOne(intent: PageIntent, e: Expectation): string | null {
   if (intent.kind !== e.kind) return `kind ${intent.kind}`
   if (intent.kind === 'edit') return e.edit && intent.edit.kind !== e.edit ? `edit ${intent.edit.kind}` : null
+  if (intent.kind === 'insertSaved') return e.saved && intent.name.trim().toLowerCase() !== e.saved ? `name ${intent.name}` : null
   if (intent.kind !== 'command') return null
   const c = intent.command
   if (e.command && c.kind !== e.command) return `command ${c.kind}`
@@ -589,6 +619,8 @@ function describe(intent: PageIntent): string {
       return `edit ${intent.edit.kind}`
     case 'unclear':
       return `unclear ${JSON.stringify(intent.say)}`
+    case 'insertSaved':
+      return `insertSaved ${JSON.stringify(intent.name)}`
     default:
       return intent.kind
   }

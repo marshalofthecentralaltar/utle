@@ -324,3 +324,27 @@ describe('pageIntent', () => {
     })
   })
 })
+
+describe('round 6: saved values (26.1, 26.3)', () => {
+  it('the user turn lists the saved names, or none', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request({ page: { ...YOUTUBE, saved: ['minu e-post', 'töö telefon'] } }), { client, model: 'm' })
+    expect(String(calls[0]?.messages[0]?.content)).toContain('saved: "minu e-post" | "töö telefon"')
+    const { client: fresh, calls: freshCalls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client: fresh, model: 'm' })
+    expect(String(freshCalls[0]?.messages[0]?.content)).toContain('saved: none')
+  })
+
+  it('an insertSaved answer with a listed name passes; an unlisted one is unclear', async () => {
+    const page = { ...YOUTUBE, saved: ['minu e-post'] }
+    const { client } = fakeClient(answer({ intent: { kind: 'insertSaved', name: 'minu e-post' }, say: '', done: true, plan: [] }))
+    expect((await pageIntent(request({ page }), { client, model: 'm' })).intent).toEqual({ kind: 'insertSaved', name: 'minu e-post' })
+    const { client: other } = fakeClient(answer({ intent: { kind: 'insertSaved', name: 'ema telefon' }, say: '', done: true, plan: [] }))
+    expect((await pageIntent(request({ page }), { client: other, model: 'm' })).intent.kind).toBe('unclear')
+  })
+
+  it('the prompt explains saved values', () => {
+    expect(INTENT_SYSTEM_PROMPT).toContain('# Saved values')
+    expect(INTENT_SYSTEM_PROMPT).toContain('insertSaved')
+  })
+})

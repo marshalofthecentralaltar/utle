@@ -4,6 +4,10 @@
 // in view while he changes them. Like newtab.html, dist/page.js is loaded first so page commands
 // (utle-page-run) can number the buttons; see the note in extension/README.md.
 
+import { SAVED_KEY, SAVED_KINDS, savedFrom, savedPhrases } from '../../src/core/saved.ts'
+import type { SavedItem, SavedKind } from '../../src/core/saved.ts'
+import { entryChips, entryStep, startEntry } from '../../src/core/savedEntry.ts'
+import type { EntryResult, EntryState } from '../../src/core/savedEntry.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
 import type { ToBackground, ToPage } from './messages.ts'
@@ -279,6 +283,247 @@ if (save) {
   })
 }
 
+// ---------- Minu andmed (round 6, docs/ARCHITECTURE.md 26.5, 26.6) ----------
+// His saved e-mail, phone number and ID code: the list with what to say, the voice entry flow
+// (the engine sends each utterance here as savedEntry while it runs), and a keyboard form for Tom.
+
+const A = STRINGS.et.andmed
+const KINDS: readonly SavedKind[] = ['email', 'tel', 'code', 'text']
+let savedItems: SavedItem[] = []
+let entry: EntryState | null = null
+/** The id of the item the keyboard form is changing, or null for a new one. */
+let editing: string | null = null
+/** What the engine was last told about the flow, so it is told on change only. */
+let entryTold = false
+
+const el = <T extends HTMLElement>(id: string): T | null => document.getElementById(id) as T | null
+
+setText('andmedTitle', A.title)
+setText('andmedEn', A.titleEn)
+setText('andmedHelp', A.help)
+setText('entryTitle', A.stepTitle)
+setText('formTitle', A.formTitle)
+setText('savedNameLabel', A.formName)
+setText('savedKindLabel', A.formKind)
+setText('savedValueLabel', A.formValue)
+setText('savedSaveLabel', A.formSave)
+
+/** Tells the strip one line, as the engine would. */
+function strip(line: string): void {
+  say(line)
+  if (line === '') return
+  const message: ToBackground = { type: 'utle-state', patch: { line } }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+}
+
+/** Tells the engine whether utterances are for the flow: on while it runs and this page is visible. */
+function tellEntry(): void {
+  const on = entry !== null && document.visibilityState === 'visible'
+  if (on === entryTold) return
+  entryTold = on
+  const message: ToBackground = { type: 'utle-entry', on }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+}
+
+async function store(next: SavedItem[]): Promise<void> {
+  savedItems = next
+  renderSaved()
+  await chrome.storage.local.set({ [SAVED_KEY]: next }).catch(() => undefined)
+}
+
+function smallButton(label: string, onFire: () => void): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.type = 'button'
+  b.className = 'choice small'
+  const fill = document.createElement('span')
+  fill.className = 'fill'
+  const name = document.createElement('span')
+  name.textContent = label
+  b.append(fill, name)
+  dwellable(b, onFire)
+  return b
+}
+
+function renderSaved(): void {
+  const list = el<HTMLDivElement>('savedList')
+  if (!list) return
+  list.replaceChildren()
+  if (savedItems.length === 0) {
+    const p = document.createElement('p')
+    p.className = 'note'
+    p.textContent = A.empty
+    list.append(p)
+  }
+  for (const item of savedItems) {
+    const card = document.createElement('div')
+    card.className = 'saved-item'
+    card.dataset.id = item.id
+    const name = document.createElement('div')
+    name.className = 'saved-name'
+    name.textContent = `${item.name} · ${A.kindName(item.kind)}`
+    const value = document.createElement('div')
+    value.className = 'saved-value'
+    value.textContent = item.value
+    const sayLine = document.createElement('div')
+    sayLine.className = 'saved-say'
+    sayLine.textContent = A.sayLine(savedPhrases(item, savedItems))
+    const row = document.createElement('div')
+    row.className = 'saved-actions'
+    row.append(
+      smallButton(A.edit, () => {
+        editing = item.id
+        const n = el<HTMLInputElement>('savedName')
+        const k = el<HTMLSelectElement>('savedKind')
+        const v = el<HTMLInputElement>('savedValue')
+        if (n) n.value = item.name
+        if (k) k.value = item.kind
+        if (v) v.value = item.value
+        n?.focus()
+      }),
+      smallButton(A.forget, () => {
+        void store(savedItems.filter((other) => other.id !== item.id)).then(() => strip(A.forgotten(item.name)))
+      }),
+    )
+    card.append(name, value, sayLine, row)
+    list.append(card)
+  }
+  renderEntry()
+}
+
+function renderEntry(): void {
+  const panel = el<HTMLDivElement>('entry')
+  if (!panel) return
+  panel.hidden = entry === null
+  if (entry === null) return
+  setText('entryKind', entry.kind === null ? '' : `${A.kindName(entry.kind)}${entry.name === '' ? '' : ` · ${entry.name}`}`)
+  // The step line stays in view whatever the last line said: what to say now.
+  setText('entryStep', entry.step === 'kind' ? A.askKind : entry.step === 'name' ? A.askName : entry.kind === 'email' ? `${A.stepValue} ${A.suffixHint}` : A.stepValue)
+  const chips = el<HTMLDivElement>('entryChips')
+  if (!chips) return
+  chips.replaceChildren()
+  const { letters, suffix } = entryChips(entry)
+  for (const letter of letters) {
+    const chip = document.createElement('span')
+    chip.className = 'chip'
+    chip.textContent = letter
+    chips.append(chip)
+  }
+  if (suffix !== '') {
+    const chip = document.createElement('span')
+    chip.className = 'chip suffix'
+    chip.title = A.suffixLabel
+    chip.textContent = suffix
+    chips.append(chip)
+  }
+}
+
+/** One result of the flow: shown, stored when it saves, and the engine told whether it still runs. */
+function applyEntry(result: EntryResult): void {
+  entry = result.state
+  setText('entryLine', result.line)
+  if (result.save) {
+    const item: SavedItem = { id: crypto.randomUUID(), ...result.save }
+    void store([...savedItems, item])
+  } else renderSaved()
+  strip(result.line)
+  tellEntry()
+}
+
+function startFlow(kind: SavedKind | null): void {
+  el<HTMLElement>('andmed')?.scrollIntoView({ block: 'start' })
+  applyEntry(startEntry(kind, savedItems, 'et'))
+}
+
+const addRow = el<HTMLDivElement>('savedAdd')
+for (const kind of KINDS) addRow?.append(smallButton(A.add(kind), () => startFlow(kind)))
+const entryButtons = el<HTMLDivElement>('entryButtons')
+entryButtons?.append(
+  smallButton(A.done, () => {
+    if (entry) applyEntry(entryStep(entry, 'valmis', savedItems, 'et'))
+  }),
+  smallButton(A.cancel, () => {
+    if (entry) applyEntry(entryStep(entry, 'katkesta', savedItems, 'et'))
+  }),
+)
+
+const kindSelect = el<HTMLSelectElement>('savedKind')
+for (const kind of SAVED_KINDS) {
+  const option = document.createElement('option')
+  option.value = kind
+  option.textContent = A.kindName(kind)
+  kindSelect?.append(option)
+}
+
+const saveButton = el<HTMLButtonElement>('savedSave')
+if (saveButton) {
+  dwellable(saveButton, () => {
+    const name = el<HTMLInputElement>('savedName')?.value.trim() ?? ''
+    const value = el<HTMLInputElement>('savedValue')?.value.trim() ?? ''
+    const kind = SAVED_KINDS.find((k) => k === kindSelect?.value) ?? 'text'
+    if (name === '' || value === '') {
+      strip(A.formMissing)
+      return
+    }
+    const id = editing ?? crypto.randomUUID()
+    const item: SavedItem = { id, name, value, kind }
+    const next = editing === null ? [...savedItems, item] : savedItems.map((other) => (other.id === id ? { ...other, name, value, kind } : other))
+    editing = null
+    for (const field of ['savedName', 'savedValue']) {
+      const input = el<HTMLInputElement>(field)
+      if (input) input.value = ''
+    }
+    void store(next).then(() => strip(A.formSaved(name)))
+  })
+}
+
+/** #andmed opens the section; #andmed:email starts the voice flow for that kind (the openSettings command). */
+function fromHash(): void {
+  const m = /^#andmed(?::(\w+))?$/u.exec(window.location.hash)
+  if (!m) return
+  const kind = SAVED_KINDS.find((k) => k === m[1])
+  el<HTMLElement>('andmed')?.scrollIntoView({ block: 'start' })
+  if (kind !== undefined) {
+    // The address goes back to #andmed, so the next "lisa uus e-post" changes it again.
+    history.replaceState(null, '', '#andmed')
+    startFlow(kind)
+  }
+}
+
+void chrome.storage.local.get(SAVED_KEY).then(
+  (stored) => {
+    savedItems = savedFrom(stored[SAVED_KEY])
+    renderSaved()
+    fromHash()
+  },
+  () => {
+    renderSaved()
+    fromHash()
+  },
+)
+chrome.storage.onChanged.addListener((changes, area) => {
+  const change = changes[SAVED_KEY]
+  if (area !== 'local' || change === undefined) return
+  savedItems = savedFrom(change.newValue)
+  renderSaved()
+})
+window.addEventListener('hashchange', fromHash)
+document.addEventListener('visibilitychange', tellEntry)
+window.addEventListener('pagehide', () => {
+  entryTold = false
+  const message: ToBackground = { type: 'utle-entry', on: false }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+})
+
+/** One utterance of the flow, from the engine through the service worker. */
+function savedEntryAnswer(utterance: string): { ok: true } | { ok: false; code: 'not_found'; message: string } {
+  if (entry === null) {
+    tellEntry()
+    return { ok: false, code: 'not_found', message: 'No entry flow is running.' }
+  }
+  applyEntry(entryStep(entry, utterance, savedItems, 'et'))
+  return { ok: true }
+}
+
 // ---------- the strip and page commands ----------
 
 mountStrip()
@@ -290,6 +535,11 @@ const myTab: Promise<number | null> = chrome.tabs.getCurrent().then(
   () => (myId = -1),
 )
 const answer = async (message: ToPage, reply: (result: unknown) => void): Promise<void> => {
+  // Round 6: the entry flow lives on this page; page.js does not know the command.
+  if (message.command.kind === 'savedEntry') {
+    reply(savedEntryAnswer(message.command.utterance))
+    return
+  }
   const utle = globalThis.__utle
   reply(utle ? await utle.run(message.command) : { ok: false, code: 'failed', message: 'The page script is missing.' })
 }

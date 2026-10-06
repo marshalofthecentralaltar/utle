@@ -42,6 +42,34 @@
       #save .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--amber); opacity: .35; }
       #save.dwelling .fill { height: 100%; transition: height 1s linear; }
       #status { min-height: 1.4em; margin: 20px 0 0; color: var(--amber); font-size: 24px; }
+      /* Round 6: Minu andmed. */
+      #andmed { margin-top: 24px; padding: 20px 24px 24px; border: 3px solid var(--edge); border-radius: 20px; background: #1b1b1b; }
+      #andmed .help { margin-top: 8px; }
+      .saved-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
+      .saved-item { border: 2px solid var(--edge); border-radius: 16px; padding: 14px 16px; background: var(--panel); }
+      .saved-name { font-size: 26px; font-weight: 700; }
+      .saved-value { font: 600 26px/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace; margin-top: 4px; word-break: break-all; }
+      .saved-say { margin-top: 6px; font-size: 20px; color: var(--amber); }
+      .saved-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+      .choice.small { min-height: 72px; font-size: 24px; }
+      #savedAdd { margin-top: 20px; }
+      #entry { margin-top: 20px; padding: 16px 20px; border: 3px solid var(--amber); border-radius: 16px; }
+      #entry[hidden] { display: none; }
+      #entry h3 { margin: 0; font-size: 26px; }
+      #entryKind { color: var(--dim); font-size: 20px; margin: 4px 0 0; }
+      #entryStep { font-size: 24px; margin: 10px 0 0; color: var(--amber); }
+      #entryLine { font-size: 24px; margin: 8px 0 0; }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; min-height: 56px; }
+      .chip { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 52px; padding: 0 8px; box-sizing: border-box; border: 2px solid var(--dim); border-radius: 10px; font: 700 30px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--panel); }
+      .chip.suffix { border: 3px dashed var(--amber); color: var(--amber); padding: 0 14px; }
+      #entryButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; max-width: 640px; }
+      #savedForm h3 { margin: 28px 0 0; font-size: 24px; }
+      select { font: inherit; width: 100%; max-width: 640px; padding: 10px 12px; box-sizing: border-box; margin-top: 6px; background: var(--panel); color: var(--ink); border: 2px solid var(--edge); border-radius: 10px; }
+      #savedSave { display: block; font: 700 24px "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, "Segoe UI", sans-serif; margin-top: 20px; padding: 0 32px; min-height: 96px; min-width: 240px;
+        background: var(--panel); color: var(--ink); border: 3px solid var(--edge); border-radius: 16px; cursor: pointer; position: relative; overflow: hidden; }
+      #savedSave > span { position: relative; z-index: 1; }
+      #savedSave .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--amber); opacity: .35; }
+      #savedSave.dwelling .fill { height: 100%; transition: height 1s linear; }
     </style>
   </head>
   <body>
@@ -49,6 +77,31 @@
       <h1 id="title"></h1>
       <p class="help" id="help"></p>
       <p class="en" id="helpEn"></p>
+      <section id="andmed">
+        <h2 id="andmedTitle"></h2>
+        <p class="en" id="andmedEn"></p>
+        <p class="help" id="andmedHelp"></p>
+        <div class="saved-list" id="savedList"></div>
+        <div class="choices" id="savedAdd"></div>
+        <div id="entry" hidden>
+          <h3 id="entryTitle"></h3>
+          <p id="entryKind"></p>
+          <p id="entryStep"></p>
+          <p id="entryLine" role="status"></p>
+          <div class="chips" id="entryChips"></div>
+          <div id="entryButtons"></div>
+        </div>
+        <div id="savedForm">
+          <h3 id="formTitle"></h3>
+          <label for="savedName" id="savedNameLabel"></label>
+          <input id="savedName" type="text" autocomplete="off" />
+          <label for="savedKind" id="savedKindLabel"></label>
+          <select id="savedKind"></select>
+          <label for="savedValue" id="savedValueLabel"></label>
+          <input id="savedValue" type="text" autocomplete="off" />
+          <button id="savedSave" type="button"><span class="fill"></span><span id="savedSaveLabel"></span></button>
+        </div>
+      </section>
       <div id="groups"></div>
       <details id="advanced">
         <summary id="advancedTitle"></summary>
