@@ -1244,9 +1244,11 @@ async function setText(text: string, site: Site | null): Promise<BrowserResult> 
   const el = await waitFor(() => findMessageBox(site), BOX_TIMEOUT_MS)
   if (!el) return fail('not_found', 'There is no message box on this page.')
   // Live dictation (21.3) mostly adds words at the end: type only those, so the box never blanks.
+  // Round 5: a one-line input is never previewed, so it is always selected and replaced whole,
+  // with the text as the core converted it (digits, an address), never appended to.
   const current = readText(el)
   const tail = text.slice(current.length)
-  if (current !== '' && text.startsWith(current) && !/[\r\n]/.test(tail)) {
+  if (!(el instanceof HTMLInputElement) && current !== '' && text.startsWith(current) && !/[\r\n]/.test(tail)) {
     if (caretAtEnd(el)) await sleep(30)
     if (tail !== '') await typeAtSelection(el, tail)
     await sleep(30)
@@ -1363,15 +1365,36 @@ const KEY_CODES: Record<PressableKey, number> = {
 const LEAVING_KEYS = new Set<PressableKey>(['Escape', 'Enter', 'Tab'])
 
 /** A key event as the page sees it. ctrl, shift: the modifiers (Undo is Ctrl+Z, a word step is Ctrl+Arrow). */
-function dispatchKey(target: Element, key: PressableKey | string, modifiers: { ctrl?: boolean; shift?: boolean } = {}): void {
+/** True when the page let the key through (nobody called preventDefault on the keydown). */
+function dispatchKey(target: Element, key: PressableKey | string, modifiers: { ctrl?: boolean; shift?: boolean } = {}): boolean {
   const named = key === 'Undo' ? 'z' : key === 'Redo' ? 'y' : key === 'SelectAll' ? 'a' : key
   const code = KEY_CODES[key as PressableKey] ?? (named.length === 1 ? named.toUpperCase().charCodeAt(0) : 0)
   const ctrl = modifiers.ctrl === true || key === 'Undo' || key === 'Redo' || key === 'SelectAll'
   const codeName = named.length === 1 ? (named === ' ' ? 'Space' : `Key${named.toUpperCase()}`) : named
   const init = { key: named, code: codeName, keyCode: code, which: code, charCode: 0, ctrlKey: ctrl, shiftKey: modifiers.shift === true, bubbles: true, cancelable: true, composed: true }
-  target.dispatchEvent(new KeyboardEvent('keydown', init))
+  const through = target.dispatchEvent(new KeyboardEvent('keydown', init))
   if (key === 'Enter') target.dispatchEvent(new KeyboardEvent('keypress', { ...init, charCode: 13 }))
   target.dispatchEvent(new KeyboardEvent('keyup', init))
+  return through
+}
+
+/**
+ * Round 5 (fields): what a real Enter does in a one-line field of a form and a synthetic one does
+ * not: implicit submission. The form submits when it has a submit button, or when the input is
+ * its only text field (the HTML rules), through its own submit button so its handlers run.
+ */
+function implicitSubmit(input: HTMLInputElement): void {
+  const form = input.form
+  if (!form) return
+  const submitter = form.querySelector<HTMLElement>('button:not([type]), button[type="submit" i], input[type="submit" i], input[type="image" i]')
+  const fields = [...form.querySelectorAll('input')].filter((el) => isTextField(el))
+  if (submitter === null && fields.length !== 1) return
+  try {
+    if (submitter instanceof HTMLButtonElement || submitter instanceof HTMLInputElement) form.requestSubmit(submitter)
+    else form.requestSubmit()
+  } catch {
+    // A disabled or detached submit button: the form is not ready, as a real Enter would do nothing.
+  }
 }
 
 function deepActive(): Element {
@@ -1412,7 +1435,8 @@ async function pressKey(key: PressableKey, times = 1, site: Site | null): Promis
       target = focusNext(target) ?? target
       continue
     }
-    dispatchKey(target, key)
+    const through = dispatchKey(target, key)
+    if (key === 'Enter' && through && target instanceof HTMLInputElement) implicitSubmit(target)
   }
   if (key === 'Escape' && target instanceof HTMLElement && isTextField(target)) target.blur()
   await sleep(30)

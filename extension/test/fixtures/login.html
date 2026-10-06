@@ -1,3 +1,40 @@
 <!doctype html>
-<html><head><meta charset="utf-8" /><title>Log in</title></head>
-<body><h1>Log in</h1><input type="email" placeholder="Email" /> <input type="password" /> <button type="button">Log in</button> <a href="#forgot">Forgotten password?</a></body></html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Logi sisse</title>
+    <style>
+      /* A Smart-ID-like login: one-line fields of every kind the fields lane tells apart (round 5),
+         named by <label for>, a button, a submit, and a textarea for comparison. No conversation list:
+         the openConversation test also uses it as a messaging home that needs logging in. */
+      body { margin: 0; font: 15px system-ui, sans-serif; padding: 24px; }
+      form { width: 360px; }
+      .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+      input, textarea { padding: 6px; font: inherit; }
+      .actions { display: flex; gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Logi sisse</h1>
+    <form id="login">
+      <div class="field"><label for="isikukood">Isikukood</label><input id="isikukood" name="personalCode" inputmode="numeric" autocomplete="off" /></div>
+      <div class="field"><label for="phone">Telefon</label><input id="phone" type="tel" autocomplete="tel" /></div>
+      <div class="field"><label for="email">E-post</label><input id="email" type="email" autocomplete="email" /></div>
+      <div class="field"><label for="amount">Summa</label><input id="amount" inputmode="decimal" /></div>
+      <div class="field"><label for="pin">PIN1</label><input id="pin" type="password" inputmode="numeric" autocomplete="one-time-code" /></div>
+      <div class="field"><label for="notes">Märkused</label><textarea id="notes" rows="3"></textarea></div>
+      <div class="actions">
+        <button id="continue" type="button">Jätka</button>
+        <button id="submit" type="submit">Logi sisse</button>
+      </div>
+    </form>
+    <a href="#forgot">Unustasid parooli?</a>
+    <script>
+      window.submits = 0
+      document.getElementById('login').addEventListener('submit', (e) => {
+        e.preventDefault()
+        window.submits++
+      })
+    </script>
+  </body>
+</html>
