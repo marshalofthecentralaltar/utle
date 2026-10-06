@@ -9,7 +9,7 @@ import { STRINGS } from '../../src/core/strings.ts'
 import { browserSocket, createLocalRecognizer } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
-import { ASK_TIMEOUT_MS, createEngine } from './engine.ts'
+import { askTimeoutMs, createEngine } from './engine.ts'
 import type { AskFailure, InpageLogic } from './engine.ts'
 import type { RunAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
 
@@ -56,8 +56,8 @@ function errorMessage(body: unknown): string {
  */
 export async function askIntent(intentUrl: string, request: IntentRequest, signal?: AbortSignal): Promise<IntentAnswer | AskFailure> {
   const controller = new AbortController()
-  // The engine gives up at ASK_TIMEOUT_MS; the request itself ends a little later, so no fetch dangles.
-  const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS + 1000)
+  // The engine gives up at ASK_TIMEOUT_MS (14 s for a careful ask, round 5); the request itself ends a little later, so no fetch dangles.
+  const timer = setTimeout(() => controller.abort(), askTimeoutMs(request.care) + 1000)
   const onAbort = (): void => controller.abort()
   signal?.addEventListener('abort', onAbort)
   if (signal?.aborted) controller.abort()

@@ -130,6 +130,8 @@ export function createLocalRecognizer(
   const releaseInstant = (text: string): void => {
     released = words(text)
     handlers.onInterim('')
+    // Round 5 (review M8): a quick reply past the assembler still counts as the last delivery.
+    assembler.noteDelivered(text)
     handlers.onUtterance(text)
   }
 

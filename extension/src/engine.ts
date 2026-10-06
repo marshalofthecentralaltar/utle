@@ -4,7 +4,7 @@
 
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
-import { chainLine, firstGoal } from '../../src/core/chain.ts'
+import { chainLine, firstGoal, hasConnective } from '../../src/core/chain.ts'
 import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
@@ -96,6 +96,34 @@ export const LONG_UTTERANCE_WORDS = 60
 /** The model must answer within this time, or the rules' step stands. */
 /** Longer than the server's own 7 s, so a slow model answers 504 and the engine sees it rather than giving up first. */
 export const ASK_TIMEOUT_MS = 9000
+/** Round 5: a careful ask (server timeout 12 s) may take this long before the engine gives it up. */
+export const ASK_TIMEOUT_CAREFUL_MS = 14_000
+/** Round 5: how long the engine waits for one ask, by its care. */
+export const askTimeoutMs = (care: Care | undefined): number => (care === 'careful' ? ASK_TIMEOUT_CAREFUL_MS : ASK_TIMEOUT_MS)
+type Care = NonNullable<IntentRequest['care']>
+/**
+ * Round 5: an utterance of this many words or more is asked with care (the model reads the whole
+ * of it and plans before it acts); so is one with a connective in it, and every ask in a chain.
+ * Shorter ones are asked quickly, so a short command keeps its speed.
+ */
+export const CAREFUL_WORDS = 8
+/**
+ * Round 5: a job (one utterance's turn, or one goal of its chain) that is still working this long
+ * after it began is given up as a barge-in would give it up, and the strip says so. Nothing can
+ * sit silent for minutes.
+ */
+export const JOB_WATCHDOG_MS = 25_000
+/** Round 5: one page command gets this long to answer, else it failed with 'timed_out' (the bridge's own cap is 20 s too). */
+export const COMMAND_TIMEOUT_MS = 20_000
+/** Round 5: the strip shows how long a job has been working from this many seconds on. */
+export const BUSY_FROM_S = 3
+/**
+ * Round 5 (review of round 4, M7): a dictation of this many words or more, typed first, is never
+ * taken back for a verdict that is one plain command with nothing after it: a 14-word single
+ * command is implausible, and a wrong verdict would erase a sentence. Chains carry a plan or
+ * done:false, so they still run.
+ */
+export const LONG_COMMAND_WORDS = 14
 /** How many strip lines the model is told about, and how long each may be (IntentRequestSchema: 200). */
 const RECENT_LINES = 3
 /** M7.2: a multi-step utterance gets no further step once this long has passed since it arrived. */
@@ -179,11 +207,18 @@ export function createEngine(deps: EngineDeps): Engine {
     deps.publish({ line, resting: session.asleep })
   }
 
+  /** One page command, never longer than COMMAND_TIMEOUT_MS (round 5): a page that never answers must not hold the engine. */
   const runSafe = async (command: BrowserCommand): Promise<BrowserResult> => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const timedOut = new Promise<BrowserResult>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, code: 'failed', message: 'timed_out' }), COMMAND_TIMEOUT_MS)
+    })
     try {
-      return await deps.run(command)
+      return await Promise.race([deps.run(command), timedOut])
     } catch (error) {
       return { ok: false, code: 'failed', message: error instanceof Error ? error.message : String(error) }
+    } finally {
+      if (timer !== null) clearTimeout(timer)
     }
   }
 
@@ -276,6 +311,12 @@ export function createEngine(deps: EngineDeps): Engine {
      * in, waits for every verification like a send, and is never stale.
      */
     continued: boolean
+    /** Round 5: Date.now() when the job began working (its turn, or its verification); null before and once given up. */
+    started: number | null
+    /** Round 5: the watchdog for the goal in hand, while one is set. */
+    watchdog: ReturnType<typeof setTimeout> | null
+    /** Round 5: "katkesta": the job does nothing more, not even the rules' step. */
+    dropped: boolean
   }
 
   /** Every job not finished: the one in its turn of the queue, those waiting for it, the verifications. */
@@ -289,34 +330,144 @@ export function createEngine(deps: EngineDeps): Engine {
   let thinkingShown = false
   let lagShown = false
 
-  const think = (on: boolean): void => {
-    thinkingCount += on ? 1 : -1
+  const showThinking = (): void => {
     const now = thinkingCount > 0
     if (now === thinkingShown) return
     thinkingShown = now
     deps.publish({ thinking: now })
   }
 
+  /** Round 5: clamped at 0, so a reset while questions are in flight never leaves the dots on. */
+  const think = (on: boolean): void => {
+    thinkingCount = Math.max(0, thinkingCount + (on ? 1 : -1))
+    showThinking()
+  }
+
+  /** Round 5: a cancel or a watchdog clears the dots whatever is in flight; the jobs' own decrements then clamp at 0. */
+  const resetThinking = (): void => {
+    thinkingCount = 0
+    showThinking()
+  }
+
+  // ---- Round 5: busy seconds. While any job works, the strip shows the elapsed seconds from BUSY_FROM_S on. ----
+  let busyShown = 0
+  let busyTimer: ReturnType<typeof setInterval> | null = null
+  const publishBusy = (seconds: number): void => {
+    if (seconds === busyShown) return
+    busyShown = seconds
+    deps.publish({ busySeconds: seconds })
+  }
+  const busyTick = (): void => {
+    const now = Date.now()
+    let longest = 0
+    for (const job of jobs) if (job.started !== null) longest = Math.max(longest, now - job.started)
+    const seconds = Math.floor(longest / 1000)
+    publishBusy(seconds >= BUSY_FROM_S ? seconds : 0)
+  }
+  const anyWorking = (): boolean => [...jobs].some((job) => job.started !== null)
+  const busyCheck = (): void => {
+    if (anyWorking()) {
+      if (busyTimer === null) busyTimer = setInterval(busyTick, 1000)
+    } else {
+      if (busyTimer !== null) clearInterval(busyTimer)
+      busyTimer = null
+      publishBusy(0)
+    }
+  }
+  // ---- end of busy seconds ----
+
   const newJob = (utterance: string, send: boolean): Job => {
-    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false }
+    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false, started: null, watchdog: null, dropped: false }
     jobs.add(job)
     return job
   }
 
-  /** Round 4: the strip's chain line while a chain runs, '' once it is over. */
+  /** Round 4: the strip's chain line while a chain runs, '' once it is over. Published on change only. */
+  let chainShown = ''
   const showChain = (chain: IntentChain | null): void => {
-    deps.publish({ chain: chain === null ? '' : chainLine(chain) })
+    const line = chain === null ? '' : chainLine(chain)
+    if (line === chainShown) return
+    chainShown = line
+    deps.publish({ chain: line })
   }
 
-  /** The rules alone say whether an utterance is a plain send, before its turn comes. Pure: the probe box is never typed into. */
-  const isPlainSend = (utterance: string): boolean => {
+  // ---- Round 5: the watchdog. A job that works JOB_WATCHDOG_MS without finishing its goal is given up. ----
+  const unwatch = (job: Job): void => {
+    if (job.watchdog !== null) clearTimeout(job.watchdog)
+    job.watchdog = null
+  }
+  /** Gives the job up as a barge-in would: the question in flight, the loop and the chain end; the page command in hand finishes. */
+  const giveUp = (job: Job): void => {
+    job.interrupted = true
+    job.cancelled = true
+    job.controller?.abort()
+    job.started = null
+    unwatch(job)
+  }
+  const tookTooLong = (job: Job): void => {
+    if (!jobs.has(job) || job.cancelled) return
+    job.dropped = true
+    giveUp(job)
+    if (job.chain !== null) showChain(null)
+    resetThinking()
+    busyCheck()
+    say(inpageText.tookTooLong)
+  }
+  /** (Re)starts the job's watchdog: at its turn, and at every goal of its chain. */
+  const watch = (job: Job): void => {
+    unwatch(job)
+    job.watchdog = setTimeout(() => tookTooLong(job), JOB_WATCHDOG_MS)
+  }
+  /** The job begins working: it is counted as busy and watched. */
+  const beginWork = (job: Job): void => {
+    job.started = Date.now()
+    watch(job)
+    busyCheck()
+  }
+  /** The job is over, however it ended. */
+  const endWork = (job: Job): void => {
+    unwatch(job)
+    job.started = null
+    jobs.delete(job)
+    busyCheck()
+  }
+  // ---- end of the watchdog ----
+
+  /** The rules' step for an utterance against the probe box. Pure: the probe box is never typed into. Null when the rules throw. */
+  const probe = (utterance: string): InpageStep | null => {
     try {
-      const step = deps.logic.inpageStep(session, utterance, SEND_PROBE_BOX)
-      return step.commands.length === 1 && step.commands[0]?.kind === 'pressSend'
+      return deps.logic.inpageStep(session, utterance, SEND_PROBE_BOX)
     } catch {
-      return false
+      return null
     }
   }
+
+  /** The rules alone say whether an utterance is a plain send, before its turn comes. */
+  const isPlainSend = (utterance: string): boolean => {
+    const step = probe(utterance)
+    return step !== null && step.commands.length === 1 && step.commands[0]?.kind === 'pressSend'
+  }
+
+  /** Round 5: the rules say the utterance is the global cancel ("katkesta"). */
+  const isCancelAll = (utterance: string): boolean => probe(utterance)?.cancel === true
+
+  /**
+   * Round 5: "katkesta": every job is given up, the queued ones do nothing at all, the live
+   * preview is taken back, and the strip's dots, seconds and chain line go. The model is not asked.
+   */
+  const cancelAll = (): void => {
+    for (const job of jobs) {
+      job.dropped = true
+      giveUp(job)
+    }
+    dropLive()
+    showChain(null)
+    resetThinking()
+    busyCheck()
+  }
+
+  /** Round 5: how hard the model should think about this job's ask. */
+  const careOf = (job: Job): Care => (job.chain !== null || wordCount(job.utterance) >= CAREFUL_WORDS || hasConnective(job.utterance) ? 'careful' : 'quick')
 
   /**
    * Barge-in (round 3): a new utterance stops the model work of every earlier one at the next
@@ -342,7 +493,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const timer = setTimeout(() => {
         controller.abort()
         resolve({ error: 'unreachable' })
-      }, ASK_TIMEOUT_MS)
+      }, askTimeoutMs(request.care))
       // The engine's own abort answers at once; the fetch ends on its own.
       controller.signal.addEventListener('abort', () => {
         clearTimeout(timer)
@@ -392,7 +543,7 @@ export function createEngine(deps: EngineDeps): Engine {
     if (job.cancelled) return null
     // Round 4: in a chain the model is asked about the goal in hand, and told the chain.
     const chain = job.chain
-    const request: IntentRequest = { lang: deps.lang, utterance: (chain === null ? job.utterance : chain.goal).slice(0, UTTERANCE_CHARS), page, tabs, recent: recentBefore }
+    const request: IntentRequest = { lang: deps.lang, utterance: (chain === null ? job.utterance : chain.goal).slice(0, UTTERANCE_CHARS), page, tabs, recent: recentBefore, care: careOf(job) }
     if (steps.length > 0) request.steps = steps
     if (chain !== null) request.chain = chain
     const controller = new AbortController()
@@ -422,7 +573,7 @@ export function createEngine(deps: EngineDeps): Engine {
    * may still be in the box; a step without a setText puts the base back first. suffix: added to
    * both lines (round 3: "Jõuan järele…" on a stale utterance).
    */
-  const perform = async (step: InpageStep, u: Live | null, suffix = ''): Promise<Outcome> => {
+  const perform = async (step: InpageStep, u: Live | null, suffix = '', job: Job | null = null): Promise<Outcome> => {
     const withSuffix = (line: string): string => (suffix === '' || line === '' ? line : `${line} ${suffix}`)
     session = step.session
     say(withSuffix(step.line))
@@ -437,7 +588,8 @@ export function createEngine(deps: EngineDeps): Engine {
     const after = deps.logic.inpageResult(session, step.commands, last)
     session = after.session
     const line = after.line !== '' ? after.line : step.line
-    say(withSuffix(line))
+    // Round 5: a job given up meanwhile ("katkesta", the watchdog) keeps that line, not this late result.
+    if (job?.dropped !== true) say(withSuffix(line))
     return { ok: last.ok, line }
   }
 
@@ -504,8 +656,9 @@ export function createEngine(deps: EngineDeps): Engine {
     for (;;) {
       planChain(job, heard, steps.length === 0)
       const step = deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
-      const outcome = await perform(step, u)
+      const outcome = await perform(step, u, '', job)
       u = null
+      if (job.dropped) return 'stopped'
       if (heard.intent.kind === 'unclear') return steps.some((s) => s.ok) ? 'done' : 'stopped'
       // A step with nothing to run did nothing: the model hears that, not a success.
       const ok = outcome.ok && step.commands.length > 0
@@ -557,6 +710,8 @@ export function createEngine(deps: EngineDeps): Engine {
         if (job.interrupted) break
         job.looping = true
         since = Date.now()
+        // Round 5: the watchdog is per goal, so a long chain is never given up while it moves.
+        watch(job)
         const next = await askOnce(job, box, null, recentBefore, [])
         if (next === null) break
         heard = next
@@ -589,9 +744,15 @@ export function createEngine(deps: EngineDeps): Engine {
     pending.add(p)
     void (async () => {
       think(true)
+      beginWork(job)
       try {
         const heard = await askOnce(job, box, box.text, recentBefore, [])
         if (heard === null || heard.intent.kind === 'dictate' || heard.intent.kind === 'unclear') return
+        // Round 5 (review M7): a long sentence judged one plain command with nothing after it stays.
+        if (heard.intent.kind === 'command' && !heard.more && heard.plan.length === 0 && wordCount(job.utterance) >= LONG_COMMAND_WORDS) {
+          say(inpageText.keptWords)
+          return
+        }
         job.acting = true
         acting.add(p)
         if (typed.ok && expected !== null) {
@@ -608,7 +769,7 @@ export function createEngine(deps: EngineDeps): Engine {
         await follow(job, box, recentBefore, heard, null)
       } finally {
         think(false)
-        jobs.delete(job)
+        endWork(job)
         pending.delete(p)
         acting.delete(p)
         done()
@@ -624,6 +785,12 @@ export function createEngine(deps: EngineDeps): Engine {
       // other utterance waits only for a verification running page commands, so commands of two
       // utterances do not interleave.
       await settled(job.send || job.continued ? pending : acting)
+      beginWork(job)
+      // Round 5: "katkesta" came while this one waited: nothing of it runs, its preview goes.
+      if (job.dropped) {
+        if (u !== null) await takeBack(u)
+        return
+      }
       // Round 4: a continued utterance carries what the last one finished as its completed goals.
       if (job.continued && job.chain !== null) job.chain = { ...job.chain, completed: clipGoals(lastDone) }
       let box: BoxState
@@ -647,11 +814,13 @@ export function createEngine(deps: EngineDeps): Engine {
       // Dictation by the rules: a short utterance, or one with no armed box, may mean something else.
       const shouldAsk = rules.ask === true && (!box.armed || wordCount(job.utterance) < LONG_UTTERANCE_WORDS) && !stale && !job.cancelled
       if (!shouldAsk) {
-        await perform(rules, u, stale ? inpageText.catchingUp : '')
+        await perform(rules, u, stale ? inpageText.catchingUp : '', job)
         lastDone = clipGoals([job.utterance])
         return
       }
-      if (box.armed) {
+      // Round 5: a single-line field (a form's name, email, code) is verified before anything is typed.
+      const single = box.single === true
+      if (box.armed && !single) {
         // Type first, verify after: the words are in the box at once, and the model only takes
         // them back when it is sure they were something else. The verification does not hold the
         // queue (round 3).
@@ -663,10 +832,21 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       // Nothing was typed, so there is nothing to show yet: wait for the model.
       think(true)
-      deps.publish({ line: inpageText.thinking })
+      deps.publish({ line: careOf(job) === 'careful' ? inpageText.thinkingLong : inpageText.thinking })
       try {
         const heard = await askOnce(job, box, box.text, recentBefore, [])
+        if (job.dropped) {
+          if (u !== null) await takeBack(u)
+          return
+        }
         if (heard === null) {
+          // A single-line field with a model that gave no answer gets nothing typed (round 5); the
+          // rules' step stands everywhere else, and where there is no model at all.
+          if (single && box.armed && !modelOff) {
+            if (u !== null) await takeBack(u)
+            say(inpageText.fieldUnverified)
+            return
+          }
           await perform(rules, u)
           return
         }
@@ -675,7 +855,7 @@ export function createEngine(deps: EngineDeps): Engine {
         think(false)
       }
     } finally {
-      jobs.delete(job)
+      endWork(job)
     }
   }
 
@@ -714,6 +894,12 @@ export function createEngine(deps: EngineDeps): Engine {
     onUtterance(utterance) {
       if (enrolling) return
       deps.publish({ heard: utterance })
+      // Round 5: "katkesta" drops everything at once, in the handler, and asks nobody.
+      if (isCancelAll(utterance)) {
+        cancelAll()
+        say(inpageText.cancelled)
+        return
+      }
       const u = live
       live = null
       if (u !== null) u.over = true

@@ -126,6 +126,17 @@ export interface Strings {
     spellWords: string
     /** What a one-line form field holds after typing, read back, with what to say next. */
     typedInto(text: string): string
+    // Round 5 (BRAIN lane).
+    /** The model is being asked with care (a long utterance or a chain): it takes longer. */
+    thinkingLong: string
+    /** The job's watchdog fired: everything of it was given up. */
+    tookTooLong: string
+    /** "katkesta": every job, chain and verification was dropped. */
+    cancelled: string
+    /** A long sentence typed into the box was judged a single command: the words stay, nothing runs. */
+    keptWords: string
+    /** A single-line field waits for the model; it did not answer, so nothing was typed. */
+    fieldUnverified: string
   }
 
   // The interpreter.
@@ -585,6 +596,11 @@ const ET: Strings = {
     spellDigits: 'Kirjutan numbritena.',
     spellWords: 'Kirjutan tavaliselt.',
     typedInto: (text) => `Kirjutasin: ${text} (ütle „edasi“ või „valmis“)`,
+    thinkingLong: 'Mõtlen pikemalt…',
+    tookTooLong: 'Võttis liiga kaua, katkestasin.',
+    cancelled: 'Katkestatud.',
+    keptWords: 'Pikk lause jäi kasti, käsku ei täitnud.',
+    fieldUnverified: 'Abiline ei vastanud, välja ei kirjutanud.',
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -963,6 +979,11 @@ const EN: Strings = {
     spellDigits: 'Writing as digits.',
     spellWords: 'Writing as words.',
     typedInto: (text) => `Typed: ${text} (say "next" or "done")`,
+    thinkingLong: 'Thinking it through…',
+    tookTooLong: 'It took too long, I stopped it.',
+    cancelled: 'Cancelled.',
+    keptWords: 'The long sentence stays in the box; no command was run.',
+    fieldUnverified: 'The assistant did not answer; nothing was typed into the field.',
   },
 
   stillWorks: 'Yes, no and undo still work.',

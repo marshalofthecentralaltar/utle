@@ -89,8 +89,12 @@ the thresholds are in `server/speaker.ts`.
   ("saa...", "keri...") are not typed; if they turn out not to be one, they appear then.
 - The upper line of the strip always shows the words being heard, and keeps the last ones until you
   speak again. Under it, the amber line says what was understood or done; three pulsing dots and
-  "Mõtlen" appear while the model is asked what you meant, and a thin amber line under that says
-  when the free-form understanding is off (no key, no server).
+  "Mõtlen" appear while the model is asked what you meant ("Mõtlen pikemalt…" for a long sentence or a
+  chain, which the model reads whole and plans before it acts; from three seconds on the dots show the
+  seconds, "Mõtlen… 7 s"), and a thin amber line under that says when the free-form understanding is off
+  (no key, no server). Nothing waits forever: a step that takes more than 25 seconds is given up with
+  "Võttis liiga kaua, katkestasin.", and `katkesta` (also `tühista kõik`, `lõpeta kõik`, `stopp kõik`,
+  `cancel`) drops everything in flight at once with "Katkestatud.", whatever is in the box.
 - A new tab is Ütle's own page: the same strip, big tiles for WhatsApp and the other known sites,
   and three example phrases that change every few seconds. Rest the eye-tracker pointer on a tile
   for one second (or click it) to open the site in that tab, or say `näita numbreid` and the
@@ -195,7 +199,7 @@ the thresholds are in `server/speaker.ts`.
   `[asr] connection closed, code N: X s received, Y s dropped (0 open)` when it is turned off. A
   dropped count above 0 means the server fell behind and threw old audio away; the bar showed
   "Kõne jääb maha N s" while it did.
-- `[intent] kind=command done=true plan=2 ms=1800`: one answer of the model (`plan` is how many goals
+- `[intent] kind=command done=true plan=2 care=careful ms=1800`: one answer of the model (`care` is quick or careful, round 5; `plan` is how many goals
   it left for later, round 4); `[intent] error=upstream_rejected` with no key.
 - `[asr] speaker model loaded; owner's voice learnt` once the model and the profile are there
   (round 4); `[asr] no speaker model (npm run model fetches it; loudness only until then); owner's

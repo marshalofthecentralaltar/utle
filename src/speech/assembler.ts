@@ -9,6 +9,11 @@ export interface Assembler {
   idle(): boolean
   /** Delivers what is held now, without waiting for the hold (push-to-talk released). */
   releaseNow(): void
+  /**
+   * Round 5 (review M8): the caller delivered text past the assembler (a quick reply released
+   * from a partial): it counts as the last delivery, so "siis ..." soon after continues it.
+   */
+  noteDelivered(text: string): void
   dispose(): void
 }
 
@@ -49,6 +54,12 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
   let continuing = false
   /** The last utterance delivered (either way) and when. */
   let last: { text: string; at: number } | null = null
+  /**
+   * Round 5 (review M8): when the first speech activity after a delivery arrived, while nothing
+   * was held. The continuation window is measured from it, not from the final: "siis ava Karini
+   * viimane sõnum ja kustuta see" takes seconds to say, and its first word is what came soon.
+   */
+  let firstActivityAt: number | null = null
 
   const cancel = (): void => {
     if (timer !== null) clearTimeout(timer)
@@ -57,6 +68,7 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
 
   const deliver = (text: string): void => {
     last = { text, at: Date.now() }
+    firstActivityAt = null
     opts.onUtterance(text)
   }
 
@@ -69,6 +81,7 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
       continuing = false
       const whole = `${last.text} ${text}`
       last = { text: whole, at: Date.now() }
+      firstActivityAt = null
       opts.onUtteranceContinued(whole, text)
       return
     }
@@ -87,7 +100,10 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
       const clean = text.trim()
       if (clean === '') return
       if (held.length === 0) {
-        if (opts.onUtteranceContinued && last !== null && Date.now() - last.at < CONTINUE_WINDOW_MS && startsWithConnective(clean)) {
+        // The window is measured from the first activity of this final (M8), or from now without one.
+        const began = firstActivityAt ?? Date.now()
+        firstActivityAt = null
+        if (opts.onUtteranceContinued && last !== null && began - last.at < CONTINUE_WINDOW_MS && startsWithConnective(clean)) {
           continuing = true
         } else if (!endsWithConnective(clean)) {
           const instant = [clean, ...alternatives.map((a) => a.trim())].find((reading) => reading !== '' && opts.isInstant(reading))
@@ -102,6 +118,7 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
     },
     activity() {
       if (held.length > 0) hold()
+      else if (firstActivityAt === null) firstActivityAt = Date.now()
     },
     idle() {
       return held.length === 0
@@ -109,10 +126,15 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
     releaseNow() {
       release()
     },
+    noteDelivered(text) {
+      last = { text: text.trim(), at: Date.now() }
+      firstActivityAt = null
+    },
     dispose() {
       cancel()
       held = []
       continuing = false
+      firstActivityAt = null
     },
   }
 }

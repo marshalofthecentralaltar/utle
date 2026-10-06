@@ -158,6 +158,14 @@ on which to keep, per file.**
 
 ## 4. Known faults
 
+- Round 5 (BRAIN lane, 2026-10-06 afternoon, spec 25.2), after the owner's report that a long prompt
+  was acted on too fast and that it once got stuck for minutes: the model is asked with `care`
+  (careful for eight words or more, a connective, or a chain: effort high, 800 tokens, 12 s on the
+  server, 14 s in the engine, an extra system block; quick for everything else, unchanged), a 25 s
+  watchdog per job and per goal, the elapsed seconds on the strip from 3 s, every page command cut
+  at 20 s, and `katkesta` as a global escape. Single-line fields (`box.single`) are verified before
+  anything is typed. None of it has met a real voice; the latency of a careful ask on the real model
+  is unmeasured (the eval prints care per ask).
 - "Kirjuta siis mulle" is taken as opening a conversation with "Siis Mul" (the two-word name rule
   in `src/core/message.ts` excludes only single-word pronouns). Not fixed.
 - A page that navigates on the search's Enter within 600 ms can lose the page's answer, so the bar
