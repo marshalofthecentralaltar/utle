@@ -315,6 +315,30 @@ describe('local recogniser (browser side)', () => {
     expect(utterances).toEqual([])
   })
 
+  it('a quick reply released from a partial counts as the last delivery, so "siis ..." soon after continues it (round 5, M8)', () => {
+    const continued: Array<[string, string]> = []
+    const r = createLocalRecognizer({ ...handlers, onUtteranceContinued: (text, added) => continued.push([text, added]) }, isInstant, {
+      onUnavailable: () => (unavailable += 1),
+      connect: (events) => new FakeSocket(events),
+      audio: () => new FakeAudio(),
+    })
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'jah' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS)
+    expect(utterances).toEqual(['jah'])
+    // The server's own final for it is swallowed, as before.
+    socket().says({ type: 'final', text: 'Jah.' })
+    // One second later he goes on; the final of that part comes two seconds after its first word.
+    vi.advanceTimersByTime(1000)
+    socket().says({ type: 'partial', text: 'siis keri' })
+    vi.advanceTimersByTime(2000)
+    socket().says({ type: 'final', text: 'siis keri alla' })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS)
+    expect(continued).toEqual([['jah siis keri alla', 'siis keri alla']])
+    expect(utterances).toEqual(['jah'])
+  })
+
   it('drops frames while the socket holds more than 2 s of audio unsent, and reports it as lag', async () => {
     const r = make()
     r.start()

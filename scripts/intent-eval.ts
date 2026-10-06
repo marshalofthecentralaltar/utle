@@ -13,11 +13,15 @@
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { writeFileSync } from 'node:fs'
+import { hasConnective } from '../src/core/chain.ts'
 import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, PageIntent, TabSummary } from '../src/core/pageIntent.ts'
 import type { Lang } from '../src/core/strings.ts'
 import type { PageContext } from '../src/browser/protocol.ts'
 import { pageIntent } from '../server/intent.ts'
 import type { MessagesClient } from '../server/interpret.ts'
+
+/** Round 5: the engine's CAREFUL_WORDS (extension/src/engine.ts): from this many words the ask is careful. */
+const CAREFUL_WORDS = 8
 
 const MODEL = process.env.UTLE_MODEL ?? 'claude-opus-5-5'
 const ONLY = (process.env.UTLE_EVAL_ONLY ?? '').toLowerCase()
@@ -639,12 +643,16 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
     // Round 4: a new chain goal starts with no steps, as the engine asks it.
     const previous = c.steps[i - 1]
     if (step.chain !== undefined && step.chain.goal !== previous?.chain?.goal) steps.length = 0
+    const utterance = step.utterance ?? c.utterance
+    // Round 5: care as the engine chooses it: a chain, eight words or more, or a connective is careful.
+    const care: IntentRequest['care'] = step.chain !== undefined || c.steps.some((s) => s.chain !== undefined) || utterance.trim().split(/\s+/).length >= CAREFUL_WORDS || hasConnective(utterance) ? 'careful' : 'quick'
     const request: IntentRequest = {
       lang: c.lang ?? 'et',
-      utterance: step.utterance ?? c.utterance,
+      utterance,
       page: step.page,
       tabs: step.tabs ?? oneTab(step.page),
       recent: c.recent ?? [],
+      care,
       ...(steps.length > 0 ? { steps: [...steps] } : {}),
       ...(step.chain !== undefined ? { chain: step.chain } : {}),
     }
@@ -686,7 +694,7 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
     const tail = problem ? ` (wanted ${JSON.stringify(step.expect)}, got ${problem})` : ''
     const plan = answer?.plan && answer.plan.length > 0 ? ` plan=${JSON.stringify(answer.plan)}` : ''
     console.log(
-      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms  ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${plan}${tail}`,
+      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms ${care.padEnd(7)} ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${plan}${tail}`,
     )
     if (!ok || !answer) {
       passed = false

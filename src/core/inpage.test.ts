@@ -37,6 +37,43 @@ function setTextOf(commands: readonly BrowserCommand[]): string {
 }
 const OK: BrowserResult = { ok: true }
 
+describe('round 5: the global cancel ("katkesta")', () => {
+  it.each(['katkesta', 'Katkesta.', 'tühista kõik', 'lõpeta kõik', 'stopp kõik', 'cancel', 'cancel everything'])('"%s" is the cancel: no commands, cancel set, the line says so', (u) => {
+    const step = inpageStep(session(), u, box('Tere, ma tulen'))
+    expect(step.cancel).toBe(true)
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.cancelled)
+    expect(step.ask).toBeUndefined()
+  })
+
+  it('is never a soft word: with words in the armed box it still cancels, and with no box too', () => {
+    expect(inpageStep(session(), 'katkesta', box('Tere, ma tulen homme')).cancel).toBe(true)
+    expect(inpageStep(session(), 'katkesta', NO_BOX).cancel).toBe(true)
+    expect(inpageStep(session(), 'katkesta', unarmed('x')).cancel).toBe(true)
+  })
+
+  it('works while asleep, and leaves the session as it was', () => {
+    const asleep = session({ asleep: true })
+    const step = inpageStep(asleep, 'katkesta', EMPTY)
+    expect(step.cancel).toBe(true)
+    expect(step.session).toBe(asleep)
+  })
+
+  it('is instant and never previewed', () => {
+    expect(inpageInstant(session(), 'katkesta')).toBe(true)
+    expect(inpageInstant(session(), 'tühista kõik')).toBe(true)
+    expect(inpagePreview(session(), 'katkesta', box('Tere'))).toBeNull()
+    expect(inpagePreview(session(), 'tühista kõik', box('Tere'))).toBeNull()
+    expect(inpagePreview(session(), 'cancel everything', box('Tere'))).toBeNull()
+  })
+
+  it('"katkesta sõnum" still clears the box, and a word near "katkesta" is not corrected into the cancel', () => {
+    expect(inpageStep(session(), 'katkesta sõnum', box('Tere')).commands).toEqual(only({ kind: 'setText', text: '' }))
+    expect(inpageStep(session(), 'katkestan nüüd', box('Tere')).cancel).toBeUndefined()
+    expect(inpageStep(session(), 'katkesta see', box('Tere')).cancel).toBeUndefined()
+  })
+})
+
 describe('rule 1: sleep and wake', () => {
   it.each(['puhka', 'Puhka.', 'ära kuula', 'maga', 'sleep', 'go to sleep', 'stop listening'])('"%s" puts it to sleep', (u) => {
     const step = inpageStep(session(), u, box('Tere'))

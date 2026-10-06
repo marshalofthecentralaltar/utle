@@ -3,7 +3,7 @@ import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../..
 import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
 import { pageIntentFrom } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { ASK_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, LAG_SHOWN_MS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, createEngine } from './engine.ts'
+import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
@@ -14,6 +14,9 @@ const logic: InpageLogic = {
     if (utterance === 'kaks') return { session, commands: [{ kind: 'setText', text: 'a' }, { kind: 'pressSend' }], line: 'kaks' }
     if (utterance === 'vaikus') return { session, commands: [], line: 'midagi' }
     if (utterance === 'saada') return { session, commands: [{ kind: 'pressSend' }], line: 'saadan' }
+    // Round 5: the global cancel, and a page command the rules know (for the command timeout).
+    if (utterance === 'katkesta') return { session, commands: [], line: STRINGS.et.inpage.cancelled, cancel: true }
+    if (utterance === 'mine') return { session, commands: [{ kind: 'goTo', url: 'https://a.ee/' }], line: 'lähen' }
     return { session, commands: [{ kind: 'setText', text: `${box.text}${utterance}` }], line: 'kirjutan' }
   },
   inpageResult: (session, _commands, result) => ({ session, line: result.ok ? 'tehtud' : `viga: ${result.message}` }),
@@ -105,6 +108,7 @@ function setup(options: Options = {}) {
   const thinking: boolean[] = []
   const modelProblems: string[] = []
   const chains: string[] = []
+  const busy: number[] = []
   const enrols: number[] = []
   const used = options.logic ?? logic
   const engine = createEngine({
@@ -142,6 +146,7 @@ function setup(options: Options = {}) {
       if (patch.modelProblem !== undefined) modelProblems.push(patch.modelProblem)
       if (patch.lag !== undefined) lags.push(patch.lag)
       if (patch.chain !== undefined) chains.push(patch.chain)
+      if (patch.busySeconds !== undefined) busy.push(patch.busySeconds)
       Object.assign(state, patch)
     },
     recognizer: (h, isInstant, onUnavailable) => {
@@ -195,6 +200,7 @@ function setup(options: Options = {}) {
     thinking,
     modelProblems,
     chains,
+    busy,
     enrols,
     foreign,
     enrolled,
@@ -796,8 +802,9 @@ describe('multi-step utterances (M7.2)', () => {
     t.engine.start()
     t.say('mine youtube\'i ja vajuta otsi')
     await t.engine.idle()
+    // Round 5: the "ja" makes the ask careful, so the longer thinking line shows.
     expect(seen).toEqual([
-      { thinking: true, line: STRINGS.et.inpage.thinking },
+      { thinking: true, line: STRINGS.et.inpage.thinkingLong },
       { thinking: true, line: 'tehtud' },
     ])
     expect(t.thinking).toEqual([true, false])
@@ -1281,18 +1288,20 @@ describe('chains of goals (round 4)', () => {
 
   it('takes no further goal once MAX_CHAIN_MS has passed since the utterance arrived', async () => {
     vi.useFakeTimers()
-    const slow = Math.ceil(MAX_CHAIN_MS / 2) + 1
+    // Round 5: one command is cut at COMMAND_TIMEOUT_MS and a goal at JOB_WATCHDOG_MS, so each goal
+    // takes just under the command cap: the fifth goal ends past MAX_CHAIN_MS and no sixth is asked.
+    const slow = COMMAND_TIMEOUT_MS - 1000
     const t = setup({
       logic: asking,
       box: unarmed,
       goToMs: slow,
-      ask: (request) => Promise.resolve(request.chain === undefined ? planned(goTo('https://a.ee/'), 'a', true, ['b', 'c', 'd']) : answer(goTo('https://b.ee/'), 'b', true)),
+      ask: (request) => Promise.resolve(request.chain === undefined ? planned(goTo('https://a.ee/'), 'a', true, ['b', 'c', 'd', 'e', 'f', 'g']) : answer(goTo('https://b.ee/'), 'b', true)),
     })
     t.engine.start()
-    t.say('a ja b ja c ja d')
+    t.say('a ja b ja c ja d ja e ja f ja g')
     await vi.advanceTimersByTimeAsync(MAX_CHAIN_MS * 3)
-    expect(t.ran.filter((c) => c.kind === 'goTo')).toHaveLength(2)
-    expect(t.asked).toHaveLength(2)
+    expect(t.ran.filter((c) => c.kind === 'goTo')).toHaveLength(5)
+    expect(t.asked).toHaveLength(5)
     expect(t.chains.at(-1)).toBe('')
   })
 
@@ -1500,6 +1509,269 @@ describe('review of round 4', () => {
     await vi.advanceTimersByTimeAsync(10)
     expect(t.ran).toEqual([])
     await vi.advanceTimersByTimeAsync(8 * 1000 * ENROL_TIMEOUT_FACTOR + 10)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.state.line).toBe('midagi')
+  })
+})
+
+describe('round 5, BRAIN lane: care, never stuck, single fields', () => {
+  const unarmed: BoxState = { present: false, text: '', armed: false }
+  const armed: BoxState = { present: true, text: 'Tere.', armed: true }
+  const single: BoxState = { present: true, text: '', armed: true, kind: 'field', fieldKind: 'text', single: true, label: 'Nimi' }
+  const goTo = (url: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'goTo', url } })
+  const scroll: IntentAnswer['intent'] = { kind: 'command', command: { kind: 'scroll', direction: 'down' } }
+  const planned = (intent: IntentAnswer['intent'], say: string, done: boolean, plan: string[]): IntentAnswer => ({ intent, say, done, plan })
+  const after = (ms: number, a: IntentAnswer | AskFailure) => new Promise<IntentAnswer | AskFailure>((resolve) => setTimeout(() => resolve(a), ms))
+  /** The first answer, then a question that never answers. */
+  const thenHang = (first: IntentAnswer) => {
+    let n = 0
+    return (): Promise<IntentAnswer | AskFailure> => (n++ === 0 ? Promise.resolve(first) : new Promise(() => undefined))
+  }
+  const EIGHT = 'ava palun see uus video mis eile tuli'
+
+  it('the constants: careful asks wait 14 s, quick ones 9 s; the watchdog is 25 s; a command 20 s; seconds from 3', () => {
+    expect(askTimeoutMs('careful')).toBe(ASK_TIMEOUT_CAREFUL_MS)
+    expect(askTimeoutMs('quick')).toBe(ASK_TIMEOUT_MS)
+    expect(askTimeoutMs(undefined)).toBe(ASK_TIMEOUT_MS)
+    expect(ASK_TIMEOUT_CAREFUL_MS).toBe(14_000)
+    expect(JOB_WATCHDOG_MS).toBe(25_000)
+    expect(COMMAND_TIMEOUT_MS).toBe(20_000)
+    expect(BUSY_FROM_S).toBe(3)
+    expect(CAREFUL_WORDS).toBe(8)
+    expect(LONG_COMMAND_WORDS).toBe(14)
+  })
+
+  it('a short utterance is asked quickly, with the short thinking line', async () => {
+    const t = setup({ logic: asking, box: unarmed, ask: () => Promise.resolve(answer(scroll, 'kerin')) })
+    t.engine.start()
+    t.say('keri natuke')
+    await t.engine.idle()
+    expect(t.asked[0]?.care).toBe('quick')
+    expect(t.heard).toEqual(['keri natuke'])
+  })
+
+  it('eight words or more, or a connective, is asked with care, and the line says it thinks longer', async () => {
+    const lines: string[] = []
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: () => {
+        lines.push(t.state.line ?? '')
+        return Promise.resolve(answer(scroll, 'kerin'))
+      },
+    })
+    t.engine.start()
+    t.say(EIGHT)
+    await t.engine.idle()
+    t.say('keri alla ja')
+    await t.engine.idle()
+    t.say('keri natuke')
+    await t.engine.idle()
+    expect(EIGHT.split(' ')).toHaveLength(CAREFUL_WORDS)
+    expect(t.asked.map((r) => r.care)).toEqual(['careful', 'careful', 'quick'])
+    expect(lines).toEqual([STRINGS.et.inpage.thinkingLong, STRINGS.et.inpage.thinkingLong, STRINGS.et.inpage.thinking])
+  })
+
+  it('every ask in a chain is careful, even when the first ask was quick', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => Promise.resolve(request.chain === undefined ? planned(goTo('https://www.youtube.com/'), 'lähen', true, ['otsi kassivideod']) : answer(scroll, 'otsin', true)),
+    })
+    t.engine.start()
+    t.say("mine youtube'i otsi kassivideod")
+    await t.engine.idle()
+    expect(t.asked.map((r) => r.care)).toEqual(['quick', 'careful'])
+  })
+
+  it('a careful ask is given up only after ASK_TIMEOUT_CAREFUL_MS; a quick one after ASK_TIMEOUT_MS', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, ask: () => new Promise(() => undefined) })
+    t.engine.start()
+    t.say(EIGHT)
+    await vi.advanceTimersByTimeAsync(ASK_TIMEOUT_MS + 100)
+    expect(t.signals[0]?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(ASK_TIMEOUT_CAREFUL_MS - ASK_TIMEOUT_MS)
+    expect(t.signals[0]?.aborted).toBe(true)
+  })
+
+  it('publishes the busy seconds from 3 s on, every second, and 0 when the job is over', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, ask: () => after(5500, answer(scroll, 'kerin')) })
+    t.engine.start()
+    t.say('keri natuke')
+    await vi.advanceTimersByTimeAsync(2900)
+    expect(t.busy).toEqual([])
+    await vi.advanceTimersByTimeAsync(200)
+    expect(t.busy).toEqual([3])
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(t.busy).toEqual([3, 4, 5])
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(t.busy).toEqual([3, 4, 5, 0])
+    expect(t.state.busySeconds).toBe(0)
+  })
+
+  it('the watchdog gives a job up after JOB_WATCHDOG_MS: the question is aborted, the line says so, the dots and the seconds go', async () => {
+    vi.useFakeTimers()
+    // A careful ask that takes 13 s, then a 19 s goTo the model wants more after: the goal crosses 25 s mid-command.
+    const t = setup({ logic: asking, box: unarmed, goToMs: COMMAND_TIMEOUT_MS - 1000, ask: () => after(13_000, answer(goTo('https://a.ee/'), 'lähen', false)) })
+    t.engine.start()
+    t.say(EIGHT)
+    await vi.advanceTimersByTimeAsync(JOB_WATCHDOG_MS - 100)
+    expect(t.state.busySeconds).toBeGreaterThan(20)
+    expect(t.state.thinking).toBe(true)
+    expect(t.state.line).toBe('lähen: teen')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(t.state.line).toBe(STRINGS.et.inpage.tookTooLong)
+    expect(t.state.thinking).toBe(false)
+    expect(t.state.busySeconds).toBe(0)
+    // The command in hand finishes, then nothing more: no second ask, no late result line.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(t.asked).toHaveLength(1)
+    expect(t.ran.filter((c) => c.kind === 'goTo')).toHaveLength(1)
+    expect(t.state.line).toBe(STRINGS.et.inpage.tookTooLong)
+    expect(t.busy.at(-1)).toBe(0)
+    // The engine is free: the next utterance is handled.
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.state.line).toBe('midagi')
+  })
+
+  it('the watchdog is per goal: a chain that moves is not given up at 25 s in all', async () => {
+    vi.useFakeTimers()
+    const slow = 12_000
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      goToMs: slow,
+      ask: (request) => Promise.resolve(request.chain === undefined ? planned(goTo('https://a.ee/'), 'a', true, ['b', 'c']) : answer(goTo('https://b.ee/'), 'b', true)),
+    })
+    t.engine.start()
+    t.say('a ja b ja c')
+    await vi.advanceTimersByTimeAsync(3 * (slow + SETTLE_MS) + 1000)
+    expect(t.ran.filter((c) => c.kind === 'goTo')).toHaveLength(3)
+    expect(t.state.line).not.toBe(STRINGS.et.inpage.tookTooLong)
+    expect(t.chains.at(-1)).toBe('')
+  })
+
+  it('"katkesta" cancels a running chain: the question is aborted, the chain line and the dots go, the model is not asked', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, ask: thenHang(planned(goTo('https://www.youtube.com/'), 'lähen', true, ['otsi kassivideod', 'mängi esimene'])) })
+    t.engine.start()
+    t.say("mine youtube'i, otsi kassivideod ja mängi esimene")
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 100)
+    expect(t.state.chain).toBe('2/3 · otsi kassivideod')
+    expect(t.state.thinking).toBe(true)
+    t.say('katkesta')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.signals[1]?.aborted).toBe(true)
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+    expect(t.state.chain).toBe('')
+    expect(t.state.thinking).toBe(false)
+    // Under 3 s: no seconds were ever shown, so none are published back to 0.
+    expect(t.state.busySeconds ?? 0).toBe(0)
+    await vi.advanceTimersByTimeAsync(ASK_TIMEOUT_CAREFUL_MS * 2)
+    // Two asks for the chain, none for "katkesta" and none after it.
+    expect(t.asked).toHaveLength(2)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readPage'])
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+  })
+
+  it('"katkesta" gives up a pending verification (the words stay), takes back the live preview, and drops what is queued', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: { ...asking, inpagePreview: previewing.inpagePreview }, box: armed, ask: () => new Promise(() => undefined) })
+    t.engine.start()
+    t.say('keri alla palun')
+    await vi.advanceTimersByTimeAsync(10)
+    // Typed first; the verification hangs in the background.
+    expect(t.page().text).toBe('Tere.keri alla palun')
+    expect(t.state.thinking).toBe(true)
+    // The next utterance is being spoken: its preview is in the box.
+    t.partial('ma jõu')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.page().text).toBe('Tere.keri alla palun ma jõu')
+    t.say('katkesta')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.signals[0]?.aborted).toBe(true)
+    expect(t.page().text).toBe('Tere.keri alla palun')
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+    expect(t.state.thinking).toBe(false)
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    // Nothing of the cancelled work ran: no scroll, no late line.
+    expect(t.ran.some((c) => c.kind === 'scroll')).toBe(false)
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+  })
+
+  it('"katkesta" while asleep or with words in the box is still the cancel through the real rules, never a soft word', () => {
+    // The probe goes through the logic given; the real core's answer is tested in inpage.test.ts.
+    const t = setup({ logic: asking, box: armed })
+    t.engine.start()
+    t.say('katkesta')
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+    expect(t.ran).toEqual([])
+  })
+
+  it('a single-line field waits for the model and types what it dictates, nothing before', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: single, ask: () => after(500, answer({ kind: 'dictate', text: 'Mari Maasikas' }, '')) })
+    t.engine.start()
+    t.say('mari maasikas')
+    await vi.advanceTimersByTimeAsync(100)
+    expect(texts(t.ran)).toEqual(['readPage'])
+    expect(t.state.line).toBe(STRINGS.et.inpage.thinking)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(texts(t.ran)).toEqual(['readPage', 'Mari Maasikas'])
+    expect(t.state.line).toBe('tehtud')
+  })
+
+  it('a single-line field whose model gave no answer gets nothing typed, and the line says so', async () => {
+    const t = setup({ logic: asking, box: single, ask: () => Promise.resolve({ error: 'unreachable' }) })
+    t.engine.start()
+    t.say('mari maasikas')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['readPage'])
+    expect(t.state.line).toBe(STRINGS.et.inpage.fieldUnverified)
+  })
+
+  it('a single-line field with no model at all still gets the rules\' typing', async () => {
+    const t = setup({ logic: asking, box: single, ask: () => Promise.resolve({ error: 'no_model' }) })
+    t.engine.start()
+    t.say('mari maasikas')
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual(['readPage', 'mari maasikas'])
+  })
+
+  it('a long sentence typed first stays in the box when the verdict is one plain command with nothing after it', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve(answer(scroll, 'kerin', true)) })
+    t.engine.start()
+    expect(SENTENCE.split(' ').length).toBeGreaterThanOrEqual(LONG_COMMAND_WORDS)
+    t.say(SENTENCE)
+    await t.engine.idle()
+    expect(texts(t.ran)).toEqual([`Tere.${SENTENCE}`, 'readPage'])
+    expect(t.page().text).toBe(`Tere.${SENTENCE}`)
+    expect(t.state.line).toBe(STRINGS.et.inpage.keptWords)
+  })
+
+  it('a long sentence is still taken back when the verdict carries a plan or asks for more', async () => {
+    const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve(planned(scroll, 'kerin', true, ['mängi esimene'])) })
+    t.engine.start()
+    t.say(SENTENCE)
+    await t.engine.idle()
+    expect(t.ran.some((c) => c.kind === 'scroll')).toBe(true)
+    expect(t.page().text).toBe('Tere.')
+  })
+
+  it('a page command that never answers fails with timed_out after COMMAND_TIMEOUT_MS, and the queue goes on', async () => {
+    vi.useFakeTimers()
+    const t = setup({ box: unarmed, goToMs: 10 * COMMAND_TIMEOUT_MS })
+    t.engine.start()
+    t.say('mine')
+    await vi.advanceTimersByTimeAsync(COMMAND_TIMEOUT_MS - 100)
+    expect(t.state.line).toBe('lähen')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(t.state.line).toBe('viga: timed_out')
     t.say('vaikus')
     await vi.advanceTimersByTimeAsync(10)
     expect(t.state.line).toBe('midagi')

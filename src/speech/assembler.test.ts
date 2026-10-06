@@ -235,4 +235,58 @@ describe('assembler: chains across pauses (round 4)', () => {
     expect(heard).toEqual(['mine whatsappi siis ava Karin'])
     expect(continued).toEqual([])
   })
+
+  // Round 5 (review of round 4, M8): the window is measured from the first word, not the final.
+  it('a long continuation whose first words came within the window continues, though its final is late', () => {
+    const a = make()
+    a.final('mine whatsappi')
+    vi.advanceTimersByTime(700)
+    // He starts the next part one second later and speaks for four seconds.
+    vi.advanceTimersByTime(1000)
+    a.activity()
+    vi.advanceTimersByTime(1500)
+    a.activity()
+    vi.advanceTimersByTime(2500)
+    a.final('siis ava Karini viimane sõnum ja kustuta see kõigi jaoks')
+    vi.advanceTimersByTime(700)
+    expect(continued).toEqual([['mine whatsappi siis ava Karini viimane sõnum ja kustuta see kõigi jaoks', 'siis ava Karini viimane sõnum ja kustuta see kõigi jaoks']])
+    expect(heard).toEqual(['mine whatsappi'])
+  })
+
+  it('activity that itself came too late does not open the window', () => {
+    const a = make()
+    a.final('mine whatsappi')
+    vi.advanceTimersByTime(700)
+    vi.advanceTimersByTime(3000)
+    a.activity()
+    vi.advanceTimersByTime(500)
+    a.final('siis ava Karin')
+    vi.advanceTimersByTime(700)
+    expect(heard).toEqual(['mine whatsappi', 'siis ava Karin'])
+    expect(continued).toEqual([])
+  })
+
+  it('the first activity counts once: a delivery forgets it, so the next final measures afresh', () => {
+    const a = make()
+    vi.advanceTimersByTime(10)
+    a.activity()
+    a.final('mine whatsappi')
+    vi.advanceTimersByTime(700)
+    // Four seconds of silence, then "siis ..." with no partial before it: too late.
+    vi.advanceTimersByTime(4000)
+    a.final('siis ava Karin')
+    vi.advanceTimersByTime(700)
+    expect(heard).toEqual(['mine whatsappi', 'siis ava Karin'])
+    expect(continued).toEqual([])
+  })
+
+  it('a quick reply released past the assembler (noteDelivered) can be continued', () => {
+    const a = make()
+    a.noteDelivered('keri alla')
+    vi.advanceTimersByTime(1000)
+    a.final('siis ava esimene')
+    vi.advanceTimersByTime(700)
+    expect(continued).toEqual([['keri alla siis ava esimene', 'siis ava esimene']])
+    expect(heard).toEqual([])
+  })
 })

@@ -36,6 +36,22 @@ export function startsWithConnective(text: string): boolean {
   return LEADING.some((word) => clean.length > word.length && clean.startsWith(`${word} `))
 }
 
+/**
+ * Round 5: true when a connective stands anywhere in the text with words before it ("mine
+ * whatsappi ja ava Karin", "keri alla siis"): the utterance may hold several goals, so the model
+ * is asked with care. Covers endsWithConnective.
+ */
+export function hasConnective(text: string): boolean {
+  const words = tidy(text).split(' ').filter((w) => w !== '')
+  return TRAILING.some((phrase) => {
+    const parts = phrase.split(' ')
+    for (let i = 1; i + parts.length <= words.length; i++) {
+      if (parts.every((part, j) => words[i + j] === part)) return true
+    }
+    return false
+  })
+}
+
 /** Trailing commas, connectives and spaces, so "mine whatsappi ja siis " becomes "mine whatsappi". */
 function trimTail(text: string): string {
   let out = text.trim().replace(/[\s,.;:…]+$/u, '')

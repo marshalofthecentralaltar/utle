@@ -187,6 +187,8 @@ type Action =
   | { kind: 'deleteNamed'; find: string }
   | { kind: 'edit'; edit: Edit }
   | { kind: 'dictate'; text: string }
+  /** Round 5: "katkesta": the engine drops everything in flight. Instant, never previewed, never soft. */
+  | { kind: 'cancel' }
 
 type Edit =
   | { kind: 'replace'; from: string; to: string; loose: boolean }
@@ -399,9 +401,19 @@ function hintPick(clean: string): number | null {
   return rest === undefined ? null : spokenNumber(rest)
 }
 
+// ---- Round 5 (BRAIN lane): the global voice escape. Only this block is the cancel rule. ----
+/** "katkesta" and its kin: every job, chain and verification in flight is dropped, asleep or not. */
+const CANCEL_ALL = new Set(['katkesta', 'tühista kõik', 'lõpeta kõik', 'stopp kõik', 'cancel', 'cancel everything'])
+/** True for an utterance that is the global cancel, before anything else is tried. */
+function isCancelAll(utterance: string): boolean {
+  return CANCEL_ALL.has(normalise(utterance))
+}
+// ---- end of the cancel rule ----
+
 function classifyExact(session: InpageSession, utterance: string): Classified {
   const plain = (action: Action): Classified => ({ action, understood: null })
   const quick = quickReply(utterance)
+  if (isCancelAll(utterance)) return plain({ kind: 'cancel' })
   if (session.asleep) return plain(quick?.kind === 'wake' ? { kind: 'wake' } : { kind: 'ignored' })
 
   const clean = normalise(utterance)
@@ -522,7 +534,7 @@ function editingPattern(clean: string): Action | null {
 // The one-letter rule (section 21.3): a short utterance one letter away from a command is that command.
 
 /** Never reached by a correction: a send, a sleep or a wake, an undo cannot be taken back (21.3); "back" may be an undo. */
-const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed'])
+const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed', 'cancel'])
 
 /** Words left out of the vocabulary: those of NEVER_CORRECTED, and the keywords of free-text patterns. */
 const LEFT_OUT = new Set([
@@ -681,6 +693,9 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       return none('')
     case 'ignored':
       return none(s.inpage.resting)
+    case 'cancel':
+      // Round 5: nothing for the page; the engine does the dropping.
+      return { session, commands: [], line: s.inpage.cancelled, cancel: true }
     case 'sleep':
       return { session: { ...session, asleep: true }, commands: [], line: s.inpage.sleeping }
     case 'wake':

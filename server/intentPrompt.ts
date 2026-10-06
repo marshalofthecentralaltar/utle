@@ -71,6 +71,12 @@ say for every other answer: at most 8 words stating what you took the words to b
 
 Every say is in the language he spoke: lang is his default, an English utterance gets English.`
 
+/**
+ * Round 5: the paragraph added as a second system block for a careful ask (a long utterance or a
+ * chain). Sent only then, so the cached first block stays identical on every call.
+ */
+export const CAREFUL_PROMPT = `This utterance is long or part of a chain. Read the whole utterance before acting. List every goal in "plan" in order, in his words. Choose the first action only after the plan is complete. Prefer one safe action over a fast guess.`
+
 const STRING = { type: 'string' } as const
 const BOOLEAN = { type: 'boolean' } as const
 const ID = { type: 'integer', description: 'The id of an item from the page list.' } as const

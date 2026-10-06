@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CONNECTIVE_HOLD_MS, chainLine, endsWithConnective, firstGoal, startsWithConnective } from './chain.ts'
+import { CONNECTIVE_HOLD_MS, chainLine, endsWithConnective, firstGoal, hasConnective, startsWithConnective } from './chain.ts'
 
 describe('connectives (round 4)', () => {
   it.each(['mine whatsappi ja', 'ava Karin siis', 'keri alla ja siis', 'otsi kassivideod, pärast seda', 'mängi esimene seejärel', 'ava youtube ning', 'open youtube then', 'open youtube and then', 'search cats, after that'])(
@@ -30,6 +30,16 @@ describe('connectives (round 4)', () => {
 
   it('holds a connective-ending final for 2.5 s', () => {
     expect(CONNECTIVE_HOLD_MS).toBe(2500)
+  })
+
+  // Round 5: care. A connective anywhere after the first word means the utterance may hold several goals.
+  it.each(['mine whatsappi ja ava Karin', 'keri alla siis', 'Mine youtube\'i, seejärel otsi kassid', 'open youtube and then play', 'tulen homme ja toon leiba', 'mine whatsappi ja'])('"%s" has a connective', (text) => {
+    expect(hasConnective(text)).toBe(true)
+  })
+
+  it.each(['ja', 'siis ava Karin', 'mine whatsappi', 'jah', '', 'siiski tulen', 'Jaan tuleb'])('"%s" has none that joins', (text) => {
+    // A connective with nothing before it joins nothing; "siiski" and "Jaan" are not "siis" and "ja".
+    expect(hasConnective(text)).toBe(false)
   })
 })
 
