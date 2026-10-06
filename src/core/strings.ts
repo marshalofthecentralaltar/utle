@@ -471,6 +471,8 @@ const ET: Strings = {
         return command.on ? 'Kirjutan siia.' : 'Siia enam ei kirjuta.'
       case 'bar':
         return command.show ? 'Näitan riba.' : 'Peidan riba.'
+      case 'zoom':
+        return command.direction === 'in' ? 'Suurendan.' : command.direction === 'out' ? 'Vähendan.' : 'Tavaline suurus.'
     }
   },
   browserDone(command, title, hints) {
@@ -844,6 +846,8 @@ const EN: Strings = {
         return command.on ? 'Writing here.' : 'Not writing here any more.'
       case 'bar':
         return command.show ? 'Showing the bar.' : 'Hiding the bar.'
+      case 'zoom':
+        return command.direction === 'in' ? 'Zooming in.' : command.direction === 'out' ? 'Zooming out.' : 'Normal size.'
     }
   },
   browserDone(command, title, hints) {

@@ -43,6 +43,8 @@ export interface InpageStep {
    * a model, or when the model cannot tell, this step stands.
    */
   ask?: boolean
+  /** Round 5: "katkesta": the engine drops every job, chain and verification in flight and clears the bar. */
+  cancel?: boolean
 }
 
 export function initialInpage(lang: Lang): InpageSession {
