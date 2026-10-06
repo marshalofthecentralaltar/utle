@@ -506,8 +506,10 @@ describe('local recogniser (browser side)', () => {
       socket().says({ type: 'final', text: 'siis ava Karin' })
       vi.advanceTimersByTime(LOCAL_HOLD_MS)
       expect(utterances).toEqual(['mine whatsappi', 'siis ava Karin'])
-  // The owner's voice (round 4, VOICE lane).
+    })
   })
+
+  // The owner's voice (round 4, VOICE lane).
 
   describe('only the owner (round 4)', () => {
     let foreign: number
