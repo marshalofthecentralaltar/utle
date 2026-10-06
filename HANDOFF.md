@@ -165,6 +165,32 @@ What to try first:
 5. If a careful ask feels slow, run `npx tsx scripts/intent-eval.ts` with the key: it prints the
    care and the latency per ask.
 
+## 1e. Round 6 (2026-10-06 evening): Minu andmed
+
+Ralf: "Inserting an e-mail, a phone number or an ID code is very hard." Built on branch `r6-saved`
+(ARCHITECTURE 26, `extension/README.md` "Minu andmed"):
+
+- **Saved once.** The settings page has a **Minu andmed** section: each saved e-mail, phone number or
+  ID code with what to say under it, Muuda and Unusta, buttons to add one by voice, and a keyboard
+  form for Tom. By voice: `minu andmed` opens it, `lisa uus e-post` opens it with the entry started;
+  he spells letter by letter (`punkt`, `ät`), `gmail` / `hotmail` / `mail punkt ee` add the ending,
+  `kustuta`, `loe ette`, `valmis`, `katkesta`. Kept in `chrome.storage.local` only.
+- **Put in by voice.** In an armed field `minu e-post`, `mu meil`, `pane mu email sinna`, `kirjuta mu
+  telefon`, `my email` type the value whole at once with no model; two of a kind and no name: the bar
+  asks which. Free phrasing ("täida telefon", "sisesta see gmaili aadress") goes to the model, which is
+  told the names only and answers `insertSaved`; the engine types the value from this machine.
+- **Guidance.** The bar adds "Või ütle „minu e-post“." when an armed field matches a saved value.
+
+Proven: unit tests (`src/core/saved.test.ts`, `savedEntry.test.ts`, `inpage.test.ts`,
+`pageIntent.test.ts`, `extension/src/engine.test.ts`, the request never holds a value), the browser
+suite (`openSettings` from the words, the savedEntry walk to ralf.tamm@gmail.com, screenshots in
+`extension/test/out/andmed.png` and `andmed-saved.png`), and four eval cases on the form page.
+Not verified: a real voice spelling letter by letter (how the recogniser writes "r", "emm", "ät" as
+single utterances), real forms, and Tom using the form.
+
+What to try first: say `lisa uus e-post`, spell the address, `gmail`, `loe ette`, `valmis`; then on
+`http://localhost:5193/extension/test/fixtures/login.html` click E-post and say `minu e-post`.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

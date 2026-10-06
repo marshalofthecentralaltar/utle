@@ -203,6 +203,45 @@ the thresholds are in `server/speaker.ts`.
 - When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.
 
+## Minu andmed: an e-mail, a phone number, an ID code (round 6)
+
+Spelling an address letter by letter every time is hard work. Save it once; afterwards say its name in
+any field. ARCHITECTURE 26 is the spec.
+
+**Saving it.** Say `minu andmed` (or `ava minu andmed`, `ava seaded` for the whole page) from any page:
+the settings page opens at the **Minu andmed** section. Say `lisa uus e-post` (or `salvesta mu telefon`,
+`lisa uus isikukood`, English `add a new email`, `save my phone`) and the page opens with the voice
+entry already started:
+
+- spell it one utterance at a time: `r`, `a`, `ell`, `f`, `punkt`, `tee`, `a`, `emm`, `m`. A whole
+  stretch in one breath works too (`ralf punkt tamm`). `punkt` is ., `ät` is @, `kriips` is -,
+  `alakriips` is _; numbers become digits. Each letter shows as a chip.
+- for the ending say `gmail` (@gmail.com), `hotmail`, `outlook`, `icloud`, `yahoo` or `mail punkt ee`
+  (@mail.ee): it shows as a dashed chip and is added when you save. `oma lõpp` takes it off.
+- `kustuta` removes the last letter, `kustuta kõik` starts over, `loe ette` reads it back letter by
+  letter on the bar.
+- `valmis` saves it; `katkesta` leaves without saving. An e-mail without @ is not saved (the bar says
+  what is missing).
+- the first e-mail is called "minu e-post" (the first phone "minu telefon", the first ID code "minu
+  isikukood"); a second one of the same kind asks for a name first ("töö e-post").
+
+Tom can do the same by keyboard in the form under the list (name, kind, value, **Salvesta**). Each saved
+item has **Muuda** and **Unusta**, and under it what to say ("Ütle: minu e-post, mu meil"). The buttons
+are dwellable like the rest of the page.
+
+**Using it.** In a field (after `kirjuta siia`, a label number, or `valmis` from the field before) say
+`minu e-post`, `mu meil`, `pane mu email sinna`, `kirjuta mu telefon`, `sisesta minu isikukood`, `my email`.
+The value is typed whole at once, no model asked, and the bar reads it back: "Kirjutasin:
+ralf.tamm@gmail.com (minu e-post). Ütle „valmis“ või „edasi“." With two e-mails saved and no name the
+bar asks "Kumb: minu e-post või töö e-post?"; answer with the name, a word of it (`töö`) or `esimene` /
+`teine`. When a field you arm has a saved value of its kind, the bar says so: "Kast on valitud.
+Räägi. Või ütle „minu e-post“." Free phrasing goes to the model, which knows the names (never the values)
+and may pick the field first: `täida telefon`, `sisesta see gmaili aadress`.
+
+**Where it is kept.** `chrome.storage.local`, key `savedValues`, on this computer only. The model is
+told the names; the values never leave the machine and are never in a log line. No passwords: a
+password field is never filled from here.
+
 ## The dev server's log lines
 
 `npm run dev` logs counts and reasons only, never words or audio. What to look for:
