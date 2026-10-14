@@ -1,0 +1,6 @@
+{
+  "cleanUrls": true,
+  "redirects": [
+    { "source": "/privacy", "destination": "/privaatsus", "permanent": true }
+  ]
+}

@@ -1,0 +1,545 @@
+<title>Ütle website mock</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Ütle on Chrome'i laiendus inimestele, kes ei saa käsi kasutada: eestikeelne kõne kirjutatakse lehe enda sõnumikasti, parandatakse ja saadetakse häälega, ja sama häälega liigud veebis.">
+<meta name="theme-color" content="#0c0e11">
+<meta property="og:title" content="Ütle">
+<meta property="og:description" content="Chrome'i laiendus, millega kirjutad sõnumeid ja kasutad veebi eesti keeles rääkides.">
+<meta property="og:image" content="https://utle.ee/og.png">
+<meta property="og:url" content="https://utle.ee/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,800&family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one dark page that reads like the product. The hero is the product itself (a chat with the Ütle bar under it, playing);
+   below it plain sections: who it is for, what it does (six things, one spoken example each), where speech goes, who we are, status, contact. */
+:root {
+  color-scheme: dark;
+  --ground: #0c0e11;
+  --raised: #14171b;
+  --well: #1b1f25;
+  --ink: #f3f1ea;
+  --ink-2: #a9aba3;
+  --ink-3: #6f736c;
+  --line: rgba(243,241,234,.09);
+  --line-2: rgba(243,241,234,.17);
+  --mint: #3ddc84;
+  --mint-ink: #08200f;
+  --amber: #f0b429;
+  --amber-soft: rgba(240,180,41,.14);
+  --bubble-me: #1d3a2a;
+  --display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+  --text: 'Manrope', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', Consolas, 'Courier New', monospace;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --ground: #f2f1ec; --raised: #ffffff; --well: #e9e8e1; --ink: #15171a; --ink-2: #4c504b; --ink-3: #6a6e66;
+  --line: rgba(21,23,26,.09); --line-2: rgba(21,23,26,.18);
+  --mint: #22c26b; --mint-ink: #06180c; --amber: #8a5a00; --amber-soft: rgba(184,124,0,.13); --bubble-me: #d4f1df;
+} }
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: #f2f1ec; --raised: #ffffff; --well: #e9e8e1; --ink: #15171a; --ink-2: #4c504b; --ink-3: #6a6e66;
+  --line: rgba(21,23,26,.09); --line-2: rgba(21,23,26,.18);
+  --mint: #22c26b; --mint-ink: #06180c; --amber: #8a5a00; --amber-soft: rgba(184,124,0,.13); --bubble-me: #d4f1df;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--text); font-size: 18px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+@media (max-width: 520px) { .wrap { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); } }
+a { color: inherit; text-underline-offset: 4px; }
+:focus-visible { outline: 3px solid var(--mint); outline-offset: 3px; border-radius: 6px; }
+.skip { position: absolute; left: 16px; top: -60px; background: var(--mint); color: var(--mint-ink); padding: 10px 16px; border-radius: 10px; font-weight: 800; z-index: 10; }
+.skip:focus { top: 12px; }
+h1, h2, h3 { font-family: var(--display); font-variation-settings: 'opsz' 72; text-wrap: balance; margin: 0; }
+h2 { font-weight: 500; font-size: clamp(32px, 4.4vw, 52px); line-height: 1.05; letter-spacing: -0.03em; }
+p { margin: 0; }
+.lede { color: var(--ink-2); max-width: 60ch; text-wrap: pretty; }
+.lede b, .prose b { color: var(--ink); font-weight: 700; }
+.prose { display: grid; gap: 18px; color: var(--ink-2); max-width: 62ch; text-wrap: pretty; }
+section { padding-block: clamp(64px, 8vw, 104px); border-top: 1px solid var(--line); }
+.head2 { display: grid; gap: 18px; margin-bottom: clamp(36px, 5vw, 56px); }
+
+.mark { font-family: var(--display); font-weight: 800; letter-spacing: -0.03em; line-height: .8; display: inline-flex; align-items: flex-end; font-variation-settings: 'opsz' 96; text-decoration: none; color: var(--ink); }
+.mark .u { position: relative; display: inline-block; }
+.mark .u i { position: absolute; top: -0.13em; width: .13em; height: .13em; border-radius: 50%; background: var(--mint); }
+.mark .u i:first-child { left: .015em; } .mark .u i:last-child { left: .235em; }
+
+.said { font-family: var(--mono); font-size: .92em; color: var(--ink); }
+.q::before { content: '„'; color: var(--ink-3); } .q::after { content: '“'; color: var(--ink-3); }
+
+.btn { display: inline-flex; align-items: center; gap: 10px; font: inherit; font-weight: 800; font-size: 17px; text-decoration: none; padding: 15px 22px; border-radius: 14px; border: 1px solid var(--line-2); background: transparent; color: var(--ink); cursor: pointer; transition: background-color .15s, border-color .15s, transform .15s; min-height: 52px; }
+.btn:hover { border-color: var(--ink-3); }
+.btn:active { transform: translateY(1px); }
+.btn.go { background: var(--mint); color: var(--mint-ink); border-color: transparent; }
+.btn.go:hover { background: color-mix(in srgb, var(--mint) 88%, var(--ink)); }
+
+/* nav */
+.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: color-mix(in srgb, var(--ground) 88%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
+.nav .wrap { display: flex; align-items: center; gap: 28px; height: 76px; }
+.nav .mark { font-size: 34px; padding-top: 6px; }
+.nav ul { display: flex; gap: 26px; list-style: none; margin: 0 0 0 auto; padding: 0; font-weight: 600; font-size: 16px; color: var(--ink-2); }
+.nav ul a { text-decoration: none; } .nav ul a:hover { color: var(--ink); }
+.nav .btn { padding: 11px 18px; min-height: 46px; font-size: 16px; }
+.lang { display: inline-flex; border: 1px solid var(--line-2); border-radius: 12px; padding: 3px; gap: 2px; }
+.lang button { font: inherit; font-size: 14px; font-weight: 800; letter-spacing: .04em; color: var(--ink-2); background: none; border: 0; border-radius: 9px; padding: 7px 11px; min-height: 36px; min-width: 44px; cursor: pointer; }
+.lang button[aria-pressed="true"] { background: var(--ink); color: var(--ground); }
+.lang button:hover:not([aria-pressed="true"]) { color: var(--ink); }
+@media (max-width: 960px) { .nav ul { display: none; } .nav .lang { margin-left: auto; } }
+@media (max-width: 440px) { .nav .btn { display: none; } }
+
+/* hero */
+.hero { padding-block: clamp(48px, 7vw, 88px) clamp(64px, 8vw, 104px); border-top: 0; }
+.hero .wrap { display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); gap: 44px clamp(36px, 5vw, 72px); align-items: start; }
+.hero h1 { grid-column: 1 / -1; font-weight: 500; font-size: clamp(42px, 6.2vw, 82px); line-height: .99; letter-spacing: -0.035em; max-width: 17ch; }
+@media (max-width: 1000px) { .hero .wrap { grid-template-columns: minmax(0, 1fr); } }
+.hero .lede { font-size: 20px; }
+.hero .ctas { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 26px; margin-top: 32px; }
+.more { font-weight: 700; text-decoration-thickness: 1.5px; text-decoration-color: var(--ink-3); min-height: 44px; display: inline-flex; align-items: center; }
+.more:hover { text-decoration-color: var(--ink); }
+.hero .meta { margin-top: 30px; font-size: 15px; color: var(--ink-3); max-width: 46ch; }
+.hero .meta b { color: var(--ink-2); font-weight: 700; }
+
+/* the product scene */
+.scene { margin: 0; min-width: 0; }
+.browser { border-radius: 20px; border: 1px solid var(--line-2); background: var(--raised); overflow: hidden; box-shadow: 0 30px 80px -40px rgba(0,0,0,.6); }
+.chrome { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.chrome .dots { display: flex; gap: 6px; } .chrome .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); }
+.chrome .url { flex: 1; min-width: 0; font-size: 13px; color: var(--ink-3); background: var(--well); border-radius: 8px; padding: 6px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app { display: grid; grid-template-columns: 170px minmax(0, 1fr); height: 330px; }
+@media (max-width: 560px) { .app { grid-template-columns: minmax(0, 1fr); } .app .people { display: none; } }
+.people { border-right: 1px solid var(--line); padding: 10px 8px; display: grid; align-content: start; gap: 2px; }
+.person { display: flex; gap: 10px; align-items: center; padding: 8px; border-radius: 10px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+.person.on { background: var(--well); color: var(--ink); }
+.av { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: var(--well); color: var(--ink-2); flex: none; }
+.person.on .av { background: var(--amber-soft); color: var(--amber); }
+.convo { display: flex; flex-direction: column; min-width: 0; }
+.convo .head { padding: 12px 18px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; display: flex; gap: 10px; align-items: center; }
+.msgs { flex: 1; padding: 16px 18px; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; overflow: hidden; }
+.msg { max-width: 78%; padding: 8px 13px; border-radius: 14px; font-size: 15px; line-height: 1.4; background: var(--well); align-self: flex-start; }
+.msg.me { background: var(--bubble-me); align-self: flex-end; }
+.msg small { display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px; text-align: right; }
+.msg.new { animation: rise .35s cubic-bezier(.2,.8,.2,1); }
+@keyframes rise { from { transform: translateY(10px); opacity: 0; } }
+.compose { margin: 0 14px 14px; display: flex; gap: 8px; align-items: center; }
+.box { flex: 1; min-width: 0; min-height: 44px; border-radius: 12px; background: var(--well); padding: 10px 14px; font-size: 15px; border: 1.5px solid transparent; display: flex; align-items: center; gap: 4px; }
+.box.armed { border-color: var(--mint); }
+.box:empty::after { content: 'Kirjuta sõnum'; color: var(--ink-3); }
+.box del { color: var(--ink-3); text-decoration-thickness: 2px; } .box ins { text-decoration: none; color: var(--amber); font-weight: 700; }
+.send { width: 44px; height: 44px; border-radius: 12px; background: var(--well); display: grid; place-items: center; color: var(--ink-3); flex: none; }
+.send svg { width: 18px; height: 18px; }
+.ubar { display: flex; align-items: center; gap: 18px; padding: 14px 18px; background: var(--raised); border-top: 1px solid var(--line-2); }
+.tile { position: relative; flex: none; width: 78px; height: 78px; border-radius: 24px; display: grid; place-items: center; background: var(--mint); color: var(--mint-ink); }
+.tile .ring { position: absolute; inset: -6px; border-radius: 29px; border: 2px solid var(--mint); opacity: .45; animation: ring 1.8s ease-out infinite; }
+@keyframes ring { 0% { transform: scale(.94); opacity: .55; } 100% { transform: scale(1.13); opacity: 0; } }
+.tile .waves { display: flex; gap: 4px; align-items: center; height: 26px; margin-bottom: 12px; }
+.tile .waves i { width: 4px; height: 8px; border-radius: 2px; background: currentColor; }
+.scene.talking .tile .waves i { animation: wave .9s ease-in-out infinite; }
+.tile .waves i:nth-child(2) { animation-delay: .12s; } .tile .waves i:nth-child(3) { animation-delay: .24s; } .tile .waves i:nth-child(4) { animation-delay: .36s; }
+@keyframes wave { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(3); } }
+.tile .lbl { position: absolute; bottom: 8px; font-size: 11px; font-weight: 800; letter-spacing: .06em; }
+.ubar .txt { flex: 1; min-width: 0; }
+.ubar .heard { font-weight: 800; font-size: 21px; letter-spacing: -0.015em; line-height: 1.2; min-height: 1.2em; }
+.ubar .heard:empty::after { content: ' '; }
+.ubar .line { color: var(--amber); font-weight: 700; font-size: 15px; margin-top: 3px; min-height: 1.4em; }
+.k { display: inline-block; padding: 0 8px; border-radius: 999px; background: var(--amber-soft); color: var(--ink); font-weight: 700; }
+.ubar .acts { display: flex; gap: 8px; }
+.ubar .acts span { font-size: 13px; font-weight: 700; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line-2); color: var(--ink-2); }
+@media (max-width: 640px) { .ubar .acts { display: none; } .tile { width: 64px; height: 64px; border-radius: 20px; } .ubar .heard { font-size: 18px; } }
+.scene figcaption { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 14px; font-size: 14px; color: var(--ink-3); }
+.playbtn { font: inherit; font-size: 14px; font-weight: 700; color: var(--ink-2); background: none; border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 12px; cursor: pointer; min-height: 40px; flex: none; }
+.playbtn:hover { color: var(--ink); }
+
+/* who it is for */
+.who .grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: clamp(32px, 5vw, 80px); align-items: start; }
+@media (max-width: 860px) { .who .grid { grid-template-columns: minmax(0, 1fr); } }
+.who h2 { margin-bottom: 26px; }
+.figs { display: grid; gap: 30px; border-left: 1px solid var(--line-2); padding-left: clamp(20px, 3vw, 40px); }
+.figs p { color: var(--ink-2); font-size: 17px; }
+.figs b { color: var(--ink); font-weight: 700; }
+.fig { font-family: var(--display); font-weight: 800; font-size: 60px; color: var(--ink); letter-spacing: -0.03em; line-height: 1; display: block; margin-bottom: 10px; font-variant-numeric: tabular-nums; }
+.src { display: block; margin-top: 6px; font-size: 14px; color: var(--ink-3); }
+
+/* what it does: six plain items */
+.does { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 clamp(28px, 4vw, 56px); }
+@media (max-width: 1000px) { .does { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .does { grid-template-columns: minmax(0, 1fr); } }
+.does li { display: grid; grid-template-rows: auto 1fr auto; gap: 12px; padding-block: 28px; border-top: 1px solid var(--line); min-width: 0; }
+.does h3 { font-weight: 800; font-size: 23px; line-height: 1.2; letter-spacing: -0.015em; }
+.does p { color: var(--ink-2); font-size: 17px; }
+.does .ex { font-size: 16px; padding: 10px 14px; border-radius: 12px; background: var(--well); overflow-wrap: anywhere; justify-self: start; max-width: 100%; }
+
+/* facts */
+.facts { margin: 0; display: grid; }
+.facts > div { display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); gap: 32px; padding: 26px 0; border-top: 1px solid var(--line); }
+.facts dt { font-weight: 800; font-size: 20px; }
+.facts dd { margin: 0; color: var(--ink-2); max-width: 62ch; }
+.facts dd b { color: var(--ink); font-weight: 700; }
+@media (max-width: 700px) { .facts > div { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+.after { margin-top: 28px; font-weight: 700; }
+
+/* who we are */
+.us .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 80px); align-items: start; }
+@media (max-width: 900px) { .us .grid { grid-template-columns: minmax(0, 1fr); } }
+.us h2 { margin-bottom: 26px; }
+.us h3 { font-weight: 800; font-size: 23px; margin-bottom: 14px; }
+.next { list-style: none; margin: 0; padding: 0; display: grid; }
+.next li { padding: 16px 0; border-top: 1px solid var(--line); color: var(--ink-2); }
+.next li b { color: var(--ink); font-weight: 700; display: block; }
+.aim { font-family: var(--display); font-weight: 500; font-size: clamp(22px, 2.4vw, 28px); line-height: 1.3; letter-spacing: -0.015em; color: var(--ink); margin-bottom: 30px; text-wrap: pretty; }
+
+/* status */
+.status .box2 { border: 1.5px solid var(--line-2); border-radius: 20px; padding: clamp(24px, 4vw, 40px); display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 24px clamp(32px, 5vw, 64px); }
+@media (max-width: 860px) { .status .box2 { grid-template-columns: minmax(0, 1fr); } }
+.status h2 { font-size: clamp(28px, 3.4vw, 40px); }
+
+/* contact */
+.join { background: var(--raised); }
+.join .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(32px, 5vw, 72px); align-items: start; }
+@media (max-width: 900px) { .join .grid { grid-template-columns: minmax(0, 1fr); } }
+.join h2 { margin-bottom: 22px; }
+.mail { display: grid; gap: 16px; padding: clamp(22px, 3vw, 32px); border-radius: 20px; background: var(--ground); border: 1px solid var(--line-2); }
+.mail .lbl { font-size: 15px; font-weight: 700; color: var(--ink-3); }
+.mail .addr { font-family: var(--display); font-weight: 800; font-size: clamp(28px, 4vw, 44px); letter-spacing: -0.02em; line-height: 1.1; overflow-wrap: anywhere; user-select: all; }
+.mail .row { display: flex; flex-wrap: wrap; gap: 12px; }
+.mail .hint { font-size: 15px; color: var(--ink-3); }
+
+footer { border-top: 1px solid var(--line); padding-block: 48px 64px; color: var(--ink-3); font-size: 15px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 24px 48px; align-items: flex-end; justify-content: space-between; }
+footer .mark { font-size: 56px; }
+footer p { max-width: 56ch; }
+footer b { color: var(--ink-2); font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) { .tile .ring, .msg.new, .scene.talking .tile .waves i { animation: none; } }
+</style>
+
+<a class="skip" href="#main" data-i18n="skip">Mine sisu juurde</a>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="mark" href="#top" aria-label="Ütle"><span class="u"><i></i><i></i>u</span>tle</a>
+    <ul>
+      <li><a href="#kellele" data-i18n="nav1">Kellele</a></li>
+      <li><a href="#mida" data-i18n="nav2">Mida see teeb</a></li>
+      <li><a href="#privaatsus" data-i18n="nav3">Privaatsus</a></li>
+      <li><a href="#meist" data-i18n="nav4">Meist</a></li>
+    </ul>
+    <div class="lang" role="group" aria-label="Keel / Language">
+      <button type="button" id="lang-et" lang="et" aria-pressed="true">ET</button>
+      <button type="button" id="lang-en" lang="en" aria-pressed="false">EN</button>
+    </div>
+    <a class="btn go" href="#kontakt" data-i18n="cta">Võta ühendust</a>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top">
+    <div class="wrap">
+      <h1 data-i18n="h1">Kirjuta sõnumeid ja kasuta veebi eesti keeles rääkides</h1>
+      <div>
+        <p class="lede" data-i18n="lede"><b>Ütle on Chrome’i laiendus inimestele, kes ei saa käsi kasutada või kellel on klaviatuuri ja hiirega raske.</b> Sa räägid ja Ütle kirjutab sinu sõnad lehe enda sõnumikasti, parandab vea, kui seda palud, ja saadab sõnumi, kui ütled „saada“. Sama häälega avad lehti, kerid, vajutad nuppe ja täidad vorme.</p>
+        <div class="ctas">
+          <a class="btn go" href="#kontakt" data-i18n="cta2">Proovi Ütlet</a>
+          <a class="more" href="#mida" data-i18n="more">Vaata, mida see teeb</a>
+        </div>
+        <p class="meta" data-i18n="meta">Sai alguse TalTech Mektorys ja võitis 2026. aasta oktoobris NewWorkTechi kaasava digiinnovatsiooni häkatoni. <b>Praegu prototüüp.</b></p>
+      </div>
+
+      <figure class="scene" id="scene" data-i18n-label="sceneLabel" aria-label="Näide: kolme öeldud lausega kirjutatakse Marile sõnum, vahetatakse üks sõna ja sõnum saadetakse.">
+        <div class="browser" aria-hidden="true">
+          <div class="chrome"><span class="dots"><i></i><i></i><i></i></span><span class="url">web.whatsapp.com</span></div>
+          <div class="app">
+            <div class="people">
+              <div class="person on"><span class="av">MT</span>Mari Tamm</div>
+              <div class="person"><span class="av">KK</span>Kalle Kuusk</div>
+              <div class="person"><span class="av">EM</span>Ema</div>
+              <div class="person"><span class="av">TT</span>Trenn, teisip.</div>
+            </div>
+            <div class="convo">
+              <div class="head"><span class="av">MT</span>Mari Tamm</div>
+              <div class="msgs" id="msgs">
+                <div class="msg me">Kas sa oled täna kodus?<small>15:58</small></div>
+                <div class="msg">Jah, tule läbi! Mis kell jõuad?<small>16:04</small></div>
+              </div>
+              <div class="compose"><div class="box armed" id="box">Jõuan kell viis.</div><span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></div>
+            </div>
+          </div>
+          <div class="ubar">
+            <div class="tile"><span class="ring"></span><span class="waves"><i></i><i></i><i></i><i></i></span><span class="lbl">KUULAN</span></div>
+            <div class="txt">
+              <div class="heard" id="heard">kirjuta Marile, et jõuan kell viis</div>
+              <div class="line" id="line">Avasin vestluse Mariga. Ütle <span class="k">saada</span> või paranda.</div>
+            </div>
+            <div class="acts"><span>Peida</span><span>Seaded</span></div>
+          </div>
+        </div>
+        <figcaption><span data-i18n="caption">Ütle riba on iga lehe allservas. Suures kirjas on see, mida Ütle kuulis, ja selle all rida sellest, mida ta tegi.</span><button class="playbtn" id="play" type="button" aria-pressed="false">Peata</button></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="who" id="kellele">
+    <div class="wrap grid">
+      <div>
+        <h2 data-i18n="whoH">Kellele see on</h2>
+        <div class="prose">
+          <p data-i18n="who1"><b>Ütle on inimestele, kes saavad rääkida, aga kellel on käte kasutamine raske või võimatu</b>, olgu põhjus liikumispuue, vigastus või haigus. Paljud neist liigutavad kursorit silmajälgijaga. Silmajälgija töötab igas keeles, aga sellega kirjutamine on aeglane: ühe sõnumi kirjutamine sõbrale võib võtta mitu minutit ja palju jõudu.</p>
+          <p data-i18n="who2">Häälega kirjutamine aitaks, aga dikteerimine teeb vigu ja vea parandamiseks on tavaliselt vaja just käsi. Ütle on tehtud nii, et ka parandamine, saatmine ja mikrofoni sisselülitamine käivad ilma käteta.</p>
+          <p data-i18n="who3">Ütle on ka abistajatele: pereliikmele, tugiisikule või tegevusterapeudile, kes seab laienduse üles ja salvestab vajalikud andmed, et edasi saaks inimene ise hakkama.</p>
+        </div>
+      </div>
+      <div class="figs">
+        <p><span class="fig" data-i18n="figN">33 700</span><span data-i18n="fig1">inimesel Eestis on registreeritud liikumispuue. Kui paljudel neist on trükkimine raske, aga kõne alles, ei ole teada.</span></p>
+        <p data-i18n="fig2"><b>Windows Voice Access, Apple Voice Control ja Dragon ei toeta eesti keelt.</b> Windowsi häälsisestus kirjutab eesti keelt, kuid arvutit sellega juhtida ei saa.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="mida">
+    <div class="wrap">
+      <div class="head2">
+        <h2 data-i18n="doH">Mida see teeb</h2>
+        <p class="lede" data-i18n="doLede">Ütle on riba iga veebilehe allservas. Kuulamise lülitad sisse häälega, klõpsuga või silmajälgijaga suurele mikrofoniplaadile vaadates. Sa räägid nagu tavaliselt ja riba näitab alati, kuidas sind mõisteti, enne kui midagi tähtsat juhtub.</p>
+      </div>
+      <ul class="does">
+        <li>
+          <h3 data-i18n="d1h">Kirjutab sõnumeid sinna, kus vestlus juba on</h3>
+          <p data-i18n="d1">Sõnad ilmuvad WhatsApp Webi või muu lehe enda sõnumikasti samal ajal, kui räägid. Eraldi rakendust ega kopeerimist ei ole. Sõnum läheb teele alles siis, kui ütled „saada“.</p>
+          <span class="ex said q" lang="et">kirjuta Marile, et jõuan homme kell kolm</span>
+        </li>
+        <li>
+          <h3 data-i18n="d2h">Parandab vea mõne sõnaga</h3>
+          <p data-i18n="d2">Vale sõna vahetamiseks ei pea kogu lauset uuesti ütlema. Saad liikuda sõnade ja lausete vahel, kustutada, lisada teksti keskele ja viimase muudatuse tagasi võtta.</p>
+          <span class="ex said q" lang="et">mitte kolm, vaid neli</span>
+        </li>
+        <li>
+          <h3 data-i18n="d3h">Saab aru ka siis, kui ütled oma sõnadega</h3>
+          <p data-i18n="d3">Levinud käsud tunneb Ütle ära kohe ja ilma internetita. Muu lause loeb keelemudel koos lehe sisuga läbi ja valib, mida teha. Ühe hingetõmbega võib paluda mitu asja järjest.</p>
+          <span class="ex said q" lang="et">mine youtube’i, siis otsi kassivideod ja pane heli vaiksemaks</span>
+        </li>
+        <li>
+          <h3 data-i18n="d4h">Töötab igal lehel</h3>
+          <p data-i18n="d4">„Näita numbreid“ paneb numbri igale lingile ja nupule ning numbri ütlemine vajutab seda. Nii saab kasutada ka lehti, mida Ütle eraldi ei tunne. Samamoodi kerid, vahetad vahelehti ja suurendad kirja.</p>
+          <span class="ex said q" lang="et">näita numbreid</span>
+        </li>
+        <li>
+          <h3 data-i18n="d5h">Täidab vorme</h3>
+          <p data-i18n="d5">Isikukoodi, telefoninumbri ja e-posti aadressi võid öelda sõnadega ning Ütle kirjutab need numbrite ja märkidena. Korduvad andmed salvestad ühe korra. „Valmis“ viib järgmisele väljale ja „kinnita“ saadab vormi ära.</p>
+          <span class="ex said q" lang="et">minu e-post</span>
+        </li>
+        <li>
+          <h3 data-i18n="d6h">Kuulab sind, kui sa seda tahad</h3>
+          <p data-i18n="d6">Kui õpetad Ütlele oma häält, jätab see toas teiste räägitu vahele. „Puhka“ lõpetab kirjutamise, kuni ütled „ärka üles“, ja „katkesta“ peatab kohe kõik pooleli oleva.</p>
+          <span class="ex said q" lang="et">puhka</span>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="privaatsus">
+    <div class="wrap">
+      <div class="head2"><h2 data-i18n="privH">Kuhu sinu kõne ja tekst lähevad</h2></div>
+      <dl class="facts">
+        <div><dt data-i18n="p1h">Kõnetuvastus</dt><dd data-i18n="p1">Kõne tunneb ära Tallinna Tehnikaülikooli keeletehnoloogia labori eesti keele mudel. See töötab sinu arvutis või serveris, mille aadressi sinu abistaja seadetes sisestas. Kui server on teises masinas, lahkub heli sinu arvutist ja seadete leht ütleb seda. Kui seadetes on valitud teine kõnetuvastaja, Soniox, saadab server heli edasi Sonioxile.</dd></div>
+        <div><dt data-i18n="p2h">Mõistmine</dt><dd data-i18n="p2">Levinud käsud tunnevad ära kindlad reeglid. Muu lause saadetakse tekstina koos lehe lühikokkuvõttega Anthropicu keelemudelile Claude. <b>Heli sellele ei saadeta.</b> Mudel saab valida ainult kindlast tegevuste loendist ja iga valikut kontrollitakse enne, kui midagi juhtub.</dd></div>
+        <div><dt data-i18n="p3h">Kirjutamine</dt><dd data-i18n="p3">Sõnad kirjutatakse ainult kasti, mille ise valisid: avatud vestlusesse, väljale, millel klõpsasid, või väljale, mille numbri ütlesid. Sõnum saadetakse ainult siis, kui ütled „saada“.</dd></div>
+        <div><dt data-i18n="p4h">Mida hoitakse</dt><dd data-i18n="p4">Heli ega öeldu teksti ei salvestata ja server ei kirjuta neid oma logisse. Seaded ja salvestatud andmed, näiteks sinu e-post, on ainult sinu brauseris. Kui õpetad Ütlele oma häält, hoiab server hääle kirjeldust (arvude rida, mitte salvestist). Analüütikat ega reklaame ei ole.</dd></div>
+      </dl>
+      <p class="after"><a href="https://utle-site.vercel.app/privaatsus" data-i18n="privLink">Loe privaatsuspoliitikat</a></p>
+    </div>
+  </section>
+
+  <section class="us" id="meist">
+    <div class="wrap grid">
+      <div>
+        <h2 data-i18n="usH">Meist</h2>
+        <div class="prose">
+          <p data-i18n="us1">Ütle sai alguse 5. ja 6. oktoobril 2026 NewWorkTechi kaasava digiinnovatsiooni häkatonil TalTech Mektorys Tallinnas ja <b>võitis selle</b>.</p>
+          <p data-i18n="us2">Esimesel päeval rääkisime silmajälgija kasutajaga, kellel on liikumispuue. Ta ütles kolm asja: sõnumite trükkimine on aeglane, ta tahab brauseris häälega liikuda ja ta tahab seda teha eesti keeles. Sellest sai Ütle ülesanne. Ta proovis Ütlet häkatonil ise ja pärast iga proovi ehitasime juurde selle, mis tal puudu jäi: vormide täitmise, pikemate lausete mõistmise ja kirja suurendamise.</p>
+        </div>
+      </div>
+      <div>
+        <p class="aim" data-i18n="aim">Meie eesmärk on, et inimene, kes ei saa käsi kasutada, saaks veebis teha sama mida teised klaviatuuri ja hiirega: kirjutada lähedastele, lugeda uudiseid ja ajada asju e-teenustes, eesti keeles ja ilma, et keegi peaks kõrval istuma.</p>
+        <h3 data-i18n="nextH">Järgmised sammud</h3>
+        <ul class="next">
+          <li data-i18n="n1"><b>Esimene testijate ring</b>Inimesed, kes kasutavad Ütlet oma arvutis iga päev ja ütlevad, mis ei tööta.</li>
+          <li data-i18n="n2"><b>Chrome’i veebipood</b>Et paigaldamiseks ei oleks vaja arendajat ega midagi peale laienduse.</li>
+          <li data-i18n="n3"><b>Rohkem lehti nime järgi</b>E-post, internetipank ja e-teenused nagu eesti.ee.</li>
+          <li data-i18n="n4"><b>Kogu arvuti</b>Hiljem programm, mis töötab ka teistes programmides peale brauseri.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="status">
+    <div class="wrap">
+      <div class="box2">
+        <h2 data-i18n="stH">Kus Ütle praegu on</h2>
+        <div class="prose">
+          <p data-i18n="st1"><b>Ütle on prototüüp.</b> Seda on proovinud inimene, kellega see koos tehti, ja meie meeskond. Enamik osi on läbinud automaattestid salvestatud kõne ja testlehtedega, aga päris silmajälgija ja päris vormidega on neid proovitud vähe.</p>
+          <p data-i18n="st2">Ütle töötab arvutis Google Chrome’is ja ainult veebilehtedel. Chrome’i veebipoes seda veel ei ole, nii et praegu on paigaldamiseks vaja meie abi.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="join" id="kontakt">
+    <div class="wrap grid">
+      <div>
+        <h2 data-i18n="joinH">Proovi Ütlet või aita meid</h2>
+        <div class="prose">
+          <p data-i18n="join1">Otsime inimesi, kes räägivad eesti keelt ja kellel on käte kasutamine raske, ning neid, kes neid aitavad. Kirjuta meile ja lepime kokku aja, millal Ütle sinu arvutisse üles seada.</p>
+          <p data-i18n="join2">Kirjuta ka siis, kui oled tegevusterapeut, töötad abivahenditega või esindad ühingut, kelle liikmetele Ütle võiks sobida.</p>
+        </div>
+      </div>
+      <div class="mail">
+        <span class="lbl" data-i18n="mailLbl">Meie e-post</span>
+        <span class="addr" id="addr">tere@utle.ee</span>
+        <div class="row">
+          <a class="btn go" href="mailto:tere@utle.ee" data-i18n="mailBtn">Kirjuta meile</a>
+          <button class="btn" type="button" id="copy" data-i18n="copy">Kopeeri aadress</button>
+        </div>
+        <span class="hint" id="copied" role="status" aria-live="polite"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="mark" href="#top" aria-label="Ütle"><span class="u"><i></i><i></i>u</span>tle</a>
+    <p data-i18n="foot">„Ütle“ on inglise keeles „say“. <b>Kõnemudel:</b> Tallinna Tehnikaülikooli keeletehnoloogia labor, MIT litsents. <a href="https://utle-site.vercel.app/privaatsus">Privaatsus</a></p>
+  </div>
+</footer>
+
+<script>
+(() => {
+  /* Estonian is written in the markup; English lives here. */
+  const EN = {
+    skip: 'Skip to content', nav1: 'Who it is for', nav2: 'What it does', nav3: 'Privacy', nav4: 'About us', cta: 'Get in touch',
+    h1: 'Write messages and use the web by speaking Estonian',
+    lede: '<b>Ütle is a Chrome extension for people who cannot use their hands, or find a keyboard and mouse hard to use.</b> You speak, and Ütle types your words into the site’s own message box, fixes a mistake when you ask, and sends the message when you say “saada”. With the same voice you open sites, scroll, press buttons and fill in forms.',
+    cta2: 'Try Ütle', more: 'See what it does',
+    meta: 'Started at TalTech Mektory and won the NewWorkTech Inclusive Digital Innovation Hackathon in October 2026. <b>A prototype for now.</b>',
+    sceneLabel: 'Example: three spoken sentences write a message to Mari, change one word and send it.',
+    caption: 'The Ütle bar sits at the bottom of every page. The large text is what Ütle heard, and the line under it says what it did.',
+    whoH: 'Who it is for',
+    who1: '<b>Ütle is for people who can speak but find it hard or impossible to use their hands</b>, whether because of a motor disability, an injury or an illness. Many of them move the pointer with an eye tracker. An eye tracker works in any language, but writing with it is slow: one message to a friend can take several minutes and a lot of effort.',
+    who2: 'Dictation would help, but dictation makes mistakes, and fixing a mistake usually needs the hands the person does not have. Ütle is built so that correcting, sending and switching the microphone on also work without hands.',
+    who3: 'Ütle is also for helpers: a family member, a support worker or an occupational therapist who sets the extension up and saves the details the person needs, so that from then on they can manage on their own.',
+    figN: '33,700',
+    fig1: 'people in Estonia have a registered mobility disability. How many of them find typing hard but can speak is not known.',
+    fig2: '<b>Windows Voice Access, Apple Voice Control and Dragon do not support Estonian.</b> Windows voice typing writes Estonian but cannot control the computer.',
+    doH: 'What it does',
+    doLede: 'Ütle is a bar along the bottom of every web page. You switch listening on by voice, with a click, or by looking at the large microphone tile with an eye tracker. You speak normally, and the bar always shows how you were understood before anything important happens.',
+    d1h: 'Writes messages where the conversation already is', d1: 'Your words appear in the message box of WhatsApp Web or another site while you speak. There is no separate app and nothing to copy across. The message goes only when you say “saada” (send).',
+    d2h: 'Fixes a mistake in a few words', d2: 'You do not have to say the whole sentence again to change one word. You can move between words and sentences, delete, insert text in the middle and undo the last change.',
+    d3h: 'Understands you in your own words', d3: 'Common commands are recognised at once and without an internet connection. Any other sentence is read by a language model together with what is on the page, and it decides what to do. You can ask for several things in one breath.',
+    d4h: 'Works on any page', d4: '“Näita numbreid” (show numbers) puts a number on every link and button, and saying a number presses it. That way you can use sites Ütle knows nothing about. Scrolling, switching tabs and enlarging the text work the same way.',
+    d5h: 'Fills in forms', d5: 'You can say an ID code, a phone number or an e-mail address as words, and Ütle types it as digits and characters. Details you use often are saved once. “Valmis” (done) moves to the next field and “kinnita” (confirm) submits the form.',
+    d6h: 'Listens to you when you want it to', d6: 'If you teach Ütle your voice, it skips what other people in the room say. “Puhka” (rest) stops typing until you say “ärka üles” (wake up), and “katkesta” (cancel) stops everything in progress at once.',
+    privH: 'Where your speech and text go',
+    p1h: 'Speech recognition', p1: 'Speech is recognised by the Estonian model of the Laboratory of Language Technology at Tallinn University of Technology. It runs on your own computer or on a server whose address your helper entered in the settings. If the server is on another machine, the audio leaves your computer, and the settings page says so. If the other recogniser, Soniox, is chosen in the settings, the server passes the audio on to Soniox.',
+    p2h: 'Understanding', p2: 'Common commands are recognised by fixed rules. Any other sentence is sent as text, with a short summary of the page, to Anthropic’s Claude language model. <b>Audio is never sent to it.</b> The model can only choose from a fixed list of actions, and each choice is checked before anything happens.',
+    p3h: 'Typing', p3: 'Words are typed only into a box you chose: an open chat, a field you clicked, or a field whose number you said. A message is sent only when you say “saada”.',
+    p4h: 'What is kept', p4: 'Audio and the text of what you say are never stored, and the server does not write them to its log. Settings and saved details, such as your e-mail address, stay in your browser. If you teach Ütle your voice, the server keeps a description of it (a list of numbers, not a recording). There are no analytics and no ads.',
+    privLink: 'Read the privacy policy',
+    usH: 'About us',
+    us1: 'Ütle started on 5 and 6 October 2026 at the NewWorkTech Inclusive Digital Innovation Hackathon at TalTech Mektory in Tallinn, and <b>won it</b>.',
+    us2: 'On the first day we spoke with an eye-tracker user who has a motor disability. He told us three things: typing messages is slow, he wants to move around the browser by voice, and he wants to do it in Estonian. That became the brief. He tried Ütle himself during the hackathon, and after each try we built what he found missing: filling in forms, understanding longer sentences, and enlarging the text.',
+    aim: 'Our aim is that a person who cannot use their hands can do on the web what others do with a keyboard and mouse: write to the people close to them, read the news and use e-services, in Estonian and without someone sitting beside them.',
+    nextH: 'Next steps',
+    n1: '<b>A first round of testers</b>People who use Ütle on their own computer every day and tell us what does not work.',
+    n2: '<b>The Chrome Web Store</b>So that installing it needs no developer and nothing beyond the extension.',
+    n3: '<b>More sites by name</b>E-mail, online banking and e-services such as eesti.ee.',
+    n4: '<b>The whole computer</b>Later, a program that also works in programs other than the browser.',
+    stH: 'Where Ütle is now',
+    st1: '<b>Ütle is a prototype.</b> It has been tried by the person it was built with and by our team. Most parts pass automated tests with recorded speech and test pages, but they have seen little use with a real eye tracker and real forms.',
+    st2: 'Ütle works in Google Chrome on a computer, and only on web pages. It is not in the Chrome Web Store yet, so for now installing it needs our help.',
+    joinH: 'Try Ütle or help us',
+    join1: 'We are looking for people who speak Estonian and find it hard to use their hands, and for the people who help them. Write to us and we will arrange a time to set Ütle up on your computer.',
+    join2: 'Write to us too if you are an occupational therapist, work with assistive technology, or represent an organisation whose members Ütle could suit.',
+    mailLbl: 'Our e-mail', mailBtn: 'Write to us', copy: 'Copy address',
+    foot: '“Ütle” means “say” in Estonian. <b>Speech model:</b> Laboratory of Language Technology, Tallinn University of Technology, MIT licence. <a href="https://utle-site.vercel.app/privaatsus">Privacy</a>',
+  };
+  const UI = {
+    et: { pause: 'Peata', play: 'Mängi', copied: 'Aadress on kopeeritud.', copyFail: 'Kopeerimine ei õnnestunud. Aadress on valitud, kopeeri see ise.' },
+    en: { pause: 'Pause', play: 'Play', copied: 'Address copied.', copyFail: 'Could not copy. The address is selected, copy it yourself.' },
+  };
+  const ET = {};
+  document.querySelectorAll('[data-i18n]').forEach(el => { ET[el.dataset.i18n] = el.innerHTML; });
+  document.querySelectorAll('[data-i18n-label]').forEach(el => { ET[el.dataset.i18nLabel] = el.getAttribute('aria-label'); });
+  let lang = 'et';
+
+  /* the playing scene: the product speaks Estonian in both page languages */
+  const scene = document.getElementById('scene'), heard = document.getElementById('heard'), line = document.getElementById('line');
+  const box = document.getElementById('box'), msgs = document.getElementById('msgs'), play = document.getElementById('play');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const base = msgs.innerHTML;
+  let timers = [], running = false;
+  const at = (ms, fn) => timers.push(setTimeout(fn, ms));
+  const setLine = html => { line.innerHTML = html; };
+  function speak(t0, words) {
+    const w = words.split(' ');
+    at(t0, () => { scene.classList.add('talking'); heard.textContent = ''; });
+    w.forEach((x, i) => at(t0 + 120 + i * 260, () => { heard.textContent = w.slice(0, i + 1).join(' '); }));
+    const end = t0 + 120 + w.length * 260;
+    at(end, () => scene.classList.remove('talking'));
+    return end;
+  }
+  function bubble(text, me, time) {
+    const d = document.createElement('div'); d.className = 'msg new' + (me ? ' me' : '');
+    d.textContent = text; const s = document.createElement('small'); s.textContent = time; d.append(s); msgs.append(d);
+  }
+  function run() {
+    timers.forEach(clearTimeout); timers = [];
+    msgs.innerHTML = base; box.textContent = ''; heard.textContent = ''; setLine('Kuulan.');
+    let t = speak(700, 'kirjuta Marile, et jõuan kell viis');
+    at(t + 250, () => { box.textContent = 'Jõuan kell viis.'; setLine('Avasin vestluse Mariga. Ütle <span class="k">saada</span> või paranda.'); });
+    t = speak(t + 2400, 'mitte viis, vaid kuus');
+    at(t + 250, () => { box.innerHTML = 'Jõuan kell <del>viis</del> <ins>kuus</ins>.'; setLine('Parandatud: viis on nüüd kuus.'); });
+    at(t + 1500, () => { box.textContent = 'Jõuan kell kuus.'; });
+    t = speak(t + 2600, 'saada');
+    at(t + 250, () => { box.textContent = ''; bubble('Jõuan kell kuus.', true, '16:05'); setLine('Saadetud Marile.'); });
+    at(t + 2300, () => bubble('Super, näeme!', false, '16:06'));
+    at(t + 5200, run);
+  }
+  function setRunning(on) {
+    running = on; play.textContent = on ? UI[lang].pause : UI[lang].play; play.setAttribute('aria-pressed', String(!on));
+    if (on) run(); else { timers.forEach(clearTimeout); timers = []; scene.classList.remove('talking'); }
+  }
+  play.addEventListener('click', () => setRunning(!running));
+
+  /* copy the address; a mailto link may do nothing on some machines */
+  const addr = document.getElementById('addr'), copied = document.getElementById('copied');
+  function selectAddr() { const r = document.createRange(); r.selectNodeContents(addr); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  document.getElementById('copy').addEventListener('click', () => {
+    const fail = () => { selectAddr(); copied.textContent = UI[lang].copyFail; };
+    try { navigator.clipboard.writeText(addr.textContent).then(() => { copied.textContent = UI[lang].copied; }, fail); } catch (e) { fail(); }
+  });
+
+  function setLang(l) {
+    lang = l;
+    document.documentElement.lang = l;
+    const dict = l === 'en' ? EN : ET;
+    document.querySelectorAll('[data-i18n]').forEach(el => { const v = dict[el.dataset.i18n]; if (v != null) el.innerHTML = v; });
+    document.querySelectorAll('[data-i18n-label]').forEach(el => el.setAttribute('aria-label', dict[el.dataset.i18nLabel]));
+    document.getElementById('lang-et').setAttribute('aria-pressed', String(l === 'et'));
+    document.getElementById('lang-en').setAttribute('aria-pressed', String(l === 'en'));
+    play.textContent = running ? UI[l].pause : UI[l].play;
+    copied.textContent = '';
+    try { localStorage.setItem('utle-lang', l); } catch (e) {}
+  }
+  document.getElementById('lang-et').addEventListener('click', () => setLang('et'));
+  document.getElementById('lang-en').addEventListener('click', () => setLang('en'));
+  let start = 'et';
+  try { start = localStorage.getItem('utle-lang') || start; } catch (e) {}
+  if (location.hash === '#en') start = 'en';
+  setLang(start === 'en' ? 'en' : 'et');
+  setRunning(!reduce);
+})();
+</script>
