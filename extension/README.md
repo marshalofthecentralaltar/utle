@@ -74,29 +74,24 @@ is told its address and a token. **The audio then leaves the computer**: say so 
 `?token=<token>` (the extension does both); `/api/status` then says `"auth":"on"`. Locally:
 `PORT=8787 UTLE_TOKEN=some-long-secret npm run serve`.
 
-Deploy on Railway (the repository holds `Dockerfile` and `railway.json`):
+Several people can share one server, each with their own voice profile (round 7):
+`UTLE_TOKEN=ralf:<token 1>,mari:<token 2>`. Each token is a person; the settings page's
+**Proovi ühendust** says whose profile the token is ("Profiil: ralf, hääl õpetatud" or
+"õpetamata"), and "Õpeta mu hääl" writes that person's profile only. The profiles are kept in
+`UTLE_DATA_DIR/profiles/` (one file per token, named by the first 16 hex digits of the token's
+SHA-256); without `UTLE_DATA_DIR` they go to `models/speaker/profiles/`. With no `UTLE_TOKEN` at all
+(the dev server) the one profile stays `models/speaker/owner.json`, as before.
 
-1. railway.com → **New project → Deploy from GitHub repo**, pick this repository and the branch.
-   Railway finds `railway.json` and builds the `Dockerfile` (it installs, then downloads both
-   models into the image: the first build takes several minutes).
-2. **Variables**: `ANTHROPIC_API_KEY` (understanding), `UTLE_TOKEN` (a long random string, e.g.
-   `node -e "console.log(crypto.randomBytes(24).toString('base64url'))"`), optionally
-   `SONIOX_API_KEY` and `UTLE_MODEL`. `PORT` is set by Railway; do not set it.
-3. **Settings → Resources**: at least **1 GB** of memory. The model loads on a worker thread and
-   took about 600 MB RSS locally.
-4. **Settings → Networking → Generate domain**. Railway gives `<name>.up.railway.app` with HTTPS.
-   `https://<domain>/healthz` must answer `ok`, and
-   `curl https://<domain>/api/status -H "Authorization: Bearer <token>"` shows `"auth":"on"` and
-   `"speech":{"local":true,...}`.
-5. On the computer: the Ütle settings page → **Server**: address `wss://<domain>/api/asr`, the token
-   from step 2, press **Proovi ühendust**. It must say "Ühendus töötab: …". "Vale võti" is a wrong
-   token; "Ei saa ühendust" is a wrong address or a server that is down.
-6. Turn listening on. Right after a deploy the first connection may wait while the model loads; the
-   deploy log says `[asr] model loaded on a worker thread in N ms` when it is ready.
+Deploy on Railway: **`docs/DEPLOY.md`** has every command (`railway login`, the variables, the
+volume at `/data`, `railway up`, the three checks). Then, on each computer, the Ütle settings page →
+**Server**: address `wss://<domain>/api/asr`, that person's token, **Proovi ühendust**. "Vale võti"
+is a wrong token; "Ei saa ühendust" is a wrong address or a server that is down. Right after a
+deploy the first connection may wait while the model loads; the deploy log says
+`[asr] model loaded on a worker thread in N ms` when it is ready.
 
-The owner's voice profile ("Õpeta mu hääl") is kept on the server's disk and is lost on every
-redeploy unless a volume is mounted at `/app/models/speaker` (with the speaker model copied into it);
-teach it again after a deploy. One server has one owner.
+`scripts/asr-client.ts <ws(s)://host/api/asr?token=…> <wav>` streams a recording to any server the
+way the extension does and prints the partials, the finals and the time from the last speech to the
+last final; `--enrol 2` first teaches the token's profile from the recording.
 
 ## Install on a locked computer
 
