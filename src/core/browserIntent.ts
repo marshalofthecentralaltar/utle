@@ -309,19 +309,19 @@ phrases({ kind: 'select', what: 'sentence' }, 'vali see lause', 'vali lause', 's
 phrases({ kind: 'select', what: 'line' }, 'vali see rida', 'vali rida', 'select the line', 'select this line')
 phrases({ kind: 'select', what: 'lastWord' }, 'vali viimane sõna', 'select the last word', 'select last word')
 phrases({ kind: 'select', what: 'lastSentence' }, 'vali viimane lause', 'select the last sentence', 'select last sentence')
+// Review R3 M6: "kustuta see" / "delete this" are not here: after a select they are Backspace, else
+// the box undo of the last utterance, so they live in inpage.ts (DELETE_THIS), where the session is.
 phrases(
   { kind: 'pressKey', key: 'Backspace' },
   'kustuta täht',
   'kustuta üks täht',
   'kustuta tagant',
   'kustuta valitud',
-  'kustuta see',
   'delete a letter',
   'delete one letter',
   'delete the letter',
   'delete the selection',
   'delete selection',
-  'delete this',
   'backspace',
 )
 phrases({ kind: 'pressKey', key: 'Delete' }, 'kustuta ees', 'kustuta eest', 'kustuta järgmine täht', 'delete forward', 'delete the next letter', 'delete next letter')
