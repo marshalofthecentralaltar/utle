@@ -6,11 +6,14 @@ import { join } from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
 import { InterpretRequestSchema } from '../src/core/intent.ts'
 import { MODEL_DIR, attachAsr } from './asr.ts'
-import { authState, expectedToken, httpAuthorized, upgradeAuthorized } from './auth.ts'
+import type { AttachOptions } from './asr.ts'
+import { LOCAL_USER, authState, httpUser, tokenUsers, upgradeUser } from './auth.ts'
+import type { TokenUser } from './auth.ts'
 import { pageIntent } from './intent.ts'
 import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode, MessagesClient } from './interpret.ts'
 import { rehearse } from './rehearsal.ts'
+import { profilePath, profileSummary } from './speaker.ts'
 
 /** Sonnet 5.5: the eval on Opus 5.5 gave p50 2.7 s per command, too slow for a spoken command. UTLE_MODEL overrides. */
 const DEFAULT_MODEL = 'claude-sonnet-5-5'
@@ -34,6 +37,8 @@ export interface ApiOptions {
   rehearsal?: boolean
   /** The environment the token and the keys are read from. Default process.env. */
   env?: NodeJS.ProcessEnv
+  /** Starts the decode worker; tests pass a fake host. Default: the real worker. */
+  startWorker?: AttachOptions['startWorker']
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -103,7 +108,9 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
 export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, options: ApiOptions): void {
   const env = options.env ?? process.env
   const rehearsal = options.rehearsal === true
-  const token = expectedToken(env)
+  const users = tokenUsers(env)
+  // Each caller's voice profile file (27.6): owner.json for the open server, profiles/<id>.json per token.
+  const profileOf = (user: TokenUser): string => profilePath(options.root, env, user.id)
   let client: MessagesClient | null = null
   const model = (): string => env.UTLE_MODEL ?? DEFAULT_MODEL
 
@@ -122,11 +129,20 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
     return rehearse(parsed.data)
   }
 
-  if (httpServer) attachAsr(httpServer, options.root, { authorize: (req) => upgradeAuthorized(req, token) })
+  if (httpServer) {
+    attachAsr(httpServer, options.root, {
+      authorize: (req) => upgradeUser(req, users) !== null,
+      profileFor: (req) => {
+        const user = upgradeUser(req, users)
+        return user === null ? undefined : profileOf(user)
+      },
+      ...(options.startWorker ? { startWorker: options.startWorker } : {}),
+    })
+  }
 
   // First under /api: the token. A preflight carries no credentials, so it passes; the route answers it.
   mount('/api', (req, res, next) => {
-    if (req.method === 'OPTIONS' || httpAuthorized(req, token)) {
+    if (req.method === 'OPTIONS' || httpUser(req, users) !== null) {
       next()
       return
     }
@@ -142,8 +158,11 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
     const intent = env.ANTHROPIC_API_KEY ? 'live' : 'no_key'
     // local: the model files are on disk (whether the addon loads is only known at the first connection).
     const speech = { local: existsSync(join(options.root, MODEL_DIR)), soniox: Boolean(env.SONIOX_API_KEY) }
-    const auth = authState(token)
-    send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent, speech, auth } : { mode: 'live', model: model(), intent, speech, auth })
+    const auth = authState(users.length === 0 ? undefined : 'on')
+    // The caller's profile (27.6): which user the token is, and whether that user's voice is learnt.
+    const user = httpUser(req, users) ?? LOCAL_USER
+    const profile = { name: user.name, ...profileSummary(profileOf(user)) }
+    send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent, speech, auth, profile } : { mode: 'live', model: model(), intent, speech, auth, profile })
   })
 
   mount('/api/intent', (req, res, next) => {

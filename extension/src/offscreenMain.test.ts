@@ -1,5 +1,6 @@
 import type { IntentRequest } from '../../src/core/pageIntent.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { STRINGS } from '../../src/core/strings.ts'
 import { DEFAULT_ASR_URL, authHeaders, connectionFrom, serverCheck, serverStatus, socketAddress } from './connection.ts'
 import { asrAddress, askIntent, serverUrl } from './offscreenMain.ts'
 
@@ -53,6 +54,15 @@ describe('the status with a token (27.3)', () => {
     vi.stubGlobal('fetch', fetchMock)
     expect(await serverCheck('https://h.example/api/status', 't1')).toEqual({ state: 'live', speech: { local: true, soniox: false } })
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('authorization')).toBe('Bearer t1')
+  })
+
+  it('reads which profile the token is (round 7, 27.6), and leaves it out when the server does not say', async () => {
+    vi.stubGlobal('fetch', answer(200, { intent: 'live', speech: { local: true, soniox: false }, auth: 'on', profile: { name: 'ralf', enrolled: true, seconds: 8 } }))
+    expect(await serverCheck('https://h.example/api/status', 't1')).toEqual({ state: 'live', speech: { local: true, soniox: false }, profile: { name: 'ralf', enrolled: true } })
+    vi.stubGlobal('fetch', answer(200, { intent: 'live', profile: { name: 7 } }))
+    expect((await serverCheck('https://h.example/api/status', 't1')).profile).toBeUndefined()
+    expect(STRINGS.et.strip.serverProfile({ name: 'ralf', enrolled: true })).toBe('Profiil: ralf, hääl õpetatud.')
+    expect(STRINGS.et.strip.serverProfile({ name: 'mari', enrolled: false })).toBe('Profiil: mari, hääl õpetamata.')
   })
 
   it('says bad_token for a 401, no_key and unreachable as before', async () => {

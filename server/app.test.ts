@@ -1,11 +1,15 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Server } from 'node:http'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WebSocket } from 'ws'
 import { createUtleServer } from './app.ts'
 import { attachAsr } from './asr.ts'
-import { upgradeAuthorized } from './auth.ts'
+import type { DecoderHost } from './asrWorker.ts'
+import { LOCAL_USER, profileId, upgradeAuthorized } from './auth.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -87,5 +91,61 @@ describe('the websocket upgrade with a token (27.2)', () => {
       ws.on('error', reject)
     })
     expect(JSON.parse(first)).toEqual({ type: 'unavailable', reason: 'model_missing' })
+  })
+})
+
+describe('profiles per token (round 7, HOST lane)', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'utle-app-profiles-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const writeProfile = (id: string): void => {
+    mkdirSync(join(dir, 'profiles'), { recursive: true })
+    writeFileSync(join(dir, 'profiles', `${id}.json`), JSON.stringify({ version: 1, model: 'm', embedding: [1, 0], rms: 0.1, seconds: 8 }))
+  }
+
+  it('says in /api/status which profile the token is, and whether its voice is learnt', async () => {
+    writeProfile(profileId('tb'))
+    const host = await serve({ UTLE_TOKEN: 'ralf:ta,mari:tb', UTLE_DATA_DIR: dir })
+    const status = async (token: string): Promise<unknown> => (await (await fetch(`http://${host}/api/status`, { headers: { authorization: `Bearer ${token}` } })).json()) as unknown
+    expect(await status('ta')).toMatchObject({ auth: 'on', profile: { name: 'ralf', enrolled: false } })
+    expect(await status('tb')).toMatchObject({ auth: 'on', profile: { name: 'mari', enrolled: true, seconds: 8 } })
+  })
+
+  it('names the local profile when the server is open', async () => {
+    const host = await serve({})
+    expect(await (await fetch(`http://${host}/api/status`)).json()).toMatchObject({ auth: 'off', profile: { name: LOCAL_USER.name } })
+  })
+
+  it('opens each socket on its own token\'s profile', async () => {
+    const opened: (string | undefined)[] = []
+    const decoder = { accept: () => ({ text: '', endpoint: false }), reset: () => undefined, close: () => undefined }
+    const host: DecoderHost = {
+      where: 'thread',
+      ms: 0,
+      speaker: { model: false, profile: false },
+      open: (profile) => {
+        opened.push(profile)
+        return decoder
+      },
+      onExit: () => undefined,
+    }
+    const address = await listen(createUtleServer({ root: '.', env: { UTLE_TOKEN: 'ralf:ta,mari:tb', UTLE_DATA_DIR: dir }, startWorker: () => Promise.resolve({ ok: true, host }) }))
+    const ready = (token: string): Promise<void> =>
+      new Promise((resolve, reject) => {
+        const ws = new WebSocket(`ws://${address}/api/asr?token=${token}`)
+        ws.on('message', () => {
+          ws.close()
+          resolve()
+        })
+        ws.on('error', reject)
+      })
+    await ready('ta')
+    await ready('tb')
+    expect(opened).toEqual([join(dir, 'profiles', `${profileId('ta')}.json`), join(dir, 'profiles', `${profileId('tb')}.json`)])
   })
 })

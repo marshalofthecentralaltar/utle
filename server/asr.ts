@@ -70,6 +70,8 @@ export interface AttachOptions {
   speaker?: ReturnType<typeof openSpeakerGate> | null
   /** The server token's check on the upgrade (27.2). False: the upgrade is answered 401. Default: every upgrade passes. */
   authorize?: (req: IncomingMessage) => boolean
+  /** The caller's voice profile file (27.6), from the token on the upgrade. Default: the one profile in models/speaker/. */
+  profileFor?: (req: IncomingMessage) => string | undefined
 }
 
 /**
@@ -148,7 +150,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
         }
         open += 1
         console.info(`[asr] connection opened on the ${loaded.host.where} (${open} open)`)
-        const session = createAsrSession(loaded.host.open(), (message) => send(ws, message), {
+        const session = createAsrSession(loaded.host.open(options.profileFor?.(req)), (message) => send(ws, message), {
           onError: () => {
             console.warn('[asr] decode failed')
             ws.close(1011)

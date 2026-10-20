@@ -10,13 +10,13 @@ import type { AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
 import { loadModel } from './asrModel.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
 import { decoderInThread } from './asrSession.ts'
-import { PROFILE_FILE, SPEAKER_DIR, createSpeakerGate } from './speaker.ts'
+import { PROFILE_FILE, SPEAKER_DIR, speakerGates } from './speaker.ts'
 import type { Judgement, SpeakerGate } from './speaker.ts'
 import { loadSpeakerModel } from './speakerModel.ts'
 
 /** Main thread to worker. The frame's buffer is transferred, not copied. judge and enrol are round 4 (the speaker gate). */
 export type ToWorker =
-  | { type: 'open'; id: number }
+  | { type: 'open'; id: number; profile?: string }
   | { type: 'accept'; id: number; seq: number; samples: Float32Array }
   | { type: 'reset'; id: number }
   | { type: 'close'; id: number }
@@ -52,27 +52,30 @@ export interface DecoderHost {
   ms: number
   /** Round 4: what the speaker gate behind the decoders has. */
   speaker: SpeakerStatus
-  open(): Decoder
+  /** A decoder whose speaker gate reads and writes this profile file (27.6); the default profile without one. */
+  open(profile?: string): Decoder
   /** The worker died, or the thread's recogniser is gone: the host is finished. */
   onExit(listener: (code: number) => void): void
 }
 
 export type HostStart = { ok: true; host: DecoderHost } | { ok: false; reason: AsrUnavailableReason }
 
-/** The speaker gate over the model in models/speaker/ (round 4), with or without the model file. */
-export function openSpeakerGate(root: string): { gate: SpeakerGate; status: SpeakerStatus } {
+/** The speaker gate over the model in models/speaker/ (round 4), with or without the model file. gateFor: one gate per profile file (27.6), the default one without a path. */
+export function openSpeakerGate(root: string): { gate: SpeakerGate; status: SpeakerStatus; gateFor(profile?: string): SpeakerGate } {
   const loaded = loadSpeakerModel(root)
-  const gate = createSpeakerGate(loaded.ok ? loaded.extractor : null, { profilePath: join(root, SPEAKER_DIR, PROFILE_FILE) })
-  return { gate, status: { model: loaded.ok, profile: gate.hasProfile() } }
+  const gates = speakerGates(loaded.ok ? loaded.extractor : null)
+  const defaultPath = join(root, SPEAKER_DIR, PROFILE_FILE)
+  const gate = gates(defaultPath)
+  return { gate, status: { model: loaded.ok, profile: gate.hasProfile() }, gateFor: (profile) => gates(profile ?? defaultPath) }
 }
 
 /** The worker's side: one shared recogniser and speaker gate, one stream per session id. */
-function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognizerLike<OnlineStreamLike>, gate: SpeakerGate): void {
+function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognizerLike<OnlineStreamLike>, gateFor: (profile?: string) => SpeakerGate): void {
   const streams = new Map<number, Decoder>()
   port.on('message', (message: ToWorker) => {
     switch (message.type) {
       case 'open':
-        streams.set(message.id, decoderInThread(recognizer, gate))
+        streams.set(message.id, decoderInThread(recognizer, gateFor(message.profile)))
         return
       case 'accept': {
         const decoder = streams.get(message.id)
@@ -132,7 +135,7 @@ if (!isMainThread && parentPort) {
   const loaded = loadModel(data.root)
   if (loaded.ok) {
     const speaker = openSpeakerGate(data.root)
-    serve(parentPort, loaded.recognizer, speaker.gate)
+    serve(parentPort, loaded.recognizer, speaker.gateFor)
     parentPort.postMessage({ type: 'loaded', ms: loaded.ms, speaker: speaker.status } satisfies FromWorker)
   } else {
     parentPort.postMessage({ type: 'unavailable', reason: loaded.reason } satisfies FromWorker)
@@ -140,12 +143,12 @@ if (!isMainThread && parentPort) {
 }
 
 /** Decoders over a recogniser (and a speaker gate, round 4) on this thread. */
-export function hostInThread(recognizer: OnlineRecognizerLike, ms: number, speaker: { gate: SpeakerGate; status: SpeakerStatus } | null = null): DecoderHost {
+export function hostInThread(recognizer: OnlineRecognizerLike, ms: number, speaker: { status: SpeakerStatus; gateFor(profile?: string): SpeakerGate } | null = null): DecoderHost {
   return {
     where: 'thread',
     ms,
     speaker: speaker?.status ?? { model: false, profile: false },
-    open: () => decoderInThread(recognizer, speaker?.gate ?? null),
+    open: (profile) => decoderInThread(recognizer, speaker?.gateFor(profile) ?? null),
     onExit() {
       // It lives as long as the process.
     },
@@ -185,11 +188,11 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
       where: 'worker',
       ms: 0,
       speaker: { model: false, profile: false },
-      open() {
+      open(profile) {
         const id = nextId
         nextId += 1
         let seq = 0
-        worker.postMessage({ type: 'open', id } satisfies ToWorker)
+        worker.postMessage((profile === undefined ? { type: 'open', id } : { type: 'open', id, profile }) satisfies ToWorker)
         return {
           accept(samples) {
             seq += 1

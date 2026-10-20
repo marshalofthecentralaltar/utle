@@ -7,7 +7,7 @@
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { readFile, mkdtemp, rm, mkdir } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, extname, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1067,7 +1067,8 @@ async function main(): Promise<void> {
     // ---------- the settings page's Server section (round 6, HOST lane, 27.3) ----------
     // Against `npm run serve` on 5197 when it is running; otherwise the same server (server/app.ts) is started here.
     const external = await reachable(`http://localhost:${SERVE_PORT}/healthz`)
-    const hosted = external ? null : createUtleServer({ root: repoRoot, asr: false, env: { ...process.env, UTLE_TOKEN: SERVE_TOKEN } })
+    // Round 7 (27.6): the token is named, so the result names its profile; the profiles' folder is a fresh one.
+    const hosted = external ? null : createUtleServer({ root: repoRoot, asr: false, env: { ...process.env, UTLE_TOKEN: `ralf:${SERVE_TOKEN}`, UTLE_DATA_DIR: mkdtempSync(join(tmpdir(), 'utle-profiles-')) } })
     if (hosted) await new Promise<void>((ok) => hosted.listen(SERVE_PORT, ok))
     try {
       const extensionId = new URL(sw.url()).host
@@ -1099,6 +1100,7 @@ async function main(): Promise<void> {
       check('settings: a wrong token reads "Vale võti"', wrong.startsWith('Vale võti'), JSON.stringify(wrong))
       const right = await testWith(SERVE_TOKEN)
       check(`settings: the right token reads "Ühendus töötab" (${external ? 'npm run serve' : 'in-process server'})`, right.startsWith('Ühendus töötab'), JSON.stringify(right))
+      check('settings: the result names the token profile and whether its voice is learnt (round 7)', external ? /Profiil: \S+, hääl õpeta(tud|mata)\./.test(right) : right.endsWith('Profiil: ralf, hääl õpetamata.'), JSON.stringify(right))
       const saved = await sw.evaluate(() => chrome.storage.local.get(['asrUrl', 'serverToken']))
       check('settings: the address and the token are stored', saved.asrUrl === `ws://localhost:${SERVE_PORT}/api/asr` && saved.serverToken === SERVE_TOKEN, JSON.stringify({ asrUrl: saved.asrUrl, token: saved.serverToken === SERVE_TOKEN ? '(right)' : '(other)' }))
       await mkdir(join(here, 'out'), { recursive: true })

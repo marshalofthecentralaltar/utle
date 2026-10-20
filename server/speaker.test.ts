@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
-import { ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, OTHER_THRESHOLD, OWNER_THRESHOLD, cosine, createSpeakerGate, normalised, verdict } from './speaker.ts'
+import { ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, OTHER_THRESHOLD, OWNER_THRESHOLD, cosine, createSpeakerGate, normalised, profilePath, profileSummary, speakerGates, verdict } from './speaker.ts'
 import type { EmbeddingExtractor } from './speaker.ts'
 
 /**
@@ -176,5 +176,50 @@ describe('the arithmetic', () => {
     expect(verdict(OWNER_THRESHOLD - 0.01)).toBe('unknown')
     expect(verdict(OTHER_THRESHOLD + 0.01)).toBe('unknown')
     expect(verdict(OTHER_THRESHOLD)).toBe('other')
+  })
+})
+
+describe('profiles per token (round 7, HOST lane)', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'utle-profiles-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('keeps today\'s owner.json for the local user, and puts each token\'s profile under profiles/', () => {
+    expect(profilePath('/app', {}, '')).toBe(join('/app', 'models', 'speaker', 'owner.json'))
+    expect(profilePath('/app', {}, 'abcdef0123456789')).toBe(join('/app', 'models', 'speaker', 'profiles', 'abcdef0123456789.json'))
+    expect(profilePath('/app', { UTLE_DATA_DIR: '/data' }, 'abcdef0123456789')).toBe(join('/data', 'profiles', 'abcdef0123456789.json'))
+    expect(profilePath('/app', { UTLE_DATA_DIR: '  ' }, '')).toBe(join('/app', 'models', 'speaker', 'owner.json'))
+  })
+
+  it('two tokens enrol two profiles and each is judged against its own', () => {
+    const env = { UTLE_DATA_DIR: dir }
+    const gateFor = speakerGates(fakeExtractor)
+    const ralf = profilePath('/unused', env, 'aaaaaaaaaaaaaaaa')
+    const mari = profilePath('/unused', env, 'bbbbbbbbbbbbbbbb')
+    expect(gateFor(ralf)).toBe(gateFor(ralf))
+    expect(gateFor(ralf)).not.toBe(gateFor(mari))
+    expect(gateFor(ralf).enrol(speech(0, 8))).toBe(true)
+    expect(gateFor(mari).judge(speech(0, 3))).toBeNull()
+    expect(gateFor(mari).enrol(speech(1, 8))).toBe(true)
+    expect(gateFor(ralf).judge(speech(0, 3))?.speaker).toBe('owner')
+    expect(gateFor(ralf).judge(speech(1, 3))?.speaker).toBe('other')
+    expect(gateFor(mari).judge(speech(1, 3))?.speaker).toBe('owner')
+    expect(gateFor(mari).judge(speech(0, 3))?.speaker).toBe('other')
+    expect(existsSync(join(dir, 'profiles', 'aaaaaaaaaaaaaaaa.json'))).toBe(true)
+    expect(existsSync(join(dir, 'profiles', 'bbbbbbbbbbbbbbbb.json'))).toBe(true)
+    expect(existsSync(join(dir, 'owner.json'))).toBe(false)
+    // A restart reads each back from its own file.
+    expect(speakerGates(fakeExtractor)(mari).judge(speech(1, 3))?.speaker).toBe('owner')
+  })
+
+  it('summarises a profile for /api/status without reading out the voice', () => {
+    const path = profilePath('/unused', { UTLE_DATA_DIR: dir }, 'cccccccccccccccc')
+    expect(profileSummary(path)).toEqual({ enrolled: false })
+    speakerGates(fakeExtractor)(path).enrol(speech(0, 8))
+    expect(profileSummary(path)).toEqual({ enrolled: true, seconds: 8 })
   })
 })
