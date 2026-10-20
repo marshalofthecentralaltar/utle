@@ -7,15 +7,15 @@ and run locally first (section 27.7 has the numbers).
 
 ## What it costs and what it needs
 
-- **Memory:** __MEMORY__. Railway's Hobby plan allows up to **48 GB of RAM and 48 vCPU per service**
+- **Memory:** the container peaked at **407 MB** (cgroup `memory.peak`) with the model loaded, two sockets decoding at once and one enrolment, and idles at about 355 to 377 MiB. Plan on 0.5 GB. Railway's Hobby plan allows up to **48 GB of RAM and 48 vCPU per service**
   ("Depending on the plan you are on, you are allowed to use up these resources per service", the
   plan table at https://docs.railway.com/reference/pricing/plans, read 2026-10-21). So the plan's
   limit is no constraint, and there is no memory setting to change.
-- **Money:** memory is billed at $10 per GB per month (same page), so about __COST__ a month for memory
+- **Money:** memory is billed at $10 per GB per month (same page), so about $4 to $5 a month for memory
   if the service runs all the time, plus a little CPU for each utterance. Hobby is $5 a month and
   includes $5 of usage.
 - **Volume:** Hobby allows 5 GB of volume storage. A voice profile is about 11 KB.
-- **Image:** __IMAGE__ (Hobby allows images up to 100 GB).
+- **Image:** 1.19 GB on disk, 393 MB compressed (both models are inside it) (Hobby allows images up to 100 GB).
 
 ## The steps
 
