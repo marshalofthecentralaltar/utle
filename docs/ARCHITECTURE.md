@@ -717,7 +717,8 @@ An empty box makes the word, sentence and mark repairs say the box is empty.
 | vali sõna X, vali X (X one or two words) / select X, select the word X | `select{find: X}` | a box holding X |
 | kustuta sõna X / delete the word X, delete word X | `select{find: X}`, then `pressKey{Backspace}`; the line names the word | a box holding X |
 | kirjuta siia vahele X, kirjuta vahele X, lisa siia vahele X, lisa siia X, sisesta siia X, sisesta X / insert X, insert here X, type here X, add here X | `typeText{X}` (a closing full stop is dropped; spacing and the capital are worked out on the page, 23.5) | a box |
-| kustuta täht, kustuta üks täht, kustuta tagant, kustuta valitud, kustuta see / delete a letter, delete one letter, delete the letter, delete the selection, delete selection, delete this, backspace; kustuta N tähte / delete N letters | `pressKey{Backspace}`, N times | a box |
+| kustuta täht, kustuta üks täht, kustuta tagant, kustuta valitud / delete a letter, delete one letter, delete the letter, delete the selection, delete selection, backspace; kustuta N tähte / delete N letters | `pressKey{Backspace}`, N times | a box |
+| kustuta see / delete this (round 7, review R3 M6) | after a step whose last command was a `select` (the session's `lastWasSelect`, set by `inpageResult`): `pressKey{Backspace}` on the selection, pushing the old text for "võta tagasi"; otherwise the box undo of the last utterance, as "võta tagasi" (says "Pole midagi tagasi võtta." when there is nothing, never one letter) | a box (armed for the undo) |
 | kustuta ees, kustuta eest, kustuta järgmine täht / delete forward, delete the next letter, delete next letter | `pressKey{Delete}` | a box |
 | vasakule, üks vasakule, üks täht vasakule / arrow left, go left, one left, one to the left; N korda vasakule, vasakule N korda, N tähte vasakule, N vasakule / N times left, left N times, go left N times, arrow left N times | `pressKey{ArrowLeft}`, N times | a box |
 | paremale, üks paremale, üks täht paremale / arrow right, go right, one right, one to the right; the same count forms | `pressKey{ArrowRight}`, N times | a box |
@@ -922,7 +923,7 @@ The owner's first item was speed: a command must act within about a second by th
 
 **Stale utterances are not thought about.** When a job's turn comes more than `STALE_MS` (3 s) after it arrived, it gets the rules' step only: no question, no loop, and both of its lines carry the suffix `catchingUp` ("Jõuan järele…"). An answer minutes late would act on a page that has changed. The clock runs from arrival, so time spent waiting for a verification (below) counts.
 
-**Barge-in.** A new utterance interrupts every earlier job at its next safe point (`interrupt`): the page command in hand finishes, no further step of a multi-step loop is asked for (`interrupted`), and the question in flight is given up (`cancelled`: the `AbortController` passed through `deps.ask(request, signal)` is aborted; `askIntent` in `offscreenMain.ts` ends the fetch with it, and `askOnce` answers null). The interrupted utterance's strip line stays what its last step said. A job still waiting its turn when a later utterance arrived is cancelled too, so it runs the rules' step and is never asked. The exception is a plain send ("saada"): it does not touch a verification that is still judging (nothing is sent while the box is being judged, so it waits for it instead), it marks every other job interrupted, and it cancels only a job that is already in its loop (`looping`, past its first step); a verification that has already found a command and is acting on it is interrupted like any other. A verification given up leaves the typed words in place. Round 4 adds two exceptions (24.1): a plain send waits behind a job that is working through a chain of goals instead of interrupting it, and a continued utterance ("siis ava Karin") interrupts nothing.
+**Barge-in.** A new utterance interrupts every earlier job at its next safe point (`interrupt`): the page command in hand finishes, no further step of a multi-step loop is asked for (`interrupted`), and the question in flight is given up (`cancelled`: the `AbortController` passed through `deps.ask(request, signal)` is aborted; `askIntent` in `offscreenMain.ts` ends the fetch with it, and `askOnce` answers null). The interrupted utterance's strip line stays what its last step said. Round 7 (review R3 M3): only a job that has begun is cancelled (its turn came: `started`, a question in flight `controller`, the loop `looping`, or a verification `verifying`; `askOnce` sets the controller before it reads the page, so a barge-in during that read counts). A job still waiting its turn when a later utterance arrived is only interrupted: when its turn comes it runs the rules and, unless it waited longer than `STALE_MS`, is asked like any other, with no further step after the first. The exception is a plain send ("saada"): it does not touch a verification that is still judging (nothing is sent while the box is being judged, so it waits for it instead), it marks every other job interrupted, and it cancels only a job that is already in its loop (`looping`, past its first step); a verification that has already found a command and is acting on it is interrupted like any other. A verification given up leaves the typed words in place. Round 4 adds two exceptions (24.1): a plain send waits behind a job that is working through a chain of goals instead of interrupting it, and a continued utterance ("siis ava Karin") interrupts nothing.
 
 **Verification off the critical path.** Type first, verify after (22.2) now runs the verification as its own job, in the background, outside the serial queue: the next utterance is handled while the model judges the words. The verifications in flight are tracked (`pending`), and of those, the ones running page commands (`acting`). Before its turn, a plain send waits for every verification pending; any other utterance waits only for a verification that is acting, so the commands of two utterances never interleave. A verdict of `dictate` or `unclear`, no answer, or a cancellation leaves the words. A verdict of anything else first reads the box again: when it still reads as the typing left it (the rules' `setText` text), the session goes back to what it was before the typing (unless something since has moved the session on), the base text is put back with one `setText`, and the model's step runs through the same loop as a first-asked utterance; when the box has changed since (more was typed, or the page changed it), nothing is touched and the strip says `lateCommand` ("Hiljem: see oli käsk „…“, teksti ei muutnud."). `thinking` counts the questions in flight, so the dots show while any verification runs.
 
@@ -1022,8 +1023,14 @@ Soniox closing first all become `unavailable` with reason `load_failed` and a 10
 which `src/speech/pick.ts` falls back to Chrome's recogniser as for the local model (the development page only; the extension shows the unreachable line, 21.2). No key at all
 is `unavailable` at once, with a warning on the server that names `SONIOX_API_KEY`.
 
-**Logged.** `[soniox] connecting`, `session open`, `browser closed, code N`, `error N`, `closed by
-Soniox, code N`. Never audio, never text.
+**Lag** (round 7, review R3 M4). A frame for Soniox is dropped, never queued, when the upstream
+socket's `bufferedAmount` exceeds `SONIOX_MAX_BUFFERED_BYTES` (64 000 bytes, 2 s of 16 kHz 16-bit
+PCM: the network is not taking the audio), and the browser gets `lag` with the queue's length in
+ms; the next frame that goes is preceded by `lag` 0, as `src/speech/local.ts` does on its side.
+
+**Logged.** `[soniox] connecting`, `session open`, `browser closed, code N`, `error N: message`
+(the message clipped to 200 characters, and left out for 401 and 403, whose message can echo the
+key), `closed by Soniox, code N`. Never audio, never text.
 
 **Not verified without a key.** The field names were taken from Soniox's client source and two
 integrations because Soniox's documentation site was not reachable from the machine that wrote
@@ -1300,3 +1307,48 @@ The service's environment: `ANTHROPIC_API_KEY` (understanding), `UTLE_TOKEN` (a 
 `npm run ext:pack` (`scripts/pack.ts`) builds the extension and writes `extension/out/utle-<version>.zip` with `manifest.json`, the html pages, `dist/`, `relay.js` and `icons/`, nothing else (the zip is written by the script with `zlib`, no external tool). The icons (16, 48, 128 px: a green rounded square with a white dot, like the microphone square) are drawn by `scripts/icons.ts` with a small PNG encoder over `zlib`, and the manifest names them under `icons` and `action.default_icon`. The version is 0.3.0. What the store listing needs that the repository cannot hold: a privacy policy URL (`docs/PRIVACY.md` is its text), screenshots, the single-purpose statement and the justification of the host permission (`extension/README.md` drafts them).
 
 Tests: `server/auth.test.ts` (the header, the query on the upgrade, wrong and missing tokens, open when unset, the status flag), `extension/src/offscreenMain.test.ts` (`serverUrl` for ws and wss, the token on the socket and as a header, `connectionFrom`, `serverStatus` for 401), `extension/src/engine.test.ts` (a 401 status shows the token line), `extension/test/run.ts` (the settings page against a running `npm run serve`). Not verified here: the Docker build (Docker is not installed on the machine that wrote this), a Railway deploy, a store upload, and a real voice over the network.
+
+## 28. Round 7, ROBUST lane (2026-10-21)
+
+The faults the round 3 review left open (`docs/REVIEW-R3.md` M3, M4, M6; their spec sentences are
+in 23.2, 21.1 and 23.6), the test that failed under load, and hotword biasing.
+
+### 28.1 Hotwords: the recogniser leans toward the command words
+
+sherpa-onnx's contextual biasing (https://k2-fsa.github.io/sherpa/onnx/hotwords/index.html; it needs
+`modified_beam_search`, which 20.1 already uses) boosts each token of a listed phrase while the beam
+search follows it. TalTech's model ships `tokens.txt` and no `bpe.model`, and with the default
+`modelingUnit` (`cjkchar`) sherpa splits a line on its own rules and cannot find the model's word
+pieces ("▁keri" is looked up as "▁" and "keri", both missing). So the recogniser is given
+`modelingUnit: 'bpe'` and a vocabulary built from `tokens.txt` (`bpeVocabFromTokens` in
+`src/core/hotwords.ts`: "piece<TAB>-ln(id)", the pieces in the tokeniser's own rank order, the
+blank, `<...>` and `#n` left out), and the phrases as plain lowercase words, one per line, as the
+docs require for that mode.
+
+**The list** (`hotwordPhrases`): every fixed command phrase of the core (`COMMAND_PHRASES` in
+`src/core/inpage.ts`: `BROWSER_PHRASES` and the rest of the rules' phrase list), the one-word
+commands that are no phrase of their own (`COMMAND_WORDS`: saada, otsi, katkesta, ava, mine, …),
+and the site names as written (the `SITES` keys found in their own address: youtube, whatsapp,
+delfi; never the sound-alike spellings "juutuba", "vatsap"). A phrase made only of words the English
+phrases use is left out (`isEnglishPhrase`). About 265 lines.
+
+**The files.** `scripts/hotwords.ts` writes `models/hotwords.txt` and `models/hotwords.vocab`
+(`writeHotwords` in `server/hotwords.ts`); `npm run model` runs it every time, and `loadModel`
+(`hotwordsConfig`) writes them when either is missing. When they cannot be written the recogniser
+loads without hotwords. `HOTWORDS_SCORE` 0 passes nothing.
+
+**The score** (`HOTWORDS_SCORE` = 1.0), measured with `npx tsx scripts/asr-hotwords-eval.ts 1 1.5 2 3`
+on the five fixtures in `scripts/fixtures/` (TartuNLP speech, 29 words): off 1 word error
+("näita numbreid ja" for "näita numbreid"); 1.0, 1.5 and 2.0 none; 3.0 four (command words that were
+not said: "keri alla numbrid", "saada numbri"). From 1.5 the dictated sentence changes too ("Tere! Ava
+uus vaheleht" became "Tere, ava uus vaheleht"); at 1.0 every dictated word, capital and mark is as
+without hotwords. The only other change at 1.0 is a capital: "Järgmine vaheleht" is "järgmine
+vaheleht". Not measured: a real voice, a noisy room, and how often a dictated sentence is pulled
+toward a command phrase at 1.0 over hours of use.
+
+### 28.2 The test that failed under load
+
+"chains of goals (round 4) > stops at MAX_CHAIN_STEPS page steps in all" ran on real timers: the
+engine waits `SETTLE_MS` (300 ms) between steps, and 16 steps made 15 real waits, about 4.8 s of wall
+time against vitest's 5 s limit. It now runs on fake timers and takes milliseconds.
+

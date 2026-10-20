@@ -86,9 +86,9 @@ and the browser suite, none of it tried with a real voice:
 - **Soniox** as a second recogniser behind `SONIOX_API_KEY` on the dev server and the Kõnemudel
   setting; built from Soniox's public client code, never run against the real service.
 
-Known, not fixed (docs/REVIEW-R3.md has the details): a queued utterance that has not started is
-cancelled by a barge-in and typed unverified; a one-word "kustuta see" with nothing selected deletes
-one letter; after 4 s on Google Docs the next sentence is glued to the last; Soniox has no lag path.
+Known, not fixed (docs/REVIEW-R3.md has the details): after 4 s on Google Docs the next sentence is
+glued to the last. The queued-utterance barge-in, "kustuta see" deleting one letter and Soniox's
+missing lag path were fixed in round 7 (1i).
 
 ## 1c. Round 4, VOICE lane (2026-10-06): the server knows his voice
 
@@ -216,6 +216,34 @@ redeploy without a volume.
 
 What Ralf must do: create the Railway service (README "Hosted server"), set the variables, read the
 first deploy's log for `[asr] model loaded`, then the store listing (README "The store zip").
+
+## 1i. Round 7, ROBUST lane (2026-10-21): the round 3 leftovers, a flaky test, hotwords
+
+Built on branch `r7-robust` (`docs/ARCHITECTURE.md` 23.2, 21.1, 23.6, 28), green on `npm run check`:
+
+- A barge-in cancels only a job that has begun (review R3 M3). An utterance still queued behind a
+  slow page command ("ava delfi", then "uus leht", then "otsi ilm") is now asked when its turn comes
+  instead of being typed unverified. `npx vitest run extension/src/engine.test.ts`, tests
+  "barge-in: a queued job is not cancelled" and "barge-in: a running model ask is cancelled".
+- "kustuta see" / "delete this" takes back the last thing he said (the box undo, as "võta tagasi");
+  after a "vali ..." step it deletes the selection (review R3 M6). `npx vitest run
+  src/core/inpage.test.ts`, the "review R3 M6" block.
+- Soniox: past 2 s of audio the network has not taken, a frame is dropped and the strip gets the
+  lag; an upstream error's message is logged except for 401 and 403 (review R3 M4). `npx vitest run
+  server/soniox.test.ts`. Never run against Soniox.
+- The engine test that failed under load ("stops at MAX_CHAIN_STEPS") waited 16 × 300 ms of real
+  time; it runs on fake timers now.
+- Hotwords: the local recogniser leans toward the ~265 Estonian command phrases and site names
+  (`models/hotwords.txt`, written by `npm run model` or at server start). `npx tsx
+  scripts/asr-hotwords-eval.ts 1 1.5 2 3` on the five fixtures: 1 word error off, 0 at 1.0, 1.5 and
+  2.0, 4 at 3.0; 1.5 already changes dictated punctuation, so `HOTWORDS_SCORE` is 1.0.
+
+Not verified: a real voice with hotwords on (the fixtures are synthetic speech, 29 words), whether
+hotwords pull ordinary dictation toward command words over a day of use, and the server actually
+writing `models/hotwords.txt` at start (the lane's `models/` was read only; the eval writes the
+files to a temporary folder through the same `hotwordsConfig`). After merging, run `npm run model`
+once (or just start the server) so the files exist. Google Docs gluing (M5) is still open: the fix is
+in `extension/src/page.ts` and needs a browser test, more than the 20 lines the lane was allowed.
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
