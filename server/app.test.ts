@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from 'node:http'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import { createUtleServer } from './app.ts'
 import { attachAsr } from './asr.ts'
@@ -119,6 +119,22 @@ describe('profiles per token (round 7, HOST lane)', () => {
   it('names the local profile when the server is open', async () => {
     const host = await serve({})
     expect(await (await fetch(`http://${host}/api/status`)).json()).toMatchObject({ auth: 'off', profile: { name: LOCAL_USER.name } })
+  })
+
+  it('logs how many of the configured profiles are enrolled at start, not the state of owner.json', async () => {
+    writeProfile(profileId('tb'))
+    const lines: string[] = []
+    const info = vi.spyOn(console, 'info').mockImplementation((line: string) => {
+      lines.push(line)
+    })
+    const host: DecoderHost = { where: 'thread', ms: 0, speaker: { model: true, profile: false }, open: () => ({ accept: () => ({ text: '', endpoint: false }), reset: () => undefined, close: () => undefined }), onExit: () => undefined }
+    try {
+      await listen(createUtleServer({ root: '.', env: { UTLE_TOKEN: 'ralf:ta,mari:tb', UTLE_DATA_DIR: dir }, startWorker: () => Promise.resolve({ ok: true, host }) }))
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    } finally {
+      info.mockRestore()
+    }
+    expect(lines).toContain('[asr] speaker model loaded; 2 profiles, 1 enrolled')
   })
 
   it('opens each socket on its own token\'s profile', async () => {

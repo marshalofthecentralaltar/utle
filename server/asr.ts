@@ -55,9 +55,16 @@ export function parseClientFrame(data: RawData | string): AsrClientMessage | nul
   }
 }
 
-/** The log line about the speaker gate (round 4): what it has, never whose voice. */
-export function speakerLine(status: SpeakerStatus): string {
+/** How many voice profiles the tokens name, and how many of them are learnt (round 7, 27.6). */
+export interface ProfileCount {
+  count: number
+  enrolled: number
+}
+
+/** The log line about the speaker gate (round 4): what it has, never whose voice. With users (27.6), how many of their profiles are learnt instead of owner.json's state. */
+export function speakerLine(status: SpeakerStatus, profiles?: ProfileCount): string {
   const model = status.model ? 'speaker model loaded' : 'no speaker model (npm run model fetches it; loudness only until then)'
+  if (profiles) return `[asr] ${model}; ${profiles.count} profile${profiles.count === 1 ? '' : 's'}, ${profiles.enrolled} enrolled`
   return `[asr] ${model}; owner's voice ${status.profile ? 'learnt' : 'not learnt yet'}`
 }
 
@@ -72,6 +79,8 @@ export interface AttachOptions {
   authorize?: (req: IncomingMessage) => boolean
   /** The caller's voice profile file (27.6), from the token on the upgrade. Default: the one profile in models/speaker/. */
   profileFor?: (req: IncomingMessage) => string | undefined
+  /** The configured profiles for the start-up line (27.6), read when the model has loaded. Default: owner.json's state. */
+  profiles?: () => ProfileCount
 }
 
 /**
@@ -91,7 +100,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     const worker = await startWorker(root, join(root, WORKER_ENTRY))
     if (worker.ok) {
       console.info(`[asr] model loaded on a worker thread in ${worker.host.ms} ms`)
-      console.info(speakerLine(worker.host.speaker))
+      console.info(speakerLine(worker.host.speaker, options.profiles?.()))
       worker.host.onExit((code) => {
         console.warn(`[asr] decode worker exited with ${code}; the next connection loads the model again`)
         host = null
@@ -111,7 +120,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     console.info(`[asr] model loaded on the server thread in ${loaded.ms} ms`)
     const speaker = options.speaker === undefined ? openSpeakerGate(root) : options.speaker
     const inThread = hostInThread(loaded.recognizer, loaded.ms, speaker)
-    console.info(speakerLine(inThread.speaker))
+    console.info(speakerLine(inThread.speaker, options.profiles?.()))
     return { ok: true, host: inThread }
   }
 

@@ -136,6 +136,7 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
         const user = upgradeUser(req, users)
         return user === null ? undefined : profileOf(user)
       },
+      ...(users.length > 0 ? { profiles: () => ({ count: users.length, enrolled: users.filter((user) => profileSummary(profileOf(user)).enrolled).length }) } : {}),
       ...(options.startWorker ? { startWorker: options.startWorker } : {}),
     })
   }
