@@ -176,6 +176,8 @@ export interface AsrSessionOptions {
   now?: () => number
   /** The decoder failed; the caller closes the connection. */
   onError?: (error: unknown) => void
+  /** Each final's verdict, for the server log: numbers only, never the text. */
+  onJudged?: (judgement: Judgement, onlyOwner: boolean) => void
 }
 
 interface QueuedFrame {
@@ -285,6 +287,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       if (closed) return
       if (judgement) {
         send({ type: 'final', text, speaker: judgement.speaker })
+        options.onJudged?.(judgement, onlyOwner)
         if (onlyOwner && judgement.speaker === 'other') foreignFinals += 1
       } else send({ type: 'final', text })
       then()

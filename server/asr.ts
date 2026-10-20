@@ -153,6 +153,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             console.warn('[asr] decode failed')
             ws.close(1011)
           },
+          onJudged: (judgement, onlyOwner) => console.info(`[asr] final judged ${judgement.speaker} ${judgement.score} (only owner ${onlyOwner ? 'on' : 'off'})`),
         })
         send(ws, { type: 'ready' })
         ws.on('message', (data: RawData, isBinary: boolean) => {
