@@ -62,6 +62,8 @@ export interface ServerCheck {
   state: ServerState
   /** Which speech engines the server can run, when it answered. */
   speech?: { local: boolean; soniox: boolean }
+  /** Round 7 (27.6): which voice profile the token is, when the server says. */
+  profile?: { name: string; enrolled: boolean }
 }
 
 const field = (body: unknown, key: string): unknown => (typeof body === 'object' && body !== null && key in body ? (body as Record<string, unknown>)[key] : undefined)
@@ -75,9 +77,12 @@ export async function serverCheck(statusUrl: string, token: string): Promise<Ser
     if (!response.ok) return { state: 'unreachable' }
     const body: unknown = await response.json()
     const speech = field(body, 'speech')
+    const profile = field(body, 'profile')
+    const name = field(profile, 'name')
     return {
       state: field(body, 'intent') === 'no_key' ? 'no_key' : 'live',
       speech: { local: field(speech, 'local') === true, soniox: field(speech, 'soniox') === true },
+      ...(typeof name === 'string' ? { profile: { name, enrolled: field(profile, 'enrolled') === true } } : {}),
     }
   } catch {
     return { state: 'unreachable' }

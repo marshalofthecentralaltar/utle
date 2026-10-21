@@ -217,6 +217,39 @@ redeploy without a volume.
 What Ralf must do: create the Railway service (README "Hosted server"), set the variables, read the
 first deploy's log for `[asr] model loaded`, then the store listing (README "The store zip").
 
+## 1h. Round 7, HOST lane (2026-10-21): the image runs, one server for several people
+
+Built on branch `r7-host` (`docs/ARCHITECTURE.md` 27.6 and 27.7; `docs/DEPLOY.md`; `extension/README.md`
+"Hosted server"):
+
+- **The Docker image builds and recognises speech.** `docker build -t utle-server .` exits 0 with
+  both models fetched inside the build; the Dockerfile needed no change (the addon loads with the
+  `LD_LIBRARY_PATH` it already set). 1.19 GB on disk, 393 MB compressed. The container logs
+  `[asr] model loaded` and `[asr] speaker model loaded`, answers `/healthz` without a token and
+  `/api/status` only with it, and gives the same finals for the recorded dictation as the dev server
+  (1691 ms from the last speech to the last final in the container, 1727 ms on the dev server).
+- **Memory:** 407 MB peak (two sockets and an enrolment), about 0.5 GB needed, not 1 GB. Railway
+  Hobby allows 48 GB per service; memory costs about $4 to $5 a month at $10 per GB.
+- **Profiles per token.** `UTLE_TOKEN=ralf:<t1>,mari:<t2>`: each token is a person with their own
+  voice profile at `UTLE_DATA_DIR/profiles/<first 16 hex of the token's SHA-256>.json`; enrolment
+  writes only the caller's. No `UTLE_TOKEN` (the dev server): `models/speaker/owner.json` as before.
+  `/api/status` answers `profile: { name, enrolled, seconds }`; the settings page's **Proovi
+  ühendust** adds "Profiil: ralf, hääl õpetatud / õpetamata". A profile written to a Docker volume
+  survived a new container.
+- `scripts/asr-client.ts <ws(s)://…/api/asr?token=…> <wav> [--enrol 2]` streams a recording to any
+  server the way the extension does.
+
+Not verified: no Railway deploy (the CLI is not logged in), no real voice over the internet, the
+latency over a real network. The recorded fixtures are quiet: only `et-sentence-16k.wav` has the two
+seconds of speech an enrolment needs within its patience window.
+
+Ralf's morning, in full in `docs/DEPLOY.md`:
+1. `railway login`, then `railway init -n utle`, `railway add --service utle-server`, `railway service link utle-server`.
+2. One token per person (`node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"`).
+3. `railway variable set "ANTHROPIC_API_KEY=…" "UTLE_DATA_DIR=/data"`, and `UTLE_TOKEN` as `name:token,name:token` through `--stdin`.
+4. `railway volume add --mount-path /data`, `railway up --ci`, `railway domain`.
+5. The three checks: `/healthz` 200, `/api/status` with the token, `npx tsx scripts/asr-client.ts "wss://<domain>/api/asr?token=…" scripts/fixtures/et-dictate-send-16k.wav`.
+
 ## 1i. Round 7, ROBUST lane (2026-10-21): the round 3 leftovers, a flaky test, hotwords
 
 Built on branch `r7-robust` (`docs/ARCHITECTURE.md` 23.2, 21.1, 23.6, 28), green on `npm run check`:

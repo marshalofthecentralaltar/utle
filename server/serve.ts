@@ -4,7 +4,7 @@
  * ANTHROPIC_API_KEY, SONIOX_API_KEY and UTLE_MODEL as in development. Never logs the token.
  */
 import { fileURLToPath } from 'node:url'
-import { expectedToken } from './auth.ts'
+import { tokenUsers } from './auth.ts'
 import { createUtleServer } from './app.ts'
 
 const DEFAULT_PORT = 8787
@@ -14,7 +14,8 @@ const port = Number(process.env.PORT) || DEFAULT_PORT
 const server = createUtleServer({ root })
 
 server.listen(port, () => {
-  const auth = expectedToken() === undefined ? 'open (UTLE_TOKEN unset)' : 'token required'
+  const users = tokenUsers().length
+  const auth = users === 0 ? 'open (UTLE_TOKEN unset)' : `token required, ${users} profile${users === 1 ? '' : 's'}`
   console.info(`[serve] Ütle server on port ${port}, ${auth}; understanding ${process.env.ANTHROPIC_API_KEY ? 'on' : 'off (no ANTHROPIC_API_KEY)'}`)
 })
 
