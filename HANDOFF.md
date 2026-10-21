@@ -287,8 +287,9 @@ the browser suite's settings case (`extension/test/out/enrol.png`, "1 / 12"); `n
 
 **Not verified**: a real voice through any of it: the threshold on his voice and a friend's, a real
 room's noise, a real microphone, and how often continuity lets a friend's short word through in a
-real conversation. The last final now comes about 0.5 s later than before the detector (container,
-`asr-client.ts`: 2.2 s after the last speech frame, was 1.7 s); not investigated. The hosted
+real conversation. Measured, not explained: with the detector the "saada" after a sentence and
+"järgmine vaheleht" end 0.5 s later, "jah", "näita numbreid" and "üks" 0.2 to 0.4 s earlier
+(ARCHITECTURE 27.7 has the table); the cause is not found. The hosted
 server (Railway) needs a redeploy for the new models.
 
 **Ten minutes in the morning, with the friend:**
