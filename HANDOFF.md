@@ -250,8 +250,8 @@ TartuNLP's synthetic voice "mari", used as a stand-in owner; the others are six 
 utterances with 0.6 s of speech or more: 0.622 to 0.760. Other voices: at most 0.499 (vesta, a
 woman's voice; the pitch-shifted owner 0.365). Threshold picked: 0.538, set as 0.54: 0 other clips
 pass. The stand-in owner's one-word utterances ("jah", "saada", "üks", 0.4 to 0.5 s of speech)
-scored 0.14 to 0.27: **in strict mode his one-word commands will often be dropped.** No threshold
-keeps them and drops a friend. Against the real round 4 `owner.json` (its own CAM++ model) every
+scored 0.14 to 0.27. No threshold keeps them and drops a friend, so continuity (below) keeps them
+instead. Against the real round 4 `owner.json` (its own CAM++ model) every
 synthetic clip scored at most 0.346.
 
 **Proven, and by what**: `npx vitest run server/speaker.test.ts server/asrSession.test.ts
@@ -261,12 +261,35 @@ scripted enrolment, the speech detector with a fake, capture); `npx tsx scripts/
 through the real recogniser and detector (pink noise: 0 finals; the five fixtures: their sentences);
 the browser suite's settings case (`extension/test/out/enrol.png`, "1 / 12"); `npm run check`.
 
+**Defect round (same day, branch `r7-speech`):**
+
+- **Merged main** (0d96e3d): HOST's profiles per token and ROBUST's hotwords now run with this
+  gate, the detector and scripted enrolment. A token's socket enrols and is judged on its own
+  `profiles/<id>.json`; tested with phrase enrolment ("two tokens enrol two profiles from read
+  phrases").
+- **Continuity** (`continued` in `server/speaker.ts`, ARCHITECTURE 24.2): an utterance with under
+  1.0 s of speech (`SHORT_UTTERANCE_SECONDS`) is the owner's when his last owner final judged on its
+  score was at most 10 s (`CONTINUITY_MS`) before it, whatever it scores. So "saada" after the
+  sentence, or "jah" right after he spoke, passes strict mode. Only a score-judged owner final opens
+  the window, an `other` final closes it, and long utterances are never covered. The cost: a
+  friend's one-word reply within 10 s of the owner speaking passes. The log says
+  `[asr] final judged owner 0.168 continuity (only owner on)`, never the words.
+- **The voice test's case 6 failure, found and fixed** (`server/vad.ts`): the detector made short
+  words vanish. Silero at 0.1 s minimum speech missed the quiet "üks" at some window phases (3 in 96
+  replays), and on the digital zeros it fed for non-speech the recogniser could drop a short last word
+  ("Saada" then nothing, in 4 of 21 recorded live sessions). Now 0.05 s, and non-speech reaches the
+  recogniser as a faint fixed hiss (-85 dBFS). `UTLE_REAL=1 extension/test/voice.ts`: ALL PASS 3 of
+  3 full runs. A lone "." is no longer sent as a final.
+- **The image** builds and runs with the three models: 1.22 GB, peak memory 579 MB (ARCHITECTURE 27.7).
+  Same words from the container as from the dev server.
+- The browser suite's two "with no ordinary window → no_target" failures did not occur on the merged
+  tree (`npx tsx extension/test/run.ts`: ALL PASS, one run).
+
 **Not verified**: a real voice through any of it: the threshold on his voice and a friend's, a real
-room's noise, a real microphone. `UTLE_REAL=1 extension/test/voice.ts` passes its new-tab case
-alone (2 of 2) but in the full run that case failed every time with the detector (the new tab was
-already on another site before "näita numbreid" was acted on; the server's finals, captured, were
-exactly the right ones) and passed without it (2 of 2); the cause was not found. The hosted server
-(Railway) needs a redeploy for the new models.
+room's noise, a real microphone, and how often continuity lets a friend's short word through in a
+real conversation. The last final now comes about 0.5 s later than before the detector (container,
+`asr-client.ts`: 2.2 s after the last speech frame, was 1.7 s); not investigated. The hosted
+server (Railway) needs a redeploy for the new models.
 
 **Ten minutes in the morning, with the friend:**
 
