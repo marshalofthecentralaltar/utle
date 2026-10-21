@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
-import { ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, MIN_PHRASE_SECONDS, OWNER_THRESHOLD, cosine, createSpeakerGate, meanEmbedding, normalised, pickThreshold, profilePath, profileSummary, speakerGates, verdict } from './speaker.ts'
+import { CONTINUITY_MS, ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, MIN_PHRASE_SECONDS, OWNER_THRESHOLD, SHORT_UTTERANCE_SECONDS, continued, cosine, createSpeakerGate, meanEmbedding, normalised, pickThreshold, profilePath, profileSummary, speakerGates, verdict } from './speaker.ts'
 import type { EmbeddingExtractor, EnrolPhrase } from './speaker.ts'
 
 /**
@@ -200,6 +200,41 @@ describe('the speaker gate', () => {
     fail = true
     expect(gate.judge(speech(0, 3))).toMatchObject({ speaker: 'unknown', score: 0 })
     expect(gate.enrol(speech(0, 8))).toBe(false)
+  })
+})
+
+describe('continuity (round 7): a short word right after the owner spoke is his', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'utle-continuity-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('continuity: the judgement says how many seconds of speech it was made from', () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath: join(dir, 'owner.json') })
+    gate.enrol(speech(0, 8))
+    expect(gate.judge([...silence(1), ...speech(0, 3)])).toEqual({ speaker: 'owner', score: 1, seconds: 3 })
+    expect(gate.judge(speech(0, 0.4))).toEqual({ speaker: 'unknown', score: 0, seconds: 0.4 })
+    expect(gate.judge(speech(0.8, 0.7))).toEqual({ speaker: 'other', score: 0.309, seconds: 0.7 })
+  })
+
+  it('continuity: under SHORT_UTTERANCE_SECONDS and within CONTINUITY_MS of an owner final is owner, whatever it scored', () => {
+    expect(SHORT_UTTERANCE_SECONDS).toBe(1)
+    expect(CONTINUITY_MS).toBe(10_000)
+    expect(continued({ speaker: 'unknown', score: 0, seconds: 0.4 }, 1000, 1000 + CONTINUITY_MS)).toEqual({ speaker: 'owner', score: 0, seconds: 0.4, reason: 'continuity' })
+    expect(continued({ speaker: 'other', score: 0.168, seconds: 0.9 }, 1000, 4000)).toEqual({ speaker: 'owner', score: 0.168, seconds: 0.9, reason: 'continuity' })
+  })
+
+  it('continuity: judged as now when too late, with no owner final, when long, or when its length is not known', () => {
+    const short = { speaker: 'unknown' as const, score: 0, seconds: 0.4 }
+    expect(continued(short, 1000, 1000 + CONTINUITY_MS + 1)).toBe(short)
+    expect(continued(short, null, 1000)).toBe(short)
+    const long = { speaker: 'other' as const, score: 0.3, seconds: SHORT_UTTERANCE_SECONDS }
+    expect(continued(long, 1000, 2000)).toBe(long)
+    const unmeasured = { speaker: 'other' as const, score: 0.3 }
+    expect(continued(unmeasured, 1000, 2000)).toBe(unmeasured)
   })
 })
 

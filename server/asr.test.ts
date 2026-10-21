@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_ENROL_PHRASES, MAX_ENROL_SECONDS, parseClientFrame, speakerLine, vadLine, wantsSoniox } from './asr.ts'
+import { MAX_ENROL_PHRASES, MAX_ENROL_SECONDS, judgedLine, parseClientFrame, speakerLine, vadLine, wantsSoniox } from './asr.ts'
 
 describe('client text frames (round 4)', () => {
   it('reads flush, enrol and onlyOwner, and nothing else', () => {
@@ -49,6 +49,14 @@ describe('the log line about the speaker gate', () => {
     expect(speakerLine({ model: true, profile: false }, { count: 2, enrolled: 1 })).toBe('[asr] speaker model loaded; 2 profiles, 1 enrolled')
     expect(speakerLine({ model: true, profile: false }, { count: 1, enrolled: 0 })).toBe('[asr] speaker model loaded; 1 profile, 0 enrolled')
     expect(speakerLine({ model: true, profile: false })).toBe("[asr] speaker model loaded; owner's voice not learnt yet")
+  })
+})
+
+describe("the log line about a final's verdict", () => {
+  it('says the verdict and the score, and the reason when continuity decided it (round 7), never the text', () => {
+    expect(judgedLine({ speaker: 'owner', score: 0.71, seconds: 1.4 }, true)).toBe('[asr] final judged owner 0.71 (only owner on)')
+    expect(judgedLine({ speaker: 'other', score: 0.2 }, false)).toBe('[asr] final judged other 0.2 (only owner off)')
+    expect(judgedLine({ speaker: 'owner', score: 0.168, seconds: 0.4, reason: 'continuity' }, true)).toBe('[asr] final judged owner 0.168 continuity (only owner on)')
   })
 })
 

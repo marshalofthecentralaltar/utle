@@ -2,6 +2,7 @@ import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE } from '../src/speech/asrProtocol.
 import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
 import type { Capture } from './capture.ts'
 import type { EnrolPhrase, Judgement, SpeakerGate } from './speaker.ts'
+import { continued } from './speaker.ts'
 import type { FilteredFrame, SpeechFilter, VadFactory } from './vad.ts'
 import { createSpeechFilter } from './vad.ts'
 
@@ -338,6 +339,8 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   let lastReport = -Infinity
   let onlyOwner = false
   let foreignFinals = 0
+  /** Round 7, continuity: when the last owner final judged on its score went; null after an other final. */
+  let ownerAt: number | null = null
 
   const report = (ms: number): void => {
     send({ type: 'lag', ms })
@@ -395,8 +398,13 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
    * that fails (review) loses the verdict, not the words: the final goes without a speaker.
    */
   const sendFinal = (text: string, then: () => void): void => {
-    const deliver = (judgement: Judgement | null | undefined): void => {
+    const deliver = (judged: Judgement | null | undefined): void => {
       if (closed) return
+      // Round 7: a short word right after the owner spoke is his (continuity, server/speaker.ts).
+      const at = now()
+      const judgement = judged ? continued(judged, ownerAt, at) : judged
+      if (judgement?.speaker === 'owner' && judgement.reason === undefined) ownerAt = at
+      else if (judgement?.speaker === 'other') ownerAt = null
       if (judgement) {
         send({ type: 'final', text, speaker: judgement.speaker })
         options.onJudged?.(judgement, onlyOwner)

@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws'
 import type { RawData, WebSocket } from 'ws'
 import { ASR_PATH } from '../src/speech/asrProtocol.ts'
 import type { AsrClientMessage, AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
+import type { Judgement } from './speaker.ts'
 import { loadModel } from './asrModel.ts'
 import type { ModelLoad } from './asrModel.ts'
 import { createAsrSession, samplesFromFrame } from './asrSession.ts'
@@ -60,6 +61,11 @@ export function parseClientFrame(data: RawData | string): AsrClientMessage | nul
     default:
       return null
   }
+}
+
+/** The log line for each final's verdict: speaker, score and (round 7) the reason when continuity decided it. Never the text. */
+export function judgedLine(judgement: Judgement, onlyOwner: boolean): string {
+  return `[asr] final judged ${judgement.speaker} ${judgement.score}${judgement.reason ? ` ${judgement.reason}` : ''} (only owner ${onlyOwner ? 'on' : 'off'})`
 }
 
 /** The log line about the speech detector (round 7). */
@@ -181,7 +187,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             console.warn('[asr] decode failed')
             ws.close(1011)
           },
-          onJudged: (judgement, onlyOwner) => console.info(`[asr] final judged ${judgement.speaker} ${judgement.score} (only owner ${onlyOwner ? 'on' : 'off'})`),
+          onJudged: (judgement, onlyOwner) => console.info(judgedLine(judgement, onlyOwner)),
         })
         send(ws, { type: 'ready' })
         ws.on('message', (data: RawData, isBinary: boolean) => {

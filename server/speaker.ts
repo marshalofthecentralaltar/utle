@@ -49,8 +49,8 @@ export const PROFILE_FILE = 'owner.json'
  * the stand-in owner's) scored 0.499 at most, the stand-in owner's utterances of 0.6 s of speech or
  * more 0.622 to 0.760, so 0.54 drops every other clip and keeps those. What it does not keep: the
  * one-word utterances ("jah", "saada", "üks", 0.4 to 0.5 s of speech) scored 0.14 to 0.27; half a
- * second of voice is too little for this model, and those are `unknown` or `other`, both dropped in
- * strict mode. The stand-in owner is a synthetic voice (TartuNLP's "mari"; there is no recording of
+ * second of voice is too little for this model, and those are `unknown` or `other` on their score; continuity
+ * (below) lets them through right after an owner final. The stand-in owner is a synthetic voice (TartuNLP's "mari"; there is no recording of
  * the owner on disk), and a real voice through a real microphone scores itself lower than a
  * synthetic one does. Re-pick it on his own recordings (UTLE_CAPTURE, HANDOFF 1g) and change this.
  */
@@ -60,6 +60,22 @@ export const OWNER_THRESHOLD = 0.54
  * voice for an embedding to mean anything. A "jah" or a "saada" is 0.4 to 0.5 s of speech.
  */
 export const MIN_JUDGE_SECONDS = 0.5
+/**
+ * Continuity (round 7): an utterance with less speech than this is too short for the embedding to
+ * tell voices apart. Measured on scripts/fixtures/speaker-set: the stand-in owner's one-word clips
+ * ("jah", "saada", "üks", 0.4 to 0.5 s of speech) scored 0.14 to 0.27 against his own profile, below
+ * every other voice's best (0.499), so no threshold keeps them and still drops a friend; his
+ * utterances of 0.6 s of speech or more scored 0.62 to 0.76. Such a word is judged by who spoke last
+ * (continued, below), not by its score.
+ */
+export const SHORT_UTTERANCE_SECONDS = 1.0
+/**
+ * Continuity: a short utterance within this long of an owner final (judged on its score) is the
+ * owner's. Ten seconds covers "keri alla" then "veel" or a sentence then "saada"; a friend's short
+ * word in that window passes too, which is the cost, and it ends at his next long utterance judged
+ * other or ten seconds after he last spoke.
+ */
+export const CONTINUITY_MS = 10_000
 /** The energy gate: an utterance whose speech RMS is below this share of the owner's enrolled RMS is `other`. */
 export const ENERGY_OTHER_RATIO = 0.4
 /** Enrolment needs at least this much speech. */
@@ -100,6 +116,22 @@ export interface Judgement {
   speaker: Speaker
   /** Cosine similarity to the owner's embedding, or 0 without one. */
   score: number
+  /** Round 7: seconds of speech the verdict was made from (speechOnly); absent when not measured. */
+  seconds?: number
+  /** Round 7: why the verdict is not the score's: 'continuity' (continued, below). */
+  reason?: 'continuity'
+}
+
+/**
+ * Continuity (round 7, ARCHITECTURE 24.2): an utterance with under SHORT_UTTERANCE_SECONDS of
+ * speech is the owner's when the session's last owner final judged on its score was at most
+ * CONTINUITY_MS before `at`, whatever it scored. Otherwise, or when its length was not measured, the
+ * judgement stands. ownerAt: when that owner final was delivered, or null when none counts.
+ */
+export function continued(judgement: Judgement, ownerAt: number | null, at: number): Judgement {
+  if (ownerAt === null || judgement.seconds === undefined) return judgement
+  if (judgement.seconds >= SHORT_UTTERANCE_SECONDS || at - ownerAt > CONTINUITY_MS) return judgement
+  return { ...judgement, speaker: 'owner', reason: 'continuity' }
 }
 
 export interface SpeakerGate {
@@ -315,22 +347,24 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
     },
     judge(frames) {
       if (profile === null) return null
+      const speech = speechOnly(frames)
+      // Round 7: the seconds of speech go with every verdict, for continuity.
+      const length = Math.round(seconds(speech) * 100) / 100
       if (extractor === null || !comparable(profile)) {
         // Round 7: loud enough is null, not unknown: strict mode drops unknown, and without a voice to
         // compare with that would drop every word he says.
         const level = speechRms(frames)
-        return profile.rms > 0 && level < profile.rms * ENERGY_OTHER_RATIO ? { speaker: 'other', score: 0 } : null
+        return profile.rms > 0 && level < profile.rms * ENERGY_OTHER_RATIO ? { speaker: 'other', score: 0, seconds: length } : null
       }
-      const speech = speechOnly(frames)
-      if (seconds(speech) < MIN_JUDGE_SECONDS) return { speaker: 'unknown', score: 0 }
+      if (length < MIN_JUDGE_SECONDS) return { speaker: 'unknown', score: 0, seconds: length }
       let score: number
       try {
         score = cosine(normalised(extractor.embed(concat(speech))), profile.embedding)
       } catch {
-        return { speaker: 'unknown', score: 0 }
+        return { speaker: 'unknown', score: 0, seconds: length }
       }
-      if (!Number.isFinite(score)) return { speaker: 'unknown', score: 0 }
-      return { speaker: verdict(score), score: Math.round(score * 1000) / 1000 }
+      if (!Number.isFinite(score)) return { speaker: 'unknown', score: 0, seconds: length }
+      return { speaker: verdict(score), score: Math.round(score * 1000) / 1000, seconds: length }
     },
   }
 }

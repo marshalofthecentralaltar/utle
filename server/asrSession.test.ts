@@ -629,6 +629,85 @@ describe('strict mode (round 7) on the server', () => {
   })
 })
 
+describe('continuity (round 7): one-word owner commands in strict mode', () => {
+  const setupJudged = (): ReturnType<typeof setupWithGate> & { judged: Judgement[] } => {
+    const recognizer = new FakeRecognizer()
+    const gate = new FakeGate()
+    const sent: AsrServerMessage[] = []
+    const judged: Judgement[] = []
+    const loop = new Loop()
+    const clock = { now: 1000 }
+    const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now, onJudged: (judgement) => judged.push(judgement) })
+    session.onlyOwner(true)
+    return { recognizer, gate, sent, loop, clock, session, judged }
+  }
+  const speakers = (sent: AsrServerMessage[]): (string | undefined)[] => sent.flatMap((m) => (m.type === 'final' ? [m.speaker] : []))
+  const OWNER: Judgement = { speaker: 'owner', score: 0.7, seconds: 1.6 }
+  const SHORT: Judgement = { speaker: 'unknown', score: 0, seconds: 0.4 }
+
+  it('continuity: a short owner word after an owner final passes, and the log has the reason', () => {
+    const { gate, sent, loop, clock, session, judged } = setupJudged()
+    gate.answer = OWNER
+    feed(session, loop, [1, 2, 0])
+    clock.now += 4000
+    gate.answer = { speaker: 'other', score: 0.168, seconds: 0.45 }
+    feed(session, loop, [1, 0])
+    expect(sent.filter((m) => m.type === 'final')).toEqual([
+      { type: 'final', text: 'ava uus', speaker: 'owner' },
+      { type: 'final', text: 'ava', speaker: 'owner' },
+    ])
+    expect(judged.at(-1)).toEqual({ speaker: 'owner', score: 0.168, seconds: 0.45, reason: 'continuity' })
+    expect(session.stats().foreignFinals).toBe(0)
+  })
+
+  it('continuity: a short word more than CONTINUITY_MS after the owner final is judged as now', () => {
+    const { gate, sent, loop, clock, session } = setupJudged()
+    gate.answer = OWNER
+    feed(session, loop, [1, 0])
+    clock.now += 10_001
+    gate.answer = SHORT
+    feed(session, loop, [1, 0])
+    expect(speakers(sent)).toEqual(['owner', 'unknown'])
+    expect(session.stats().foreignFinals).toBe(1)
+  })
+
+  it('continuity: a short word after an other final is judged as now, and a word continuity passed never extends the window', () => {
+    const { gate, sent, loop, clock, session } = setupJudged()
+    gate.answer = OWNER
+    feed(session, loop, [1, 0])
+    clock.now += 2000
+    gate.answer = { speaker: 'other', score: 0.2, seconds: 2.1 }
+    feed(session, loop, [1, 0])
+    clock.now += 1000
+    gate.answer = SHORT
+    feed(session, loop, [1, 0])
+    expect(speakers(sent)).toEqual(['owner', 'other', 'unknown'])
+
+    // The window runs from the last owner final judged on its score, not from a word continuity let through.
+    const next = setupJudged()
+    next.gate.answer = OWNER
+    feed(next.session, next.loop, [1, 0])
+    next.clock.now += 8000
+    next.gate.answer = SHORT
+    feed(next.session, next.loop, [1, 0])
+    next.clock.now += 8000
+    feed(next.session, next.loop, [1, 0])
+    expect(speakers(next.sent)).toEqual(['owner', 'owner', 'unknown'])
+  })
+
+  it('continuity: a long utterance is never passed by continuity', () => {
+    const { gate, sent, loop, clock, session, judged } = setupJudged()
+    gate.answer = OWNER
+    feed(session, loop, [1, 0])
+    clock.now += 1000
+    gate.answer = { speaker: 'other', score: 0.3, seconds: 1.0 }
+    feed(session, loop, [1, 2, 3, 0])
+    expect(sent.filter((m) => m.type === 'final').at(-1)).toEqual({ type: 'final', text: 'ava uus vaheleht', speaker: 'other' })
+    expect(judged.at(-1)).toEqual({ speaker: 'other', score: 0.3, seconds: 1.0 })
+    expect(session.stats().foreignFinals).toBe(1)
+  })
+})
+
 describe('scripted enrolment (round 7)', () => {
   it('takes each utterance with words as one phrase, says the count after each, and learns at the asked number', async () => {
     const { gate, sent, loop, session } = setupWithGate()
