@@ -701,7 +701,10 @@ function serverSection(): void {
       const check = await serverCheck(serverUrl(connection.asrUrl, '/api/status'), connection.token)
       if (check.state === 'bad_token') show(text.serverWrongToken)
       else if (check.state === 'unreachable') show(text.serverUnreachable)
-      else show(text.serverOk(check.speech ?? { local: false, soniox: false }, check.state === 'live'), true)
+      else {
+        const ok = text.serverOk(check.speech ?? { local: false, soniox: false }, check.state === 'live')
+        show(check.profile ? `${ok} ${text.serverProfile(check.profile)}` : ok, true)
+      }
     })()
   })
 

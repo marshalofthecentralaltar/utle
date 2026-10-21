@@ -334,3 +334,39 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
     },
   }
 }
+
+// ---------- profiles per token (round 7, HOST lane, ARCHITECTURE 27.6) ----------
+// Where a caller's profile lives, and one gate per profile over one shared extractor. Kept apart
+// from the gate above: nothing here judges or enrols, it only picks the file.
+
+export const PROFILES_DIR = 'profiles'
+
+/**
+ * The profile file of the caller with this id (auth.ts profileId; '' for the local user). The base
+ * is UTLE_DATA_DIR (where Railway's volume mounts) or models/speaker. The local user keeps
+ * owner.json, so nothing changes on the dev server; each token's user has profiles/<id>.json.
+ */
+export function profilePath(root: string, env: NodeJS.ProcessEnv, id: string): string {
+  const dataDir = env.UTLE_DATA_DIR?.trim()
+  const base = dataDir ? dataDir : join(root, SPEAKER_DIR)
+  return id === '' ? join(base, PROFILE_FILE) : join(base, PROFILES_DIR, `${id}.json`)
+}
+
+/** The gate for a profile file, made on first use and kept, all over the one extractor (null without the model). */
+export function speakerGates(extractor: EmbeddingExtractor | null, modelName?: string): (profilePath: string) => SpeakerGate {
+  const gates = new Map<string, SpeakerGate>()
+  return (path) => {
+    let gate = gates.get(path)
+    if (!gate) {
+      gate = createSpeakerGate(extractor, modelName === undefined ? { profilePath: path } : { profilePath: path, modelName })
+      gates.set(path, gate)
+    }
+    return gate
+  }
+}
+
+/** What /api/status says of a profile: whether a voice is learnt, and from how many seconds. Never the embedding. */
+export function profileSummary(path: string): { enrolled: boolean; seconds?: number } {
+  const profile = readProfile(path)
+  return profile === null ? { enrolled: false } : { enrolled: true, seconds: profile.seconds }
+}

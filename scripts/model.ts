@@ -2,8 +2,9 @@
  * Downloads TalTech's streaming Estonian and English model for the local recogniser (ARCHITECTURE
  * 20.1) into models/streaming-zipformer-large.et-en/, then, as a second and optional step, the
  * speaker embedding model (round 4, server/speaker.ts) into models/speaker/, and as a third, the
- * speech detector (round 7, server/vad.ts) into models/vad/. Skips files that are already there. A
- * failure of the second or third step is a warning: the recogniser works without them.
+ * speech detector (round 7, server/vad.ts) into models/vad/. Skips files that are already there.
+ * Writes the hotword list (round 7, server/hotwords.ts) next to them every time. A failure of the
+ * second or third step is a warning: the recogniser works without them.
  *
  *   npm run model
  */
@@ -13,6 +14,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { MODEL_DIR, MODEL_FILES } from '../server/asr.ts'
+import { writeHotwords } from '../server/hotwords.ts'
 import { SPEAKER_DIR, SPEAKER_MODEL_BYTES, SPEAKER_MODEL_FILE, SPEAKER_MODEL_URL } from '../server/speaker.ts'
 import { VAD_DIR, VAD_MODEL_BYTES, VAD_MODEL_FILE, VAD_MODEL_URL } from '../server/vad.ts'
 
@@ -38,6 +40,10 @@ async function fetchFile(url: string, target: string, file: string): Promise<voi
 
 for (const file of MODEL_FILES) await fetchFile(`${SOURCE}/${file}`, join(dir, file), file)
 console.log(`model ready in ${MODEL_DIR}`)
+
+// Round 7 (28.1): the hotword list, rewritten every time so it follows the command vocabulary.
+const hot = writeHotwords(root, dir)
+console.log(`hotwords written: ${hot.file}`)
 
 // The speaker model (optional): without it "Kuula ainult mind" goes by loudness alone.
 const speakerDir = join(root, SPEAKER_DIR)

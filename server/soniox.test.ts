@@ -4,6 +4,7 @@ import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
 import {
   SONIOX_FINALIZE,
   SONIOX_KEEPALIVE,
+  SONIOX_MAX_BUFFERED_BYTES,
   SONIOX_URL,
   attachSonioxSession,
   createUtteranceMapper,
@@ -18,6 +19,7 @@ type Listener = (...args: never[]) => void
 /** A ws-shaped socket that records what was sent and lets the test fire events. */
 class FakeSocket implements SocketLike {
   readyState = 0
+  bufferedAmount = 0
   sent: (string | Uint8Array)[] = []
   closedWith: number | undefined
   closed = false
@@ -253,6 +255,25 @@ describe('unavailable', () => {
     expect(logged).not.toContain('secret')
   })
 
+  it('error message logged except 401/403', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const [code, logged] of [[400, true], [503, true], [401, false], [403, false]] as const) {
+      warn.mockClear()
+      const { upstream } = session()
+      upstream.open()
+      upstream.text(JSON.stringify({ error_code: code, error_message: 'Model stt-rt-v9 not found' }))
+      const line = warn.mock.calls.flat().join(' ')
+      expect(line, String(code)).toContain(`[soniox] error ${code}`)
+      expect(line.includes('Model stt-rt-v9 not found'), String(code)).toBe(logged)
+    }
+    // A long message is clipped.
+    warn.mockClear()
+    const { upstream } = session()
+    upstream.open()
+    upstream.text(JSON.stringify({ error_code: 400, error_message: 'x'.repeat(1000) }))
+    expect(warn.mock.calls.flat().join(' ').length).toBeLessThan(300)
+  })
+
   it('a socket error or an unexpected close from Soniox: unavailable once', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { browser, upstream } = session()
@@ -314,5 +335,40 @@ describe('choosing the engine', () => {
     expect(wantsSoniox('/api/asr', {})).toBe(false)
     expect(wantsSoniox('/api/asr', { UTLE_ASR: 'soniox' })).toBe(true)
     expect(wantsSoniox('/api/asr', { UTLE_ASR: 'local' })).toBe(false)
+  })
+})
+
+describe('soniox lag (review R3 M4)', () => {
+  it('lag: drops when buffered', () => {
+    expect(SONIOX_MAX_BUFFERED_BYTES).toBe(64_000)
+    const { browser, upstream } = session()
+    upstream.open()
+    const audio = (): number => upstream.sent.filter((item) => typeof item !== 'string').length
+    browser.binary(floatFrame(0.1))
+    expect(audio()).toBe(1)
+    // The network stalls: Soniox's socket holds more than 2 s of PCM.
+    upstream.bufferedAmount = SONIOX_MAX_BUFFERED_BYTES + 32 * 500
+    browser.binary(floatFrame(0.2))
+    browser.binary(floatFrame(0.3))
+    expect(audio()).toBe(1)
+    expect(browser.json.slice(1)).toEqual([
+      { type: 'lag', ms: 2500 },
+      { type: 'lag', ms: 2500 },
+    ])
+    // It drains: the next frame goes, and a lag of 0 says the delay is over, once.
+    upstream.bufferedAmount = 0
+    browser.binary(floatFrame(0.4))
+    browser.binary(floatFrame(0.5))
+    expect(audio()).toBe(3)
+    expect(browser.json.slice(3)).toEqual([{ type: 'lag', ms: 0 }])
+  })
+
+  it('lag: at exactly the bound the frame still goes', () => {
+    const { browser, upstream } = session()
+    upstream.open()
+    upstream.bufferedAmount = SONIOX_MAX_BUFFERED_BYTES
+    browser.binary(floatFrame(0.1))
+    expect(upstream.sent.filter((item) => typeof item !== 'string')).toHaveLength(1)
+    expect(browser.json).toEqual([{ type: 'ready' }])
   })
 })

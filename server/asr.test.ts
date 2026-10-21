@@ -44,6 +44,12 @@ describe('the log line about the speaker gate', () => {
     expect(speakerLine({ model: false, profile: false })).toContain('no speaker model')
     expect(speakerLine({ model: false, profile: false })).toContain('not learnt yet')
   })
+
+  it('counts the configured profiles when tokens name users (round 7), the old wording without', () => {
+    expect(speakerLine({ model: true, profile: false }, { count: 2, enrolled: 1 })).toBe('[asr] speaker model loaded; 2 profiles, 1 enrolled')
+    expect(speakerLine({ model: true, profile: false }, { count: 1, enrolled: 0 })).toBe('[asr] speaker model loaded; 1 profile, 0 enrolled')
+    expect(speakerLine({ model: true, profile: false })).toBe("[asr] speaker model loaded; owner's voice not learnt yet")
+  })
 })
 
 describe('the engine on the socket address', () => {

@@ -330,6 +330,8 @@ export interface Strings {
     serverOk(speech: { local: boolean; soniox: boolean }, understanding: boolean): string
     serverUnreachable: string
     serverWrongToken: string
+    /** Round 7 (27.6): which voice profile the token is, after the test answered. */
+    serverProfile(profile: { name: string; enrolled: boolean }): string
     /** The strip's standing line when the server answers 401. */
     badToken: string
   }
@@ -871,6 +873,7 @@ const ET: Strings = {
     },
     serverUnreachable: 'Ei saa ühendust.',
     serverWrongToken: 'Vale võti.',
+    serverProfile: (profile) => `Profiil: ${profile.name}, hääl ${profile.enrolled ? 'õpetatud' : 'õpetamata'}.`,
     badToken: 'Serveri võti on vale.',
   },
 
@@ -1326,6 +1329,7 @@ const EN: Strings = {
     },
     serverUnreachable: 'Cannot connect.',
     serverWrongToken: 'Wrong token.',
+    serverProfile: (profile) => `Profile: ${profile.name}, voice ${profile.enrolled ? 'learnt' : 'not learnt yet'}.`,
     badToken: 'The server token is wrong.',
   },
 

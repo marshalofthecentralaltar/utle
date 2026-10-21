@@ -1457,7 +1457,6 @@ describe('Round 3 editing: the fixed phrases', () => {
     ['kustuta täht', { kind: 'pressKey', key: 'Backspace' }],
     ['Kustuta üks täht.', { kind: 'pressKey', key: 'Backspace' }],
     ['kustuta valitud', { kind: 'pressKey', key: 'Backspace' }],
-    ['kustuta see', { kind: 'pressKey', key: 'Backspace' }],
     ['delete a letter', { kind: 'pressKey', key: 'Backspace' }],
     ['delete the selection', { kind: 'pressKey', key: 'Backspace' }],
     ['kustuta ees', { kind: 'pressKey', key: 'Delete' }],
@@ -2071,5 +2070,63 @@ describe('round 6: opening the settings by voice (26.4)', () => {
   })
   it('"seaded" with words in the armed box is a word of the message', () => {
     expect(inpageStep(session(), 'seaded', box('Need on mu')).ask).toBe(true)
+  })
+})
+
+describe('review R3 M6: "kustuta see" / "delete this" takes back the last utterance, or deletes a selection', () => {
+  const B = box('Tere homme kell viis')
+  it.each(['kustuta see', 'Kustuta see.', 'delete this'])('"%s" with no select before it is the box undo of the last utterance', (u) => {
+    const step = inpageStep(session({ undo: ['Tere homme'] }), u, B)
+    expect(step.commands).toEqual(only({ kind: 'setText', text: 'Tere homme' }))
+    expect(step.line).toBe(ET.inpage.undoing)
+    expect(inpageInstant(session(), u)).toBe(true)
+    expect(inpagePreview(session(), u, B)).toBeNull()
+  })
+
+  it('a dictation then "kustuta see" takes the dictated words back, never one letter', () => {
+    const typed = inpageStep(session(), 'kell viis', box('Tere homme'))
+    const done = inpageResult(typed.session, typed.commands, { ok: true, box: B })
+    const step = inpageStep(done.session, 'kustuta see', B)
+    expect(step.commands).toEqual(only({ kind: 'setText', text: 'Tere homme' }))
+  })
+
+  it('with nothing to undo it says so and presses no key', () => {
+    const step = inpageStep(session({ undo: [] }), 'kustuta see', B)
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.nothingToUndo)
+  })
+
+  it('after a select step it is Backspace on the selection, and pushes the old text', () => {
+    const picked = inpageStep(session({ undo: ['Tere'] }), 'vali viimane sõna', B)
+    const after = inpageResult(picked.session, picked.commands, OK)
+    expect(after.session.lastWasSelect).toBe(true)
+    const step = inpageStep(after.session, 'kustuta see', B)
+    expect(step.commands).toEqual(only({ kind: 'pressKey', key: 'Backspace' }))
+    expect(step.session.undo).toEqual(['Tere', 'Tere homme kell viis'])
+    // The Backspace ran: the next "kustuta see" is the undo again.
+    const deleted = inpageResult(step.session, step.commands, OK)
+    expect(deleted.session.lastWasSelect).toBe(false)
+    expect(inpageStep(deleted.session, 'delete this', box('Tere homme kell')).commands).toEqual(only({ kind: 'setText', text: 'Tere homme kell viis' }))
+  })
+
+  it('a select by the model counts too; any other step in between clears it', () => {
+    const selected = inpageResult(session({ undo: ['Tere'] }), [{ kind: 'select', what: 'all' }], OK)
+    expect(inpageStep(selected.session, 'kustuta see', B).commands).toEqual(only({ kind: 'pressKey', key: 'Backspace' }))
+    const moved = inpageResult(selected.session, [{ kind: 'caret', to: 'end' }], OK)
+    expect(inpageStep(moved.session, 'kustuta see', B).commands).toEqual(only({ kind: 'setText', text: 'Tere' }))
+    const failed = inpageResult(selected.session, [{ kind: 'caret', to: 'end' }], { ok: false, code: 'not_found', message: 'x' })
+    expect(failed.session.lastWasSelect).toBe(false)
+  })
+
+  it('without a box it says to pick a field; into an unarmed box it never writes', () => {
+    expect(inpageStep(session({ undo: ['Tere'] }), 'kustuta see', NO_BOX).line).toBe(ET.inpage.pickField)
+    expect(inpageStep(session({ undo: ['Tere'], lastWasSelect: true }), 'kustuta see', NO_BOX).commands).toEqual([])
+    expect(inpageStep(session({ undo: ['Tere'] }), 'kustuta see', unarmed('abc')).commands).toEqual([])
+  })
+
+  it('"kustuta valitud" and "delete the selection" stay Backspace whatever came before', () => {
+    for (const u of ['kustuta valitud', 'delete the selection', 'kustuta täht']) {
+      expect(inpageStep(session({ undo: ['Tere'] }), u, B).commands, u).toEqual(only({ kind: 'pressKey', key: 'Backspace' }))
+    }
   })
 })
