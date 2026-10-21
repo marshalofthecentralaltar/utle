@@ -227,6 +227,12 @@ describe('continuity (round 7): a short word right after the owner spoke is his'
     expect(continued({ speaker: 'other', score: 0.168, seconds: 0.9 }, 1000, 4000)).toEqual({ speaker: 'owner', score: 0.168, seconds: 0.9, reason: 'continuity' })
   })
 
+  it('continuity: a short utterance the score already judged owner keeps the score as its reason', () => {
+    const scored = { speaker: 'owner' as const, score: 0.7, seconds: 0.9 }
+    expect(continued(scored, 1000, 4000)).toBe(scored)
+    expect(continued(scored, 1000, 4000).reason).toBeUndefined()
+  })
+
   it('continuity: judged as now when too late, with no owner final, when long, or when its length is not known', () => {
     const short = { speaker: 'unknown' as const, score: 0, seconds: 0.4 }
     expect(continued(short, 1000, 1000 + CONTINUITY_MS + 1)).toBe(short)

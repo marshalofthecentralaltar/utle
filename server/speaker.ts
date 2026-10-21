@@ -126,10 +126,12 @@ export interface Judgement {
  * Continuity (round 7, ARCHITECTURE 24.2): an utterance with under SHORT_UTTERANCE_SECONDS of
  * speech is the owner's when the session's last owner final judged on its score was at most
  * CONTINUITY_MS before `at`, whatever it scored. Otherwise, or when its length was not measured, the
- * judgement stands. ownerAt: when that owner final was delivered, or null when none counts.
+ * judgement stands. A verdict the score already made `owner` stands too, whatever its length: the
+ * score is its reason, and it opens or extends the window. ownerAt: when that owner final was
+ * delivered, or null when none counts.
  */
 export function continued(judgement: Judgement, ownerAt: number | null, at: number): Judgement {
-  if (ownerAt === null || judgement.seconds === undefined) return judgement
+  if (judgement.speaker === 'owner' || ownerAt === null || judgement.seconds === undefined) return judgement
   if (judgement.seconds >= SHORT_UTTERANCE_SECONDS || at - ownerAt > CONTINUITY_MS) return judgement
   return { ...judgement, speaker: 'owner', reason: 'continuity' }
 }

@@ -728,6 +728,26 @@ describe('continuity (round 7): one-word owner commands in strict mode', () => {
     expect(speakers(next.sent)).toEqual(['owner', 'owner', 'unknown'])
   })
 
+  it('continuity: a short final the score judged owner opens and extends the window', () => {
+    const { gate, sent, loop, clock, session, judged } = setupJudged()
+    gate.answer = { speaker: 'owner', score: 0.7, seconds: 0.9 }
+    feed(session, loop, [1, 0])
+    expect(judged.at(-1)).toEqual({ speaker: 'owner', score: 0.7, seconds: 0.9 })
+    clock.now += 9000
+    gate.answer = SHORT
+    feed(session, loop, [1, 0])
+    expect(judged.at(-1)).toEqual({ ...SHORT, speaker: 'owner', reason: 'continuity' })
+    // A second short owner-scored final at 9.5 s extends the window: a short word at 19 s still passes.
+    clock.now += 500
+    gate.answer = { speaker: 'owner', score: 0.66, seconds: 0.8 }
+    feed(session, loop, [1, 0])
+    clock.now += 9500
+    gate.answer = SHORT
+    feed(session, loop, [1, 0])
+    expect(speakers(sent)).toEqual(['owner', 'owner', 'owner', 'owner'])
+    expect(judged.at(-1)?.reason).toBe('continuity')
+  })
+
   it('continuity: a long utterance is never passed by continuity', () => {
     const { gate, sent, loop, clock, session, judged } = setupJudged()
     gate.answer = OWNER
