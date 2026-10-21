@@ -4,14 +4,15 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
-import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
+import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
 import type { EnrolPhrase, Judgement, SpeakerGate } from './speaker.ts'
 import { CAPTURE_LOG, captureFromEnv, createCapture } from './capture.ts'
 import type { Capture } from './capture.ts'
 import type { VadLike } from './vad.ts'
+import { QUIET_AMPLITUDE, createSpeechFilter } from './vad.ts'
 
-/** A recogniser that "hears" one word per frame and ends the utterance on a silent frame. */
+/** A recogniser that "hears" one word per frame and ends the utterance on a silent frame (first sample under 0.5: zero, or the detector's faint hiss). */
 class FakeStream implements OnlineStreamLike {
   words: string[] = []
   pending: number[] = []
@@ -33,7 +34,7 @@ class FakeRecognizer implements OnlineRecognizerLike {
   }
   decode(stream: FakeStream): void {
     const value = stream.pending.shift() ?? 0
-    if (value === 0) stream.endpoint = true
+    if (Math.abs(value) < 0.5) stream.endpoint = true
     else stream.words.push(WORDS[(value - 1) % WORDS.length] ?? '')
   }
   getResult(stream: FakeStream): { text: string } {
@@ -127,6 +128,21 @@ describe('local recogniser session', () => {
 
     expect(sent).toEqual([])
     expect(recognizer.resets).toBe(2)
+  })
+
+  it('sends no partial and no final that is only punctuation (the recogniser can end a breath with ".")', () => {
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    const results: DecodeResult[] = [{ text: '.', endpoint: false }, { text: '.', endpoint: true }, { text: 'Jah', endpoint: false }, { text: 'Jah.', endpoint: true }]
+    const decoder: Decoder = { accept: () => results.shift() ?? { text: '', endpoint: false }, reset() {}, close() {} }
+    const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule })
+    for (let i = 0; i < 4; i += 1) session.audio(frame(1))
+    loop.settle()
+    expect(sent).toEqual([
+      { type: 'partial', text: 'Jah' },
+      { type: 'partial', text: 'Jah.' },
+      { type: 'final', text: 'Jah.' },
+    ])
   })
 
   it('ignores audio after it is closed, and a result that lands after it', () => {
@@ -602,6 +618,23 @@ describe('the speech detector in front of the decoder (round 7)', () => {
     session.audio(noise())
     loop.settle()
     expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'ava uus vaheleht' }])
+  })
+
+  it('hands the decoder a faint fixed hiss for what is not speech, never digital zeros (zeros let the recogniser drop a short last word)', () => {
+    const filter = createSpeechFilter(new FakeVad(1))
+    const out = [noise(), noise(), noise()].flatMap((samples) => filter.push(samples))
+    expect(out).toHaveLength(3)
+    for (const part of out) {
+      expect(part.speech).toBe(false)
+      expect(part.samples).toHaveLength(ASR_FRAME_SAMPLES)
+      expect(part.samples.some((x) => x !== 0)).toBe(true)
+      expect(part.samples.every((x) => Math.abs(x) <= QUIET_AMPLITUDE)).toBe(true)
+      // Still silence to everything that measures loudness (the backlog cut, the speaker gate's frames).
+      expect(rms(part.samples)).toBeLessThan(SILENCE_RMS / 10)
+    }
+    // The same hiss every time the server runs: a test of recorded speech gives the same words.
+    const again = createSpeechFilter(new FakeVad(1)).push(noise())[0]
+    expect(Array.from(again?.samples ?? [])).toEqual(Array.from(out[0]?.samples ?? []))
   })
 
   it('keeps only speech for the speaker gate', () => {

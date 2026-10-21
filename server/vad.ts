@@ -2,8 +2,9 @@
  * The speech detector in front of the decoder (round 7, SPEECH lane; ARCHITECTURE 24.2). The owner's
  * report: room noise was typed as words. The recogniser decodes every frame it is given and will
  * find words in a fan or a street; Silero VAD tells speech from everything else, and only speech
- * reaches the decoder and the speaker gate. Everything else is replaced by digital silence of the
- * same length, so the decoder's clock (its endpoint rules count trailing silence) is unchanged.
+ * reaches the decoder and the speaker gate. Everything else is replaced by a faint fixed hiss of the
+ * same length (QUIET_AMPLITUDE, below), so the decoder's clock (its endpoint rules count trailing
+ * silence) is unchanged.
  *
  * Model: Silero VAD v5 in sherpa-onnx's asr-models release:
  *   https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad_v5.onnx
@@ -24,12 +25,16 @@ export const VAD_MODEL_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/dow
 export const VAD_MODEL_BYTES = 2_313_101
 
 /**
- * Silero's settings. threshold 0.5 is the model's own default. A segment needs 0.1 s of speech (a
- * click is shorter; "jah" and "üks" are about 0.4 s, and 0.15 s missed the live "üks") and ends after
- * 0.5 s below the threshold, so the pause between two words of one sentence stays inside it.
+ * Silero's settings. threshold 0.5 is the model's own default. A segment needs 0.05 s of speech and
+ * ends after 0.5 s below the threshold, so the pause between two words of one sentence stays inside
+ * it. 0.05, not 0.1 (round 7, SPEECH lane defect round): the quiet one-word "üks" of et-numbers-one
+ * stays above the threshold for barely 0.1 s, so whether it counted depended on where Silero's 32 ms
+ * windows fell; at 16 phases times 3 gains 0.1 missed it 3 times in 96 (the extension's voice test,
+ * case 6: "üks" never reached the recogniser), 0.05 never, nor any word of the other fixtures, and
+ * 20 s of pink noise at -30 and -20 dBFS gave no speech at either setting.
  */
 export const VAD_THRESHOLD = 0.5
-export const VAD_MIN_SPEECH_SECONDS = 0.1
+export const VAD_MIN_SPEECH_SECONDS = 0.05
 export const VAD_MIN_SILENCE_SECONDS = 0.5
 /**
  * Audio remembered while no speech is detected, and passed on again as speech when it starts.
@@ -39,6 +44,18 @@ export const VAD_MIN_SILENCE_SECONDS = 0.5
  * at the start of speech the decoder hears the remembered 0.4 s once more, as audio this time.
  */
 export const PRE_ROLL_MS = 400
+
+/**
+ * What the decoder hears while no speech is detected: uniform noise of at most this amplitude
+ * (RMS about 5.8e-5, -85 dBFS), the same sequence every run. Not digital zeros (round 7, SPEECH
+ * lane defect round): on exact zeros after a short word the recogniser's best hypothesis can turn
+ * empty, the stream then ends by the 2.4 s rule with no words, and the word is lost with no final.
+ * Measured: a live session's audio (scripts/fixtures/live-vad-saada-16k.wav, the extension's voice
+ * test, saada never finalised) loses saada on zeros and keeps it with the hiss; 21 recorded live
+ * sessions lost saada in 4 on zeros, none with the hiss; et-numbers-one at 24 phases and gains lost
+ * üks in 2 on zeros. Far below SILENCE_RMS, so it is silence to everything that measures loudness.
+ */
+export const QUIET_AMPLITUDE = 1e-4
 
 /** The parts of sherpa-onnx-node's Vad this server uses. */
 export interface VadLike {
@@ -102,7 +119,7 @@ const ms = (samples: Float32Array): number => (samples.length * 1000) / ASR_SAMP
 
 /**
  * The detector as a filter over frames. While speech is detected each frame passes as heard. While
- * it is not, the frame passes at once as silence of its length, and is remembered (the newest
+ * it is not, the frame passes at once as the faint hiss of its length, and is remembered (the newest
  * preRollMs of them); when speech starts, the remembered frames pass first, as speech: they hold
  * the start of the first word. The decoder then hears up to preRollMs more audio than arrived,
  * which it does not mind; its endpoint rules see the silence when it happens.
@@ -110,6 +127,16 @@ const ms = (samples: Float32Array): number => (samples.length * 1000) / ASR_SAMP
 export function createSpeechFilter(vad: VadLike, preRollMs = PRE_ROLL_MS): SpeechFilter {
   let recent: Float32Array[] = []
   let recentMs = 0
+  // A small linear congruential generator: the hiss is the same every run, so recorded speech gives the same words.
+  let seed = 1
+  const quiet = (length: number): Float32Array => {
+    const out = new Float32Array(length)
+    for (let i = 0; i < length; i += 1) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+      out[i] = ((seed / 4294967296) * 2 - 1) * QUIET_AMPLITUDE
+    }
+    return out
+  }
   return {
     push(samples) {
       vad.acceptWaveform(samples)
@@ -127,7 +154,7 @@ export function createSpeechFilter(vad: VadLike, preRollMs = PRE_ROLL_MS): Speec
         const oldest = recent.shift()
         if (oldest) recentMs -= ms(oldest)
       }
-      return [{ samples: new Float32Array(samples.length), speech: false }]
+      return [{ samples: quiet(samples.length), speech: false }]
     },
   }
 }

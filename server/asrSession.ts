@@ -431,7 +431,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
 
   /** The partial for a frame's result, then the final when it ended the utterance; `then` once the final is away. */
   const finish = (result: DecodeResult, then: () => void): void => {
-    const text = result.text.trim()
+    // Round 7: text with no letter or digit (a lone "." the recogniser can make of a breath) is no words.
+    const heard = result.text.trim()
+    const text = /[\p{L}\p{N}]/u.test(heard) ? heard : ''
     if (text !== last && text !== '') send({ type: 'partial', text })
     last = text
     if (!result.endpoint) {
