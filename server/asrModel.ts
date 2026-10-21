@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
 import type { OnlineRecognizerLike } from './asrSession.ts'
+import { hotwordsConfig } from './hotwords.ts'
 
 export const MODEL_DIR = join('models', 'streaming-zipformer-large.et-en')
 export const MODEL_FILES = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'] as const
@@ -31,6 +32,8 @@ export function loadModel(root: string): ModelLoad {
 
   try {
     const started = Date.now()
+    // Round 7 (28.1): bias toward the command vocabulary; HOTWORDS_SCORE 0 passes nothing.
+    const hotwords = hotwordsConfig(root, dir)
     const recognizer = new OnlineRecognizer({
       featConfig: { sampleRate: 16000, featureDim: 80 },
       modelConfig: {
@@ -43,8 +46,10 @@ export function loadModel(root: string): ModelLoad {
         numThreads: 2,
         provider: 'cpu',
         debug: 0,
+        ...hotwords.model,
       },
       decodingMethod: 'modified_beam_search',
+      ...hotwords.recognizer,
       enableEndpoint: true,
       rule1MinTrailingSilence: 2.4,
       rule2MinTrailingSilence: 1.0,

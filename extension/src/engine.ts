@@ -489,6 +489,10 @@ export function createEngine(deps: EngineDeps): Engine {
    * Barge-in (round 3): a new utterance stops the model work of every earlier one at the next
    * safe point. A plain send is the exception: it waits for a verification instead of cancelling
    * it (nothing is sent while the box is being judged), but a multi-step loop is still given up.
+   * Review R3 M3: only a job that has begun (its turn came: a question in flight, the loop, a
+   * verification, or the typing a verification would follow) is cancelled; one still waiting its
+   * turn has nothing stale, so it is only interrupted (no further step) and gets the rules and its
+   * first ask when its turn comes. STALE_MS covers one that waited too long.
    */
   const interrupt = (newcomer: Job): void => {
     for (const job of jobs) {
@@ -497,7 +501,8 @@ export function createEngine(deps: EngineDeps): Engine {
       // Round 4: a plain send does not cancel a chain of goals; it waits its turn behind it.
       if (newcomer.send && job.chain !== null) continue
       job.interrupted = true
-      if (!newcomer.send || job.looping) {
+      const modelWork = job.started !== null || job.controller !== null || job.looping || job.verifying
+      if (modelWork && (!newcomer.send || job.looping)) {
         job.cancelled = true
         job.controller?.abort()
       }
@@ -554,18 +559,26 @@ export function createEngine(deps: EngineDeps): Engine {
    */
   const askOnce = async (job: Job, box: BoxState, baseText: string | null, recentBefore: string[], steps: IntentStep[]): Promise<Heard | null> => {
     if (job.cancelled) return null
-    const page = await readPage(box, baseText)
-    const tabs = await deps.tabs().catch((): TabSummary[] => [])
-    if (job.cancelled) return null
-    // Round 4: in a chain the model is asked about the goal in hand, and told the chain.
-    const chain = job.chain
-    const request: IntentRequest = { lang: deps.lang, utterance: (chain === null ? job.utterance : chain.goal).slice(0, UTTERANCE_CHARS), page, tabs, recent: recentBefore, care: careOf(job) }
-    if (steps.length > 0) request.steps = steps
-    if (chain !== null) request.chain = chain
+    // Review R3 M3: the controller is set before the page is read, so a barge-in while the page
+    // is read counts this as model work begun and cancels it.
     const controller = new AbortController()
     job.controller = controller
-    const answer = await askWithTimeout(request, controller)
-    job.controller = null
+    let answer: IntentAnswer | AskFailure
+    let page: PageContext
+    let tabs: TabSummary[]
+    try {
+      page = await readPage(box, baseText)
+      tabs = await deps.tabs().catch((): TabSummary[] => [])
+      if (job.cancelled) return null
+      // Round 4: in a chain the model is asked about the goal in hand, and told the chain.
+      const chain = job.chain
+      const request: IntentRequest = { lang: deps.lang, utterance: (chain === null ? job.utterance : chain.goal).slice(0, UTTERANCE_CHARS), page, tabs, recent: recentBefore, care: careOf(job) }
+      if (steps.length > 0) request.steps = steps
+      if (chain !== null) request.chain = chain
+      answer = await askWithTimeout(request, controller)
+    } finally {
+      job.controller = null
+    }
     if (job.cancelled) return null
     if ('error' in answer) {
       if (answer.error === 'no_model') setModelOff(true)

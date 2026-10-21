@@ -48,6 +48,15 @@ export const SONIOX_FINALIZE = '{"type":"finalize"}'
 export const SONIOX_KEEPALIVE = '{"type":"keepalive"}'
 /** Soniox wants a keepalive within 20 s of silence; 10 s leaves room for a slow network. */
 export const SONIOX_KEEPALIVE_MS = 10_000
+/** 16 kHz mono 16-bit PCM: bytes per millisecond of audio. */
+export const SONIOX_BYTES_PER_MS = (16000 * 2) / 1000
+/**
+ * Review R3 M4: when Soniox's socket holds more than 2 s of unsent PCM the network is not taking
+ * the audio; a frame is dropped and the browser told the lag, as src/speech/local.ts does.
+ */
+export const SONIOX_MAX_BUFFERED_BYTES = 2000 * SONIOX_BYTES_PER_MS
+/** The most of an upstream error message that is logged. */
+export const SONIOX_ERROR_MESSAGE_CHARS = 200
 
 /** The first frame to Soniox. Exported so the test and the owner can see every field in one place. */
 export function sonioxConfig(apiKey: string, model: string): Record<string, unknown> {
@@ -65,6 +74,8 @@ export function sonioxConfig(apiKey: string, model: string): Record<string, unkn
 /** The parts of a `ws` WebSocket this file uses, on both sides: the browser's socket and Soniox's. */
 export interface SocketLike {
   readonly readyState: number
+  /** Bytes queued and not yet sent (ws). Read on Soniox's socket for the lag bound. */
+  readonly bufferedAmount: number
   send(data: string | Uint8Array): void
   close(code?: number): void
   on(event: 'open', listener: () => void): unknown
@@ -96,7 +107,7 @@ export function int16FromFloat32(samples: Float32Array): Buffer {
 }
 
 type SonioxToken = { text: string; is_final: boolean }
-type SonioxResponse = { tokens: SonioxToken[]; finished: boolean; errorCode: number | null }
+type SonioxResponse = { tokens: SonioxToken[]; finished: boolean; errorCode: number | null; errorMessage?: string }
 
 /** Reads one Soniox response; null when the frame is not one. */
 export function parseSonioxResponse(raw: string): SonioxResponse | null {
@@ -118,7 +129,19 @@ export function parseSonioxResponse(raw: string): SonioxResponse | null {
       if (typeof token.text === 'string') tokens.push({ text: token.text, is_final: token.is_final === true })
     }
   }
-  return { tokens, finished: record.finished === true, errorCode }
+  const response: SonioxResponse = { tokens, finished: record.finished === true, errorCode }
+  if (typeof record.error_message === 'string') response.errorMessage = record.error_message
+  return response
+}
+
+/**
+ * The log line for an upstream error. Review R3 M4: the message is logged (a wrong SONIOX_MODEL is
+ * otherwise invisible), clipped, except for 401 and 403, whose message can echo the key.
+ */
+export function sonioxErrorLine(code: number, message: string | undefined): string {
+  const secret = code === 401 || code === 403
+  const shown = secret || message === undefined || message === '' ? '' : `: ${message.slice(0, SONIOX_ERROR_MESSAGE_CHARS)}`
+  return `error ${code}${shown}`
 }
 
 /**
@@ -163,7 +186,8 @@ export function createUtteranceMapper(send: (message: AsrServerMessage) => void)
 
 /**
  * Takes over one browser socket at /api/asr and serves it from Soniox. Logs connection events and
- * error codes only: never audio, never text.
+ * error codes (with the message, except 401 and 403): never audio, never text. More than
+ * SONIOX_MAX_BUFFERED_BYTES unsent to Soniox drops the frame and sends the browser a lag.
  */
 export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): void {
   const send = (message: AsrServerMessage): void => {
@@ -186,6 +210,8 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
   let browserClosed = false
   let failed = false
   let keepalive: ReturnType<typeof setInterval> | null = null
+  /** Frames are being dropped for lag; the next frame sent ends it with a lag of 0. */
+  let dropping = false
 
   const upstream = connect(SONIOX_URL)
   console.info('[soniox] connecting')
@@ -232,7 +258,7 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
     const response = parseSonioxResponse(rawToString(data))
     if (!response) return
     if (response.errorCode !== null) {
-      fail(`error ${response.errorCode}`)
+      fail(sonioxErrorLine(response.errorCode, response.errorMessage))
       return
     }
     mapper.tokens(response.tokens)
@@ -256,8 +282,19 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
       const samples = samplesFromFrame(data)
       if (!samples) return
       const pcm = int16FromFloat32(samples)
-      if (upstreamReady && upstream.readyState === OPEN) upstream.send(pcm)
-      else buffered.push(pcm)
+      if (upstreamReady && upstream.readyState === OPEN) {
+        if (upstream.bufferedAmount > SONIOX_MAX_BUFFERED_BYTES) {
+          // The network is not taking the audio: queuing more would only make the delay longer.
+          dropping = true
+          send({ type: 'lag', ms: Math.round(upstream.bufferedAmount / SONIOX_BYTES_PER_MS) })
+          return
+        }
+        if (dropping) {
+          dropping = false
+          send({ type: 'lag', ms: 0 })
+        }
+        upstream.send(pcm)
+      } else buffered.push(pcm)
       return
     }
     if (rawToString(data).includes('"flush"') && upstreamReady && upstream.readyState === OPEN) upstream.send(SONIOX_FINALIZE)

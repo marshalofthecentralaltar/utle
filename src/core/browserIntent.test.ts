@@ -228,6 +228,9 @@ describe('browserIntent: what is not a browser command', () => {
     'mine sõna homme ette',
     'vali homme',
     'kustuta kolm tähte',
+    // Review R3 M6: "kustuta see" depends on what came before (a select, or the last utterance): inpage.ts.
+    'kustuta see',
+    'delete this',
   ])('%s', (text) => {
     expect(browserIntent(text)).toBeNull()
   })

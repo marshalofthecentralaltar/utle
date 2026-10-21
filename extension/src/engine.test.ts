@@ -1029,6 +1029,44 @@ describe('the queue keeps up (round 3)', () => {
     expect(t.state.thinking).toBe(false)
   })
 
+  it('barge-in: a queued job is not cancelled', async () => {
+    vi.useFakeTimers()
+    // Review R3 M3: "mine" runs a slow page command; "otsi ilm" queues behind it; "vaikus" arrives
+    // while the page command still runs. The queued one has started no model work, so it is still asked.
+    const t = setup({ logic: asking, box: unarmed, goToMs: 1000, ask: () => Promise.resolve(answer(scroll, 'kerin')) })
+    t.engine.start()
+    t.say('mine')
+    await vi.advanceTimersByTimeAsync(10)
+    t.say('otsi ilm')
+    await vi.advanceTimersByTimeAsync(10)
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(t.asked.map((r) => r.utterance)).toEqual(['otsi ilm'])
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'goTo', 'readBox', 'readPage', 'scroll', 'readBox'])
+    expect(t.signals[0]?.aborted).toBe(false)
+  })
+
+  it('barge-in: a running model ask is cancelled', async () => {
+    vi.useFakeTimers()
+    // The first utterance's question is in flight; the second queues; the third arrives. Only the
+    // question in flight is given up (the rules' step runs for it); the queued one is still asked.
+    let n = 0
+    const t = setup({ logic: asking, box: unarmed, ask: () => (n++ === 0 ? new Promise<IntentAnswer>(() => undefined) : Promise.resolve(answer(scroll, 'kerin'))) })
+    t.engine.start()
+    t.say('a')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.asked).toHaveLength(1)
+    t.say('otsi ilm')
+    t.say('vaikus')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(t.signals[0]?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(t.asked.map((r) => r.utterance)).toEqual(['a', 'otsi ilm'])
+    expect(t.signals[1]?.aborted).toBe(false)
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'setText', 'readBox', 'readPage', 'scroll', 'readBox'])
+    expect(t.state.line).toBe('midagi')
+  })
+
   it('two dictations in a row do not wait for each other\'s verification: the second is typed before the first\'s answer', async () => {
     vi.useFakeTimers()
     const t = setup({ logic: asking, box: armed, ask: () => after(1000, answer({ kind: 'dictate', text: 'x' })) })
@@ -1282,6 +1320,9 @@ describe('chains of goals (round 4)', () => {
   })
 
   it('stops at MAX_CHAIN_STEPS page steps in all, however many goals are left', async () => {
+    // Fake timers: the engine waits SETTLE_MS between steps, and 15 real waits of 300 ms made this
+    // test take about 5 s of wall time, so it timed out on a loaded machine.
+    vi.useFakeTimers()
     const plan = Array.from({ length: 12 }, (_, i) => `keri ${i + 1}`)
     const t = setup({
       logic: asking,
@@ -1290,7 +1331,9 @@ describe('chains of goals (round 4)', () => {
     })
     t.engine.start()
     t.say('keri alla ' + plan.join(' ja '))
-    await t.engine.idle()
+    const idle = t.engine.idle()
+    await vi.advanceTimersByTimeAsync(SETTLE_MS * (MAX_CHAIN_STEPS + 1))
+    await idle
     expect(t.ran.filter((c) => c.kind === 'scroll')).toHaveLength(MAX_CHAIN_STEPS)
     expect(t.asked).toHaveLength(MAX_CHAIN_STEPS)
     expect(t.asked.at(-1)?.chain?.remaining.length).toBeGreaterThan(0)

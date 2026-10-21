@@ -42,6 +42,11 @@ export interface InpageSession {
   saved?: readonly SavedItem[]
   /** Round 6 (26.2): the ids of the saved items the bar just asked about ("Kumb: a või b?"), or null. */
   choosing?: readonly string[] | null
+  /**
+   * Review R3 M6: the last commands that ran ended with a select, so "kustuta see" deletes the
+   * selection (Backspace); otherwise it takes back the last utterance. Set by inpageResult.
+   */
+  lastWasSelect?: boolean
 }
 
 export interface InpageStep {
@@ -182,7 +187,7 @@ export function inpageResult(
       if (item !== undefined) line = s.inpage.insertedSaved(shown, item.name)
       else line = result.box?.single === true ? s.inpage.typedInto(shown) : s.inpage.written
     } else line = s.browserDone(last, result.tab?.title ?? null, result.hints ?? null) + (result.box ? savedHint(session.saved ?? [], result.box, session.lang) : '')
-    return { session: { ...session, undo, hints }, line }
+    return { session: { ...session, undo, hints, ...selected(session, last.kind === 'select') }, line }
   }
 
   // The extension stops at the first failure; only the one-breath form has two commands, and when
@@ -190,7 +195,12 @@ export function inpageResult(
   const edited = commands.some((c) => pushesUndo(c))
   const undo = (typed !== undefined && !wasUndo) || (typed === undefined && edited) ? session.undo.slice(0, -1) : session.undo
   const hints = first.kind === 'showHints' ? false : session.hints
-  return { session: { ...session, undo, hints }, line: failureLine(s, first, result.code, result.message) }
+  return { session: { ...session, undo, hints, ...selected(session, false) }, line: failureLine(s, first, result.code, result.message) }
+}
+
+/** Review R3 M6: lastWasSelect as the commands that just ran leave it; absent while it was never set. */
+function selected(session: InpageSession, now: boolean): Pick<InpageSession, 'lastWasSelect'> {
+  return now || session.lastWasSelect !== undefined ? { lastWasSelect: now } : {}
 }
 
 function failureLine(s: Strings, command: BrowserCommand, code: BrowserFailure, message: string): string {
@@ -229,6 +239,8 @@ type Action =
   | { kind: 'undo' }
   /** M7: "tagasi" / "back": undo when there are words to take back, else the page history. */
   | { kind: 'back' }
+  /** Review R3 M6: "kustuta see": Backspace after a select, else the box undo of the last utterance. */
+  | { kind: 'deleteThis' }
   /** Round 3: "kustuta sõna X": select the word in the box, then Backspace. */
   | { kind: 'deleteNamed'; find: string }
   | { kind: 'edit'; edit: Edit }
@@ -296,6 +308,8 @@ const BARE_BROWSER: Record<string, BrowserCommand> = {
 
 /** M7 (section 22): undo while the armed box is being written in, else the page history. */
 const BACK = new Set(['tagasi', 'back', 'go back'])
+/** Review R3 M6: "delete this" means the selection after a select, else the words just said. */
+const DELETE_THIS = new Set(['kustuta see', 'delete this'])
 
 /**
  * M7 (section 22): one-word fixed phrases that are also ordinary words of a message ("välja", "siia",
@@ -560,6 +574,7 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
   if (messageCommand(utterance)?.kind === 'send') return plain({ kind: 'send' })
   if (quick?.kind === 'undo') return plain({ kind: 'undo' })
   if (BACK.has(clean)) return plain({ kind: 'back' })
+  if (DELETE_THIS.has(clean)) return plain({ kind: 'deleteThis' })
 
   const fixed = EDITS[clean]
   if (fixed) return plain({ kind: 'edit', edit: fixed })
@@ -668,7 +683,7 @@ function editingPattern(clean: string): Action | null {
 // The one-letter rule (section 21.3): a short utterance one letter away from a command is that command.
 
 /** Never reached by a correction: a send, a sleep or a wake, an undo cannot be taken back (21.3); "back" may be an undo. */
-const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed', 'cancel', 'insertSaved', 'whichSaved'])
+const NEVER_CORRECTED = new Set<Action['kind']>(['send', 'sleep', 'wake', 'undo', 'back', 'dictate', 'oneBreath', 'empty', 'ignored', 'deleteNamed', 'cancel', 'insertSaved', 'whichSaved', 'deleteThis'])
 
 /** Words left out of the vocabulary: those of NEVER_CORRECTED, and the keywords of free-text patterns. */
 const LEFT_OUT = new Set([
@@ -690,12 +705,19 @@ const PHRASES: readonly (readonly string[])[] = [
   ...Object.keys(EDITS),
   ...Object.keys(BARE_BROWSER),
   ...BACK,
+  ...DELETE_THIS,
   ...Object.keys(SPELL_MODES),
   'saada ära', 'saada sõnum', 'saada see', 'send it', 'send the message', 'send message',
   'stop listening', 'go to sleep', 'ära kuula', 'wake up', 'start listening', 'ärka üles', 'võta tagasi', 'undo that',
   'uus sõnum', 'kirjuta sõnum', 'new message', 'write a message to', 'write message to', 'send a message to',
   'open chat with', 'open the chat with', 'open conversation with', 'open the conversation with', 'chat with', 'write to',
 ].map((phrase) => phrase.split(' '))
+
+/** Round 7 (hotwords, 28.1): every fixed command phrase, for the recogniser's hotword list. */
+export const COMMAND_PHRASES: readonly string[] = PHRASES.map((words) => words.join(' '))
+
+/** Round 7 (hotwords, 28.1): the one-word commands that are no phrase of their own (LEFT_OUT keeps them from the sound-alike rule). */
+export const COMMAND_WORDS: readonly string[] = ['saada', 'otsi', 'puhka', 'maga', 'kuula', 'ärka', 'katkesta', 'kirjuta', 'ava', 'mine', 'vajuta', 'klõpsa', 'kliki', 'vestlus', 'vaheleht']
 
 const VOCABULARY: readonly string[] = [
   ...new Set([
@@ -869,6 +891,12 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       // M7: an armed box with words in it, or words just taken out of it (undo has an entry): undo, which
       // says so when there is nothing to take back. The page history only when he is not writing.
       return box.present && box.armed && (box.text.trim() !== '' || session.undo.length > 0) ? undo() : run({ kind: 'history', direction: 'back' })
+    case 'deleteThis': {
+      if (session.lastWasSelect !== true) return armed() ?? undo()
+      if (!box.present) return none(s.inpage.pickField)
+      const step = run({ kind: 'pressKey', key: 'Backspace' })
+      return { ...step, session: pushUndo(step.session, box.text) }
+    }
     case 'edit': {
       const refused = armed()
       if (refused) return refused

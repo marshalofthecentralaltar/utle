@@ -108,7 +108,7 @@ delivered to the fresh engine as is; a `toggle` meant to stop the old engine sta
 he needs one more click. A cleaner shape: the options page sends `utle-listen off` before writing
 `speechEngine`, or `toOffscreen('toggle')` becomes `start`/`stop` resolved from the state.
 
-### M3. An utterance waiting its turn never asks the model. Left (spec says so; worth a second thought).
+### M3. An utterance waiting its turn never asks the model. Fixed in round 7 (r7-robust, b8ce89c).
 
 `extension/src/engine.ts` `interrupt` sets `cancelled` on every earlier job, including ones that
 have not started; `handle` then computes `shouldAsk = … && !job.cancelled`, and skips `verify` too.
@@ -123,7 +123,7 @@ duration. Barge-in's purpose (stop stale model work) is served by aborting the c
 on all (no loop for them). The stale rule (`STALE_MS` 3 s) already covers the case the spec worries
 about.
 
-### M4. Soniox: no lag path, and an error's message is kept out of the log. Left.
+### M4. Soniox: no lag path, and an error's message is kept out of the log. Fixed in round 7 (r7-robust, 4f3eff5).
 
 `server/soniox.ts`: audio goes to `upstream.send(pcm)` with no look at the upstream socket's
 `bufferedAmount`; when the network stalls, `ws` buffers without limit and the delay grows silently,
@@ -151,7 +151,7 @@ leading space: "Tere.Uus lause." Sketch: keep `docsLast` (the last character typ
 space first. Also `readPage` on Docs still reports `boxState(findMessageBox(site))` (the title
 input) while `readBox` reports "Google Docs": the model and the rules see different boxes.
 
-### M6. "kustuta see" with nothing selected deletes one letter. Left; propose.
+### M6. "kustuta see" with nothing selected deletes one letter. Fixed in round 7 (r7-robust, 0029308).
 
 `src/core/browserIntent.ts`: `kustuta see` is a Backspace phrase. Without a selection it erases the
 last letter, which is almost never what "delete this" means after dictating. Proposal: make
