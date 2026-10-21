@@ -28,8 +28,10 @@ export interface StripState {
   busySeconds: number
   /** Round 4: progress through a chain of goals, e.g. "2/4 · otsin kassivideod", or ''. */
   chain: string
-  /** Round 4: a line when speech was dropped as someone else's voice, or ''. Cleared on the next owner utterance. */
+  /** Round 4: a line when speech was dropped as someone else's voice, or ''. Cleared after FOREIGN_SHOWN_MS. */
   foreign: string
+  /** Round 7: scripted enrolment: phrases heard so far (0 at its start), or -1 when none is running. The settings page follows it. */
+  enrolPhrases: number
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -40,7 +42,7 @@ export interface StripState {
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', connects: 0, micOpens: 0, micOpenedAt: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, connects: 0, micOpens: 0, micOpenedAt: 0 }
 
 /** To the service worker. */
 export type ToBackground =
@@ -69,6 +71,9 @@ export type ToBackground =
   | { type: 'utle-listen'; on: boolean; flush?: boolean }
   /** From the options page (round 4): learn the owner's voice from the next `seconds` of speech. Listening starts if it was off. */
   | { type: 'utle-enrol'; seconds: number }
+  /** Round 7: from the options page: scripted enrolment of `phrases` read phrases starts, or ends now with what was read. */
+  | { type: 'utle-enrol-script'; phrases: number }
+  | { type: 'utle-enrol-finish' }
   /** Round 6 (26.1): from the offscreen engine at start: his saved values and whether the entry flow runs. Answered with a SavedAnswer. */
   | { type: 'utle-saved' }
   /** Round 6 (26.5): from the options page: the voice entry flow started (on) or ended. */
@@ -82,6 +87,9 @@ export type ToOffscreen =
   | { target: 'offscreen'; type: 'flush' }
   /** Round 4: learn the owner's voice (the strip tells him to speak). */
   | { target: 'offscreen'; type: 'enrol'; seconds: number }
+  /** Round 7: scripted enrolment starts, or ends now. */
+  | { target: 'offscreen'; type: 'enrolScript'; phrases: number }
+  | { target: 'offscreen'; type: 'enrolFinish' }
   /** Round 6 (26.1): his saved values changed. They stay on this machine. */
   | { target: 'offscreen'; type: 'saved'; items: SavedItem[] }
   /** Round 6 (26.5): the options page's entry flow started or ended. */

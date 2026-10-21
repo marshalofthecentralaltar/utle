@@ -101,7 +101,7 @@ voice (this machine has no model files):
   stores an embedding in `models/speaker/owner.json`, never audio) and **Kuula ainult mind** /
   **Kuula kõiki** (`onlyOwner`, takes effect the next time listening starts).
 - Every final then carries `speaker: owner | other | unknown` (cosine similarity 0.55 / 0.35 in
-  `server/speaker.ts`); the client drops `other` while the mode is on and the bar says "Keegi teine
+  `server/speaker.ts`; round 7 replaced this with one threshold and strict mode, see 1g); the client drops `other` while the mode is on and the bar says "Keegi teine
   rääkis, jätsin vahele." `unknown` is obeyed, so a bad profile never locks him out.
 - Without the model the mode only drops speech fainter than his was at enrolment (40 % of its RMS).
 - The other voice's partials are typed as a preview before its final is judged; the review made the
@@ -216,6 +216,98 @@ redeploy without a volume.
 
 What Ralf must do: create the Railway service (README "Hosted server"), set the variables, read the
 first deploy's log for `[asr] model loaded`, then the store listing (README "The store zip").
+
+## 1g. Round 7, SPEECH lane (2026-10-21): a speaker gate that drops other voices, a speech detector
+
+The owner's report, 2026-10-20: "I had my voice learnt, then had my friend talk next to me, his
+voice was picked up fully. Mine was too, the background noise was as well." Built on branch
+`r7-speech` (ARCHITECTURE 24.2 is the spec; `extension/README.md` "Only your own voice"):
+
+- **Why it let the friend through**, three faults, all fixed: `unknown` (cosine 0.35 to 0.55) was
+  obeyed; judge embedded the utterance with its silences while enrolment embedded speech only, so
+  one recording scored 0.34 against itself (now 1.000); and round 4's model, WeSpeaker CAM++, does
+  not tell voices apart on short utterances (other voices up to 0.85, the owner down to 0.21).
+- **New speaker model**: TitaNet small (`nemo_en_titanet_small.onnx`, 40 MB). `npm run model` fetches
+  it. The old `owner.json` was made with CAM++: until the voice is taught again the server cannot
+  judge voices, and with strict mode on it obeys everything except much fainter speech.
+- **Strict mode**: "Kuula ainult mind" drops `other` and `unknown`; one threshold,
+  `OWNER_THRESHOLD = 0.54` in `server/speaker.ts`. The bar says "Keegi teine rääkis, jätsin vahele."
+  at each drop and, at the third in a row, once "Kui see olid sina, õpeta hääl uuesti seadetes."
+- **Scripted enrolment**: the settings page's **Õpeta mu hääl lausetega** shows 12 sentences
+  (`src/core/enrolPhrases.ts`) one at a time with "1 / 12"; one embedding per sentence, the
+  profile is their mean. **Valmis** keeps what was read; under 6 sentences the bar says the profile
+  is thin. The old 8 s button is **Õpeta vabalt rääkides**.
+- **Speech detector**: Silero VAD v5 (`silero_vad_v5.onnx`, 2.3 MB, third file of `npm run model`).
+  Only speech reaches the decoder and the speaker gate; everything else reaches the decoder as
+  silence, so 20 s of pink noise gives zero finals. Log: `[asr] vad model loaded` / `[asr] no vad model`.
+- **UTLE_CAPTURE=<folder>**: each final's speech as `<time>-<speaker>-<score>.wav` plus a line in
+  `log.tsv` with the words. For calibration on his own machine only; delete the folder after.
+
+**The numbers** (`npx tsx scripts/speaker-calibrate.ts scripts/fixtures/speaker-set`, full table in
+that folder's `scores.json`). There is no recording of the owner on disk: the five fixtures are
+TartuNLP's synthetic voice "mari", used as a stand-in owner; the others are six more TartuNLP voices
+(albert, kalev, meelis, kylli, vesta, liivika) and "mari" pitch-shifted 20 %. Stand-in owner,
+utterances with 0.6 s of speech or more: 0.622 to 0.760. Other voices: at most 0.499 (vesta, a
+woman's voice; the pitch-shifted owner 0.365). Threshold picked: 0.538, set as 0.54: 0 other clips
+pass. The stand-in owner's one-word utterances ("jah", "saada", "üks", 0.4 to 0.5 s of speech)
+scored 0.14 to 0.27. No threshold keeps them and drops a friend, so continuity (below) keeps them
+instead. Against the real round 4 `owner.json` (its own CAM++ model) every
+synthetic clip scored at most 0.346.
+
+**Proven, and by what**: `npx vitest run server/speaker.test.ts server/asrSession.test.ts
+server/asr.test.ts src/speech/local.test.ts extension/src/engine.test.ts
+extension/src/offscreenMain.test.ts src/core/enrolPhrases.test.ts` (strict mode, the self-score,
+scripted enrolment, the speech detector with a fake, capture); `npx tsx scripts/asr-file.ts <wav>`
+through the real recogniser and detector (pink noise: 0 finals; the five fixtures: their sentences);
+the browser suite's settings case (`extension/test/out/enrol.png`, "1 / 12"); `npm run check`.
+
+**Defect round (same day, branch `r7-speech`):**
+
+- **Merged main** (0d96e3d): HOST's profiles per token and ROBUST's hotwords now run with this
+  gate, the detector and scripted enrolment. A token's socket enrols and is judged on its own
+  `profiles/<id>.json`; tested with phrase enrolment ("two tokens enrol two profiles from read
+  phrases").
+- **Continuity** (`continued` in `server/speaker.ts`, ARCHITECTURE 24.2): an utterance with under
+  1.0 s of speech (`SHORT_UTTERANCE_SECONDS`) is the owner's when his last owner final judged on its
+  score was at most 10 s (`CONTINUITY_MS`) before it, whatever it scores. So "saada" after the
+  sentence, or "jah" right after he spoke, passes strict mode. Only a score-judged owner final opens
+  the window, an `other` final closes it, and long utterances are never covered. The cost: a
+  friend's one-word reply within 10 s of the owner speaking passes. The log says
+  `[asr] final judged owner 0.168 continuity (only owner on)`, never the words.
+- **The voice test's case 6 failure, found and fixed** (`server/vad.ts`): the detector made short
+  words vanish. Silero at 0.1 s minimum speech missed the quiet "üks" at some window phases (3 in 96
+  replays), and on the digital zeros it fed for non-speech the recogniser could drop a short last word
+  ("Saada" then nothing, in 4 of 21 recorded live sessions). Now 0.05 s, and non-speech reaches the
+  recogniser as a faint fixed hiss (-85 dBFS). `UTLE_REAL=1 extension/test/voice.ts`: ALL PASS 3 of
+  3 full runs. A lone "." is no longer sent as a final.
+- **The image** builds and runs with the three models: 1.22 GB, peak memory 579 MB (ARCHITECTURE 27.7).
+  Same words from the container as from the dev server.
+- The browser suite's two "with no ordinary window → no_target" failures did not occur on the merged
+  tree (`npx tsx extension/test/run.ts`: ALL PASS, one run).
+
+**Not verified**: a real voice through any of it: the threshold on his voice and a friend's, a real
+room's noise, a real microphone, and how often continuity lets a friend's short word through in a
+real conversation. Measured, not explained: with the detector the "saada" after a sentence and
+"järgmine vaheleht" end 0.5 s later, "jah", "näita numbreid" and "üks" 0.2 to 0.4 s earlier
+(ARCHITECTURE 27.7 has the table); the cause is not found. The hosted
+server (Railway) needs a redeploy for the new models.
+
+**Ten minutes in the morning, with the friend:**
+
+1. `npm run model` (fetches the two new files), then teach the voice again: settings, **Õpeta mu hääl
+   lausetega**, read the 12 sentences.
+2. Stop the dev server. PowerShell: `$env:UTLE_CAPTURE="C:\temp\voice-me"; npm run dev`. Turn
+   **Kuula kõiki** on (nothing dropped while recording). Say 20 things you really say: "saada",
+   "jah", "keri alla", "ava uus leht", two or three whole sentences. Stop listening.
+3. Restart with `$env:UTLE_CAPTURE="C:\temp\voice-friend"`. The friend, beside you, says the same
+   kinds of things, short and long. Then both of you at once for a minute. Then a minute of the room
+   with nobody speaking (it should write nothing: the detector).
+4. Move the "both at once" clips by ear (`log.tsv` has the words) into `voice-me` or `voice-friend`.
+5. `npx tsx scripts/speaker-calibrate.ts --owner C:\temp\voice-me --other C:\temp\voice-friend`.
+   Read the printed best threshold and how many of your clips it drops. Put it in
+   `OWNER_THRESHOLD` (`server/speaker.ts`) if it differs, restart, turn **Kuula ainult mind** on and
+   try the friend again.
+6. Delete both folders: they hold your voice and your words.
 
 ## 1h. Round 7, HOST lane (2026-10-21): the image runs, one server for several people
 

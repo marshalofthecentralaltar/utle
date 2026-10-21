@@ -304,6 +304,20 @@ export interface Strings {
     enrolDone: string
     enrolFailed: string
     foreign: string
+    // Round 7 (SPEECH lane): strict mode and scripted enrolment.
+    /** Said once after three dropped finals in a row. */
+    foreignRetrain: string
+    /** Scripted enrolment: the button, its sub-line, the line while reading, the step counter, the early end, and a thin profile. */
+    teachScript: string
+    teachScriptEn: string
+    teachFree: string
+    teachFreeEn: string
+    scriptStart: string
+    scriptStep(at: number, total: number): string
+    scriptFinish: string
+    scriptFinishEn: string
+    enrolPhrasesDone(phrases: number): string
+    enrolFew(phrases: number, enough: number): string
     // The hosted server (round 6, HOST lane, ARCHITECTURE 27.3).
     /** The settings page's section and its fields. */
     serverTitle: string
@@ -835,6 +849,17 @@ const ET: Strings = {
     enrolDone: 'Hääl on õpitud.',
     enrolFailed: 'Hääle õppimine ei õnnestunud.',
     foreign: 'Keegi teine rääkis, jätsin vahele.',
+    foreignRetrain: 'Kui see olid sina, õpeta hääl uuesti seadetes.',
+    teachScript: 'Õpeta mu hääl lausetega',
+    teachScriptEn: 'Teach it my voice: read 12 short sentences aloud',
+    teachFree: 'Õpeta vabalt rääkides',
+    teachFreeEn: 'Or speak freely for 8 seconds',
+    scriptStart: 'Loe see lause tavalisel häälel. Järgmine tuleb ise.',
+    scriptStep: (at, total) => `${at} / ${total}`,
+    scriptFinish: 'Valmis',
+    scriptFinishEn: 'Done: keep what was read so far',
+    enrolPhrasesDone: (phrases) => `Hääl on õpitud ${phrases} lausest.`,
+    enrolFew: (phrases, enough) => `Hääl on õpitud ainult ${phrases} lausest. Vähemalt ${enough} on kindlam: õpeta uuesti, kui ma sind ära ei tunne.`,
     // The hosted server (round 6, HOST lane).
     serverTitle: 'Server',
     serverAddress: 'Serveri aadress',
@@ -1280,6 +1305,17 @@ const EN: Strings = {
     enrolDone: 'Your voice is learnt.',
     enrolFailed: 'Learning your voice did not work.',
     foreign: 'Someone else spoke; skipped it.',
+    foreignRetrain: 'If that was you, teach it your voice again in the settings.',
+    teachScript: 'Teach it my voice with sentences',
+    teachScriptEn: 'Read 12 short sentences aloud',
+    teachFree: 'Teach it by speaking freely',
+    teachFreeEn: 'Speak for 8 seconds',
+    scriptStart: 'Read this sentence in your usual voice. The next one comes by itself.',
+    scriptStep: (at, total) => `${at} / ${total}`,
+    scriptFinish: 'Done',
+    scriptFinishEn: '',
+    enrolPhrasesDone: (phrases) => `Your voice is learnt from ${phrases} sentences.`,
+    enrolFew: (phrases, enough) => `Your voice is learnt from only ${phrases} sentences. ${enough} or more is surer: teach it again if it does not know you.`,
     // The hosted server (round 6, HOST lane).
     serverTitle: 'Server',
     serverAddress: 'Server address',

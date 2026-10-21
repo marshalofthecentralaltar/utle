@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
-import { ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, OTHER_THRESHOLD, OWNER_THRESHOLD, cosine, createSpeakerGate, normalised, profilePath, profileSummary, speakerGates, verdict } from './speaker.ts'
-import type { EmbeddingExtractor } from './speaker.ts'
+import { CONTINUITY_MS, ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, MIN_PHRASE_SECONDS, OWNER_THRESHOLD, SHORT_UTTERANCE_SECONDS, continued, cosine, createSpeakerGate, meanEmbedding, normalised, pickThreshold, profilePath, profileSummary, speakerGates, verdict } from './speaker.ts'
+import type { EmbeddingExtractor, EnrolPhrase } from './speaker.ts'
 
 /**
  * A voice is a number from 0 to 1 carried in a frame's first sample. The fake extractor turns it
@@ -49,17 +49,17 @@ describe('the speaker gate', () => {
     expect(gate.judge(speech(0, 3))).toBeNull()
   })
 
-  it('learns the owner and knows him, a stranger, and a voice it cannot place', () => {
+  it('learns the owner and knows him and a stranger, with one threshold (strict mode: no band in between)', () => {
     const gate = createSpeakerGate(fakeExtractor, { profilePath })
     expect(gate.enrol(speech(0, 8))).toBe(true)
     expect(gate.hasProfile()).toBe(true)
-    expect(gate.judge(speech(0, 3))).toEqual({ speaker: 'owner', score: 1 })
+    expect(gate.judge(speech(0, 3))).toMatchObject({ speaker: 'owner', score: 1 })
     // cos(45°) = 0.707: still the owner.
     expect(gate.judge(speech(0.5, 3))?.speaker).toBe('owner')
     // cos(72°) = 0.309: someone else.
     expect(gate.judge(speech(0.8, 3))?.speaker).toBe('other')
-    // cos(58.5°) = 0.52: between the thresholds.
-    expect(gate.judge(speech(0.65, 3))?.speaker).toBe('unknown')
+    // cos(58.5°) = 0.52: round 4 called this unknown and obeyed it; it is someone else now.
+    expect(gate.judge(speech(0.65, 3))?.speaker).toBe('other')
   })
 
   it('never calls the owner a stranger over a profile from another model or of another size (review)', () => {
@@ -68,19 +68,28 @@ describe('the speaker gate', () => {
     // The same file read by a server with a newer model: the embedding is not comparable, loudness still is.
     const second = createSpeakerGate(fakeExtractor, { profilePath, modelName: 'new.onnx' })
     expect(second.hasProfile()).toBe(true)
-    expect(second.judge(speech(0.8, 3))?.speaker).toBe('unknown')
-    expect(second.judge(speech(0, 3))?.speaker).toBe('unknown')
+    // Round 7: no verdict (null), so strict mode obeys it; unknown would be dropped.
+    expect(second.judge(speech(0.8, 3))).toBeNull()
+    expect(second.judge(speech(0, 3))).toBeNull()
     expect(second.judge(speech(0, 3, 0.02))?.speaker).toBe('other')
     // An extractor of another size over a profile that names this model: no score, so unknown.
     const wide: EmbeddingExtractor = { embed: () => new Float32Array([1, 0, 0]) }
     const third = createSpeakerGate(wide, { profilePath, modelName: 'old.onnx' })
-    expect(third.judge(speech(0.8, 3))).toEqual({ speaker: 'unknown', score: 0 })
+    expect(third.judge(speech(0.8, 3))).toMatchObject({ speaker: 'unknown', score: 0 })
+  })
+
+  it('judges the same frames it learnt from: his own recording, silences and all, scores 1 (round 7)', () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath })
+    // A voice whose embedding changes when silence is in the clip, as CAM++ did.
+    const recording = [...silence(1), ...speech(0.3, 3), ...silence(2)]
+    expect(gate.enrol(recording)).toBe(true)
+    expect(gate.judge(recording)).toMatchObject({ speaker: 'owner', score: 1 })
   })
 
   it('calls an utterance shorter than MIN_JUDGE_SECONDS unknown, whatever it sounds like', () => {
     const gate = createSpeakerGate(fakeExtractor, { profilePath })
     gate.enrol(speech(0, 8))
-    expect(gate.judge(speech(0.8, MIN_JUDGE_SECONDS - 0.1))).toEqual({ speaker: 'unknown', score: 0 })
+    expect(gate.judge(speech(0.8, MIN_JUDGE_SECONDS - 0.1))).toMatchObject({ speaker: 'unknown', score: 0 })
     expect(gate.judge(speech(0.8, MIN_JUDGE_SECONDS))?.speaker).toBe('other')
   })
 
@@ -123,15 +132,15 @@ describe('the speaker gate', () => {
   })
 
   describe('without the model (the energy gate)', () => {
-    it('still learns the owner, by loudness, and never says owner', () => {
+    it('still learns the owner, by loudness, never says owner, and gives no verdict (not unknown) for loud speech', () => {
       const gate = createSpeakerGate(null, { profilePath })
       expect(gate.hasModel()).toBe(false)
       expect(gate.enrol(speech(0, 8, 0.1))).toBe(true)
       const stored = JSON.parse(readFileSync(profilePath, 'utf8')) as Record<string, unknown>
       expect(stored.embedding).toEqual([])
       expect(stored.model).toBe('')
-      expect(gate.judge(speech(0, 3, 0.1))).toEqual({ speaker: 'unknown', score: 0 })
-      expect(gate.judge(speech(0, 3, 0.1 * ENERGY_OTHER_RATIO * 1.1))?.speaker).toBe('unknown')
+      expect(gate.judge(speech(0, 3, 0.1))).toBeNull()
+      expect(gate.judge(speech(0, 3, 0.1 * ENERGY_OTHER_RATIO * 1.1))).toBeNull()
       expect(gate.judge(speech(0, 3, 0.1 * ENERGY_OTHER_RATIO * 0.9))?.speaker).toBe('other')
     })
 
@@ -139,8 +148,42 @@ describe('the speaker gate', () => {
       createSpeakerGate(fakeExtractor, { profilePath }).enrol(speech(0, 8, 0.1))
       const gate = createSpeakerGate(null, { profilePath })
       expect(gate.hasProfile()).toBe(true)
-      expect(gate.judge(speech(1, 3, 0.1))?.speaker).toBe('unknown')
+      expect(gate.judge(speech(1, 3, 0.1))).toBeNull()
       expect(gate.judge(speech(0, 3, 0.01))?.speaker).toBe('other')
+    })
+  })
+
+  describe('scripted enrolment (round 7)', () => {
+    it('makes the profile the mean of one embedding per phrase, at unit length, and counts the phrases', () => {
+      const gate = createSpeakerGate(fakeExtractor, { profilePath, modelName: 'fake.onnx' })
+      const phrases = [gate.phrase(speech(0, 1.5)), gate.phrase(speech(1, 1.5))].filter((p) => p !== null)
+      expect(phrases).toHaveLength(2)
+      expect(gate.enrolPhrases(phrases)).toBe(true)
+      const stored = JSON.parse(readFileSync(profilePath, 'utf8')) as { embedding: number[]; phrases: number; seconds: number; model: string }
+      expect(stored.phrases).toBe(2)
+      expect(stored.seconds).toBe(3)
+      expect(stored.model).toBe('fake.onnx')
+      expect(stored.embedding[0]).toBeCloseTo(Math.SQRT1_2, 6)
+      expect(stored.embedding[1]).toBeCloseTo(Math.SQRT1_2, 6)
+      // The voice halfway between the two read voices is the owner.
+      expect(gate.judge(speech(0.5, 3))).toMatchObject({ speaker: 'owner', score: 1 })
+    })
+
+    it('keeps a profile from fewer than six phrases, and refuses one with too little speech', () => {
+      const gate = createSpeakerGate(fakeExtractor, { profilePath })
+      const one = gate.phrase(speech(0, 1))
+      expect(one).not.toBeNull()
+      expect(gate.enrolPhrases(one ? [one] : [])).toBe(false)
+      const two = [gate.phrase(speech(0, 1.2)), gate.phrase(speech(0, 1.2))].filter((p) => p !== null)
+      expect(gate.enrolPhrases(two)).toBe(true)
+      expect(gate.hasProfile()).toBe(true)
+      expect(gate.enrolPhrases([])).toBe(false)
+    })
+
+    it('does not count a phrase shorter than MIN_PHRASE_SECONDS, nor silence', () => {
+      const gate = createSpeakerGate(fakeExtractor, { profilePath })
+      expect(gate.phrase(speech(0, MIN_PHRASE_SECONDS - 0.1))).toBeNull()
+      expect(gate.phrase(silence(2))).toBeNull()
     })
   })
 
@@ -155,8 +198,49 @@ describe('the speaker gate', () => {
     const gate = createSpeakerGate(flaky, { profilePath })
     gate.enrol(speech(0, 8))
     fail = true
-    expect(gate.judge(speech(0, 3))).toEqual({ speaker: 'unknown', score: 0 })
+    expect(gate.judge(speech(0, 3))).toMatchObject({ speaker: 'unknown', score: 0 })
     expect(gate.enrol(speech(0, 8))).toBe(false)
+  })
+})
+
+describe('continuity (round 7): a short word right after the owner spoke is his', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'utle-continuity-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('continuity: the judgement says how many seconds of speech it was made from', () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath: join(dir, 'owner.json') })
+    gate.enrol(speech(0, 8))
+    expect(gate.judge([...silence(1), ...speech(0, 3)])).toEqual({ speaker: 'owner', score: 1, seconds: 3 })
+    expect(gate.judge(speech(0, 0.4))).toEqual({ speaker: 'unknown', score: 0, seconds: 0.4 })
+    expect(gate.judge(speech(0.8, 0.7))).toEqual({ speaker: 'other', score: 0.309, seconds: 0.7 })
+  })
+
+  it('continuity: under SHORT_UTTERANCE_SECONDS and within CONTINUITY_MS of an owner final is owner, whatever it scored', () => {
+    expect(SHORT_UTTERANCE_SECONDS).toBe(1)
+    expect(CONTINUITY_MS).toBe(10_000)
+    expect(continued({ speaker: 'unknown', score: 0, seconds: 0.4 }, 1000, 1000 + CONTINUITY_MS)).toEqual({ speaker: 'owner', score: 0, seconds: 0.4, reason: 'continuity' })
+    expect(continued({ speaker: 'other', score: 0.168, seconds: 0.9 }, 1000, 4000)).toEqual({ speaker: 'owner', score: 0.168, seconds: 0.9, reason: 'continuity' })
+  })
+
+  it('continuity: a short utterance the score already judged owner keeps the score as its reason', () => {
+    const scored = { speaker: 'owner' as const, score: 0.7, seconds: 0.9 }
+    expect(continued(scored, 1000, 4000)).toBe(scored)
+    expect(continued(scored, 1000, 4000).reason).toBeUndefined()
+  })
+
+  it('continuity: judged as now when too late, with no owner final, when long, or when its length is not known', () => {
+    const short = { speaker: 'unknown' as const, score: 0, seconds: 0.4 }
+    expect(continued(short, 1000, 1000 + CONTINUITY_MS + 1)).toBe(short)
+    expect(continued(short, null, 1000)).toBe(short)
+    const long = { speaker: 'other' as const, score: 0.3, seconds: SHORT_UTTERANCE_SECONDS }
+    expect(continued(long, 1000, 2000)).toBe(long)
+    const unmeasured = { speaker: 'other' as const, score: 0.3 }
+    expect(continued(unmeasured, 1000, 2000)).toBe(unmeasured)
   })
 })
 
@@ -171,11 +255,32 @@ describe('the arithmetic', () => {
     expect(cosine([], [])).toBeNaN()
   })
 
-  it('draws the lines at the thresholds', () => {
+  it('strict mode: draws one line, at OWNER_THRESHOLD, measured on the calibration set', () => {
     expect(verdict(OWNER_THRESHOLD)).toBe('owner')
-    expect(verdict(OWNER_THRESHOLD - 0.01)).toBe('unknown')
-    expect(verdict(OTHER_THRESHOLD + 0.01)).toBe('unknown')
-    expect(verdict(OTHER_THRESHOLD)).toBe('other')
+    expect(verdict(OWNER_THRESHOLD - 0.001)).toBe('other')
+    expect(verdict(1)).toBe('owner')
+    expect(verdict(0)).toBe('other')
+    // scripts/fixtures/speaker-set/scores.json: the closest other voice 0.499, the stand-in owner's next score 0.577.
+    expect(OWNER_THRESHOLD).toBeGreaterThan(0.499)
+    expect(OWNER_THRESHOLD).toBeLessThanOrEqual(0.577)
+  })
+
+  it('averages unit embeddings to unit length', () => {
+    expect(meanEmbedding([])).toEqual([])
+    const mean = meanEmbedding([[1, 0], [0, 1]])
+    expect(mean[0]).toBeCloseTo(Math.SQRT1_2, 6)
+    expect(mean[1]).toBeCloseTo(Math.SQRT1_2, 6)
+  })
+
+  it('picks the threshold with the fewest errors, ties toward dropping others, in the middle of the gap', () => {
+    // A clean gap: the middle of it.
+    expect(pickThreshold([0.7, 0.8, 0.9], [0.1, 0.3, 0.5])).toEqual({ threshold: 0.6, ownerDropped: 0, otherPassed: 0 })
+    // An overlap of one: one error either way; the one that drops the owner clip wins (others never pass).
+    const tie = pickThreshold([0.4, 0.8], [0.5, 0.2])
+    expect(tie.ownerDropped + tie.otherPassed).toBe(1)
+    expect(tie.otherPassed).toBe(0)
+    expect(tie.threshold).toBeGreaterThan(0.5)
+    expect(tie.threshold).toBeLessThanOrEqual(0.8)
   })
 })
 
@@ -214,6 +319,28 @@ describe('profiles per token (round 7, HOST lane)', () => {
     expect(existsSync(join(dir, 'owner.json'))).toBe(false)
     // A restart reads each back from its own file.
     expect(speakerGates(fakeExtractor)(mari).judge(speech(1, 3))?.speaker).toBe('owner')
+  })
+
+  it('two tokens enrol two profiles from read phrases (round 7) and each is judged against its own', () => {
+    const env = { UTLE_DATA_DIR: dir }
+    const gateFor = speakerGates(fakeExtractor)
+    const ralf = profilePath('/unused', env, 'dddddddddddddddd')
+    const mari = profilePath('/unused', env, 'eeeeeeeeeeeeeeee')
+    const read = (path: string, voice: number): EnrolPhrase[] => [1, 2, 3, 4, 5, 6].map(() => gateFor(path).phrase(speech(voice, 1.5))).filter((p): p is EnrolPhrase => p !== null)
+    const ralfPhrases = read(ralf, 0)
+    const mariPhrases = read(mari, 1)
+    expect(ralfPhrases).toHaveLength(6)
+    expect(gateFor(ralf).enrolPhrases(ralfPhrases)).toBe(true)
+    expect(gateFor(mari).judge(speech(1, 3))).toBeNull()
+    expect(gateFor(mari).enrolPhrases(mariPhrases)).toBe(true)
+    expect(gateFor(ralf).judge(speech(0, 3))).toMatchObject({ speaker: 'owner', score: 1 })
+    expect(gateFor(ralf).judge(speech(1, 3))?.speaker).toBe('other')
+    expect(gateFor(mari).judge(speech(1, 3))).toMatchObject({ speaker: 'owner', score: 1 })
+    expect(gateFor(mari).judge(speech(0, 3))?.speaker).toBe('other')
+    expect(profileSummary(ralf)).toEqual({ enrolled: true, seconds: 9 })
+    expect(JSON.parse(readFileSync(mari, 'utf8'))).toMatchObject({ phrases: 6, model: 'nemo_en_titanet_small.onnx' })
+    // A restart reads each back from its own file.
+    expect(speakerGates(fakeExtractor)(ralf).judge(speech(0, 3))?.speaker).toBe('owner')
   })
 
   it('summarises a profile for /api/status without reading out the voice', () => {

@@ -1,0 +1,370 @@
+{
+  "model": "nemo_en_titanet_small.onnx",
+  "ownerPhrases": 4,
+  "ownerMin": 0.144,
+  "otherMax": 0.499,
+  "threshold": 0.538,
+  "ownerDropped": 3,
+  "otherPassed": 0,
+  "currentThreshold": 0.54,
+  "currentErrors": {
+    "ownerDropped": 3,
+    "otherPassed": 0
+  },
+  "scores": [
+    {
+      "file": "other-albert-1.wav",
+      "label": "other",
+      "seconds": 1.36,
+      "score": 0.136,
+      "gate": "other",
+      "ms": 12
+    },
+    {
+      "file": "other-albert-2.wav",
+      "label": "other",
+      "seconds": 1.82,
+      "score": 0.25,
+      "gate": "other",
+      "ms": 16
+    },
+    {
+      "file": "other-albert-3.wav",
+      "label": "other",
+      "seconds": 3.55,
+      "score": 0.192,
+      "gate": "other",
+      "ms": 49
+    },
+    {
+      "file": "other-kalev-1.wav",
+      "label": "other",
+      "seconds": 1.35,
+      "score": 0.214,
+      "gate": "other",
+      "ms": 16
+    },
+    {
+      "file": "other-kalev-2.wav",
+      "label": "other",
+      "seconds": 1.82,
+      "score": 0.254,
+      "gate": "other",
+      "ms": 20
+    },
+    {
+      "file": "other-kalev-3.wav",
+      "label": "other",
+      "seconds": 3.52,
+      "score": 0.253,
+      "gate": "other",
+      "ms": 31
+    },
+    {
+      "file": "other-kylli-1.wav",
+      "label": "other",
+      "seconds": 1.47,
+      "score": 0.327,
+      "gate": "other",
+      "ms": 10
+    },
+    {
+      "file": "other-kylli-2.wav",
+      "label": "other",
+      "seconds": 1.88,
+      "score": 0.408,
+      "gate": "other",
+      "ms": 14
+    },
+    {
+      "file": "other-kylli-3.wav",
+      "label": "other",
+      "seconds": 4.2,
+      "score": 0.412,
+      "gate": "other",
+      "ms": 46
+    },
+    {
+      "file": "other-liivika-1.wav",
+      "label": "other",
+      "seconds": 1.41,
+      "score": 0.203,
+      "gate": "other",
+      "ms": 8
+    },
+    {
+      "file": "other-liivika-2.wav",
+      "label": "other",
+      "seconds": 1.91,
+      "score": 0.456,
+      "gate": "other",
+      "ms": 14
+    },
+    {
+      "file": "other-liivika-3.wav",
+      "label": "other",
+      "seconds": 3.8,
+      "score": 0.317,
+      "gate": "other",
+      "ms": 27
+    },
+    {
+      "file": "other-mari-pitch20-1.wav",
+      "label": "other",
+      "seconds": 3.46,
+      "score": 0.328,
+      "gate": "other",
+      "ms": 51
+    },
+    {
+      "file": "other-mari-pitch20-2.wav",
+      "label": "other",
+      "seconds": 2.29,
+      "score": 0.365,
+      "gate": "other",
+      "ms": 20
+    },
+    {
+      "file": "other-meelis-1.wav",
+      "label": "other",
+      "seconds": 1.45,
+      "score": 0.259,
+      "gate": "other",
+      "ms": 10
+    },
+    {
+      "file": "other-meelis-2.wav",
+      "label": "other",
+      "seconds": 1.86,
+      "score": 0.248,
+      "gate": "other",
+      "ms": 15
+    },
+    {
+      "file": "other-meelis-3.wav",
+      "label": "other",
+      "seconds": 4.1,
+      "score": 0.315,
+      "gate": "other",
+      "ms": 55
+    },
+    {
+      "file": "other-vesta-1.wav",
+      "label": "other",
+      "seconds": 1.4,
+      "score": 0.414,
+      "gate": "other",
+      "ms": 14
+    },
+    {
+      "file": "other-vesta-2.wav",
+      "label": "other",
+      "seconds": 1.98,
+      "score": 0.466,
+      "gate": "other",
+      "ms": 18
+    },
+    {
+      "file": "other-vesta-3.wav",
+      "label": "other",
+      "seconds": 3.65,
+      "score": 0.499,
+      "gate": "other",
+      "ms": 36
+    },
+    {
+      "file": "owner-dictate-send-1.wav",
+      "label": "owner",
+      "seconds": 2.75,
+      "score": 0.76,
+      "gate": "owner",
+      "ms": 41
+    },
+    {
+      "file": "owner-dictate-send-2.wav",
+      "label": "owner",
+      "seconds": 1.25,
+      "score": 0.168,
+      "gate": "other",
+      "ms": 12
+    },
+    {
+      "file": "owner-jah-1.wav",
+      "label": "owner",
+      "seconds": 1.15,
+      "score": 0.271,
+      "gate": "unknown",
+      "ms": 7
+    },
+    {
+      "file": "owner-numbers-one-1.wav",
+      "label": "owner",
+      "seconds": 1.85,
+      "score": 0.716,
+      "gate": "owner",
+      "ms": 24
+    },
+    {
+      "file": "owner-numbers-one-2.wav",
+      "label": "owner",
+      "seconds": 1.25,
+      "score": 0.144,
+      "gate": "unknown",
+      "ms": 19
+    },
+    {
+      "file": "owner-scroll-tab-1.wav",
+      "label": "owner",
+      "seconds": 1.45,
+      "score": 0.622,
+      "gate": "owner",
+      "ms": 16
+    },
+    {
+      "file": "owner-scroll-tab-2.wav",
+      "label": "owner",
+      "seconds": 1.75,
+      "score": 0.647,
+      "gate": "owner",
+      "ms": 16
+    },
+    {
+      "file": "owner-sentence-1.wav",
+      "label": "owner",
+      "seconds": 1.15,
+      "score": 0.577,
+      "gate": "unknown",
+      "ms": 9
+    },
+    {
+      "file": "owner-sentence-2.wav",
+      "label": "owner",
+      "seconds": 4.15,
+      "score": 0.691,
+      "gate": "owner",
+      "ms": 36
+    }
+  ],
+  "stored": {
+    "profile": "models/speaker/owner.json",
+    "model": "wespeaker_en_voxceleb_CAM++.onnx",
+    "scores": [
+      {
+        "file": "other-albert-1.wav",
+        "score": -0.096
+      },
+      {
+        "file": "other-albert-2.wav",
+        "score": 0.06
+      },
+      {
+        "file": "other-albert-3.wav",
+        "score": 0.229
+      },
+      {
+        "file": "other-kalev-1.wav",
+        "score": -0.045
+      },
+      {
+        "file": "other-kalev-2.wav",
+        "score": 0.094
+      },
+      {
+        "file": "other-kalev-3.wav",
+        "score": 0.245
+      },
+      {
+        "file": "other-kylli-1.wav",
+        "score": 0.031
+      },
+      {
+        "file": "other-kylli-2.wav",
+        "score": 0.008
+      },
+      {
+        "file": "other-kylli-3.wav",
+        "score": 0.163
+      },
+      {
+        "file": "other-liivika-1.wav",
+        "score": -0.005
+      },
+      {
+        "file": "other-liivika-2.wav",
+        "score": 0.006
+      },
+      {
+        "file": "other-liivika-3.wav",
+        "score": 0.346
+      },
+      {
+        "file": "other-mari-pitch20-1.wav",
+        "score": 0.147
+      },
+      {
+        "file": "other-mari-pitch20-2.wav",
+        "score": 0.143
+      },
+      {
+        "file": "other-meelis-1.wav",
+        "score": -0.078
+      },
+      {
+        "file": "other-meelis-2.wav",
+        "score": 0.052
+      },
+      {
+        "file": "other-meelis-3.wav",
+        "score": 0.264
+      },
+      {
+        "file": "other-vesta-1.wav",
+        "score": 0.027
+      },
+      {
+        "file": "other-vesta-2.wav",
+        "score": 0.118
+      },
+      {
+        "file": "other-vesta-3.wav",
+        "score": 0.204
+      },
+      {
+        "file": "owner-dictate-send-1.wav",
+        "score": 0.345
+      },
+      {
+        "file": "owner-dictate-send-2.wav",
+        "score": -0.025
+      },
+      {
+        "file": "owner-jah-1.wav",
+        "score": -0.028
+      },
+      {
+        "file": "owner-numbers-one-1.wav",
+        "score": -0.074
+      },
+      {
+        "file": "owner-numbers-one-2.wav",
+        "score": -0.079
+      },
+      {
+        "file": "owner-scroll-tab-1.wav",
+        "score": -0.048
+      },
+      {
+        "file": "owner-scroll-tab-2.wav",
+        "score": 0.032
+      },
+      {
+        "file": "owner-sentence-1.wav",
+        "score": -0.026
+      },
+      {
+        "file": "owner-sentence-2.wav",
+        "score": 0.246
+      }
+    ]
+  }
+}

@@ -22,8 +22,9 @@ type ExtractorConstructor = new (config: unknown) => ExtractorLike
 
 export type SpeakerModelLoad = { ok: true; extractor: EmbeddingExtractor; ms: number } | { ok: false; reason: 'model_missing' | 'addon_missing' | 'load_failed' }
 
-export function loadSpeakerModel(root: string): SpeakerModelLoad {
-  const model = join(root, SPEAKER_DIR, SPEAKER_MODEL_FILE)
+/** file: another model in models/speaker/ (the calibration reads an older profile with the model that made it). */
+export function loadSpeakerModel(root: string, file: string = SPEAKER_MODEL_FILE): SpeakerModelLoad {
+  const model = join(root, SPEAKER_DIR, file)
   if (!existsSync(model)) return { ok: false, reason: 'model_missing' }
 
   let Extractor: ExtractorConstructor

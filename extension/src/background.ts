@@ -609,6 +609,13 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       // Round 4: the offscreen document starts listening if it must and asks the server to learn the voice.
       void sendOffscreen({ target: 'offscreen', type: 'enrol', seconds: message.seconds })
       return false
+    case 'utle-enrol-script':
+      // Round 7: scripted enrolment, the same way.
+      void sendOffscreen({ target: 'offscreen', type: 'enrolScript', phrases: message.phrases })
+      return false
+    case 'utle-enrol-finish':
+      void sendOffscreen({ target: 'offscreen', type: 'enrolFinish' })
+      return false
     case 'utle-mic-blocked':
       void chrome.storage.session.set({ wantListening: true }).then(openPermissionPage)
       return false

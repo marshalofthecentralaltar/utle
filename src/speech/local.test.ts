@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS } from './asrProtocol.ts'
-import { MAX_BUFFERED_BYTES, createLocalRecognizer } from './local.ts'
+import { MAX_BUFFERED_BYTES, RETRAIN_AFTER_DROPS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
 
 /** Stands in for the browser's WebSocket: records what is sent and lets the test play the server. */
@@ -537,11 +537,17 @@ describe('local recogniser (browser side)', () => {
 
   describe('only the owner (round 4)', () => {
     let foreign: number
-    let enrolled: Array<[boolean, number]>
+    let streaks: number[]
+    let enrolled: Array<[boolean, number] | [boolean, number, number]>
+    let phrases: number[]
     const voiceHandlers = () => ({
       ...handlers,
-      onForeign: () => (foreign += 1),
-      onEnrolled: (ok: boolean, seconds: number) => enrolled.push([ok, seconds]),
+      onForeign: (streak: number) => {
+        foreign += 1
+        streaks.push(streak)
+      },
+      onEnrolled: (ok: boolean, seconds: number, read?: number) => enrolled.push(read === undefined ? [ok, seconds] : [ok, seconds, read]),
+      onEnrolPhrase: (count: number) => phrases.push(count),
     })
     const makeOwner = (onlyOwner: boolean) =>
       createLocalRecognizer(voiceHandlers(), isInstant, {
@@ -555,7 +561,9 @@ describe('local recogniser (browser side)', () => {
 
     beforeEach(() => {
       foreign = 0
+      streaks = []
       enrolled = []
+      phrases = []
     })
 
     it('tells the server right after ready, and only when the mode is on', () => {
@@ -588,7 +596,7 @@ describe('local recogniser (browser side)', () => {
       expect(foreign).toBe(1)
     })
 
-    it('delivers finals of the owner, of an unknown voice, and without a speaker', () => {
+    it('strict mode: drops an unknown final too when on, and delivers the owner and a final without a speaker', () => {
       const r = makeOwner(true)
       r.start()
       socket().says({ type: 'ready' })
@@ -598,8 +606,53 @@ describe('local recogniser (browser side)', () => {
       vi.advanceTimersByTime(150)
       socket().says({ type: 'final', text: 'kolm' })
       vi.advanceTimersByTime(150)
-      expect(utterances).toEqual(['üks', 'kaks', 'kolm'])
+      expect(utterances).toEqual(['üks', 'kolm'])
+      expect(foreign).toBe(1)
+    })
+
+    it('strict mode: obeys an unknown final when off', () => {
+      const r = makeOwner(false)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'kaks', speaker: 'unknown' })
+      vi.advanceTimersByTime(150)
+      expect(utterances).toEqual(['kaks'])
       expect(foreign).toBe(0)
+      expect(dropsFinal(false, 'unknown')).toBe(false)
+      expect(dropsFinal(false, 'other')).toBe(false)
+      expect(dropsFinal(true, 'unknown')).toBe(true)
+      expect(dropsFinal(true, 'other')).toBe(true)
+      expect(dropsFinal(true, 'owner')).toBe(false)
+      expect(dropsFinal(true, undefined)).toBe(false)
+    })
+
+    it('strict mode: counts drops in a row, the third drop message once, and an obeyed final starts over', () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      for (const speaker of ['other', 'unknown', 'other', 'other'] as const) socket().says({ type: 'final', text: 'jah', speaker })
+      expect(streaks).toEqual([1, 2, 3, 4])
+      expect(streaks.filter(retrainDue)).toEqual([RETRAIN_AFTER_DROPS])
+      socket().says({ type: 'final', text: 'saada', speaker: 'owner' })
+      socket().says({ type: 'final', text: 'jah', speaker: 'unknown' })
+      expect(streaks).toEqual([1, 2, 3, 4, 1])
+      expect(RETRAIN_AFTER_DROPS).toBe(3)
+    })
+
+    it('scripted enrolment (round 7): asks for the phrases, waits for the connection, reports each phrase and the end', () => {
+      const r = makeOwner(false)
+      r.start()
+      r.enrolScript?.(12)
+      expect(texts()).toEqual([])
+      socket().says({ type: 'ready' })
+      expect(texts()).toEqual([{ type: 'enrolScript', phrases: 12 }])
+      socket().says({ type: 'enrolPhrase', count: 1 })
+      socket().says({ type: 'enrolPhrase', count: 2 })
+      r.enrolFinish?.()
+      expect(texts()).toEqual([{ type: 'enrolScript', phrases: 12 }, { type: 'enrolFinish' }])
+      socket().says({ type: 'enrolled', ok: true, seconds: 4.2, phrases: 2 })
+      expect(phrases).toEqual([1, 2])
+      expect(enrolled).toEqual([[true, 4.2, 2]])
     })
 
     it('delivers finals of other voices while the mode is off', () => {

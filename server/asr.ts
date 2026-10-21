@@ -6,11 +6,13 @@ import { WebSocketServer } from 'ws'
 import type { RawData, WebSocket } from 'ws'
 import { ASR_PATH } from '../src/speech/asrProtocol.ts'
 import type { AsrClientMessage, AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
+import type { Judgement } from './speaker.ts'
 import { loadModel } from './asrModel.ts'
 import type { ModelLoad } from './asrModel.ts'
 import { createAsrSession, samplesFromFrame } from './asrSession.ts'
-import { hostInThread, openSpeakerGate, startWorkerHost } from './asrWorker.ts'
+import { hostInThread, openDecoderExtras, openSpeakerGate, startWorkerHost } from './asrWorker.ts'
 import type { DecoderHost, HostStart, SpeakerStatus } from './asrWorker.ts'
+import type { DecoderExtras } from './asrSession.ts'
 import { attachSonioxSession } from './soniox.ts'
 
 export { MODEL_DIR, MODEL_FILES, loadModel } from './asrModel.ts'
@@ -32,6 +34,8 @@ const send = (socket: WebSocket, message: AsrServerMessage): void => {
 
 /** Enrolment may ask for this many seconds of speech at most (the owner's button asks for 8). */
 export const MAX_ENROL_SECONDS = 30
+/** Round 7: scripted enrolment may ask for this many phrases at most (the settings page asks for 12). */
+export const MAX_ENROL_PHRASES = 30
 
 /** One text frame from the browser, or null for anything else. */
 export function parseClientFrame(data: RawData | string): AsrClientMessage | null {
@@ -50,9 +54,23 @@ export function parseClientFrame(data: RawData | string): AsrClientMessage | nul
       return typeof record.seconds === 'number' && record.seconds >= 1 && record.seconds <= MAX_ENROL_SECONDS ? { type: 'enrol', seconds: Math.round(record.seconds) } : null
     case 'onlyOwner':
       return typeof record.on === 'boolean' ? { type: 'onlyOwner', on: record.on } : null
+    case 'enrolScript':
+      return typeof record.phrases === 'number' && record.phrases >= 1 && record.phrases <= MAX_ENROL_PHRASES ? { type: 'enrolScript', phrases: Math.round(record.phrases) } : null
+    case 'enrolFinish':
+      return { type: 'enrolFinish' }
     default:
       return null
   }
+}
+
+/** The log line for each final's verdict: speaker, score and (round 7) the reason when continuity decided it. Never the text. */
+export function judgedLine(judgement: Judgement, onlyOwner: boolean): string {
+  return `[asr] final judged ${judgement.speaker} ${judgement.score}${judgement.reason ? ` ${judgement.reason}` : ''} (only owner ${onlyOwner ? 'on' : 'off'})`
+}
+
+/** The log line about the speech detector (round 7). */
+export function vadLine(loaded: boolean): string {
+  return loaded ? '[asr] vad model loaded' : '[asr] no vad model'
 }
 
 /** How many voice profiles the tokens name, and how many of them are learnt (round 7, 27.6). */
@@ -75,6 +93,8 @@ export interface AttachOptions {
   startWorker?: (root: string, entry: string) => Promise<HostStart>
   /** The speaker gate for in-thread decoding (round 4). Default: over models/speaker/. Tests pass null or a fake. */
   speaker?: ReturnType<typeof openSpeakerGate> | null
+  /** Round 7: the speech detector and UTLE_CAPTURE for in-thread decoding. Default: models/vad/ and the environment. */
+  extras?: DecoderExtras
   /** The server token's check on the upgrade (27.2). False: the upgrade is answered 401. Default: every upgrade passes. */
   authorize?: (req: IncomingMessage) => boolean
   /** The caller's voice profile file (27.6), from the token on the upgrade. Default: the one profile in models/speaker/. */
@@ -101,6 +121,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     if (worker.ok) {
       console.info(`[asr] model loaded on a worker thread in ${worker.host.ms} ms`)
       console.info(speakerLine(worker.host.speaker, options.profiles?.()))
+      console.info(vadLine(worker.host.vad))
       worker.host.onExit((code) => {
         console.warn(`[asr] decode worker exited with ${code}; the next connection loads the model again`)
         host = null
@@ -119,8 +140,10 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     }
     console.info(`[asr] model loaded on the server thread in ${loaded.ms} ms`)
     const speaker = options.speaker === undefined ? openSpeakerGate(root) : options.speaker
-    const inThread = hostInThread(loaded.recognizer, loaded.ms, speaker)
+    const extras = options.extras === undefined ? openDecoderExtras(root) : options.extras
+    const inThread = hostInThread(loaded.recognizer, loaded.ms, speaker, extras)
     console.info(speakerLine(inThread.speaker, options.profiles?.()))
+    console.info(vadLine(inThread.vad))
     return { ok: true, host: inThread }
   }
 
@@ -164,7 +187,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             console.warn('[asr] decode failed')
             ws.close(1011)
           },
-          onJudged: (judgement, onlyOwner) => console.info(`[asr] final judged ${judgement.speaker} ${judgement.score} (only owner ${onlyOwner ? 'on' : 'off'})`),
+          onJudged: (judgement, onlyOwner) => console.info(judgedLine(judgement, onlyOwner)),
         })
         send(ws, { type: 'ready' })
         ws.on('message', (data: RawData, isBinary: boolean) => {
@@ -173,6 +196,8 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             if (frame?.type === 'flush') session.flush()
             else if (frame?.type === 'enrol') session.enrol(frame.seconds)
             else if (frame?.type === 'onlyOwner') session.onlyOwner(frame.on)
+            else if (frame?.type === 'enrolScript') session.enrolScript(frame.phrases)
+            else if (frame?.type === 'enrolFinish') session.enrolFinish()
             return
           }
           if (!Buffer.isBuffer(data)) return

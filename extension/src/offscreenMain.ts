@@ -6,8 +6,9 @@ import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.t
 import { IntentAnswerSchema } from '../../src/core/pageIntent.ts'
 import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pageIntent.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { browserSocket, createLocalRecognizer } from '../../src/speech/local.ts'
+import { browserSocket, createLocalRecognizer, retrainDue } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
+import type { Recognizer } from '../../src/speech/recognizer.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { askTimeoutMs, createEngine } from './engine.ts'
 import type { AskFailure, InpageLogic } from './engine.ts'
@@ -83,6 +84,29 @@ export const FLUSH_STOP_MS = 800
 /** Round 4: the "someone else spoke" line stays on the strip this long. */
 export const FOREIGN_SHOWN_MS = 3000
 
+/** Round 7: a scripted profile from fewer phrases than this is kept, and the bar says it is thin (server/speaker.ts ENOUGH_PHRASES). */
+export const ENOUGH_PHRASES = 6
+/**
+ * Round 7: scripted enrolment goes through the engine's enrolment (it starts listening and ignores
+ * what he reads) with this many seconds; the engine gives up after five times it, 5 minutes.
+ */
+export const SCRIPT_ENROL_SECONDS = 60
+
+/**
+ * Round 7: what the strip shows for a dropped final: the foreign line every time, and, at the third
+ * in a row, once, the line that tells him to teach his voice again.
+ */
+export function foreignNotice(streak: number, text: { foreign: string; foreignRetrain: string }): { foreign: string; line?: string } {
+  return retrainDue(streak) ? { foreign: text.foreign, line: text.foreignRetrain } : { foreign: text.foreign }
+}
+
+/** Round 7: the strip's line when enrolment ends: phrases is set after scripted enrolment. */
+export function enrolledLine(ok: boolean, phrases: number | undefined, text: { enrolDone: string; enrolFailed: string; enrolPhrasesDone(n: number): string; enrolFew(n: number, enough: number): string }): string {
+  if (!ok) return text.enrolFailed
+  if (phrases === undefined) return text.enrolDone
+  return phrases < ENOUGH_PHRASES ? text.enrolFew(phrases, ENOUGH_PHRASES) : text.enrolPhrasesDone(phrases)
+}
+
 /** The speech model's address with the engine chosen on the options page: ?engine=soniox asks the dev server for Soniox (round 3). */
 export function asrAddress(base: string, engine: string | null): string {
   if (engine !== 'soniox') return base
@@ -127,17 +151,24 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
   const stripText = STRINGS.et.strip
   const onlyOwner = params.get('onlyOwner') === '1'
   let foreignTimer: ReturnType<typeof setTimeout> | null = null
-  const onForeign = (): void => {
-    publish({ foreign: stripText.foreign })
+  const onForeign = (streak: number): void => {
+    publish(foreignNotice(streak, stripText))
     if (foreignTimer !== null) clearTimeout(foreignTimer)
     foreignTimer = setTimeout(() => {
       foreignTimer = null
       publish({ foreign: '' })
     }, FOREIGN_SHOWN_MS)
   }
-  const onEnrolled = (ok: boolean): void => {
-    publish({ line: ok ? stripText.enrolDone : stripText.enrolFailed })
+  const onEnrolled = (ok: boolean, phrases: number | undefined): void => {
+    publish({ line: enrolledLine(ok, phrases, stripText), enrolPhrases: -1 })
   }
+  /**
+   * Round 7: scripted enrolment rides on the engine's enrolment (listening starts, what he reads is
+   * neither typed nor run, onEnrolled ends it). While `scripted` is set, the engine's call to the
+   * recogniser's enrol becomes enrolScript.
+   */
+  let scripted: number | null = null
+  let recognizer: Recognizer | null = null
 
   const engine = createEngine({
     logic,
@@ -145,18 +176,19 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     run,
     publish,
     // The handlers go through whole, onLag (round 3) with them: the recogniser reports its lag to the engine, the engine to the strip.
-    recognizer: (handlers, isInstant, onUnavailable) =>
-      createLocalRecognizer(
+    recognizer: (handlers, isInstant, onUnavailable) => {
+      const inner = createLocalRecognizer(
         {
           ...handlers,
-          onForeign: () => {
+          onForeign: (streak) => {
             handlers.onForeign()
-            onForeign()
+            onForeign(streak)
           },
-          onEnrolled: (ok, seconds) => {
+          onEnrolled: (ok, seconds, phrases) => {
             handlers.onEnrolled(ok, seconds)
-            onEnrolled(ok)
+            onEnrolled(ok, phrases)
           },
+          onEnrolPhrase: (count) => publish({ enrolPhrases: count }),
         },
         isInstant,
         {
@@ -171,7 +203,24 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
           },
           audio: microphone,
         },
-      ),
+      )
+      const wrapped: Recognizer = {
+        ...inner,
+        supported: inner.supported,
+        start: () => inner.start(),
+        stop: () => inner.stop(),
+        setLang: (lang) => inner.setLang(lang),
+        flush: () => inner.flush?.(),
+        enrol: (seconds) => {
+          const phrases = scripted
+          scripted = null
+          if (phrases !== null) inner.enrolScript?.(phrases)
+          else inner.enrol?.(seconds)
+        },
+      }
+      recognizer = inner
+      return wrapped
+    },
     micBlocked: () => {
       void tell({ type: 'utle-mic-blocked' })
     },
@@ -222,6 +271,17 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
         cancelStop()
         engine.enrol(message.seconds)
         publish({ line: stripText.enrolStart(message.seconds) })
+        break
+      case 'enrolScript':
+        // Round 7: the settings page shows the phrases; the strip says to read them.
+        cancelStop()
+        scripted = message.phrases
+        engine.enrol(SCRIPT_ENROL_SECONDS)
+        scripted = null
+        publish({ line: stripText.scriptStart, enrolPhrases: 0 })
+        break
+      case 'enrolFinish':
+        recognizer?.enrolFinish?.()
         break
       case 'stop':
         cancelStop()

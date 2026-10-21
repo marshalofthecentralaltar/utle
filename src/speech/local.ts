@@ -35,8 +35,25 @@ export interface LocalOptions {
   audio: () => AudioSource
   /** How long a final is held to be joined with the next one. Default LOCAL_HOLD_MS. */
   holdMs?: number
-  /** Round 4: only the owner's voice is obeyed; a final the server marks as someone else's is dropped. */
+  /**
+   * Round 4: only the owner's voice is obeyed. Round 7 (strict mode): a final the server marks as
+   * someone else's or as `unknown` is dropped; only `owner`, and a final without a speaker (the
+   * server cannot judge voices), are delivered.
+   */
   onlyOwner?: boolean
+}
+
+/** Round 7: after this many dropped finals in a row the bar says once to teach the voice again. */
+export const RETRAIN_AFTER_DROPS = 3
+
+/** Round 7: the drop of this streak is the one that says to teach the voice again (once per streak). */
+export function retrainDue(streak: number): boolean {
+  return streak === RETRAIN_AFTER_DROPS
+}
+
+/** Round 7 (strict mode): a final with this speaker is dropped while only the owner is obeyed. */
+export function dropsFinal(onlyOwner: boolean, speaker: 'owner' | 'other' | 'unknown' | undefined): boolean {
+  return onlyOwner && (speaker === 'other' || speaker === 'unknown')
 }
 
 const OPEN = 1
@@ -196,6 +213,8 @@ export function createLocalRecognizer(
    * begins, when the engine takes it back (an empty utterance would cancel the model work of an
    * earlier one, so none is sent). Words held from an earlier flush still go.
    */
+  /** Round 7: finals dropped in a row; an obeyed final resets it. */
+  let dropStreak = 0
   const onForeignFinal = (): void => {
     cancelSettle()
     handlers.onInterim('')
@@ -204,7 +223,8 @@ export function createLocalRecognizer(
     const atOnce = flushed
     flushed = false
     if (atOnce) assembler.releaseNow()
-    handlers.onForeign?.()
+    dropStreak += 1
+    handlers.onForeign?.(dropStreak)
   }
   const send = (message: AsrClientMessage): boolean => {
     if (socket?.readyState !== OPEN) return false
@@ -217,10 +237,17 @@ export function createLocalRecognizer(
     if (send({ type: 'enrol', seconds })) enrolWanted = null
     else enrolWanted = seconds
   }
+  /** Round 7: a scripted enrolment asked before the socket was ready is sent at ready. */
+  let scriptWanted: number | null = null
+  const sendScript = (phrases: number): void => {
+    if (send({ type: 'enrolScript', phrases })) scriptWanted = null
+    else scriptWanted = phrases
+  }
   /** Right after ready: the server knows the mode, and any enrolment that waited for the connection goes. */
   const afterReady = (): void => {
     if (options.onlyOwner === true) send({ type: 'onlyOwner', on: true })
     if (enrolWanted !== null) sendEnrol(enrolWanted)
+    if (scriptWanted !== null) sendScript(scriptWanted)
   }
   // ---- end of the owner's voice ----
 
@@ -294,14 +321,20 @@ export function createLocalRecognizer(
           onPartial(message.text)
           return
         case 'final':
-          if (options.onlyOwner === true && message.speaker === 'other') onForeignFinal()
-          else onFinal(message.text)
+          if (dropsFinal(options.onlyOwner === true, message.speaker)) onForeignFinal()
+          else {
+            dropStreak = 0
+            onFinal(message.text)
+          }
           return
         case 'lag':
           handlers.onLag?.(message.ms)
           return
         case 'enrolled':
-          handlers.onEnrolled?.(message.ok, message.seconds)
+          handlers.onEnrolled?.(message.ok, message.seconds, message.phrases)
+          return
+        case 'enrolPhrase':
+          handlers.onEnrolPhrase?.(message.count)
           return
       }
     }
@@ -378,6 +411,15 @@ export function createLocalRecognizer(
     enrol(seconds) {
       if (!running) return
       sendEnrol(seconds)
+    },
+    enrolScript(phrases) {
+      if (!running) return
+      sendScript(phrases)
+    },
+    enrolFinish() {
+      if (!running) return
+      scriptWanted = null
+      send({ type: 'enrolFinish' })
     },
   }
 }

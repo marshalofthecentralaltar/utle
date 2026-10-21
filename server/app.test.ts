@@ -127,7 +127,7 @@ describe('profiles per token (round 7, HOST lane)', () => {
     const info = vi.spyOn(console, 'info').mockImplementation((line: string) => {
       lines.push(line)
     })
-    const host: DecoderHost = { where: 'thread', ms: 0, speaker: { model: true, profile: false }, open: () => ({ accept: () => ({ text: '', endpoint: false }), reset: () => undefined, close: () => undefined }), onExit: () => undefined }
+    const host: DecoderHost = { where: 'thread', ms: 0, speaker: { model: true, profile: false }, vad: false, open: () => ({ accept: () => ({ text: '', endpoint: false }), reset: () => undefined, close: () => undefined }), onExit: () => undefined }
     try {
       await listen(createUtleServer({ root: '.', env: { UTLE_TOKEN: 'ralf:ta,mari:tb', UTLE_DATA_DIR: dir }, startWorker: () => Promise.resolve({ ok: true, host }) }))
       await new Promise((resolve) => setTimeout(resolve, 400))
@@ -144,6 +144,7 @@ describe('profiles per token (round 7, HOST lane)', () => {
       where: 'thread',
       ms: 0,
       speaker: { model: false, profile: false },
+      vad: false,
       open: (profile) => {
         opened.push(profile)
         return decoder

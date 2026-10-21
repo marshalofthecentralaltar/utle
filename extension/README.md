@@ -14,9 +14,10 @@ commands, editing, Soniox), 24 (round 4: chains of goals, only your own voice, e
 From the repository root:
 
 1. `npm ci` (once).
-2. `npm run model` (once): downloads the Estonian speech model into `models/`, and the small
-   speaker model (29 MB) for "Kuula ainult mind" into `models/speaker/` (optional; a failure there
-   is a warning).
+2. `npm run model` (once): downloads the Estonian speech model into `models/`, the speaker model
+   (TitaNet small, 40 MB, round 7) for "Kuula ainult mind" into `models/speaker/`, and the speech
+   detector (Silero VAD v5, 2.3 MB, round 7) into `models/vad/`. The last two are optional; a failure
+   there is a warning. Pulled round 7 onto an older checkout? Run it again: both files are new.
 3. `npm run ext`: bundles `extension/src/` into `extension/dist/`. Run it again after any change.
 
 ## Load
@@ -41,26 +42,51 @@ on. `UTLE_ASR=soniox` in the same environment sends every connection to Soniox w
 Without the key the bar says the speech model is not reachable and the server logs
 `[soniox] SONIOX_API_KEY is not set`. Nobody has run this with a real key (see "Unverified").
 
-## Only your own voice (round 4, optional)
+## Only your own voice (round 4, strict since round 7, optional)
 
 Background conversations are typed as if you said them. Two things stop that: push-to-talk by
 looking (below), and the server knowing your voice. On the settings page, group **Minu hääl**:
 
-1. **Õpeta mu hääl**: listening starts if it was off and the bar says "Räägi 8 sekundit tavalisel
-   häälel…"; speak normally for eight seconds (pauses are skipped). The bar then says "Hääl on
-   õpitud." or "Hääle õppimine ei õnnestunud." (too little speech within about 30 s). What you say
-   meanwhile is neither typed nor run. The server
-   keeps `models/speaker/owner.json`: a voice embedding and a loudness, never audio. Press the
-   button again to replace it.
-2. **Kuula ainult mind**: from the next time listening starts, an utterance the server judges to be
-   another voice is dropped and the bar says "Keegi teine rääkis, jätsin vahele." for three seconds.
-   An utterance it cannot place is obeyed. Words the other voice typed as a preview are taken back
-   the moment its final is dropped. **Kuula kõiki** turns it off.
+1. **Õpeta mu hääl lausetega** (round 7): the page shows twelve short sentences one at a time, with
+   "1 / 12" above. Read each aloud in your usual voice; the next one comes by itself when the server
+   has heard it. **Valmis** keeps what was read so far. The server keeps one voice embedding per
+   sentence and stores their mean in `models/speaker/owner.json` (never audio). The bar then says
+   "Hääl on õpitud 12 lausest."; fewer than six sentences are kept too, and the bar says the profile
+   is thin. What you read is neither typed nor run.
+2. **Õpeta vabalt rääkides**: the round 4 way, kept as a fallback: speak normally for eight seconds.
+3. **Kuula ainult mind**: from the next time listening starts, only what the server judges to be
+   your voice is obeyed. Another voice, and an utterance it cannot judge (less than half a second of
+   speech), are dropped, and the bar says "Keegi teine rääkis, jätsin vahele." for three seconds. At
+   the third drop in a row it also says once "Kui see olid sina, õpeta hääl uuesti seadetes." Words
+   a dropped voice typed as a preview are taken back. **Kuula kõiki** turns it off.
 
-Without the speaker model (`npm run model` not run, or the download failed) the server logs
-`[asr] no speaker model (npm run model fetches it; loudness only until then); …`, and "Kuula ainult mind" only skips speech clearly fainter than yours was
-at enrolment: distance from the microphone, not the voice. Nobody has tried this with a real voice;
-the thresholds are in `server/speaker.ts`.
+One-word commands ("jah", "saada", "üks") are often too short for the speaker model to recognise
+you, so with **Kuula ainult mind** on they may be dropped as someone else's. That is the cost of not
+letting a friend's words through; see HANDOFF 1g for the numbers.
+
+Pulled round 7 over a profile from round 4? Teach your voice again: the old profile was made with
+another speaker model, and until you do, the server cannot judge voices (everything is obeyed except
+speech much fainter than yours was).
+
+Without the speaker model the server logs `[asr] no speaker model (npm run model fetches it;
+loudness only until then); …`, and "Kuula ainult mind" only skips speech clearly fainter than yours
+was at enrolment: distance from the microphone, not the voice. The threshold is `OWNER_THRESHOLD`
+in `server/speaker.ts`, measured on synthetic voices only (HANDOFF 1g).
+
+### Recording yourself to set the threshold (UTLE_CAPTURE)
+
+For calibration on your own machine only; the folder holds your voice and your words; delete it
+after. Start the dev server with the variable set to a folder:
+
+    $env:UTLE_CAPTURE="C:\temp\utle-voice"; npm run dev        (PowerShell)
+    UTLE_CAPTURE=/tmp/utle-voice npm run dev                     (sh)
+
+Each final is then written there as `<timestamp>-<speaker>-<score>.wav` (the speech the speaker
+gate judged) and one line `<file>\t<score>\t<speaker>\t<heard text>` is appended to `log.tsv`.
+Without the variable nothing is written and no text goes anywhere. Then put your clips in one
+folder and the others' in another and run
+`npx tsx scripts/speaker-calibrate.ts --owner <your folder> --other <their folder>`: it prints every
+score and the best threshold. HANDOFF 1g has a ten-minute script.
 
 ## Hosted server (round 6)
 
@@ -172,7 +198,8 @@ What the listing needs that the repository cannot hold:
   what the gaze rests on (`gazeTarget`: Mikrofon / Kogu riba, shown only for Vaatamisega) and the
   speech model (`speechEngine`: Arvutis (TalTech) / Soniox (pilves); Soniox needs `SONIOX_API_KEY`
   on the dev server and takes effect the next time listening starts), and since round 4 the group
-  **Minu hääl**: the button **Õpeta mu hääl** (speak 8 s; see "Only your own voice" above) and the
+  **Minu hääl**: the buttons **Õpeta mu hääl lausetega** and **Õpeta vabalt rääkides** (round 7;
+  see "Only your own voice" above) and the
   choice **Kuula ainult mind** / **Kuula kõiki** (`onlyOwner`, default off; takes effect the next
   time listening starts). The speech-model and
   development-page addresses are under "Täpsemalt". The same strip is mounted there. (Numbering the
@@ -323,6 +350,10 @@ password field is never filled from here.
   "Kõne jääb maha N s" while it did.
 - `[intent] kind=command done=true plan=2 care=careful ms=1800`: one answer of the model (`care` is quick or careful, round 5; `plan` is how many goals
   it left for later, round 4); `[intent] error=upstream_rejected` with no key.
+- `[asr] vad model loaded` (round 7): the speech detector is in front of the decoder, so room noise
+  is never decoded into words. `[asr] no vad model`: `npm run model` has not fetched it; every frame
+  is decoded, as before round 7.
+- `[asr] final judged owner 0.712 (only owner on)`: each final's verdict and score, never its words.
 - `[asr] speaker model loaded; owner's voice learnt` once the model and the profile are there
   (round 4); `[asr] no speaker model (npm run model fetches it; loudness only until then); owner's
   voice not learnt yet` when neither is. The two halves vary on their own. Nothing says whose
@@ -487,9 +518,8 @@ keys reach it, the whole-box repairs and "find a word" do not (see "What to say"
   - Chains with a real voice: whether the recogniser hears "siis" after a pause as "siis", and
     whether 2.5 s is the right wait; the chain itself is tested with fakes in the engine and with the
     real model against fake pages in the eval.
-  - The speaker model on an Estonian voice: the 0.55 / 0.35 thresholds in `server/speaker.ts` come
-    from the model's published scores on English, not from any measurement; the model files were
-    not on the machine that built this.
+  - The speaker model on a real voice: round 7's `OWNER_THRESHOLD` (0.54) is measured on synthetic
+    Estonian voices only (HANDOFF 1g); re-pick it with UTLE_CAPTURE and `scripts/speaker-calibrate.ts`.
   - The WhatsApp and Messenger message selectors (`messageRows`, `messageText`, `messageMenu`,
     `messageMine` in `sites.ts`), every one marked UNVERIFIED 2026-10-06.
   - Hover on real sites: whether WhatsApp's arrow, YouTube's card menu and Gmail's row actions

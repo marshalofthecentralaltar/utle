@@ -1,6 +1,10 @@
 import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
-import type { Judgement, SpeakerGate } from './speaker.ts'
+import type { Capture } from './capture.ts'
+import type { EnrolPhrase, Judgement, SpeakerGate } from './speaker.ts'
+import { continued } from './speaker.ts'
+import type { FilteredFrame, SpeechFilter, VadFactory } from './vad.ts'
+import { createSpeechFilter } from './vad.ts'
 
 /** The parts of sherpa-onnx-node's OnlineStream this server uses. */
 export interface OnlineStreamLike {
@@ -41,6 +45,31 @@ export interface Decoder {
   judge?(): Judgement | null | Promise<Judgement | null>
   /** Round 4: learns the owner's voice from the next `seconds` of speech. Resolves once learnt, or false once given up. */
   enrol?(seconds: number): Promise<boolean>
+  /**
+   * Round 7: scripted enrolment. Each utterance that ends from now on is one read phrase, embedded
+   * at once (onPhrase gets the count so far); after `phrases` of them, or at enrolFinish, the
+   * profile is the mean. Resolves with what was learnt.
+   */
+  enrolScript?(phrases: number, onPhrase: (count: number) => void): Promise<ScriptResult>
+  /** Round 7: ends scripted enrolment now with the phrases heard so far. */
+  enrolFinish?(): void
+  /** Round 7 (UTLE_CAPTURE): writes the utterance just judged (the same frames as judge) with its words. */
+  capture?(text: string, judgement: Judgement | null): void | Promise<void>
+}
+
+/** Round 7: what scripted enrolment learnt. */
+export interface ScriptResult {
+  ok: boolean
+  phrases: number
+  seconds: number
+}
+
+/** Round 7: what a decoder may have besides the recogniser and the gate. */
+export interface DecoderExtras {
+  /** The speech detector (one per stream); null: every frame is decoded, as before round 7. */
+  vad?: VadFactory | null
+  /** UTLE_CAPTURE; null: nothing is written. */
+  capture?: Capture | null
 }
 
 /**
@@ -63,15 +92,26 @@ interface Enrolment {
 /**
  * The recogniser's stream, decoded on the calling thread. With a speaker gate (round 4) it also
  * keeps the frames of the utterance in progress (the newest MAX_KEPT_MS) for judge, and feeds an
- * enrolment the speech frames (RMS at or above SILENCE_RMS) until it has its seconds.
+ * enrolment the speech frames until it has its seconds.
+ *
+ * Round 7: with a speech detector, each frame goes through it first (server/vad.ts). Speech reaches
+ * the recogniser as heard; everything else reaches it as silence of the same length, so room noise
+ * is never decoded into words and the endpoint rules still count trailing silence. Only speech is
+ * kept for the speaker gate, for enrolment and for capture. Without a detector, speech is the frames
+ * whose RMS is at or above SILENCE_RMS, and every frame is kept, as before.
  */
-export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRecognizerLike<S>, gate: SpeakerGate | null = null): Decoder {
+export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRecognizerLike<S>, gate: SpeakerGate | null = null, extras: DecoderExtras = {}): Decoder {
   const stream = recognizer.createStream()
+  const filter: SpeechFilter | null = extras.vad ? createSpeechFilter(extras.vad()) : null
+  const capture = extras.capture ?? null
   let kept: Float32Array[] = []
   let keptMs = 0
   /** The frames of the utterance the last accept ended, until the next frame arrives. */
   let ended: Float32Array[] | null = null
   let enrolling: Enrolment | null = null
+  let scripting: Script | null = null
+  /** Frames the detector passed on that come after an endpoint in the same accept: decoded at the next one. */
+  let carry: FilteredFrame[] = []
 
   const keep = (samples: Float32Array): void => {
     kept.push(samples)
@@ -88,12 +128,12 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
     e?.resolve(ok)
   }
 
-  const feedEnrolment = (samples: Float32Array, g: SpeakerGate): void => {
+  const feedEnrolment = (samples: Float32Array, speech: boolean, g: SpeakerGate): void => {
     const e = enrolling
     if (!e) return
     const ms = frameMs(samples)
     e.totalMs += ms
-    if (rms(samples) >= SILENCE_RMS) {
+    if (speech) {
       e.frames.push(samples)
       e.speechMs += ms
     }
@@ -101,26 +141,67 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
     else if (e.totalMs >= e.seconds * 1000 * ENROL_PATIENCE) finishEnrolment(false)
   }
 
+  const finishScript = (): void => {
+    const sc = scripting
+    scripting = null
+    if (!sc) return
+    const ok = gate !== null && sc.phrases.length > 0 && gate.enrolPhrases(sc.phrases)
+    sc.resolve({ ok, phrases: ok ? sc.phrases.length : 0, seconds: Math.round(sc.phrases.reduce((n, p) => n + p.seconds, 0) * 10) / 10 })
+  }
+
+  /** An utterance ended while reading phrases: its speech is one phrase, when long enough. */
+  const takePhrase = (frames: Float32Array[]): void => {
+    const sc = scripting
+    if (!sc || !gate) return
+    const phrase = gate.phrase(filter ? frames : frames.filter((frame) => rms(frame) >= SILENCE_RMS))
+    if (!phrase) return
+    sc.phrases.push(phrase)
+    sc.onPhrase(sc.phrases.length)
+    if (sc.phrases.length >= sc.wanted) finishScript()
+  }
+
+  /** One frame into the recogniser; true when it ended the utterance. */
+  const decodeOne = (part: FilteredFrame): boolean => {
+    stream.acceptWaveform({ samples: part.samples, sampleRate: ASR_SAMPLE_RATE })
+    while (recognizer.isReady(stream)) recognizer.decode(stream)
+    if (gate) {
+      // Without a detector every frame is kept, as before; with one, only speech.
+      if (!filter || part.speech) keep(part.samples)
+      feedEnrolment(part.samples, part.speech, gate)
+    }
+    return recognizer.isEndpoint(stream)
+  }
+
   return {
     accept(samples) {
-      stream.acceptWaveform({ samples, sampleRate: ASR_SAMPLE_RATE })
-      while (recognizer.isReady(stream)) recognizer.decode(stream)
+      const parts: FilteredFrame[] = [...carry, ...(filter ? filter.push(samples) : [{ samples, speech: rms(samples) >= SILENCE_RMS }])]
+      carry = []
+      let endpoint = false
+      for (let i = 0; i < parts.length; i += 1) {
+        const part = parts[i]
+        if (!part) continue
+        endpoint = decodeOne(part)
+        if (endpoint) {
+          carry = parts.slice(i + 1)
+          break
+        }
+      }
       const text = recognizer.getResult(stream).text.trim()
-      const endpoint = recognizer.isEndpoint(stream)
       if (endpoint) recognizer.reset(stream)
       if (gate) {
-        keep(samples)
-        feedEnrolment(samples, gate)
         if (endpoint) {
           ended = kept
           kept = []
           keptMs = 0
-        } else ended = null
+          if (text !== '') takePhrase(ended)
+        } else if (parts.length > 0) ended = null
       }
       return { text, endpoint }
     },
     reset() {
       recognizer.reset(stream)
+      // A flush ends the utterance: while reading phrases, what was said up to it is one.
+      if (scripting && kept.length > 0) takePhrase(kept)
       kept = []
       keptMs = 0
       ended = null
@@ -128,6 +209,9 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
     close() {
       // sherpa frees the stream with its object.
       finishEnrolment(false)
+      const sc = scripting
+      scripting = null
+      sc?.resolve({ ok: false, phrases: 0, seconds: 0 })
     },
     judge() {
       if (!gate) return null
@@ -140,7 +224,29 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
         enrolling = { frames: [], speechMs: 0, totalMs: 0, seconds, resolve }
       })
     },
+    enrolScript(phrases, onPhrase) {
+      if (!gate) return Promise.resolve({ ok: false, phrases: 0, seconds: 0 })
+      const earlier = scripting
+      scripting = null
+      earlier?.resolve({ ok: false, phrases: 0, seconds: 0 })
+      return new Promise<ScriptResult>((resolve) => {
+        scripting = { wanted: phrases, phrases: [], onPhrase, resolve }
+      })
+    },
+    enrolFinish() {
+      finishScript()
+    },
+    capture(text, judgement) {
+      capture?.write(ended ?? kept, judgement, text)
+    },
   }
+}
+
+interface Script {
+  wanted: number
+  phrases: EnrolPhrase[]
+  onPhrase(count: number): void
+  resolve(result: ScriptResult): void
 }
 
 /** Audio queued ahead of the decoder beyond this is a backlog: the oldest of it is dropped. */
@@ -165,8 +271,15 @@ export interface AsrSession {
   stats(): { receivedMs: number; decodedMs: number; droppedMs: number; foreignFinals: number }
   /** Round 4: learns the owner's voice from the next `seconds` of speech, then sends `enrolled`. */
   enrol(seconds: number): void
-  /** Round 4: the client wants only the owner's words. Finals of others are still sent, with their speaker; this only counts them. */
+  /**
+   * Round 4: the client wants only the owner's words. Finals of others are still sent, with their
+   * speaker; this only counts them (round 7: `other` and `unknown`, as strict mode drops both).
+   */
   onlyOwner(on: boolean): void
+  /** Round 7: scripted enrolment of `phrases` read phrases; `enrolPhrase` after each, `enrolled` at the end. */
+  enrolScript(phrases: number): void
+  /** Round 7: ends scripted enrolment with the phrases heard so far. */
+  enrolFinish(): void
 }
 
 export interface AsrSessionOptions {
@@ -226,6 +339,8 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   let lastReport = -Infinity
   let onlyOwner = false
   let foreignFinals = 0
+  /** Round 7, continuity: when the last owner final judged on its score went; null after an other final. */
+  let ownerAt: number | null = null
 
   const report = (ms: number): void => {
     send({ type: 'lag', ms })
@@ -283,13 +398,24 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
    * that fails (review) loses the verdict, not the words: the final goes without a speaker.
    */
   const sendFinal = (text: string, then: () => void): void => {
-    const deliver = (judgement: Judgement | null | undefined): void => {
+    const deliver = (judged: Judgement | null | undefined): void => {
       if (closed) return
+      // Round 7: a short word right after the owner spoke is his (continuity, server/speaker.ts).
+      const at = now()
+      const judgement = judged ? continued(judged, ownerAt, at) : judged
+      if (judgement?.speaker === 'owner' && judgement.reason === undefined) ownerAt = at
+      else if (judgement?.speaker === 'other') ownerAt = null
       if (judgement) {
         send({ type: 'final', text, speaker: judgement.speaker })
         options.onJudged?.(judgement, onlyOwner)
-        if (onlyOwner && judgement.speaker === 'other') foreignFinals += 1
+        if (onlyOwner && judgement.speaker !== 'owner') foreignFinals += 1
       } else send({ type: 'final', text })
+      // Round 7: UTLE_CAPTURE writes the clip and its words; without it the decoder does nothing here.
+      try {
+        void Promise.resolve(decoder.capture?.(text, judgement ?? null)).catch(() => undefined)
+      } catch {
+        // Calibration only: never in the way of the words.
+      }
       then()
     }
     let judged: Judgement | null | Promise<Judgement | null> | undefined
@@ -305,7 +431,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
 
   /** The partial for a frame's result, then the final when it ended the utterance; `then` once the final is away. */
   const finish = (result: DecodeResult, then: () => void): void => {
-    const text = result.text.trim()
+    // Round 7: text with no letter or digit (a lone "." the recogniser can make of a breath) is no words.
+    const heard = result.text.trim()
+    const text = /[\p{L}\p{N}]/u.test(heard) ? heard : ''
     if (text !== last && text !== '') send({ type: 'partial', text })
     last = text
     if (!result.endpoint) {
@@ -406,6 +534,28 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     },
     onlyOwner(on) {
       onlyOwner = on
+    },
+    enrolScript(phrases) {
+      if (closed) return
+      const learning = decoder.enrolScript?.(phrases, (count) => {
+        if (!closed) send({ type: 'enrolPhrase', count })
+      })
+      if (!learning) {
+        send({ type: 'enrolled', ok: false, seconds: 0, phrases: 0 })
+        return
+      }
+      learning.then(
+        (result) => {
+          if (!closed) send({ type: 'enrolled', ok: result.ok, seconds: result.seconds, phrases: result.phrases })
+        },
+        () => {
+          if (!closed) send({ type: 'enrolled', ok: false, seconds: 0, phrases: 0 })
+        },
+      )
+    },
+    enrolFinish() {
+      if (closed) return
+      decoder.enrolFinish?.()
     },
   }
 }

@@ -1,8 +1,10 @@
 /**
  * Downloads TalTech's streaming Estonian and English model for the local recogniser (ARCHITECTURE
  * 20.1) into models/streaming-zipformer-large.et-en/, then, as a second and optional step, the
- * speaker embedding model (round 4, server/speaker.ts) into models/speaker/. Skips files that are
- * already there. Writes the hotword list (round 7, server/hotwords.ts) next to them every time. A failure of the second step is a warning: the recogniser works without it.
+ * speaker embedding model (round 4, server/speaker.ts) into models/speaker/, and as a third, the
+ * speech detector (round 7, server/vad.ts) into models/vad/. Skips files that are already there.
+ * Writes the hotword list (round 7, server/hotwords.ts) next to them every time. A failure of the
+ * second or third step is a warning: the recogniser works without them.
  *
  *   npm run model
  */
@@ -14,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { MODEL_DIR, MODEL_FILES } from '../server/asr.ts'
 import { writeHotwords } from '../server/hotwords.ts'
 import { SPEAKER_DIR, SPEAKER_MODEL_BYTES, SPEAKER_MODEL_FILE, SPEAKER_MODEL_URL } from '../server/speaker.ts'
+import { VAD_DIR, VAD_MODEL_BYTES, VAD_MODEL_FILE, VAD_MODEL_URL } from '../server/vad.ts'
 
 const SOURCE = 'https://huggingface.co/TalTechNLP/streaming-zipformer-large.et-en/resolve/main'
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -50,4 +53,14 @@ try {
   console.log(`speaker model ready in ${SPEAKER_DIR}`)
 } catch (error) {
   console.warn(`speaker model not fetched (${error instanceof Error ? error.message : String(error)}); the recogniser works without it, "Kuula ainult mind" goes by loudness alone. Run npm run model again later.`)
+}
+
+// The speech detector (optional, round 7): without it every frame is decoded and room noise can be typed as words.
+const vadDir = join(root, VAD_DIR)
+mkdirSync(vadDir, { recursive: true })
+try {
+  await fetchFile(VAD_MODEL_URL, join(vadDir, VAD_MODEL_FILE), `${VAD_MODEL_FILE} (${Math.round(VAD_MODEL_BYTES / 1e3)} kB, the speech detector)`)
+  console.log(`speech detector ready in ${VAD_DIR}`)
+} catch (error) {
+  console.warn(`speech detector not fetched (${error instanceof Error ? error.message : String(error)}); the recogniser works without it but decodes room noise too. Run npm run model again later.`)
 }
