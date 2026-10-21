@@ -1,9 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
 import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
-import type { Judgement, SpeakerGate } from './speaker.ts'
+import type { EnrolPhrase, Judgement, SpeakerGate } from './speaker.ts'
+import { CAPTURE_LOG, captureFromEnv, createCapture } from './capture.ts'
+import type { Capture } from './capture.ts'
+import type { VadLike } from './vad.ts'
 
 /** A recogniser that "hears" one word per frame and ends the utterance on a silent frame. */
 class FakeStream implements OnlineStreamLike {
@@ -317,6 +323,16 @@ class FakeGate implements SpeakerGate {
     this.judged.push(frames)
     return this.answer
   }
+  phrased: Float32Array[][] = []
+  learnt: EnrolPhrase[][] = []
+  phrase(frames: Float32Array[]): EnrolPhrase | null {
+    this.phrased.push(frames)
+    return frames.length === 0 ? null : { embedding: [1, 0], rms: 0.1, seconds: frames.length / 10 }
+  }
+  enrolPhrases(phrases: EnrolPhrase[]): boolean {
+    this.learnt.push(phrases)
+    return this.enrolOk
+  }
 }
 
 /** Feeds frames one by one, each decoded before the next arrives (no backlog, no drop). */
@@ -502,5 +518,204 @@ describe('enrolment (round 4)', () => {
     expect(await first).toBe(false)
     decoder.close()
     expect(await second).toBe(false)
+  })
+})
+
+/**
+ * A speech detector for the tests: a frame is speech when its first sample is a word (1 to 8);
+ * NOISE frames are loud but not speech. It says "speech" once the last `lag` frames were all speech
+ * (Silero's onset delay).
+ */
+const NOISE = 9
+class FakeVad implements VadLike {
+  heard: boolean[] = []
+  lag: number
+  constructor(lag = 1) {
+    this.lag = lag
+  }
+  acceptWaveform(samples: Float32Array): void {
+    const value = samples[0] ?? 0
+    this.heard.push(value > 0 && value < NOISE)
+  }
+  isDetected(): boolean {
+    const last = this.heard.slice(-this.lag)
+    return last.length === this.lag && last.every((x) => x)
+  }
+  isEmpty(): boolean {
+    return true
+  }
+  pop(): void {}
+}
+
+/** A loud frame that is not speech (a fan, a street): its first sample would be a word to the fake recogniser. */
+const noise = (): Float32Array => {
+  const samples = new Float32Array(ASR_FRAME_SAMPLES).fill(0.1)
+  samples[0] = NOISE
+  return samples
+}
+
+const setupWithVad = (lag = 1, gate: FakeGate | null = null, capture: Capture | null = null): ReturnType<typeof setup> => {
+  const recognizer = new FakeRecognizer()
+  const sent: AsrServerMessage[] = []
+  const loop = new Loop()
+  const clock = { now: 1000 }
+  const session = createAsrSession(decoderInThread(recognizer, gate, { vad: () => new FakeVad(lag), capture }), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now })
+  return { recognizer, sent, loop, clock, session }
+}
+
+describe('the speech detector in front of the decoder (round 7)', () => {
+  it('turns 20 s of room noise into silence for the decoder: no partial, no final', () => {
+    const { sent, loop, session } = setupWithVad()
+    for (let i = 0; i < 200; i += 1) {
+      session.audio(noise())
+      loop.settle()
+    }
+    expect(sent.filter((m) => m.type === 'partial' || m.type === 'final')).toEqual([])
+  })
+
+  it('without a detector the same noise is decoded into words (the fault it fixes)', () => {
+    const { sent, loop, session } = setup()
+    for (let i = 0; i < 3; i += 1) session.audio(noise())
+    session.audio(frame(0))
+    loop.settle()
+    expect(sent.some((m) => m.type === 'final')).toBe(true)
+  })
+
+  it('passes speech as heard, the frames remembered before the detector spoke first (the start of the first word)', () => {
+    const { sent, loop, session } = setupWithVad(2)
+    // Frame 1 is not yet detected (lag 2): it reaches the decoder as silence, then again as audio with frame 2.
+    for (const value of [1, 2, 3]) session.audio(frame(value))
+    session.audio(noise())
+    session.audio(noise())
+    loop.settle()
+    expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'ava uus vaheleht' }])
+  })
+
+  it('decodes the frames after an endpoint inside one burst at the next frame, none lost', () => {
+    const { sent, loop, session } = setupWithVad(2)
+    // A silent frame is remembered; when speech starts it is replayed first and ends an empty utterance.
+    for (const value of [0, 1, 2, 3]) {
+      session.audio(frame(value))
+      loop.settle()
+    }
+    session.audio(noise())
+    session.audio(noise())
+    loop.settle()
+    expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'ava uus vaheleht' }])
+  })
+
+  it('keeps only speech for the speaker gate', () => {
+    const gate = new FakeGate()
+    const { loop, session } = setupWithVad(1, gate)
+    for (const value of [1, 2]) session.audio(frame(value))
+    session.audio(noise())
+    loop.settle()
+    expect(gate.judged).toHaveLength(1)
+    expect(gate.judged[0]?.map((f) => f[0])).toEqual([1, 2])
+  })
+})
+
+describe('strict mode (round 7) on the server', () => {
+  it('strict mode: counts unknown finals as dropped while onlyOwner is on, not owner ones', () => {
+    const { gate, loop, session } = setupWithGate()
+    session.onlyOwner(true)
+    gate.answer = { speaker: 'unknown', score: 0 }
+    feed(session, loop, [1, 0])
+    gate.answer = { speaker: 'other', score: 0.3 }
+    feed(session, loop, [1, 0])
+    gate.answer = { speaker: 'owner', score: 0.8 }
+    feed(session, loop, [1, 0])
+    expect(session.stats().foreignFinals).toBe(2)
+  })
+})
+
+describe('scripted enrolment (round 7)', () => {
+  it('takes each utterance with words as one phrase, says the count after each, and learns at the asked number', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrolScript(2)
+    feed(session, loop, [1, 2, 0])
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([{ type: 'enrolPhrase', count: 1 }])
+    // Silence alone is no phrase.
+    feed(session, loop, [0, 0])
+    feed(session, loop, [3, 0])
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([
+      { type: 'enrolPhrase', count: 1 },
+      { type: 'enrolPhrase', count: 2 },
+    ])
+    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: true, seconds: 0.3, phrases: 2 }])
+    expect(gate.learnt).toHaveLength(1)
+    expect(gate.learnt[0]).toHaveLength(2)
+  })
+
+  it('ends early with what was read, and counts an utterance a flush ended', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrolScript(12)
+    session.audio(frame(1))
+    session.audio(frame(2))
+    session.flush()
+    loop.settle()
+    session.enrolFinish()
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([{ type: 'enrolPhrase', count: 1 }])
+    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: true, seconds: 0.2, phrases: 1 }])
+    expect(gate.learnt[0]).toHaveLength(1)
+  })
+
+  it('answers ok: false when nothing was read, and without a gate', async () => {
+    const { gate, sent, session } = setupWithGate()
+    session.enrolScript(12)
+    session.enrolFinish()
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: false, seconds: 0, phrases: 0 }])
+    expect(gate.learnt).toEqual([])
+
+    const plain = setup()
+    plain.session.enrolScript(12)
+    await microtasks()
+    expect(plain.sent).toEqual([{ type: 'enrolled', ok: false, seconds: 0, phrases: 0 }])
+  })
+})
+
+describe('capture (round 7, UTLE_CAPTURE)', () => {
+  let dir = ''
+  afterEach(() => {
+    if (dir !== '') rmSync(dir, { recursive: true, force: true })
+    dir = ''
+  })
+
+  it('is off without the variable', () => {
+    expect(captureFromEnv({})).toBeNull()
+    expect(captureFromEnv({ UTLE_CAPTURE: '  ' })).toBeNull()
+  })
+
+  it('hands each final, its judged frames and its verdict to the capture only when one is given', () => {
+    const written: Array<{ frames: number; speaker: string; text: string }> = []
+    const capture: Capture = { write: (frames, judgement, text) => written.push({ frames: frames.length, speaker: judgement?.speaker ?? 'none', text }) }
+    const gate = new FakeGate()
+    gate.answer = { speaker: 'other', score: 0.31 }
+    const { loop, session } = setupWithVad(1, gate, capture)
+    for (const value of [1, 2]) session.audio(frame(value))
+    session.audio(noise())
+    loop.settle()
+    expect(written).toEqual([{ frames: 2, speaker: 'other', text: 'ava uus' }])
+
+    const without = setupWithVad(1, new FakeGate(), null)
+    for (const value of [1, 2]) without.session.audio(frame(value))
+    without.session.audio(noise())
+    without.loop.settle()
+    expect(written).toHaveLength(1)
+  })
+
+  it('writes <timestamp>-<speaker>-<score>.wav and a line of log.tsv into the folder', () => {
+    dir = mkdtempSync(join(tmpdir(), 'utle-capture-'))
+    expect(captureFromEnv({ UTLE_CAPTURE: dir })).not.toBeNull()
+    const fixed = createCapture(dir, () => new Date('2026-10-21T08:00:00.123Z'))
+    fixed.write([frame(1), frame(2)], { speaker: 'owner', score: 0.7 }, 'ava\tuus')
+    fixed.write([frame(1)], null, 'saada')
+    expect(readdirSync(dir).sort()).toEqual(['20261021T080000123-none-0.000.wav', '20261021T080000123-owner-0.700.wav', CAPTURE_LOG].sort())
+    expect(readFileSync(join(dir, '20261021T080000123-owner-0.700.wav')).length).toBe(44 + 2 * 2 * ASR_FRAME_SAMPLES)
+    expect(readFileSync(join(dir, CAPTURE_LOG), 'utf8')).toBe('20261021T080000123-owner-0.700.wav\t0.700\towner\tava uus\n20261021T080000123-none-0.000.wav\t0.000\tnone\tsaada\n')
   })
 })

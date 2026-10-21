@@ -9,8 +9,9 @@ import type { AsrClientMessage, AsrServerMessage, AsrUnavailableReason } from '.
 import { loadModel } from './asrModel.ts'
 import type { ModelLoad } from './asrModel.ts'
 import { createAsrSession, samplesFromFrame } from './asrSession.ts'
-import { hostInThread, openSpeakerGate, startWorkerHost } from './asrWorker.ts'
+import { hostInThread, openDecoderExtras, openSpeakerGate, startWorkerHost } from './asrWorker.ts'
 import type { DecoderHost, HostStart, SpeakerStatus } from './asrWorker.ts'
+import type { DecoderExtras } from './asrSession.ts'
 import { attachSonioxSession } from './soniox.ts'
 
 export { MODEL_DIR, MODEL_FILES, loadModel } from './asrModel.ts'
@@ -32,6 +33,8 @@ const send = (socket: WebSocket, message: AsrServerMessage): void => {
 
 /** Enrolment may ask for this many seconds of speech at most (the owner's button asks for 8). */
 export const MAX_ENROL_SECONDS = 30
+/** Round 7: scripted enrolment may ask for this many phrases at most (the settings page asks for 12). */
+export const MAX_ENROL_PHRASES = 30
 
 /** One text frame from the browser, or null for anything else. */
 export function parseClientFrame(data: RawData | string): AsrClientMessage | null {
@@ -50,9 +53,18 @@ export function parseClientFrame(data: RawData | string): AsrClientMessage | nul
       return typeof record.seconds === 'number' && record.seconds >= 1 && record.seconds <= MAX_ENROL_SECONDS ? { type: 'enrol', seconds: Math.round(record.seconds) } : null
     case 'onlyOwner':
       return typeof record.on === 'boolean' ? { type: 'onlyOwner', on: record.on } : null
+    case 'enrolScript':
+      return typeof record.phrases === 'number' && record.phrases >= 1 && record.phrases <= MAX_ENROL_PHRASES ? { type: 'enrolScript', phrases: Math.round(record.phrases) } : null
+    case 'enrolFinish':
+      return { type: 'enrolFinish' }
     default:
       return null
   }
+}
+
+/** The log line about the speech detector (round 7). */
+export function vadLine(loaded: boolean): string {
+  return loaded ? '[asr] vad model loaded' : '[asr] no vad model'
 }
 
 /** The log line about the speaker gate (round 4): what it has, never whose voice. */
@@ -68,6 +80,8 @@ export interface AttachOptions {
   startWorker?: (root: string, entry: string) => Promise<HostStart>
   /** The speaker gate for in-thread decoding (round 4). Default: over models/speaker/. Tests pass null or a fake. */
   speaker?: ReturnType<typeof openSpeakerGate> | null
+  /** Round 7: the speech detector and UTLE_CAPTURE for in-thread decoding. Default: models/vad/ and the environment. */
+  extras?: DecoderExtras
   /** The server token's check on the upgrade (27.2). False: the upgrade is answered 401. Default: every upgrade passes. */
   authorize?: (req: IncomingMessage) => boolean
 }
@@ -90,6 +104,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     if (worker.ok) {
       console.info(`[asr] model loaded on a worker thread in ${worker.host.ms} ms`)
       console.info(speakerLine(worker.host.speaker))
+      console.info(vadLine(worker.host.vad))
       worker.host.onExit((code) => {
         console.warn(`[asr] decode worker exited with ${code}; the next connection loads the model again`)
         host = null
@@ -108,8 +123,10 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     }
     console.info(`[asr] model loaded on the server thread in ${loaded.ms} ms`)
     const speaker = options.speaker === undefined ? openSpeakerGate(root) : options.speaker
-    const inThread = hostInThread(loaded.recognizer, loaded.ms, speaker)
+    const extras = options.extras === undefined ? openDecoderExtras(root) : options.extras
+    const inThread = hostInThread(loaded.recognizer, loaded.ms, speaker, extras)
     console.info(speakerLine(inThread.speaker))
+    console.info(vadLine(inThread.vad))
     return { ok: true, host: inThread }
   }
 
@@ -162,6 +179,8 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             if (frame?.type === 'flush') session.flush()
             else if (frame?.type === 'enrol') session.enrol(frame.seconds)
             else if (frame?.type === 'onlyOwner') session.onlyOwner(frame.on)
+            else if (frame?.type === 'enrolScript') session.enrolScript(frame.phrases)
+            else if (frame?.type === 'enrolFinish') session.enrolFinish()
             return
           }
           if (!Buffer.isBuffer(data)) return

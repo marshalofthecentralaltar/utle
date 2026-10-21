@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_ENROL_SECONDS, parseClientFrame, speakerLine, wantsSoniox } from './asr.ts'
+import { MAX_ENROL_PHRASES, MAX_ENROL_SECONDS, parseClientFrame, speakerLine, vadLine, wantsSoniox } from './asr.ts'
 
 describe('client text frames (round 4)', () => {
   it('reads flush, enrol and onlyOwner, and nothing else', () => {
@@ -18,6 +18,23 @@ describe('client text frames (round 4)', () => {
     expect(parseClientFrame('{"type":"speaker"}')).toBeNull()
     expect(parseClientFrame('not json')).toBeNull()
     expect(parseClientFrame('42')).toBeNull()
+  })
+})
+
+describe('client text frames (round 7)', () => {
+  it('reads scripted enrolment and its early end', () => {
+    expect(parseClientFrame('{"type":"enrolScript","phrases":12}')).toEqual({ type: 'enrolScript', phrases: 12 })
+    expect(parseClientFrame('{"type":"enrolFinish"}')).toEqual({ type: 'enrolFinish' })
+    expect(parseClientFrame('{"type":"enrolScript","phrases":0}')).toBeNull()
+    expect(parseClientFrame(`{"type":"enrolScript","phrases":${MAX_ENROL_PHRASES + 1}}`)).toBeNull()
+    expect(parseClientFrame('{"type":"enrolScript"}')).toBeNull()
+  })
+})
+
+describe('the log line about the speech detector (round 7)', () => {
+  it('says whether the model is loaded', () => {
+    expect(vadLine(true)).toBe('[asr] vad model loaded')
+    expect(vadLine(false)).toBe('[asr] no vad model')
   })
 })
 

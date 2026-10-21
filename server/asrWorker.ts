@@ -8,8 +8,10 @@ import { join } from 'node:path'
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads'
 import type { AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
 import { loadModel } from './asrModel.ts'
-import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
+import { captureFromEnv } from './capture.ts'
+import type { DecodeResult, Decoder, DecoderExtras, OnlineRecognizerLike, OnlineStreamLike, ScriptResult } from './asrSession.ts'
 import { decoderInThread } from './asrSession.ts'
+import { loadVad } from './vad.ts'
 import { PROFILE_FILE, SPEAKER_DIR, createSpeakerGate } from './speaker.ts'
 import type { Judgement, SpeakerGate } from './speaker.ts'
 import { loadSpeakerModel } from './speakerModel.ts'
@@ -22,6 +24,10 @@ export type ToWorker =
   | { type: 'close'; id: number }
   | { type: 'judge'; id: number; seq: number }
   | { type: 'enrol'; id: number; seq: number; seconds: number }
+  /** Round 7: scripted enrolment, its early end, and UTLE_CAPTURE's clip of the final just judged. */
+  | { type: 'enrolScript'; id: number; seq: number; phrases: number }
+  | { type: 'enrolFinish'; id: number }
+  | { type: 'capture'; id: number; text: string; judgement: Judgement | null }
 
 /** What the speaker gate has (round 4): the embedding model, and a learnt voice. */
 export interface SpeakerStatus {
@@ -31,12 +37,14 @@ export interface SpeakerStatus {
 
 /** Worker to main thread. */
 export type FromWorker =
-  | { type: 'loaded'; ms: number; speaker: SpeakerStatus }
+  | { type: 'loaded'; ms: number; speaker: SpeakerStatus; vad: boolean }
   | { type: 'unavailable'; reason: AsrUnavailableReason }
   | { type: 'result'; id: number; seq: number; result: DecodeResult }
   | { type: 'failed'; id: number; seq: number; message: string }
   | { type: 'judged'; id: number; seq: number; judgement: Judgement | null }
   | { type: 'enrolled'; id: number; seq: number; ok: boolean }
+  | { type: 'enrolPhrase'; id: number; seq: number; count: number }
+  | { type: 'scripted'; id: number; seq: number; result: ScriptResult }
 
 export interface WorkerData {
   root: string
@@ -52,6 +60,8 @@ export interface DecoderHost {
   ms: number
   /** Round 4: what the speaker gate behind the decoders has. */
   speaker: SpeakerStatus
+  /** Round 7: the speech detector is in front of the decoders. */
+  vad: boolean
   open(): Decoder
   /** The worker died, or the thread's recogniser is gone: the host is finished. */
   onExit(listener: (code: number) => void): void
@@ -66,13 +76,22 @@ export function openSpeakerGate(root: string): { gate: SpeakerGate; status: Spea
   return { gate, status: { model: loaded.ok, profile: gate.hasProfile() } }
 }
 
+/**
+ * Round 7: the speech detector over models/vad/ (null without the file) and UTLE_CAPTURE (null
+ * unless set). Loaded where the decoders live: the worker, or the server thread.
+ */
+export function openDecoderExtras(root: string, env: NodeJS.ProcessEnv = process.env): DecoderExtras {
+  const vad = loadVad(root)
+  return { vad: vad.ok ? vad.create : null, capture: captureFromEnv(env) }
+}
+
 /** The worker's side: one shared recogniser and speaker gate, one stream per session id. */
-function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognizerLike<OnlineStreamLike>, gate: SpeakerGate): void {
+function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognizerLike<OnlineStreamLike>, gate: SpeakerGate, extras: DecoderExtras): void {
   const streams = new Map<number, Decoder>()
   port.on('message', (message: ToWorker) => {
     switch (message.type) {
       case 'open':
-        streams.set(message.id, decoderInThread(recognizer, gate))
+        streams.set(message.id, decoderInThread(recognizer, gate, extras))
         return
       case 'accept': {
         const decoder = streams.get(message.id)
@@ -123,6 +142,24 @@ function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognize
         else learning.then(reply, () => reply(false))
         return
       }
+      case 'enrolScript': {
+        const decoder = streams.get(message.id)
+        const reply = (result: ScriptResult): void => port.postMessage({ type: 'scripted', id: message.id, seq: message.seq, result } satisfies FromWorker)
+        const learning = decoder?.enrolScript?.(message.phrases, (count) => port.postMessage({ type: 'enrolPhrase', id: message.id, seq: message.seq, count } satisfies FromWorker))
+        if (!learning) reply({ ok: false, phrases: 0, seconds: 0 })
+        else learning.then(reply, () => reply({ ok: false, phrases: 0, seconds: 0 }))
+        return
+      }
+      case 'enrolFinish':
+        streams.get(message.id)?.enrolFinish?.()
+        return
+      case 'capture':
+        try {
+          void streams.get(message.id)?.capture?.(message.text, message.judgement)
+        } catch {
+          // Calibration only.
+        }
+        return
     }
   })
 }
@@ -132,20 +169,22 @@ if (!isMainThread && parentPort) {
   const loaded = loadModel(data.root)
   if (loaded.ok) {
     const speaker = openSpeakerGate(data.root)
-    serve(parentPort, loaded.recognizer, speaker.gate)
-    parentPort.postMessage({ type: 'loaded', ms: loaded.ms, speaker: speaker.status } satisfies FromWorker)
+    const extras = openDecoderExtras(data.root)
+    serve(parentPort, loaded.recognizer, speaker.gate, extras)
+    parentPort.postMessage({ type: 'loaded', ms: loaded.ms, speaker: speaker.status, vad: extras.vad != null } satisfies FromWorker)
   } else {
     parentPort.postMessage({ type: 'unavailable', reason: loaded.reason } satisfies FromWorker)
   }
 }
 
-/** Decoders over a recogniser (and a speaker gate, round 4) on this thread. */
-export function hostInThread(recognizer: OnlineRecognizerLike, ms: number, speaker: { gate: SpeakerGate; status: SpeakerStatus } | null = null): DecoderHost {
+/** Decoders over a recogniser (and a speaker gate, round 4; the speech detector and capture, round 7) on this thread. */
+export function hostInThread(recognizer: OnlineRecognizerLike, ms: number, speaker: { gate: SpeakerGate; status: SpeakerStatus } | null = null, extras: DecoderExtras = {}): DecoderHost {
   return {
     where: 'thread',
     ms,
     speaker: speaker?.status ?? { model: false, profile: false },
-    open: () => decoderInThread(recognizer, speaker?.gate ?? null),
+    vad: extras.vad != null,
+    open: () => decoderInThread(recognizer, speaker?.gate ?? null, extras),
     onExit() {
       // It lives as long as the process.
     },
@@ -169,6 +208,7 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
     const pending = new Map<string, { resolve(result: DecodeResult): void; reject(error: Error): void }>()
     const judging = new Map<string, { resolve(judgement: Judgement | null): void; reject(error: Error): void }>()
     const enrolling = new Map<string, (ok: boolean) => void>()
+    const scripting = new Map<string, { resolve(result: ScriptResult): void; onPhrase(count: number): void }>()
     const exitListeners: Array<(code: number) => void> = []
     let started = false
     let nextId = 1
@@ -185,6 +225,7 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
       where: 'worker',
       ms: 0,
       speaker: { model: false, profile: false },
+      vad: false,
       open() {
         const id = nextId
         nextId += 1
@@ -223,6 +264,20 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
               worker.postMessage({ type: 'enrol', id, seq: mine, seconds } satisfies ToWorker)
             })
           },
+          enrolScript(phrases, onPhrase) {
+            seq += 1
+            const mine = seq
+            return new Promise<ScriptResult>((resolveScript) => {
+              scripting.set(key(id, mine), { resolve: resolveScript, onPhrase })
+              worker.postMessage({ type: 'enrolScript', id, seq: mine, phrases } satisfies ToWorker)
+            })
+          },
+          enrolFinish() {
+            worker.postMessage({ type: 'enrolFinish', id } satisfies ToWorker)
+          },
+          capture(text, judgement) {
+            worker.postMessage({ type: 'capture', id, text, judgement } satisfies ToWorker)
+          },
         }
       },
       onExit(listener) {
@@ -238,6 +293,7 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           clearTimeout(timer)
           host.ms = message.ms
           host.speaker = message.speaker
+          host.vad = message.vad
           resolve({ ok: true, host })
           return
         case 'unavailable':
@@ -265,6 +321,13 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           enrolling.get(key(message.id, message.seq))?.(message.ok)
           enrolling.delete(key(message.id, message.seq))
           return
+        case 'enrolPhrase':
+          scripting.get(key(message.id, message.seq))?.onPhrase(message.count)
+          return
+        case 'scripted':
+          scripting.get(key(message.id, message.seq))?.resolve(message.result)
+          scripting.delete(key(message.id, message.seq))
+          return
       }
     })
     worker.on('error', (error: Error) => {
@@ -283,6 +346,8 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
       judging.clear()
       for (const entry of enrolling.values()) entry(false)
       enrolling.clear()
+      for (const entry of scripting.values()) entry.resolve({ ok: false, phrases: 0, seconds: 0 })
+      scripting.clear()
       if (!started) {
         started = true
         resolve({ ok: false, reason: 'load_failed' })
