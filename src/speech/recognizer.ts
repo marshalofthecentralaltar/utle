@@ -10,6 +10,10 @@ export interface Recognizer {
   flush?(): void
   /** Round 4: learns the owner's voice from the next `seconds` of speech; answered through onEnrolled. Optional. */
   enrol?(seconds: number): void
+  /** Round 7: scripted enrolment: each utterance is one read phrase, `phrases` of them; onEnrolPhrase after each, onEnrolled at the end. Optional. */
+  enrolScript?(phrases: number): void
+  /** Round 7: ends scripted enrolment now with the phrases read so far. Optional. */
+  enrolFinish?(): void
 }
 
 export interface RecognizerHandlers {
@@ -29,10 +33,15 @@ export interface RecognizerHandlers {
   onNotice?(message: string): void
   /** The recogniser is this many ms behind the speech (it drops audio to catch up); 0 once caught up. */
   onLag?(ms: number): void
-  /** Round 4: an utterance was someone else's voice and was dropped (only-owner mode). */
-  onForeign?(): void
-  /** Round 4: the server has learnt the owner's voice, or could not. */
-  onEnrolled?(ok: boolean, seconds: number): void
+  /**
+   * Round 4: an utterance was someone else's voice and was dropped (only-owner mode). Round 7:
+   * streak is how many finals in a row have been dropped (1 for the first; an obeyed final resets it).
+   */
+  onForeign?(streak: number): void
+  /** Round 4: the server has learnt the owner's voice, or could not. Round 7: phrases, after scripted enrolment. */
+  onEnrolled?(ok: boolean, seconds: number, phrases?: number): void
+  /** Round 7: scripted enrolment has heard this many phrases. */
+  onEnrolPhrase?(count: number): void
 }
 
 export const LANGUAGES = [

@@ -8,10 +8,12 @@ import { SAVED_KEY, SAVED_KINDS, savedFrom, savedPhrases } from '../../src/core/
 import type { SavedItem, SavedKind } from '../../src/core/saved.ts'
 import { entryChips, entryStep, startEntry } from '../../src/core/savedEntry.ts'
 import type { EntryResult, EntryState } from '../../src/core/savedEntry.ts'
+import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
 import { CONNECTION_KEYS, connectionFrom, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
-import type { ToBackground, ToPage } from './messages.ts'
+import { STATE_KEY } from './messages.ts'
+import type { StripState, ToBackground, ToPage } from './messages.ts'
 import { BAR_HEIGHTS, SETTING_KEYS, mountStrip, settingsFrom } from './strip.ts'
 import type { StripSettings } from './strip.ts'
 
@@ -63,8 +65,8 @@ interface Group {
   note?: string
   /** The group is shown only while this holds (the gaze target needs gaze mode). */
   when?(settings: StripSettings): boolean
-  /** A button before the choices that does something instead of choosing (round 4: "Õpeta mu hääl"). */
-  action?: { label: string; sub: string; run(): void }
+  /** Buttons before the choices that do something instead of choosing (round 4: "Õpeta mu hääl"; round 7: the scripted one first). */
+  actions?: Array<{ id: string; label: string; sub: string; run(): void }>
 }
 
 /** Round 4: how long the owner speaks for the server to learn his voice. */
@@ -135,21 +137,110 @@ const GROUPS: Group[] = [
     title: text.myVoice,
     titleEn: text.myVoiceEn,
     note: `${text.voiceNote} ${text.voiceNoteEn}`,
-    action: {
-      label: text.teachVoice,
-      sub: text.teachVoiceEn,
-      run: () => {
-        const message: ToBackground = { type: 'utle-enrol', seconds: ENROL_SECONDS }
-        chrome.runtime.sendMessage(message).catch(() => undefined)
-        say(text.enrolStart(ENROL_SECONDS))
+    actions: [
+      { id: 'teachScript', label: text.teachScript, sub: text.teachScriptEn, run: () => startScript() },
+      {
+        id: 'teachFree',
+        label: text.teachFree,
+        sub: text.teachFreeEn,
+        run: () => {
+          const message: ToBackground = { type: 'utle-enrol', seconds: ENROL_SECONDS }
+          chrome.runtime.sendMessage(message).catch(() => undefined)
+          say(text.enrolStart(ENROL_SECONDS))
+        },
       },
-    },
+    ],
     choices: [
       { value: true, label: text.onlyOwner, sub: text.onlyOwnerEn },
       { value: false, label: text.everyone, sub: text.everyoneEn },
     ],
   },
 ]
+
+// ---------- scripted enrolment (round 7, ARCHITECTURE 24.2) ----------
+// The phrases one at a time, the step ("1 / 12") and "Valmis" to keep what was read so far. The
+// server counts a phrase each time an utterance ends; the offscreen document publishes the count in
+// the strip's state (enrolPhrases), which this page follows.
+
+/** Round 7: how many phrases scripted enrolment asks for: all of them. */
+export const SCRIPT_PHRASES = ENROL_PHRASES.length
+let scriptOn = false
+/** The count was seen at 0 or more since the start: a later -1 means the enrolment is over. */
+let scriptSeen = false
+const scriptEls = { panel: null as HTMLElement | null, step: null as HTMLElement | null, phrase: null as HTMLElement | null }
+
+function scriptPanel(): HTMLElement {
+  const panel = document.createElement('div')
+  panel.id = 'script'
+  panel.hidden = true
+  const step = document.createElement('div')
+  step.id = 'scriptStep'
+  const phrase = document.createElement('p')
+  phrase.id = 'scriptPhrase'
+  const help = document.createElement('p')
+  help.id = 'scriptHelp'
+  help.textContent = text.scriptStart
+  const grid = document.createElement('div')
+  grid.className = 'choices'
+  const finish = document.createElement('button')
+  finish.type = 'button'
+  finish.id = 'scriptFinish'
+  finish.className = 'choice'
+  const fill = document.createElement('span')
+  fill.className = 'fill'
+  const name = document.createElement('span')
+  name.textContent = text.scriptFinish
+  const small = document.createElement('span')
+  small.className = 'sub'
+  small.textContent = text.scriptFinishEn
+  finish.append(fill, name, small)
+  dwellable(finish, () => {
+    const message: ToBackground = { type: 'utle-enrol-finish' }
+    chrome.runtime.sendMessage(message).catch(() => undefined)
+  })
+  grid.append(finish)
+  panel.append(step, phrase, help, grid)
+  scriptEls.panel = panel
+  scriptEls.step = step
+  scriptEls.phrase = phrase
+  return panel
+}
+
+/** Shows phrase `at` (0-based) and its step. */
+function showPhrase(at: number): void {
+  const index = Math.min(at, SCRIPT_PHRASES - 1)
+  if (scriptEls.step) scriptEls.step.textContent = text.scriptStep(index + 1, SCRIPT_PHRASES)
+  if (scriptEls.phrase) scriptEls.phrase.textContent = ENROL_PHRASES[index] ?? ''
+}
+
+function startScript(): void {
+  scriptOn = true
+  scriptSeen = false
+  if (scriptEls.panel) scriptEls.panel.hidden = false
+  showPhrase(0)
+  say(text.scriptStart)
+  const message: ToBackground = { type: 'utle-enrol-script', phrases: SCRIPT_PHRASES }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+}
+
+function followScript(state: StripState | undefined): void {
+  if (!scriptOn || !state) return
+  const count = state.enrolPhrases
+  if (count >= 0) {
+    scriptSeen = true
+    showPhrase(count)
+    return
+  }
+  if (!scriptSeen) return
+  scriptOn = false
+  if (scriptEls.panel) scriptEls.panel.hidden = true
+  if (state.line !== '') say(state.line)
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'session' || !changes[STATE_KEY]) return
+  followScript(changes[STATE_KEY].newValue as StripState | undefined)
+})
 
 let current: StripSettings = settingsFrom({})
 const buttons = new Map<SettingKey, { value: Choice['value']; button: HTMLButtonElement }[]>()
@@ -184,20 +275,20 @@ for (const group of GROUPS) {
   const grid = document.createElement('div')
   grid.className = 'choices'
   const list: { value: Choice['value']; button: HTMLButtonElement }[] = []
-  if (group.action) {
+  for (const action of group.actions ?? []) {
     const b = document.createElement('button')
     b.type = 'button'
+    b.id = action.id
     b.className = 'choice action'
     const fill = document.createElement('span')
     fill.className = 'fill'
     const name = document.createElement('span')
-    name.textContent = group.action.label
+    name.textContent = action.label
     const small = document.createElement('span')
     small.className = 'sub'
-    small.textContent = group.action.sub
+    small.textContent = action.sub
     b.append(fill, name, small)
-    const { run } = group.action
-    dwellable(b, run)
+    dwellable(b, action.run)
     grid.append(b)
   }
   for (const choice of group.choices) {
@@ -219,6 +310,7 @@ for (const group of GROUPS) {
   }
   buttons.set(group.key, list)
   section.append(h2, sub, grid)
+  if (group.key === 'onlyOwner') section.append(scriptPanel())
   if (group.note !== undefined) {
     const note = document.createElement('p')
     note.className = 'note'

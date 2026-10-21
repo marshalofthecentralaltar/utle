@@ -30,8 +30,10 @@ export type AsrServerMessage =
   | { type: 'unavailable'; reason: AsrUnavailableReason }
   | { type: 'partial'; text: string }
   | { type: 'final'; text: string; speaker?: Speaker }
-  /** Round 4: the voice profile was learnt (or not). */
-  | { type: 'enrolled'; ok: boolean; seconds: number }
+  /** Round 4: the voice profile was learnt (or not). Round 7: phrases is how many read phrases made it (scripted enrolment). */
+  | { type: 'enrolled'; ok: boolean; seconds: number; phrases?: number }
+  /** Round 7: scripted enrolment heard one more phrase; count is how many so far. */
+  | { type: 'enrolPhrase'; count: number }
   /** The server is this many ms behind the audio it has received (it drops audio to catch up). 0 when caught up. */
   | { type: 'lag'; ms: number }
 
@@ -45,6 +47,10 @@ export type AsrClientMessage =
   | { type: 'enrol'; seconds: number }
   /** Round 4: only the owner's utterances are delivered; others are dropped (finals still carry speaker). */
   | { type: 'onlyOwner'; on: boolean }
+  /** Round 7: scripted enrolment: each utterance from now on is one read phrase, `phrases` of them. */
+  | { type: 'enrolScript'; phrases: number }
+  /** Round 7: end scripted enrolment now with the phrases heard so far. */
+  | { type: 'enrolFinish' }
 
 /** Reads one text frame from the server; null for anything that is not a known message. */
 export function parseAsrMessage(raw: string): AsrServerMessage | null {
@@ -73,8 +79,13 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
       const speaker = record.speaker === 'owner' || record.speaker === 'other' || record.speaker === 'unknown' ? record.speaker : undefined
       return speaker === undefined ? { type: 'final', text: record.text } : { type: 'final', text: record.text, speaker }
     }
-    case 'enrolled':
-      return typeof record.ok === 'boolean' ? { type: 'enrolled', ok: record.ok, seconds: typeof record.seconds === 'number' ? record.seconds : 0 } : null
+    case 'enrolled': {
+      if (typeof record.ok !== 'boolean') return null
+      const seconds = typeof record.seconds === 'number' ? record.seconds : 0
+      return typeof record.phrases === 'number' ? { type: 'enrolled', ok: record.ok, seconds, phrases: record.phrases } : { type: 'enrolled', ok: record.ok, seconds }
+    }
+    case 'enrolPhrase':
+      return typeof record.count === 'number' && record.count >= 0 ? { type: 'enrolPhrase', count: record.count } : null
     default:
       return null
   }

@@ -1,7 +1,7 @@
 import type { IntentRequest } from '../../src/core/pageIntent.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_ASR_URL, authHeaders, connectionFrom, serverCheck, serverStatus, socketAddress } from './connection.ts'
-import { asrAddress, askIntent, serverUrl } from './offscreenMain.ts'
+import { ENOUGH_PHRASES, asrAddress, askIntent, enrolledLine, foreignNotice, serverUrl } from './offscreenMain.ts'
 
 describe('the server address (27.3)', () => {
   it('derives the http base from a ws address and https from wss', () => {
@@ -73,5 +73,27 @@ describe('the status with a token (27.3)', () => {
     const result = await askIntent('https://h.example/api/intent', request, undefined, 't1')
     expect(result).toEqual({ error: 'no_model' })
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('authorization')).toBe('Bearer t1')
+  })
+})
+
+describe('strict mode lines on the strip (round 7)', () => {
+  const text = { foreign: 'Keegi teine rääkis, jätsin vahele.', foreignRetrain: 'Kui see olid sina, õpeta hääl uuesti seadetes.' }
+  it('strict mode: says who spoke at every drop, and the third drop message once', () => {
+    expect([1, 2, 3, 4, 5].map((streak) => foreignNotice(streak, text))).toEqual([
+      { foreign: text.foreign },
+      { foreign: text.foreign },
+      { foreign: text.foreign, line: text.foreignRetrain },
+      { foreign: text.foreign },
+      { foreign: text.foreign },
+    ])
+  })
+
+  it('says how many phrases taught the voice, and when they were too few', () => {
+    const lines = { enrolDone: 'done', enrolFailed: 'failed', enrolPhrasesDone: (n: number) => `done ${n}`, enrolFew: (n: number, enough: number) => `few ${n}/${enough}` }
+    expect(enrolledLine(false, 12, lines)).toBe('failed')
+    expect(enrolledLine(true, undefined, lines)).toBe('done')
+    expect(enrolledLine(true, 12, lines)).toBe('done 12')
+    expect(enrolledLine(true, ENOUGH_PHRASES, lines)).toBe(`done ${ENOUGH_PHRASES}`)
+    expect(enrolledLine(true, ENOUGH_PHRASES - 1, lines)).toBe(`few ${ENOUGH_PHRASES - 1}/${ENOUGH_PHRASES}`)
   })
 })

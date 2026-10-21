@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
+import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
 import { createUtleServer } from '../../server/app.ts'
 
@@ -1120,6 +1121,30 @@ async function main(): Promise<void> {
       await options.close()
     } finally {
       hosted?.close()
+    }
+
+    // ---------- scripted enrolment on the settings page (round 7, SPEECH lane, 24.2) ----------
+    {
+      const extensionId = new URL(sw.url()).host
+      const options = await ctx.newPage()
+      await options.goto(`chrome-extension://${extensionId}/options.html`)
+      const start = options.locator('#teachScript')
+      await start.waitFor()
+      check('settings: Minu hääl has the scripted button and the free-speech fallback', (await options.locator('#teachFree').count()) === 1)
+      await options.mouse.move(0, 0)
+      await start.click()
+      const panel = options.locator('#script')
+      await panel.waitFor({ state: 'visible', timeout: 3000 })
+      const step = (await options.locator('#scriptStep').textContent()) ?? ''
+      const phrase = (await options.locator('#scriptPhrase').textContent()) ?? ''
+      check('settings: scripted enrolment shows the first phrase and "1 / 12"', step === `1 / ${ENROL_PHRASES.length}` && ENROL_PHRASES.length === 12 && phrase === ENROL_PHRASES[0], JSON.stringify({ step, phrase }))
+      await mkdir(join(here, 'out'), { recursive: true })
+      const voice = options.locator('#onlyOwner')
+      await voice.evaluate((el) => el.scrollIntoView({ block: 'start' }))
+      await voice.screenshot({ path: join(here, 'out/enrol.png') })
+      await options.mouse.move(0, 0)
+      await options.click('#scriptFinish')
+      await options.close()
     }
   } finally {
     await context?.close()
