@@ -1517,10 +1517,24 @@ one of `page.places`, and the engine resolves the address from storage on his ma
 kind outside `PageIntent` (`ModelIntent = PageIntent | PlaceIntent`), so `applyIntent` in `inpage.ts`
 is unchanged; the engine turns it into a `goTo` step.
 
-**29.4.3 The settings page.** A "Minu kohad" section after "Minu andmed": every place as noun →
-label and address, a remove button on each (click or dwell), and a small form (noun, address) that
-adds one or replaces the row with that noun. By text form, not by voice: a helper sets the places
-once, as with the wake word.
+**29.4.3 Adding a place by voice, and the settings page.** By voice, with no spelling: on the page
+he wants, "lisa koht uudised", "salvesta see koht uudised", "save this place as news" (anywhere), or
+"see on mu uudised" (only when no box is armed: there it may be a message) saves the address of the tab
+in front under that noun; "eemalda koht uudised" / "remove place news" removes it (his row with an
+empty address, so a default is hidden too). `placeVoice` in `places.ts` holds the rules; the noun is
+one or two words through `placeNoun` and none of them a command word (`COMMAND_WORDS`: the command
+heads of `ENROL_COMMAND_WORDS` and the place shapes' own words), else the utterance is not this. The
+engine checks it before the place rules and sends a new command, `{ kind: 'savePlace' | 'removePlace';
+noun }`, which the service worker resolves with the active tab's address and writes into `places`;
+the strip says "Koht „uudised“ salvestatud: postimees.ee". "lisa koht" alone asks "Ütle, mis sõnaga
+seda kohta kutsuda." and the next final within 20 s (`PLACE_ASK_MS`) is the noun, as the entry flow
+of 26.5 does; an answer that is not a usable noun ends the question and is handled as usual. The
+model never answers these (they are not in its command schema).
+
+The settings page has a "Minu kohad" section after "Minu andmed": every place as noun → label and
+address, a remove button on each (click or dwell), and a small form (noun, address) that adds one or
+replaces the row with that noun, the helper's path. The page's `<main>` keeps 240 px free at its end
+(the strip at its tallest is 192 px), so the last of the page scrolls clear of the bar.
 
 ### 29.5 Reading aloud: the measurement (READ lane)
 
