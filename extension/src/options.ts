@@ -155,6 +155,17 @@ const GROUPS: Group[] = [
       { value: false, label: text.everyone, sub: text.everyoneEn },
     ],
   },
+  // ---------- reading aloud (29.5): the last group ----------
+  {
+    key: 'readBar',
+    title: STRINGS.et.read.barTitle,
+    titleEn: STRINGS.en.read.barTitle,
+    note: `${STRINGS.et.read.barNote} ${STRINGS.en.read.barNote}`,
+    choices: [
+      { value: false, label: STRINGS.et.read.barOff, sub: STRINGS.en.read.barOff },
+      { value: true, label: STRINGS.et.read.barOn, sub: STRINGS.en.read.barOn },
+    ],
+  },
 ]
 
 // ---------- scripted enrolment (round 7, ARCHITECTURE 24.2) ----------
