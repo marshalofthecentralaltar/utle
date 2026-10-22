@@ -194,7 +194,8 @@ What the listing needs that the repository cannot hold:
 - Settings (the **Seaded** control, or the extension's options page) are large buttons that a
   click or a one-second dwell toggles, saved at once: bar height (Väike 96 / Tavaline 128 / Suur
   192, `barHeight`), microphone side (`micSide`: Vasakul / Paremal), and whether the bar starts
-  folded (`barHiddenDefault`), how listening is triggered (`listenMode`: Lülitiga / Vaatamisega),
+  folded (`barHiddenDefault`), how listening is triggered (`listenMode`: Lülitiga / Vaatamisega /
+  Äratussõnaga, the last with a field for the wake word, `wakeWord`, default "Ütle"),
   what the gaze rests on (`gazeTarget`: Mikrofon / Kogu riba, shown only for Vaatamisega) and the
   speech model (`speechEngine`: Arvutis (TalTech) / Soniox (pilves); Soniox needs `SONIOX_API_KEY`
   on the dev server and takes effect the next time listening starts), and since round 4 the group
@@ -213,6 +214,23 @@ What the listing needs that the repository cannot hold:
   nothing in this mode. The folded pill is a gaze target too (resting on it for two seconds no
   longer unfolds the bar in this mode; use **Näita**). When a page swallows the pointer-leave
   event, a one-second poll of the pointer's last position ends listening instead.
+- **Wake word** (`listenMode: wake`, round 8, ARCHITECTURE 29.4.1): listening starts by itself when
+  the browser starts and when the mode or the word is set, and stays on; the microphone button still
+  turns it off. Only what starts with the wake word is acted on: "Ütle, keri alla". Everything else
+  is shown on the strip's upper line and goes nowhere (not typed, not sent to the model). Dictating:
+  "Ütle, tulen kell viis" into an armed box types it and opens the dictation window, shown as a small
+  amber disc on the microphone; while it is open, sentences need no word. It closes after 20 s with
+  nothing said, on `aitab` / `see on kõik` / `that's all`, or after `saada`. "Ütle" alone opens it too.
+  The word is matched by sound ("ütel", "Ütle," pass; "ütlesin", "ütles" do not) and must be first.
+- **Minu kohad** (round 8, 29.4.2): `vaata uudiseid`, `näita uudiseid`, `ava uudised`, `pane raadio
+  käima`, `ava raadio`, `mis ilm on`, `näita ilma`, `ava mu mail`, `ava meil`, `vaata videoid` open
+  your place for that word (not while a message box is armed: there the words are typed). Defaults:
+  uudised → Postimees, raadio → Vikerraadio's live page (otse.err.ee), ilm → Ilmateenistus, mail →
+  Gmail, kalender → Google Kalender, kaart → Google Maps, video → YouTube; no bank. The model is told
+  only the words and may answer one of them in other phrasings; it never sees an address. Another
+  station once the radio page is open: `vajuta Raadio 2` or the numbers, as on any page. The settings
+  page's **Minu kohad** section lists them; type a word and an address (`postimees.ee`) and **Lisa
+  koht** to add one or replace a default; **Eemalda** removes one. Stored under `places`.
 - When the speech server falls behind by more than one second, a thin dim line under the amber
   one says "Kõne jääb maha N s" until it has caught up. While a chain of goals runs (below) a
   line in the same place says where it is: "2/4 · ava Karini viimane sõnum".

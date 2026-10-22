@@ -1450,8 +1450,10 @@ The state is the word's phonetic keys and `openUntil` (0 when the window is clos
    with the word and the punctuation after it stripped ("Ütle, keri alla" → "keri alla"). Any other
    final is dropped: not typed, not previewed, never sent to the rules or the model. The strip's
    upper line still shows the words heard, so he sees it listens.
-2. A woken final handled while the box is armed opens the dictation window: `openUntil = now +
-   WAKE_WINDOW_MS` (20 000 ms). The bare word alone ("Ütle.") opens it too, whatever the box.
+2. A woken final that the rules type into an armed box (their step has a `setText`) opens the
+   dictation window: `openUntil = now + WAKE_WINDOW_MS` (20 000 ms). A woken command into an armed
+   box ("Ütle, keri alla" in WhatsApp) does not: the room's talk after a command must not be typed.
+   The bare word alone ("Ütle.") opens it too, whatever the box.
 3. Open. Every final is acted on without the word (the word is still stripped when he says it), and
    each final and each partial moves `openUntil` to now + 20 s, so "20 s of silence" means 20 s with
    no speech heard.
@@ -1505,7 +1507,9 @@ mängima", "pane raadio käima", "ava raadio", "mis ilm on", "näita ilma", "ava
 "vaata videoid", in the general shapes `(ava|vaata|näita|mine) [mu|minu] <noun>`, `pane <noun>
 (mängima|käima|tööle)`, `mis <noun> on`. The noun is matched after a case ending comes off
 (uudiseid → uudis, raadiot → raadio, ilma → ilm, videoid → video) and by `soundsLike`. The engine
-checks it before the rules of `inpage.ts` and runs `goTo` with the stored address.
+checks it before the rules of `inpage.ts` and runs `goTo` with the stored address. The engine holds
+no places until the offscreen document hands it the merged list (`utle-places` at start, a `places`
+message on every change; the service worker sends his raw rows, merged on the engine's side).
 
 **By the model.** The page context carries `places: ["uudised", "raadio", …]`, the nouns only, never
 an address. The model may answer `place { noun }`; `pageIntentFrom` accepts it only when the noun is
