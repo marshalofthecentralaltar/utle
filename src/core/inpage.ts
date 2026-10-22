@@ -4,6 +4,7 @@ import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './b
 import { endsWithConnective } from './chain.ts'
 import { closeSentence, lastSentenceOf } from './documentMode.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
+import { mailCommand, mailFieldCommand } from './mail.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
 import { savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
@@ -99,6 +100,9 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
   // "kinnita" / "logi sisse" submit, whatever the box holds; elsewhere the words keep their meaning.
   const formKey = box.present && box.armed && box.single === true && !session.asleep ? FORM_KEYS[normalise(utterance)] : undefined
   if (formKey !== undefined) return act(session, { kind: 'browser', command: { kind: 'pressKey', key: formKey } }, box)
+  // mail (29.3.2): "teema …" and "lisa koopia" only in a field of a compose window; elsewhere they are words.
+  const mailField = box.present && box.mail === true && !session.asleep ? mailFieldCommand(utterance) : null
+  if (mailField !== null) return act(session, { kind: 'browser', command: mailField }, box)
   const classified = documentClassified(classify(session, utterance), box)
   const spoken: Action = { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
   // One ordinary word while he is writing is a word of the message, not a command (section 22, "Soft words").
@@ -593,6 +597,9 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
   const replace = replaceEdit(utterance)
   if (replace) return plain({ kind: 'edit', edit: replace })
   if (Object.hasOwn(SPELL_MODES, clean)) return plain({ kind: 'spell', spell: SPELL_MODES[clean] ?? null })
+  // ---------- mail (29.3): before the spelled values and the chats, so "kirjuta meil Marile" is a mail ----------
+  const mail = mailCommand(utterance)
+  if (mail) return plain({ kind: 'browser', command: mail })
   const spelled = spelledDictation(utterance)
   if (spelled) return plain(spelled)
   const typing = typeTextPattern(utterance)
@@ -797,6 +804,8 @@ function misheard(session: InpageSession, utterance: string): Classified | null 
     if (action.kind === 'browser' && (action.command.kind === 'arm' || action.command.kind === 'pressKey')) return
     // Nor is free text: "vali X", "mine X juurde", "kirjuta siia vahele X" (round 3).
     if (action.kind === 'deleteNamed' || (action.kind === 'browser' && (action.command.kind === 'typeText' || findOf(action.command) !== null))) return
+    // mail (29.3): nor a mail ("kirjuta meile" is not "kirjuta meil").
+    if (action.kind === 'browser' && (action.command.kind === 'compose' || action.command.kind === 'mailField')) return
     const key = JSON.stringify(action)
     const before = found.get(key)
     if (before === undefined || cost < before.cost) found.set(key, { classified: { action, understood: text }, cost })

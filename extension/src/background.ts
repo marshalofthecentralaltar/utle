@@ -11,6 +11,10 @@ import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.t
 import type { PageCommand } from './page.ts'
 import { SITES, siteOf } from './sites.ts'
 import type { SiteName, SiteSettings } from './sites.ts'
+// mail (29.3)
+import { isEmailAddress } from '../../src/core/contacts.ts'
+import { GMAIL_HOME, composeUrl } from '../../src/core/mail.ts'
+import { isMailPage } from './sites.ts'
 
 /** Where the section 20 development page runs unless the options page says otherwise. */
 const DEFAULT_UTLE_URL = 'http://localhost:5173'
@@ -410,6 +414,12 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
       // Round 6 (26.5): only the options page holds the entry flow; anywhere else he has left it.
       if (!(tab.url ?? tab.pendingUrl ?? '').startsWith(chrome.runtime.getURL('options.html'))) return fail('not_found', 'The Minu andmed page is not in front.')
       return clean(await runOnNewTab(tab, tabId, command))
+    // ---------- mail (29.3) ----------
+    case 'mailField':
+      return clean(await runInPage(tab, command))
+    case 'compose':
+    case 'composeTo':
+      return composeMail(tab, command)
     case 'clickHint':
     case 'clickItem': {
       let result: PageAnswer = fail('failed', 'The page did not answer.')
@@ -421,6 +431,34 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     }
   }
 }
+
+// ---------- mail (29.3) ----------
+
+/** Gmail's address, or the mailHome setting (the browser suite points it at the stand-in, 29.3.4). */
+async function mailHome(): Promise<string> {
+  const value = await stored('mailHome')
+  return typeof value === 'string' && value !== '' ? value : GMAIL_HOME
+}
+
+/**
+ * compose on Gmail runs on the page. Off Gmail, and composeTo always, open Gmail's compose page in a
+ * new tab of the target window (composeTo with the address, subject and body in the address), wait
+ * for it, and let the page fill To or arm the body there.
+ */
+async function composeMail(tab: Tab, command: Extract<BrowserCommand, { kind: 'compose' | 'composeTo' }>): Promise<BrowserResult> {
+  const home = await mailHome()
+  if (command.kind === 'compose' && isMailPage(tab.url, home)) return clean(await runInPage(tab, command))
+  // pageIntentFrom already checked the address against the page; a malformed one is never opened.
+  if (command.kind === 'composeTo' && !isEmailAddress(command.address)) return fail('not_allowed', 'That is not an e-mail address.')
+  const mail = command.kind === 'composeTo' ? { to: command.address, ...(command.subject ? { subject: command.subject } : {}), ...(command.body ? { body: command.body } : {}) } : {}
+  const created = await chrome.tabs.create({ windowId: tab.windowId, active: true, url: composeUrl(home, mail) })
+  if (created.id === undefined) return fail('failed', 'The new tab did not open.')
+  await waitForComplete(created.id)
+  const opened = await chrome.tabs.get(created.id).catch(() => created)
+  const result = clean(await runInPage(opened, command))
+  return result.ok ? { ...result, tab: tabInfo(opened) } : result
+}
+// ---------- end mail (29.3) ----------
 
 async function history(tab: Tab, tabId: number, back: boolean): Promise<BrowserResult> {
   const nothing = fail('not_found', back ? 'There is no page to go back to.' : 'There is no page to go forward to.')

@@ -293,6 +293,18 @@ What the listing needs that the repository cannot hold:
   - `puhka` stops typing, `ärka üles` resumes.
   - push-to-talk by looking: nothing to say; look at the microphone (or the whole bar) and speak, look
     away and the words are delivered. Set it on the settings page (**Kuulamine: Vaatamisega**).
+- **Meil** (round 8, docs/ARCHITECTURE.md 29.3): `kirjuta meil Marile` (also `kirjuta kiri Marile`, `saada
+  meil Jaanile`, `write an email to Mari`) opens a new message in Gmail with Mari in To, and the message body is
+  ready for your words; `kirjuta meil Marile, et tulen homme` writes the body too; `uus meil` opens an empty one
+  with To ready. Off Gmail it opens Gmail's compose page in a new tab first. In the message, `teema Koosolek`
+  writes the subject, `lisa koopia` (`lisa koopia Jaanile`) opens Cc, `valmis` or `järgmine väli` moves To,
+  Cc, Subject, body in turn, and `saada` clicks Send (never Enter, which is a new line in a mail). Only
+  in the message: anywhere else a sentence that begins with "teema" is typed like any other. What you
+  say into To or Cc is written as an address ("ät", "punkt"). On any page the e-mail addresses and phone
+  numbers it shows are read off it (text and links, at most 20), so `võta see meiliaadress siit lehelt ja
+  kirjuta talle, et tulen homme` or `kirjuta talle meil` opens a new mail to that address; the model may only
+  pick an address the page shows, never one of its own. Tested on `fixtures/gmail.html` and `fixtures/cv.html`;
+  the Gmail selectors are unverified on real Gmail.
 - The toolbar icon also turns listening on and off.
 - When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.

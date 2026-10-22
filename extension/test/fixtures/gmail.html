@@ -21,17 +21,23 @@
       #body { min-height: 120px; border: 1px solid #eee; padding: 6px; margin: 8px 0; outline: none; }
       #compose .bar { display: flex; gap: 8px; align-items: center; }
       #send { background: #0b57d0; color: #fff; border: 0; border-radius: 16px; padding: 8px 20px; font: inherit; }
+      /* Round 8 (29.3): Compose in the header, a Cc row that opens on its button. */
+      header { display: flex; gap: 16px; align-items: center; }
+      #koosta { background: #c2e7ff; border: 0; border-radius: 12px; padding: 8px 16px; font: inherit; }
+      #compose .cc[hidden] { display: none; }
+      #ccButton { border: 0; background: none; color: #555; font: inherit; }
     </style>
   </head>
   <body>
-    <header><h1>Postkast</h1></header>
+    <header><h1>Postkast</h1><button id="koosta" type="button">Koosta</button></header>
     <div class="inbox" role="grid" aria-label="Kirjad">
       <div role="row" tabindex="0"><span class="from">Mari Maasikas</span><span>Homne koosolek</span></div>
       <div role="row" tabindex="0"><span class="from">TalTech</span><span>Mektory uudiskiri</span></div>
       <div role="row" tabindex="0"><span class="from">Jaan Tamm</span><span>Pildid reisilt</span></div>
     </div>
     <div id="compose" role="dialog" aria-label="Uus kiri">
-      <div class="field"><label for="to">Saaja</label><input id="to" type="text" /></div>
+      <div class="field"><label for="to">Saaja</label><input id="to" type="text" /><button id="ccButton" type="button">Koopia</button></div>
+      <div class="field cc" hidden><label for="cc">Koopia</label><input id="cc" type="text" /></div>
       <div class="field"><label for="subject">Teema</label><input id="subject" type="text" /></div>
       <label for="body">Sõnum</label>
       <div id="body" contenteditable="true" role="textbox" aria-multiline="true"></div>
@@ -41,11 +47,37 @@
       </div>
     </div>
     <script>
+      // Round 8 (29.3): what the suite reads back. sentMails: every Send click, with what the window held.
+      // clicks: the ids of the buttons clicked. Koosta opens a fresh window (the old one goes, as a
+      // stand-in for Gmail's stack of windows); ?view=cm&to=&su=&body= prefills it as Gmail does.
       window.sentMails = []
-      document.getElementById('send').addEventListener('click', () => {
-        window.sentMails.push({ to: document.getElementById('to').value, subject: document.getElementById('subject').value, body: document.getElementById('body').innerText })
-        document.getElementById('compose').remove()
+      window.clicks = []
+      const template = document.getElementById('compose').cloneNode(true)
+      function wire(win) {
+        win.querySelector('#send').addEventListener('click', () => {
+          window.clicks.push('send')
+          window.sentMails.push({ to: win.querySelector('#to').value, cc: win.querySelector('#cc').value, subject: win.querySelector('#subject').value, body: win.querySelector('#body').innerText })
+          win.remove()
+        })
+        win.querySelector('#ccButton').addEventListener('click', () => {
+          window.clicks.push('cc')
+          win.querySelector('.cc').hidden = false
+        })
+      }
+      wire(document.getElementById('compose'))
+      document.getElementById('koosta').addEventListener('click', () => {
+        window.clicks.push('koosta')
+        document.getElementById('compose')?.remove()
+        const fresh = template.cloneNode(true)
+        document.body.appendChild(fresh)
+        wire(fresh)
       })
+      const query = new URLSearchParams(location.search)
+      if (query.get('view') === 'cm') {
+        document.getElementById('to').value = query.get('to') ?? ''
+        document.getElementById('subject').value = query.get('su') ?? ''
+        document.getElementById('body').innerText = query.get('body') ?? ''
+      }
     </script>
   </body>
 </html>
