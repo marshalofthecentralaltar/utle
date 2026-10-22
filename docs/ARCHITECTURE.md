@@ -1413,7 +1413,37 @@ lane; a lane writes only its own. Sections 29.5 and 29.6 are scoping lanes and e
 
 ### 29.1 Seek by amount (MEDIA lane)
 
-(filled by the MEDIA lane)
+`media` with action `forward` or `back` carries an optional `seconds`: an integer from 1 to 3600.
+Absent means 10 s, exactly as before. `CommandSchema` (`src/core/pageIntent.ts`) rejects 0, a
+negative, a fraction, anything above 3600, and `seconds` on any other media action; the model's
+tool schema (`server/intentPrompt.ts`, `kind('media', …)`) has the same field as integer-or-null
+with `minimum` 1 and `maximum` 3600 (the tool is not strict, so the bounds are sent), and one
+rules line: "keri edasi üks minut" forward 60, "poolteist minutit" 90, "keri kaks minutit tagasi"
+back 120, bare "keri edasi" no seconds.
+
+**Grammar** (`seekCommand` in `src/core/browserIntent.ts`, whole utterances after
+`cleanForBrowser`, so case and punctuation do not matter; tried after the fixed table, so "keri
+edasi" and "keri tagasi" alone are still the 10 s rows):
+
+- Estonian: `keri <edasi|tagasi> <amount>` or `keri <amount> <edasi|tagasi>`.
+- English: `[skip|go|jump] <forward|ahead|back|backward|backwards> <amount>`,
+  `<skip|go|jump> <amount> <forward|ahead|back|backward|backwards>`, `rewind <amount>` (back).
+- `<amount>` is `[count] <unit> [and a half]`. Units: `sekund`, `sekundi`, `sekundit`, `sek`,
+  `second(s)`, `sec(s)` (1 s); `minut`, `minuti`, `minutit`, `min`, `minute(s)`, `mins` (60 s).
+- `count`: absent, `a`, `an` (1; "keri edasi minut" is 60); `pool`, `half`, `half a` (0.5);
+  `poolteist` (1.5); `<n> ja pool`, `<n> and a half` (n + 0.5); else `<n>`. `n` is digits (up to
+  four) or a number word through `spokenNumber` (`quickReply.ts`: "üks" to "kolmkümmend üheksa",
+  "one" to "thirty nine").
+- The product, rounded to whole seconds, must be 1 to 3600; otherwise the utterance is not a seek
+  and goes on (to the model). A scroll phrase ("keri alla kolm korda") has no `edasi`/`tagasi`
+  and is never a seek.
+
+**Page side** (`media()` in `extension/src/page.ts`). Without `seconds`: unchanged (YouTube's own
+`l`/`j` shortcut, else `currentTime` ± 10). With `seconds` on a plain `<video>`/`<audio>`:
+`currentTime` moves by that amount, clamped to [0, duration]. On YouTube (`#movie_player`), whose
+shortcuts move a fixed 5 or 10 s, the explicit amount sets `currentTime` on the element directly;
+when `currentTime` has not moved within `SHORTCUT_MS` (a player that ignores or resets the write),
+it falls back to pressing `l` or `j` (10 s each) `round(seconds / 10)` times, at least once.
 
 ### 29.2 Document mode (DOCS lane)
 
