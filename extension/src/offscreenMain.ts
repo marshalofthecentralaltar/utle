@@ -15,6 +15,11 @@ import type { AskFailure, InpageLogic } from './engine.ts'
 import type { RunAnswer, SavedAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
 import { savedFrom } from '../../src/core/saved.ts'
 import { DEFAULT_ASR_URL, authHeaders, serverStatus, serverUrl, socketAddress } from './connection.ts'
+// ---------- reading aloud (29.5) ----------
+import type { Lang } from '../../src/core/strings.ts'
+import { browserSpeech, createReader } from './reader.ts'
+import type { SpeechPort } from './reader.ts'
+import type { ReadBarAnswer } from './messages.ts'
 
 // The server's address and status live in connection.ts (27.3), shared with the settings page.
 export { DEFAULT_ASR_URL, STATUS_TIMEOUT_MS, serverStatus, serverUrl } from './connection.ts'
@@ -115,6 +120,120 @@ export function asrAddress(base: string, engine: string | null): string {
   return url.toString()
 }
 
+// ---------- reading aloud (29.5) ----------
+
+export type ReadCommand = Extract<BrowserCommand, { kind: 'read' }>
+
+/** "Loe riba ette": a line this long or longer is not spoken, nor the same line again within BAR_REPEAT_MS. */
+export const BAR_LINE_MAX = 200
+export const BAR_REPEAT_MS = 1500
+
+/**
+ * The pause rule (29.5): while muted() the recogniser gets silence of the same length instead of the
+ * microphone's samples. The track and the socket stay open; the server ends an utterance in progress
+ * on the silence and never hears the synthesised voice.
+ */
+export function mutedSource(inner: AudioSource, muted: () => boolean): AudioSource {
+  return {
+    start: (onFrame) => inner.start((samples) => onFrame(muted() ? new Float32Array(samples.length) : samples)),
+    stop: () => inner.stop(),
+  }
+}
+
+export interface ReadAloudDeps {
+  lang: Lang
+  port(): SpeechPort | null
+  /** Runs read page, box or selection on the page in front; the answer carries `reading`. */
+  fetch(command: ReadCommand): Promise<BrowserResult>
+  publish(patch: Partial<StripState>): void
+  now?(): number
+}
+
+export interface ReadAloud {
+  /** One read command. fetched: the page's answer when the caller already has it (the harness's bridge). */
+  run(command: ReadCommand, fetched?: BrowserResult): Promise<BrowserResult>
+  /** Stops a reading in progress; false when there was none. */
+  stop(): boolean
+  readonly reading: boolean
+  /** The microphone is handed silence (mutedSource). */
+  readonly muted: boolean
+  setReadBar(on: boolean): void
+  /** The strip's publish, through which "Loe riba ette" hears every new amber line. */
+  publish(patch: Partial<StripState>): void
+}
+
+export function createReadAloud(deps: ReadAloudDeps): ReadAloud {
+  const text = STRINGS[deps.lang].read
+  const now = deps.now ?? (() => Date.now())
+  let muted = false
+  let readBar = false
+  let lastLine = ''
+  let lastAt = Number.NEGATIVE_INFINITY
+
+  const publish = (patch: Partial<StripState>): void => {
+    deps.publish(patch)
+    const line = patch.line
+    if (!readBar || typeof line !== 'string' || line.trim() === '' || line.length >= BAR_LINE_MAX || reader.reading) return
+    const at = now()
+    if (line === lastLine && at - lastAt < BAR_REPEAT_MS) return
+    lastLine = line
+    lastAt = at
+    reader.sayLine(line)
+  }
+
+  const reader = createReader({
+    port: deps.port,
+    onAloud: (on) => {
+      muted = on
+      deps.publish({ micMuted: on })
+    },
+    onReading: (on) => publish(on ? { reading: true, line: text.now } : { reading: false }),
+    onLine: (line) => publish({ line: line === 'skipped' ? text.skipped : text.ended }),
+  })
+
+  const failed = (code: 'not_found' | 'not_allowed', message: string, line: string): BrowserResult => {
+    publish({ line })
+    return { ok: false, code, message }
+  }
+
+  return {
+    async run(command, fetched) {
+      switch (command.what) {
+        case 'stop':
+          if (reader.stop()) publish({ line: text.stopped })
+          return { ok: true }
+        case 'continue':
+          return reader.next() ? { ok: true } : failed('not_found', 'Nothing more to read.', text.ended)
+        default: {
+          const answer = fetched ?? (await deps.fetch(command))
+          if (!answer.ok) return answer
+          const reading = answer.reading ?? { text: '', sentences: [] }
+          const outcome = await reader.read(reading.sentences)
+          if (outcome === 'nothing') return failed('not_found', 'Nothing to read here.', text.nothing)
+          if (outcome === 'no_voice') return failed('not_allowed', 'This browser has no Estonian voice.', text.noVoice)
+          return { ok: true, reading }
+        }
+      }
+    },
+    stop: () => {
+      const was = reader.stop()
+      if (was) publish({ line: text.stopped })
+      return was
+    },
+    get reading() {
+      return reader.reading
+    },
+    get muted() {
+      return muted
+    },
+    setReadBar(on) {
+      readBar = on
+    },
+    publish,
+  }
+}
+// ---------- end of reading aloud ----------
+
 export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {}): void {
   const params = new URLSearchParams(location.search)
   // The token (27.3) comes in the document's address: an offscreen document cannot read chrome.storage.
@@ -140,7 +259,27 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     }
   }
 
+  // ---------- reading aloud (29.5): the reader, the pause rule, "Loe riba ette" ----------
+  const toPage = async (command: BrowserCommand): Promise<BrowserResult> => {
+    const answer = (await tell({ type: 'utle-run', command })) as RunAnswer | undefined
+    return answer?.result ?? { ok: false, code: 'failed', message: 'The extension did not answer.' }
+  }
+  const readAloud = createReadAloud({ lang: 'et', port: browserSpeech, fetch: toPage, publish })
+  void tell({ type: 'utle-read-bar' }).then((answer) => readAloud.setReadBar((answer as ReadBarAnswer | undefined)?.on === true))
+  chrome.runtime.onMessage.addListener((message: ToOffscreen, _sender, sendResponse: (answer: RunAnswer) => void) => {
+    if (!message || message.target !== 'offscreen') return false
+    if (message.type === 'readBar') readAloud.setReadBar(message.on)
+    if (message.type !== 'read') return false
+    readAloud.run(message.command, message.fetched).then(
+      (result) => sendResponse({ result }),
+      () => sendResponse({ result: { ok: false, code: 'failed', message: 'Reading aloud failed.' } }),
+    )
+    return true
+  })
+  // ---------- end of reading aloud ----------
+
   const run = async (command: BrowserCommand): Promise<BrowserResult> => {
+    if (command.kind === 'read') return readAloud.run(command)
     const answer = (await tell({ type: 'utle-run', command })) as RunAnswer | undefined
     return answer?.result ?? { ok: false, code: 'failed', message: 'The extension did not answer.' }
   }
@@ -174,7 +313,8 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     logic,
     lang: 'et',
     run,
-    publish,
+    publish: readAloud.publish,
+    reading: () => readAloud.reading,
     // The handlers go through whole, onLag (round 3) with them: the recogniser reports its lag to the engine, the engine to the strip.
     recognizer: (handlers, isInstant, onUnavailable) => {
       const inner = createLocalRecognizer(
@@ -201,7 +341,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
             publish({ connects })
             return browserSocket(events, address)
           },
-          audio: microphone,
+          audio: () => mutedSource(microphone(), () => readAloud.muted),
         },
       )
       const wrapped: Recognizer = {
@@ -251,6 +391,8 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     switch (message.type) {
       case 'toggle':
         cancelStop()
+        // 29.5: the microphone pressed while reading stops the reading; listening stays as it was.
+        if (readAloud.stop()) break
         engine.toggle()
         break
       case 'start':

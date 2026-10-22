@@ -37,12 +37,17 @@ export interface StripState {
   micOpens: number
   /** Date.now() when the microphone last opened, for the tests' timings. */
   micOpenedAt: number
+  // ---------- reading aloud (29.5) ----------
+  /** A reading aloud is in progress (the amber line says "Loen ette…"). */
+  reading: boolean
+  /** The microphone is handed silence because something is being spoken aloud (the pause rule). */
+  micMuted: boolean
 }
 
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, connects: 0, micOpens: 0, micOpenedAt: 0 }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false }
 
 /** To the service worker. */
 export type ToBackground =
@@ -78,6 +83,9 @@ export type ToBackground =
   | { type: 'utle-saved' }
   /** Round 6 (26.5): from the options page: the voice entry flow started (on) or ended. */
   | { type: 'utle-entry'; on: boolean }
+  // ---------- reading aloud (29.5) ----------
+  /** From the offscreen engine at start: whether "Loe riba ette" is on. Answered with a ReadBarAnswer. */
+  | { type: 'utle-read-bar' }
 
 /** To the offscreen document. stop with flush: deliver the words said so far, then stop. */
 export type ToOffscreen =
@@ -94,6 +102,16 @@ export type ToOffscreen =
   | { target: 'offscreen'; type: 'saved'; items: SavedItem[] }
   /** Round 6 (26.5): the options page's entry flow started or ended. */
   | { target: 'offscreen'; type: 'entry'; on: boolean }
+  // ---------- reading aloud (29.5) ----------
+  /** A read command from the harness's bridge; fetched is the page's answer to read page, box or selection. Answered with a RunAnswer. */
+  | { target: 'offscreen'; type: 'read'; command: Extract<BrowserCommand, { kind: 'read' }>; fetched?: BrowserResult }
+  /** "Loe riba ette" changed on the settings page. */
+  | { target: 'offscreen'; type: 'readBar'; on: boolean }
+
+/** The answer to utle-read-bar. */
+export interface ReadBarAnswer {
+  on: boolean
+}
 
 /**
  * To the extension's new-tab page, from the service worker: run one page command there (21.3). The
