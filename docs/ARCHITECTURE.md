@@ -1494,6 +1494,7 @@ today" means `raw` plus the rules above; it differs from `raw` only on line 12.
 | Model | Output | Runs | WER raw / Ütle today | WER cleaned | p50 / p90 latency | Tokens in / out per line | USD per 1000 | Meaning changes |
 |---|---|---|---|---|---|---|---|---|
 | claude-opus-5-5 | plain text | 3 (+1 earlier) | 28.0 % / 25.2 % | **3.5, 3.5, 3.5 %** (earlier run 4.2 %) | 1350, 1720, 1281 ms (earlier 1282) / 3136, 3415, 3173 ms | 709 / 61–63 | 4.05–4.10 | **0 of 20** in every run |
+| claude-opus-5-5 (orchestrator re-run) | plain text | 1 | 28.0 % | 4.2 % (6/143) | 1370 ms / not reported | not reported | not reported | 0 of 20 (flagged #10 võitu, #14 ei, #17 egaarel tööl, #19 trend; none a meaning change) |
 | claude-sonnet-5-5 | plain text | 1 | 28.0 % | 13.3 % | 1100 / 2799 ms | 709 / 55 | 1.97 | 1 of 20 |
 | claude-haiku-5-5 | plain text | 1 | 28.0 % | 72.7 % | 854 / 1324 ms | 709 / 40 | 0.09 | 3 of 20 |
 | claude-opus-5-5 | structured `{text}` | 1 | 28.0 % | 2.1 % | 3481 / 4966 ms | 893 / 31 | 4.19 | 0 of 20 |
@@ -1510,19 +1511,39 @@ or got the wrong way round compared with `raw`. A decoder word the cleaning left
 
 Left in by every model, and not counted: #17 "Egaarel" and "tööl" (decoder). #19 "trend" (decoder; Opus structured changed it to "trenn"). #14 and #7 the leading "Ei," that was a misheard "ee": Opus plain kept it on #14, Opus structured removed it, Sonnet structured kept it on both. #9 a trailing "siis". In the earlier Opus run, #10 kept "võitu".
 
-**Verdict per the kill rule (kill if cleaning changes meaning in more than 1 of 20):** on this
-stand-in, cleaning is not killed for Opus. It changed meaning in 0 of 20 lines in each of four runs,
-and cut word error from 28.0 % (25.2 % after Ütle's own rules) to 3.5 %. Haiku is killed (2 to 3 of 20). Sonnet passes only
-with structured output (0 of 20); in plain text it typed its own monologue once. These are the
-lane's sentences, and a prompt rule ("ee" heard as "ei") came from the same decoder run. The real
-number needs Ralf's 20 captured finals run through `npx tsx scripts/flow-eval.ts` (replace the TSV).
+**The ee/ei hazard.** The 0 of 20 above holds only because this set's `meant` says which "ei" was a
+negation and which was a misheard "ee". The cleaner has no such knowledge: it guesses, from the
+sentence alone, whether he said "not" or hesitated, on a decoder that turns his "ee" into "ei".
+Line 14 shows one side of it. Raw "Ei, Eesti kirjandus ei kujunes välja…" was cleaned to "…kirjandus
+kujunes välja…" in every Opus run. The cleaner removed a mid-sentence "ei". Here that was right, by
+this set's word. In a sentence where he meant "ei", the same rule removes his negation and types the
+opposite of what he said. Line 19 shows the other side. "Ei, ma ei saa täna tulla" kept both of its
+"ei", correctly. These two lines differ only in whether the sentence still parses with "ei" in it.
+That is the model's guess, not a fact the server can check. A dropped "not" reads fluently, and a
+person who cannot use his hands may not see it before "saada". It is the most dangerous change this
+lane found.
+
+**Verdict per the kill rule (kill if cleaning changes meaning in more than 1 of 20):** as applied, 0
+of 20 on this stand-in for Opus, in each of four runs plus the orchestrator's re-run. Word error
+fell from 28.0 % (25.2 % after Ütle's own rules) to 3.5–4.2 %. So cleaning is not killed for Opus.
+Haiku is killed (2 to 3 of 20). Sonnet passes only with structured output (0 of 20); in plain text
+it typed its own monologue once. This 0 of 20 is not the test. These are the lane's sentences in a
+synthetic voice, and a prompt rule ("ee" heard as "ei") came from the same decoder run. The real test
+is Ralf's 20 captured finals, with his own fillers, run through `npx tsx scripts/flow-eval.ts` (replace
+the TSV). The thing to count there is the ee/ei hazard: every line where cleaning removed or added a
+negation word, judged against what he meant.
 
 **Proposed next step** (only after the real 20 pass). Add a `clean` option to the preview path, on
 the server, under the same rule as editing: the model proposes ops, and the server and the reducer
 validate them. The box text becomes a one-block `Doc`. The model answers `replace_text` ops (exact
 `find`, `replace`), never a rewritten string. `applyOps` refuses a `find` that is not in the text,
 and an op that adds a content word the utterance lacks is refused too (a new check, the same test
-as this script's INVENTED flag). Order: type first (as today), clean after, show the change with
+as this script's INVENTED flag). **Negation rule:** the cleaner may never remove or add a negation
+word ("ei", "mitte", "pole", "ära") unless it is the first word of the utterance. The ops validator
+refuses any op whose `find` and `replace` differ in the count of those words outside the first
+word, and the model is told the same. Under this rule, line 14 keeps its mid-sentence "ei" ("Eesti
+kirjandus ei kujunes"): wrong grammar he can see and repair, instead of a silently flipped meaning.
+Order: type first (as today), clean after, show the change with
 `diffSegments`, and let "võta tagasi" undo it. Measured cost, plain text: Opus about $4.1 per 1000
 utterances at 709 in and 62 out tokens, p50 about 1.3 s after the final. Sonnet structured: about
 $2.3 per 1000 at about 1.4 s. Answering as ops roughly doubles the output tokens (estimated, not
