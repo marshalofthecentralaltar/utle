@@ -73,7 +73,7 @@ describe('reading aloud (29.5): the text read', () => {
 
 describe('reading aloud (29.5): the stop words while reading', () => {
   it('stopp, aitab, stop, seis, lõpeta and the explicit phrases stop a reading, whatever the case and punctuation', () => {
-    for (const said of ['stopp', 'Stopp!', 'aitab', 'Aitab.', 'stop', 'seis', 'lõpeta', 'lõpeta lugemine', 'Stop reading', 'lugemine seis']) expect(isReadStop(said)).toBe(true)
+    for (const said of ['stopp', 'Stopp!', 'aitab', 'Aitab.', 'stop', 'seis', 'lõpeta', 'lõpeta lugemine', 'Stop reading', 'lugemine seis', 'paus', 'Peata.']) expect(isReadStop(said)).toBe(true)
   })
   it('other words do not', () => {
     for (const said of ['loe edasi', 'stopp siia', 'aitäh', 'kirjuta stopp', '']) expect(isReadStop(said)).toBe(false)

@@ -14,6 +14,10 @@ import { RESUME_MS, VOICE_POLL_MS, VOICE_WAIT_MS, estonianVoice, sentenceTimeout
 import type { SpeechEvents, SpeechPort, SpeechVoiceInfo } from './reader.ts'
 import type { StripState } from './messages.ts'
 import { DEFAULT_SETTINGS, SETTING_KEYS, settingsFrom } from './strip.ts'
+import type { BrowserCommand } from '../../src/browser/protocol.ts'
+import { applyIntent, initialInpage, inpageInstant, inpagePreview, inpageResult, inpageStep } from '../../src/core/inpage.ts'
+import { pageIntentFrom } from '../../src/core/pageIntent.ts'
+import { createEngine } from './engine.ts'
 
 describe('the server address (27.3)', () => {
   it('derives the http base from a ws address and https from wss', () => {
@@ -195,20 +199,16 @@ describe('reading aloud (29.5): the reader in the offscreen document', () => {
     expect(lines().at(-1)).toBe('Lugemine on lõppenud.')
   })
 
-  it('read: listening is paused from the first sentence and resumed 150 ms after the last ends (within 300 ms)', async () => {
+  it('read: an article never mutes the microphone (micMuted stays false): the engine filters the finals instead', async () => {
     const speech = new FakeSpeech()
     const { ra, patches } = readAloudWith(speech)
-    await ra.run(PAGE, fetched(['Üks.']))
-    expect(ra.muted).toBe(true)
-    expect(patches).toContainEqual({ micMuted: true })
-    speech.end()
-    expect(ra.muted).toBe(true)
-    vi.advanceTimersByTime(RESUME_MS - 1)
-    expect(ra.muted).toBe(true)
-    vi.advanceTimersByTime(1)
+    await ra.run(PAGE, fetched(['Üks.', 'Kaks.']))
     expect(ra.muted).toBe(false)
-    expect(RESUME_MS).toBeLessThanOrEqual(300)
-    expect(patches.at(-1)).toEqual({ micMuted: false })
+    speech.end()
+    speech.end()
+    vi.advanceTimersByTime(RESUME_MS)
+    expect(ra.muted).toBe(false)
+    expect(patches.some((p) => p.micMuted !== undefined)).toBe(false)
   })
 
   it('read: stop cancels at once and listening is back within 300 ms (fake timers)', async () => {
@@ -236,7 +236,7 @@ describe('reading aloud (29.5): the reader in the offscreen document', () => {
     await ra.run({ kind: 'read', what: 'stop' })
     expect((await ra.run({ kind: 'read', what: 'continue' })).ok).toBe(true)
     expect(speech.spoken).toEqual(['Suur uudis.', 'Esimene lause.'])
-    expect(ra.muted).toBe(true)
+    expect(ra.muted).toBe(false)
     await ra.run({ kind: 'read', what: 'stop' })
     await ra.run({ kind: 'read', what: 'continue' })
     await ra.run({ kind: 'read', what: 'stop' })
@@ -355,7 +355,7 @@ describe('reading aloud (29.5): a failed sentence', () => {
   })
 })
 
-describe('reading aloud (29.5): no final is delivered while reading', () => {
+describe('reading aloud (29.5): the microphone stays live while an article is read', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -363,8 +363,9 @@ describe('reading aloud (29.5): no final is delivered while reading', () => {
     vi.useRealTimers()
   })
 
-  it('read: the recogniser hears silence while reading (the synthesised voice in the microphone makes no final), and hears again after', async () => {
-    /** The speech server: any frame with a sound in it is heard as words and finalised at once. */
+  it("read: the recogniser hears the room while an article is read; a final that is not a stop word is dropped and never shown; 'stopp' stops within 300 ms", async () => {
+    /** The speech server: any frame with a sound in it is heard as `said` and finalised at once. */
+    let said = 'tartu raamatukogu avab uue lugemissaali'
     const sockets: Array<{ events: SocketEvents; sent: number; silent: number }> = []
     const connect = (events: SocketEvents): SocketLike => {
       const record = { events, sent: 0, silent: 0 }
@@ -376,7 +377,7 @@ describe('reading aloud (29.5): no final is delivered while reading', () => {
           if (typeof data === 'string') return
           record.sent += 1
           if (new Float32Array(data).every((x) => x === 0)) record.silent += 1
-          else events.message(JSON.stringify({ type: 'final', text: 'loen teile seda lehte ette' }))
+          else events.message(JSON.stringify({ type: 'final', text: said }))
         },
         close: () => events.close(),
       }
@@ -389,40 +390,72 @@ describe('reading aloud (29.5): no final is delivered while reading', () => {
       },
       stop: () => undefined,
     }
+    const sound = (): void => onFrame?.(new Float32Array([0.2, -0.3, 0.25, -0.1]))
     const speech = new FakeSpeech()
-    const { ra } = readAloudWith(speech)
-    const finals: string[] = []
-    const recogniser = createLocalRecognizer({ onUtterance: (t) => finals.push(t), onInterim: () => undefined, onError: () => undefined }, () => false, {
-      onUnavailable: () => undefined,
-      connect,
-      holdMs: 0,
-      audio: () => mutedSource(microphone, () => ra.muted),
+    const { ra, patches } = readAloudWith(speech)
+    const ran: BrowserCommand[] = []
+    const heard: string[] = []
+    const stopsAt: number[] = []
+    const engine = createEngine({
+      logic: { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom },
+      lang: 'et',
+      run: (command) => {
+        ran.push(command)
+        if (command.kind === 'read') {
+          if (command.what === 'stop') stopsAt.push(Date.now())
+          return ra.run(command, fetched())
+        }
+        if (command.kind === 'readBox') return Promise.resolve({ ok: true, box: { present: false, text: '', armed: false } })
+        return Promise.resolve({ ok: true })
+      },
+      publish: (patch) => {
+        if (patch.heard !== undefined) heard.push(patch.heard)
+        ra.publish(patch)
+      },
+      recognizer: (handlers, isInstant) => createLocalRecognizer(handlers, isInstant, { onUnavailable: () => undefined, connect, holdMs: 0, audio: () => mutedSource(microphone, () => ra.muted) }),
+      micBlocked: () => undefined,
+      ask: () => Promise.resolve({ error: 'unreachable' }),
+      tabs: () => Promise.resolve([]),
+      status: () => Promise.resolve('live'),
+      reading: () => ra.reading,
     })
-    recogniser.start()
+    engine.start()
     sockets[0]?.events.message(JSON.stringify({ type: 'ready' }))
     await Promise.resolve()
-    const voice = (): void => onFrame?.(new Float32Array([0.2, -0.3, 0.25, -0.1]))
 
-    await ra.run(PAGE)
+    await ra.run({ kind: 'read', what: 'page' }, fetched())
     expect(ra.reading).toBe(true)
-    for (let i = 0; i < 20; i++) voice()
-    vi.advanceTimersByTime(2000)
-    expect(finals).toEqual([])
-    expect(sockets[0]?.sent).toBe(20)
-    expect(sockets[0]?.silent).toBe(20)
-
-    speech.end()
-    speech.end()
-    for (let i = 0; i < 5; i++) voice()
-    vi.advanceTimersByTime(1000)
-    expect(finals).toEqual([])
-    speech.end()
-    vi.advanceTimersByTime(RESUME_MS)
+    // The synthesised voice in the microphone: the server hears it (no silence sent), the engine drops it unseen.
+    for (let i = 0; i < 10; i++) sound()
+    await vi.advanceTimersByTimeAsync(1000)
+    await engine.idle()
+    expect(sockets[0]?.sent).toBe(10)
+    expect(sockets[0]?.silent).toBe(0)
     expect(ra.muted).toBe(false)
-    voice()
-    vi.advanceTimersByTime(1000)
-    expect(finals).toEqual(['loen teile seda lehte ette'])
-    recogniser.stop()
+    expect(patches.some((p) => p.micMuted === true)).toBe(false)
+    expect(heard).toEqual([])
+    expect(ran.filter((c) => c.kind !== 'readBox')).toEqual([])
+
+    // He says "stopp" over the voice: it is heard and the reading stops at once.
+    said = 'stopp'
+    const cancels = speech.cancels
+    const t0 = Date.now()
+    sound()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopsAt).toHaveLength(1)
+    expect((stopsAt[0] ?? Number.POSITIVE_INFINITY) - t0).toBeLessThanOrEqual(300)
+    expect(speech.cancels).toBeGreaterThan(cancels)
+    expect(ra.reading).toBe(false)
+    expect(heard).toEqual(['stopp'])
+
+    // After the reading the same words are heard and run again.
+    said = 'keri alla'
+    sound()
+    await vi.advanceTimersByTimeAsync(0)
+    await engine.idle()
+    expect(heard).toEqual(['stopp', 'keri alla'])
+    expect(ran.filter((c) => c.kind !== 'readBox').at(-1)).toEqual({ kind: 'scroll', direction: 'down' })
+    engine.stop()
   })
 })
 
@@ -483,6 +516,9 @@ describe('reading aloud (29.5): "Loe riba ette" (riba)', () => {
     expect(speech.cancels).toBeGreaterThan(cancels)
     ra.publish({ line: 'Kirjutasin: tere.' })
     expect(speech.spoken).toEqual(['Vaatan lehte.', 'Suur uudis.'])
+    // The bar line's mute ends with it; the article itself does not mute.
+    vi.advanceTimersByTime(RESUME_MS)
+    expect(ra.muted).toBe(false)
   })
 
   it('riba: the setting is the last group of the settings page, off by default', () => {
