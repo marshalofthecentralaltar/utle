@@ -297,6 +297,25 @@ What the listing needs that the repository cannot hold:
 - When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.
 
+### Dokumendis (round 8, ARCHITECTURE 29.2)
+
+A box is a document when it is Google Docs, a textarea or rich editor holding over 500 characters, or
+a rich editor with headings, lists or paragraphs of its own (never a chat's message box, nor a box with
+a send button beside it). There a pause of up to 20 seconds does not end the sentence: the next words
+continue it with a small letter; after a longer pause the sentence gets its full stop and a new one
+starts. Only `punkt` (and `küsimärk`, `hüüumärk`) and `uus lõik` break a sentence. One-word words such as
+`välja`, `sulge`, `edasi`, `tagasi`, `paus` are typed, not obeyed. Nothing you say is taken back by the
+model's check; it is asked only when you start with a command word (`vali`, `tee`, `muuda`, `loe`,
+`kustuta`, `ava`, `mine`, `kirjuta` …), and then before anything is typed. `saada` sends nothing:
+"Dokumendis ei saadeta." Formatting works in any armed rich editor: `paksuks` / `tee paksuks`,
+`kaldkirja`, `allajoonitud`, `pealkirjaks`, `tavaline tekst`, `loendiks`, `uus lõik` (English `bold`,
+`italic`, `underline`, `heading`, `normal text`, `bulleted list`, `new paragraph`); select first with
+`vali see lause`, `vali lõik`, `vali viimased kolm sõna`, `vali sõna X`. On Google Docs they are Docs'
+own shortcuts (Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+Alt+1, Ctrl+Alt+0, Ctrl+Shift+8, Enter twice), tested on
+a stand-in only. A plain textarea has no bold or italics and says so. `loe viimane lause ette` reads the
+last sentence of the box aloud, `loe see ette` the whole box (the microphone may hear the voice until
+the reading pause of the READ lane lands).
+
 ## Minu andmed: an e-mail, a phone number, an ID code (round 6)
 
 Spelling an address letter by letter every time is hard work. Save it once; afterwards say its name in

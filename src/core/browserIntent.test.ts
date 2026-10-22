@@ -194,6 +194,50 @@ const ROWS: Array<[string, BrowserCommand]> = [
   ['next field', { kind: 'pressKey', key: 'Tab' }],
 ]
 
+// ---------- document mode (29.2) ----------
+
+describe('format (29.2): the formatting phrases of the browser table', () => {
+  const FORMAT_ROWS: ReadonlyArray<readonly [string, BrowserCommand]> = [
+    ['paksuks', { kind: 'format', style: 'bold' }],
+    ['Tee paksuks.', { kind: 'format', style: 'bold' }],
+    ['rasvaseks', { kind: 'format', style: 'bold' }],
+    ['bold', { kind: 'format', style: 'bold' }],
+    ['kaldkirja', { kind: 'format', style: 'italic' }],
+    ['tee kaldkirja', { kind: 'format', style: 'italic' }],
+    ['italic', { kind: 'format', style: 'italic' }],
+    ['allajoonitud', { kind: 'format', style: 'underline' }],
+    ['jooni alla', { kind: 'format', style: 'underline' }],
+    ['underline', { kind: 'format', style: 'underline' }],
+    ['pealkirjaks', { kind: 'format', style: 'heading' }],
+    ['tee pealkirjaks', { kind: 'format', style: 'heading' }],
+    ['heading', { kind: 'format', style: 'heading' }],
+    ['tavaline tekst', { kind: 'format', style: 'normal' }],
+    ['tavaliseks', { kind: 'format', style: 'normal' }],
+    ['normal text', { kind: 'format', style: 'normal' }],
+    ['loendiks', { kind: 'format', style: 'list' }],
+    ['tee loendiks', { kind: 'format', style: 'list' }],
+    ['bulleted list', { kind: 'format', style: 'list' }],
+    ['uus lõik', { kind: 'format', style: 'paragraph' }],
+    ['new paragraph', { kind: 'format', style: 'paragraph' }],
+  ]
+  for (const [phrase, command] of FORMAT_ROWS) {
+    it(`format: "${phrase}" is ${JSON.stringify(command)}`, () => {
+      expect(browserIntent(phrase)).toEqual(command)
+    })
+  }
+
+  it('format: "tee uuesti" stays redo and "tavaline suurus" stays the zoom reset', () => {
+    expect(browserIntent('tee uuesti')).toEqual({ kind: 'pressKey', key: 'Redo' })
+    expect(browserIntent('tavaline suurus')).toEqual({ kind: 'zoom', direction: 'reset' })
+  })
+
+  it('selection (29.2): "vali lõik" and "select the paragraph" select the paragraph', () => {
+    expect(browserIntent('vali lõik')).toEqual({ kind: 'select', what: 'paragraph' })
+    expect(browserIntent('vali see lõik')).toEqual({ kind: 'select', what: 'paragraph' })
+    expect(browserIntent('select the paragraph')).toEqual({ kind: 'select', what: 'paragraph' })
+  })
+})
+
 describe('browserIntent: the phrase table', () => {
   it.each(ROWS)('%s', (text, command) => {
     expect(browserIntent(text)).toEqual(command)

@@ -88,6 +88,12 @@ export type BrowserCommand =
   | { kind: 'openSettings'; section?: 'andmed'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
   /** One utterance for the entry flow on the options page; only that page answers it. */
   | { kind: 'savedEntry'; utterance: string }
+  // ---------- document mode (29.2) ----------
+  /** Formats the selection (bold, italic, underline) or the paragraph at the caret; paragraph starts a new one at the end. The page picks the editor's chord. */
+  | { kind: 'format'; style: FormatStyle }
+
+/** Round 8 (29.2): what "paksuks", "kaldkirja", "pealkirjaks", "loendiks", "uus lõik" ask for. */
+export type FormatStyle = 'bold' | 'italic' | 'underline' | 'heading' | 'normal' | 'list' | 'paragraph'
 
 export type FieldKind = 'email' | 'tel' | 'code' | 'number' | 'password' | 'text'
 
@@ -121,6 +127,9 @@ export type CaretTarget =
   | { find: string; where: 'before' | 'after' }
 
 export type SelectTarget = 'all' | 'word' | 'sentence' | 'line' | 'lastWord' | 'lastSentence' | { find: string }
+  // Round 8 (29.2): "vali lõik" (the line the caret is on, between two line breaks), "vali viimased kolm sõna".
+  | 'paragraph'
+  | { lastWords: number }
 
 export type MediaAction =
   | 'play'
@@ -187,6 +196,12 @@ export interface BoxState {
   single?: boolean
   /** The field's label or placeholder, at most 60 characters. */
   label?: string
+  /**
+   * Round 8 (29.2): the box is a document: Google Docs, a textarea or contenteditable over 500
+   * characters, or a rich editor with headings, lists or a multiline textbox of blocks; never a
+   * site's composer. Absent or false: a message box, as before.
+   */
+  document?: boolean
 }
 
 export type BrowserFailure = 'no_extension' | 'no_target' | 'not_found' | 'not_allowed' | 'failed'

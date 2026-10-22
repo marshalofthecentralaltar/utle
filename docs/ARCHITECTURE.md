@@ -1449,7 +1449,120 @@ The line the bar shows and speaks names the amount (`browserDoing` in `src/core/
 
 ### 29.2 Document mode (DOCS lane)
 
-(filled by the DOCS lane)
+Ralf's items 5 ("dokumente kirjutada ja muuta, vali see lõik ja pane kaldkirja") and 15 (thinking
+pauses while writing a document). Three parts: formatting by voice in any editor, a document mode
+that changes how dictation is joined and judged, and reading the last sentence back.
+
+**Formatting is a command of its own.** `{ kind: 'format', style }` with `style` one of `bold`,
+`italic`, `underline`, `heading`, `normal`, `list`, `paragraph` (`FormatStyle` in
+`src/browser/protocol.ts`). Not new `PressableKey` values: the right keys depend on the editor
+(Google Docs, a rich editor, a plain contenteditable, a textarea), and only the page knows which one
+is in front; the core says what he wants and the page picks the chord and the fallback. Rules only:
+the model's schema does not carry it (the server is another lane's), so "tee see lause paksuks"
+goes to the model as any other utterance and comes back unclear or as dictation. Phrases (whole
+utterance, `src/core/browserIntent.ts`, the "document mode (29.2)" block):
+
+| Style | Estonian | English |
+|---|---|---|
+| bold | paksuks, tee paksuks, rasvaseks, tee rasvaseks | bold, make it bold |
+| italic | kaldkirja, tee kaldkirja, kaldkirjas, kaldkirjaga | italic, italics, make it italic |
+| underline | allajoonitud, jooni alla, tee allajoonituks | underline |
+| heading | pealkirjaks, tee pealkirjaks | heading, make it a heading |
+| normal | tavaline tekst, tavaliseks, tee tavaliseks | normal text |
+| list | loendiks, tee loendiks, täpploendiks | bulleted list, make it a list |
+| paragraph | uus lõik | new paragraph |
+
+The key table per editor (`extension/src/page.ts`, `format`). A chord is a keydown/keyup pair with
+the modifiers set, sent to the editor's keyboard target. "Fallback" runs when the chord's keydown
+was not cancelled and the field's HTML did not change, which is what a plain contenteditable does
+with a key event a script dispatched.
+
+| Style | Google Docs (on `docsEditor()`) | Rich editor (contenteditable): chord, then fallback | Textarea |
+|---|---|---|---|
+| bold | Ctrl+B | Ctrl+B, then `execCommand('bold')` | refused: plain text has no bold |
+| italic | Ctrl+I | Ctrl+I, then `execCommand('italic')` | refused |
+| underline | Ctrl+U | Ctrl+U, then `execCommand('underline')` | refused |
+| heading | Ctrl+Alt+1 | Ctrl+Alt+1, then `formatBlock h1` | refused |
+| normal | Ctrl+Alt+0 | Ctrl+Alt+0, then out of a list (`insertUnorderedList`) or `formatBlock div` | refused |
+| list | Ctrl+Shift+8 | Ctrl+Shift+8, then `insertUnorderedList` | refused |
+| paragraph | Enter, Enter | at the end: `beforeinput insertParagraph`, else `execCommand('insertParagraph')` | `\n\n` at the end |
+
+The Docs chords are Google's documented shortcuts (Windows); Ctrl+Alt+1, Ctrl+Alt+0 and
+Ctrl+Shift+8 are also TipTap's, so one chord table serves the rich editors built on it. Bold,
+italic and underline act on the selection; a selection that ends in spaces (as "vali see lause"
+leaves it) is shrunk to its last letter or mark first, so exactly the sentence is styled.
+**Unverified: real Google Docs.** The Docs path is tested on a stand-in only
+(`extension/test/fixtures/docs.html`).
+
+Outside document mode "uus lõik" is a new line (the box edit `newLine`, Shift+Enter in a composer,
+never a send); in document mode it is the paragraph format and a dictation break.
+
+**Selection.** "vali see lause" / "vali lause" (`sentence`), "vali kõik", "vali viimane lause" and
+"vali sõna X" existed. Added: "vali lõik", "vali see lõik", "select the paragraph" (`paragraph`: the
+line the caret is on, from one line break to the next) and "vali viimased kolm sõna", "select the
+last three words" (`{ lastWords: n }`, n from `spokenNumber`, 1 to 50: the last n words with their
+marks and the spaces before them). On Docs `paragraph` is Ctrl+ArrowUp then Ctrl+Shift+ArrowDown,
+and `lastWords` is n times Ctrl+Shift+ArrowLeft (unverified: real Google Docs).
+
+**The trigger.** `BoxState.document` is true when the box in front is a document
+(`extension/src/box.ts`, `isDocument`):
+
+- Google Docs (`docsBox`), always;
+- otherwise never a site's composer (WhatsApp, Messenger, or any box with a send button beside it,
+  which is what makes `kind: 'composer'`), never a one-line input, never a search field; and one of:
+  a textarea or contenteditable whose text is over **500 characters** (`DOCUMENT_CHARS`); a
+  contenteditable holding a heading or a list (`h1` to `h6`, `ul`, `ol`); a contenteditable
+  `[role=textbox]` with `aria-multiline="true"` and block children (`div`, `p`, `h1` to `h6`, `li`).
+
+The composer exclusion is deliberate: a chat box over 500 characters is still a chat box, and Gmail's
+body (a multiline textbox) has its send button beside it. A document's text is reported with one
+trailing line break when it ends in an empty paragraph (`documentText`), so a dictation after "uus
+lõik" starts that paragraph with a capital and no space, and `setText` appends to it rather than
+retyping the document.
+
+**What document mode changes** (`src/core/inpage.ts` and `src/core/documentMode.ts`, the core;
+`extension/src/engine.ts`, the window). Outside document mode nothing changes: the tests named
+"document mode: outside it" run the same utterances against the same box without the flag and
+assert the chat-box step.
+
+1. **A silence does not close the sentence.** A dictated final is typed without a closing full stop;
+   the next final continues the same sentence with a small first letter (the joining rules of 21.1:
+   a capital only at a sentence start, or for a name or "I"). The window is
+   **`DOCUMENT_PAUSE_MS` = 20 000 ms** from the previous final the engine handled: a final that
+   arrives later first closes the open sentence with a full stop and starts a new one with a
+   capital (`documentPaused` decides from the two times; the engine passes it as `session.paused`).
+   The only spoken breaks are "punkt" (with the other marks, "küsimärk" and "hüüumärk") and
+   "uus lõik".
+2. **One-word ordinary words are dictation.** "välja", "sulge", "edasi", "tagasi", "enter", "paus",
+   "veel" and the other soft words of section 22 are typed as words, also into an empty document.
+   With the numbered labels showing they keep their meaning (he is navigating then).
+3. **No verification that takes words back.** The round 5 type-first check never runs in a
+   document: dictation goes straight in. The model is asked only about an utterance whose first
+   word is a command verb: `COMMAND_WORDS` (28.1) plus "vali", "tee", "muuda", "loe", "kustuta"
+   (`DOCUMENT_VERBS`). Such an utterance is asked before anything is typed (as a one-line field is
+   in round 5): the model's dictation, or no answer, types it; its command runs.
+4. **"saada" sends nothing.** "saada", "saada ära", "send it" type nothing, press nothing, and the
+   strip says "Dokumendis ei saadeta." ("Nothing is sent from a document.").
+
+**Reading back.** "loe viimane lause ette", "loe viimane lause", "read the last sentence" hand the
+last sentence of the box (`lastSentenceOf`: after the last `.`, `!`, `?`, `…` or line break before
+the final mark) to `speak`; "loe see ette", "loe ette", "read it back" hand the whole box. The step
+carries the text as `speak`; the engine calls `EngineDeps.speak` (optional; the default is
+`src/speech/synth.ts`'s `speak`) in the session's language (`et-EE`, `en-US`). It works in any box,
+not only a document. Listening is not paused here: the microphone may hear the synthesised voice
+until the READ lane's listening pause (29.5) lands. Unverified: Chrome's speech synthesis inside
+the offscreen document.
+
+**REVIEW-R3 M5 (Docs gluing after the 4 s reset).** Document mode does not supersede it: the 20 s
+window needs the box to know whether the sentence is open, and on Docs the box is what Ütle typed
+within `DOCS_TYPED_RESET_MS` (4 s). Fixed as the sketch says, in one rule: when the 4 s pass, the
+memory keeps the last character typed instead of emptying (`docsTyped.slice(-1)`). The core joins
+onto that character (a space after a letter or a mark, a capital after a mark, a small letter after
+a letter), and `docsSetText` types only what follows it. `readPage` on Docs reports the same box as
+`readBox` (the other half of M5). Browser test: the Docs stand-in (`fixtures/docs.html`, served as
+`https://docs.google.com/document/d/stand-in/edit` by a route in the suite) records the keys Docs
+would get; "Tere", "punkt", a 4.5 s wait, "uus lause on siin" must arrive as "Tere. Uus lause on
+siin" (before the fix: "Tere.Uus lause on siin").
 
 ### 29.3 Mail by voice and addresses off the page (MAIL lane)
 
