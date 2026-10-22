@@ -1421,7 +1421,97 @@ lane; a lane writes only its own. Sections 29.5 and 29.6 are scoping lanes and e
 
 ### 29.3 Mail by voice and addresses off the page (MAIL lane)
 
-(filled by the MAIL lane)
+Ralf's items 10 and 12. Item 11, the real-voice read-backs, did not happen: section 2 step 3 of the
+plan was not run, so there is no list of wrong read-backs, and the spelling tests of rounds 5 and 6
+stand in for it (29.3.6). The rules live in `src/core/mail.ts`, the address finder in
+`src/core/contacts.ts`, both pure; the page side is the `mail (29.3)` blocks of
+`extension/src/page.ts`, `box.ts`, `sites.ts` and `background.ts`.
+
+**29.3.1 Three commands.** `compose { to?, body? }`: on Gmail, a new message: the compose window in
+front is used, else Compose ("Koosta") is clicked and the window waited for; `to` (a name, or an
+address) is typed into To and confirmed (Enter when Gmail shows a suggestion row, else Tab); `body`
+is typed into the message. The body is armed when To has something in it, else To is. Off Gmail,
+`compose` opens Gmail's compose page (29.3.4) in a new tab first, then does the same there.
+`composeTo { address, subject?, body? }`: opens the compose page in a new tab with the address in
+To (and the subject and body when given), waits for the window and arms the body; only the model
+answers it (29.3.3). `mailField { field: subject | cc, text? }` in the open compose window: subject
+types the text into Subject (replacing it) and arms the body; cc opens the Cc row (its button
+"Koopia" / "Cc") and arms the Cc field, typing the text when given. A page without a compose window
+answers `not_found`. "saada" is the existing `pressSend`: inside a compose window it clicks the
+window's Send ("Saada" / "Send") and never presses Enter (Enter is a new line in a mail body); sent
+means the window closed or the body emptied.
+
+**29.3.2 The rules** (`mailCommand`, tried in `inpage.ts` before the conversation rules, so "kirjuta
+meil Marile" is never a chat with "Meil Mari"; that one line is the whole change to `inpage.ts`):
+
+| Said | Command |
+|---|---|
+| `kirjuta meil Marile`, `kirjuta kiri Marile`, `saada meil Marile`, `koosta e-kiri Marile` | `compose { to: "Mari" }` (the allative ending taken off as for chats) |
+| `kirjuta meil Marile, et tulen homme` | `compose { to: "Mari", body: "Tulen homme." }` |
+| `uus meil`, `uus kiri`, `kirjuta meil`, `new email`, `compose an email` | `compose {}` |
+| `write an email to Mari`, `send an email to Mari saying …` | `compose { to: "Mari" (, body) }` |
+| `teema Koosolek`, `teemaks koosolek`, `subject: Meeting` | `mailField { subject, "Koosolek" }` (first letter capitalised) |
+| `lisa koopia`, `lisa koopia Jaanile`, `add cc`, `add a cc to Jaan` | `mailField { cc (, "Jaan") }` |
+| `saada`, `saada ära`, `send` | `pressSend` (unchanged) |
+| `valmis`, `järgmine väli`, `next field` in To or Subject | `pressKey Tab` (round 5's form keys: both are one-line fields) |
+
+A name must carry the allative ending (`…le`) in Estonian, so "kirjuta kirja lõppu" stays dictation.
+"teema …" at the start of an utterance is always the subject: a chat message that begins with the
+word "teema" is taken for it (off a compose window the page answers `not_found` and the strip says so).
+
+**29.3.3 Addresses on the page.** `readPage` adds `contacts: { kind: email | tel; value; label }[]`
+(absent when there are none): at most 20, the ones on screen first, each value once. Sources: the
+text of the page (text nodes outside Ütle's strip, scripts and hidden elements) and the hrefs of
+`a[href^="mailto:"]` and `a[href^="tel:"]` (label: the link's text, at most 40 characters; '' for
+plain text). Values: an e-mail lower-cased; a phone compacted (spaces, dashes and brackets dropped).
+The regexes (`src/core/contacts.ts`):
+
+- e-mail: `(?<![\w.+%-])[a-z0-9](?:[a-z0-9._%+-]{0,62}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-]|\.[a-z0-9])`, case-insensitive, no ".." in it.
+- phone, international: `(?<![\w+])\+\d{1,3}(?:[ -]?\d){6,11}(?!\d)`; with +372 the rest is 7 or 8 digits.
+- phone, Estonian without the prefix: `(?<![\w+.,/-])[3-8]\d{2,3} ?\d{3,4}(?!\d|[.,/-]\d)`, 7 or 8 digits in all.
+- a `tel:` href is a phone only when its compacted value is one of those shapes; a `mailto:` href
+  gives each address before the `?` that is an e-mail as a whole.
+
+So a version (v2.10.3), an ID code (39001010000: eleven digits, never a 7-digit piece of it), a
+price (19.99 €), a postal code or street number, and a date (10.03.2024) are not contacts.
+
+The model gets them as one line of values only, `contacts: e-mail a@b.ee, tel +37251234567` (or
+`none`), never the labels or the text around them. Its schema gains `compose`, `composeTo` and
+`mailField`; `pageIntentFrom` takes `composeTo` only when `address` is an e-mail as a whole AND one
+of the page's contacts' e-mail values (ignoring case), and `compose` with an `@` in `to` only on the
+same terms: **the model can never invent a recipient.** The prompt's rules line says so, and says
+that "võta see meiliaadress siit lehelt ja kirjuta talle, et …" is one goal: `composeTo` with the
+address and the dictated words as the body (`plan` []). That utterance is ten words, so the ask is
+careful (round 5's eight words); a tel contact is never an address ("helista talle" is a click on
+the tel link, or unclear).
+
+**29.3.4 The Gmail address.** `https://mail.google.com/mail/?view=cm&fs=1&to=<address>&su=<subject>`,
+and `&body=<body>` only when he dictated the body in the same utterance; each value
+`encodeURIComponent`. The base is the setting `mailHome` (chrome.storage.local, default
+`https://mail.google.com/mail/`); a page is Gmail when its host is `mail.google.com` or its address
+starts with `mailHome`. The browser suite sets `mailHome` to the stand-in `fixtures/gmail.html`,
+which reads `to`, `su` and `body` from its query as Gmail does.
+
+**29.3.5 The compose window as one field group.** In a compose window the box reports, for the
+field under focus: To and Cc `single`, `fieldKind: email`; Subject `single`, `fieldKind: text`; the
+body `kind: composer`. So dictation into To is converted as an address ("ät", "punkt"), "valmis"
+moves To to Subject to the body (Tab inside the window), and "saada" from the body sends. The
+selectors are in `sites.ts` `MAIL`, each marked; **all unverified on real Gmail**: Compose
+`[gh="cm"]` or a button named Koosta / Compose; the window `[role="dialog"]` holding a subject
+field; To `input[aria-label*="recipient" i]`, `input[name="to"]`, or a field labelled Saaja / To /
+Kellele; Subject `input[name="subjectbox"]` or a field labelled Teema / Subject; body
+`[aria-label="Message Body"]`, `[aria-label="Sõnumi sisu"]`, or the window's contenteditable
+textbox; Send `[role="button"][aria-label^="Send"]`, `[role="button"][aria-label^="Saada"]`, or a
+button named Saada / Send; Cc a button or link named Koopia / Cc / Add Cc. Only the stand-in proves
+them.
+
+**29.3.6 Spelled addresses.** Unchanged from rounds 5 and 6 (25.1, 26). The three read-backs the
+plan names are tests of `typedFromSpoken` in `src/core/spelling.test.ts`: an ID code digit by digit,
+a phone number, an e-mail with "punkt" and "ät".
+
+**29.3.7 Privacy.** The server logs for a mail ask what it logs for any ask (`[intent] kind=… done=…
+plan=… care=… ms=…`): no address, no body, no page text (`server/intent.test.ts`). The contacts'
+values are the model's input, sent once in the user turn, never logged.
 
 ### 29.4 Wake word and "Minu kohad" (WAKE lane)
 
