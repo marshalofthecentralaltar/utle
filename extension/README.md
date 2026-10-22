@@ -297,6 +297,36 @@ What the listing needs that the repository cannot hold:
 - When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.
 
+### Lugemine: reading aloud (round 8, ARCHITECTURE 29.5)
+
+Say `loe ette` (also `loe lehte ette`, `read the page`) and Ütle reads the article of the page in
+front aloud: its headline and paragraphs, without the menus, the sidebar, the footer, the cookie
+banner or the bar itself, sentence by sentence. `loe see ette` reads the armed message box (the
+page when no box is armed), `loe valitud ette` the selected text, `loe edasi` goes on from the next
+sentence after a stop, and `lõpeta lugemine` stops; while it reads, `stopp` and `aitab` stop the
+reading too, before anything else. The microphone does not listen while a sentence is spoken (the
+recogniser is handed silence, so the voice is never typed), and listens again 150 ms after the
+reading ends or stops; so to stop in the middle of a sentence press the bar's microphone or the
+toolbar icon, which stops the reading and leaves listening as it was. The amber line says
+"Loen ette…" while it reads.
+
+The voice is the browser's own Estonian voice. **Chrome has none today**; **Microsoft Edge has two**
+(Microsoft Anu and Kert, natural network voices) when its online voices are on, which they are in an
+everyday Edge (they need the internet; the text goes to Microsoft's speech service). Load the
+extension into Edge the same way (`edge://extensions`, developer mode, Load unpacked). Where no
+Estonian voice exists nothing is read and the bar says "Selles brauseris pole eesti häält. Edge'is
+on."; Ütle never reads Estonian with an English voice. A sentence the voice fails on is tried once
+more and then skipped ("Jätsin ühe lause vahele.").
+
+**Loe riba ette** (settings page, the last group, off by default): when on, every new amber line of
+the bar is spoken too, so a person who cannot read the strip hears "Kirjutasin: …"; lines of 200
+characters or more, the live words and anything while an article is being read are not. The
+microphone does not listen while the bar speaks.
+
+To check it by ear (not done by the tests, whose Chromium has no Estonian voice): in Edge, open a news
+article, turn listening on, say `loe ette`, then press the microphone after a sentence or two, then
+say `loe edasi`.
+
 ## Minu andmed: an e-mail, a phone number, an ID code (round 6)
 
 Spelling an address letter by letter every time is hard work. Save it once; afterwards say its name in
