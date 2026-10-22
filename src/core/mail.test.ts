@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BoxState } from '../browser/protocol.ts'
 import { initialInpage, inpageStep } from './inpage.ts'
-import { GMAIL_HOME, composeUrl, mailCommand } from './mail.ts'
+import { GMAIL_HOME, composeUrl, mailCommand, mailFieldCommand } from './mail.ts'
 
 // Round 8 (docs/ARCHITECTURE.md 29.3.1, 29.3.2, 29.3.4): mail by voice.
 
@@ -42,20 +42,28 @@ describe('mail (29.3): subject and cc by the rules', () => {
     ['add cc', { kind: 'mailField', field: 'cc' }],
     ['add a cc to Jaan', { kind: 'mailField', field: 'cc', text: 'Jaan' }],
   ])('"%s" is %j', (said, command) => {
-    expect(mailCommand(said)).toEqual(command)
+    expect(mailFieldCommand(said)).toEqual(command)
   })
 
   it.each(['teema', 'koopia', 'lisa', 'teemat ei ole'])('"%s" is not a mail command', (said) => {
-    expect(mailCommand(said)).toBeNull()
+    expect(mailFieldCommand(said)).toBeNull()
+  })
+
+  it('subject and cc are never global: mailCommand leaves them to the compose window', () => {
+    expect(mailCommand('teema: Koosolek')).toBeNull()
+    expect(mailCommand('lisa koopia')).toBeNull()
   })
 })
 
 describe('mail (29.3): through inpageStep, the rules the engine runs', () => {
   const session = initialInpage('et')
   const NONE: BoxState = { present: false, text: '', armed: false, kind: 'none' }
-  const TO: BoxState = { present: true, text: 'mari@example.ee', armed: true, kind: 'field', single: true, fieldKind: 'email', label: 'Saaja' }
-  const SUBJECT: BoxState = { present: true, text: 'Koosolek', armed: true, kind: 'field', single: true, fieldKind: 'text', label: 'Teema' }
-  const BODY: BoxState = { present: true, text: 'Tulen homme.', armed: true, kind: 'composer', label: 'Sõnum' }
+  const TO: BoxState = { present: true, text: 'mari@example.ee', armed: true, kind: 'field', single: true, fieldKind: 'email', label: 'Saaja', mail: true }
+  const SUBJECT: BoxState = { present: true, text: 'Koosolek', armed: true, kind: 'field', single: true, fieldKind: 'text', label: 'Teema', mail: true }
+  const BODY: BoxState = { present: true, text: 'Tulen homme.', armed: true, kind: 'composer', label: 'Sõnum', mail: true }
+  const CHAT: BoxState = { present: true, text: '', armed: true, kind: 'composer', label: 'Type a message' }
+  const ESSAY: BoxState = { present: true, text: 'Esimene lõik.', armed: true, kind: 'field', label: 'Essee', document: true }
+  const FORM: BoxState = { present: true, text: '', armed: true, kind: 'field', single: true, fieldKind: 'text', label: 'Märkus' }
 
   it('"kirjuta meil Marile" composes to Mari and is never a chat with "Meil Mari"', () => {
     const step = inpageStep(session, 'kirjuta meil Marile', NONE)
@@ -70,9 +78,20 @@ describe('mail (29.3): through inpageStep, the rules the engine runs', () => {
     expect(step.commands).toEqual([{ kind: 'setText', text: 'ralf@gmail.com' }])
   })
 
-  it('"teema: Koosolek" and "lisa koopia" run in the compose window, whatever box is armed', () => {
+  it('"teema: Koosolek" and "lisa koopia" in To, Subject or the body of a compose window are the subject and Cc', () => {
     expect(inpageStep(session, 'teema: Koosolek', TO).commands).toEqual([{ kind: 'mailField', field: 'subject', text: 'Koosolek' }])
+    expect(inpageStep(session, 'teema on huvitav', SUBJECT).commands).toEqual([{ kind: 'mailField', field: 'subject', text: 'On huvitav' }])
+    expect(inpageStep(session, 'teema on huvitav', BODY).commands).toEqual([{ kind: 'mailField', field: 'subject', text: 'On huvitav' }])
     expect(inpageStep(session, 'lisa koopia', BODY).commands).toEqual([{ kind: 'mailField', field: 'cc' }])
+  })
+
+  it('"teema on huvitav" in a chat box, a document or a form field is dictation, never the subject', () => {
+    for (const box of [CHAT, ESSAY, FORM]) {
+      const step = inpageStep(session, 'Teema on huvitav, aga pikk', box)
+      expect(step.commands.some((c) => c.kind === 'mailField')).toBe(false)
+    }
+    expect(inpageStep(session, 'Teema on huvitav, aga pikk', CHAT).commands[0]?.kind).toBe('setText')
+    expect(inpageStep(session, 'lisa koopia', CHAT).commands.some((c) => c.kind === 'mailField')).toBe(false)
   })
 
   it('"valmis" and "järgmine väli" in To and Subject move to the next field (Tab)', () => {
