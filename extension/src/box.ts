@@ -4,6 +4,7 @@
 
 import type { BoxState, FieldKind } from '../../src/browser/protocol.ts'
 import type { Site } from './sites.ts'
+import { MAIL, MAIL_NAMES } from './sites.ts'
 
 /** The element's box when it is on screen and not hidden by style, else null. No hit test. */
 export function onScreenRect(el: Element): DOMRect | null {
@@ -207,6 +208,8 @@ export function sendButtonBeside(el: HTMLElement): HTMLElement | null {
  */
 export function boxKind(el: HTMLElement, site: Site | null): 'composer' | 'search' | 'field' {
   if (site && el.matches(site.composer)) return 'composer'
+  // mail (29.3.5): the body of a compose window.
+  if (!(el instanceof HTMLInputElement) && mailPartOf(el) === 'body') return 'composer'
   if (isSearchField(el)) return 'search'
   if (!(el instanceof HTMLInputElement) && sendButtonBeside(el)) return 'composer'
   return 'field'
@@ -288,8 +291,50 @@ export function boxState(el: HTMLElement | null, site: Site | null): BoxState {
   const kind = boxKind(el, site)
   const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el) }
   if (!(el instanceof HTMLInputElement)) return base
+  // mail (29.3.5): To and Cc take addresses, Subject plain text, whatever their own clues say.
+  const part = mailPartOf(el)
+  if (part === 'to' || part === 'cc') return { ...base, single: true, fieldKind: 'email' }
+  if (part === 'subject') return { ...base, single: true, fieldKind: 'text' }
   return { ...base, single: true, fieldKind: kind === 'search' ? 'text' : fieldKindOf(el) }
 }
+
+// ---------- mail (29.3.5): the compose window as one group of fields ----------
+
+export type MailPart = 'to' | 'cc' | 'subject' | 'body'
+
+const nameOf = (el: HTMLElement): string => boxLabel(el).trim()
+
+/** The window's Subject field, by Gmail's selector or by its label. */
+export function subjectIn(win: Element): HTMLInputElement | null {
+  const hit = win.querySelector<HTMLInputElement>(MAIL.subject)
+  if (hit) return hit
+  return [...win.querySelectorAll<HTMLInputElement>('input')].find((el) => MAIL_NAMES.subject.test(nameOf(el))) ?? null
+}
+
+/** The compose window around an element: the innermost MAIL.window that holds a subject field. */
+export function composeWindowOf(el: Element): HTMLElement | null {
+  let win = el.closest<HTMLElement>(MAIL.window)
+  while (win) {
+    if (subjectIn(win)) return win
+    win = win.parentElement?.closest<HTMLElement>(MAIL.window) ?? null
+  }
+  return null
+}
+
+/** Which field of a compose window an element is, or null outside one. Cc is tried before To (Gmail names both "recipients"). */
+export function mailPartOf(el: HTMLElement): MailPart | null {
+  if (composeWindowOf(el) === null) return null
+  const name = nameOf(el)
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    if (el.matches(MAIL.subject) || MAIL_NAMES.subject.test(name)) return 'subject'
+    if (el.matches(MAIL.cc) || MAIL_NAMES.ccField.test(name)) return 'cc'
+    if (el.matches(MAIL.to) || MAIL_NAMES.to.test(name)) return 'to'
+    return null
+  }
+  if (el.isContentEditable && (el.matches(MAIL.body) || MAIL_NAMES.body.test(name))) return 'body'
+  return null
+}
+// ---------- end mail (29.3.5) ----------
 
 function lowestVisible(selector: string): HTMLElement | null {
   let best: HTMLElement | null = null

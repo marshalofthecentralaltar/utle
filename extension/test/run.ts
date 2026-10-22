@@ -7,7 +7,7 @@
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { readFile, mkdtemp, rm, mkdir } from 'node:fs/promises'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, extname, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,6 +23,8 @@ const extensionDir = resolve(here, '..')
 const repoRoot = resolve(extensionDir, '..')
 // The WhatsApp stand-in: the test maps this address prefix to the whatsapp entry of sites.ts.
 const WA_PREFIX = `http://127.0.0.1:5183/fixtures/whatsapp`
+/** mail (29.3.4): the mailHome setting points Gmail's compose address at the stand-in. */
+const GMAIL_PREFIX = `http://127.0.0.1:5183/fixtures/gmail.html`
 const PORT = 5183
 const UTLE = `http://localhost:${PORT}/fixtures/utle.html`
 const T = `http://127.0.0.1:${PORT}/fixtures`
@@ -36,7 +38,7 @@ const SERVE_TOKEN = 't1'
 const headed = true
 
 type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string; fieldKind?: string; single?: boolean }
-type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean }
+type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean; contacts?: { kind: string; value: string; label: string }[] }
 type Result = { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxInfo; page?: PageInfo } | { ok: false; code: string; message: string }
 
 const kindsSeen = new Set<string>()
@@ -757,7 +759,77 @@ async function main(): Promise<void> {
     r = await send({ kind: 'scroll', direction: 'down' })
     line('scroll', 'page that does not scroll -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
     r = await send({ kind: 'readBox' })
-    check('readBox: the To field is single, fieldKind text (no clue in its name), label from <label for>', r !== 'timeout' && r.ok && r.box?.single === true && r.box.fieldKind === 'text' && r.box.label === 'Saaja', describe(r))
+    // Round 8 (29.3.5): To of a compose window is an address field, whatever its own name says.
+    check('readBox: the To field is single, fieldKind email (a compose window, 29.3.5), label from <label for>', r !== 'timeout' && r.ok && r.box?.single === true && r.box.fieldKind === 'email' && r.box.label === 'Saaja', describe(r))
+
+    // ---------- mail (29.3): addresses off a CV page, composeTo into the Gmail stand-in, Send ----------
+    // The engine's Gmail is the stand-in: mailHome points the compose address at fixtures/gmail.html,
+    // which reads to, su and body from ?view=cm as Gmail does (29.3.4).
+    await sw.evaluate((home) => chrome.storage.local.set({ mailHome: home }), GMAIL_PREFIX)
+    await send({ kind: 'goTo', url: `${T}/cv.html` })
+    r = await send({ kind: 'readPage' })
+    const contacts = r !== 'timeout' && r.ok ? r.page?.contacts ?? [] : []
+    const contactValues = contacts.map((c) => `${c.kind} ${c.value}`)
+    line(
+      'readPage',
+      `cv contacts: ${contactValues.join(', ')}`,
+      contacts.length === 3 && contactValues[0] === 'email mari.maasikas@example.ee' && contactValues[1] === 'email mari.tookoht@firma.ee' && contactValues[2] === 'tel +37251234567',
+      `length=${contacts.length} (3 wanted; no version, ID code, price, street number, date or hidden address) ${JSON.stringify(contacts)}`,
+    )
+    const firstAddress = contacts.find((c) => c.kind === 'email')?.value ?? ''
+    const tabsBeforeMail = await tabCount()
+    r = await send({ kind: 'composeTo', address: firstAddress, subject: 'Teie CV' })
+    const mailTab = ctx.pages().find((p) => p.url().startsWith(`${GMAIL_PREFIX}?view=cm`))
+    if (!mailTab) throw new Error('the Gmail stand-in did not open')
+    const mailValue = async (id: string): Promise<string> => mailTab.evaluate((i) => (document.getElementById(i) as HTMLInputElement | null)?.value ?? '(none)', id)
+    const toFilled = await mailValue('to')
+    line(
+      'composeTo',
+      'a new tab at the compose address: To and Subject filled, the body armed',
+      r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer' && toFilled === firstAddress && (await mailValue('subject')) === 'Teie CV' && (await tabCount()) === tabsBeforeMail + 1,
+      `${describe(r)} url=${mailTab.url()} to=${JSON.stringify(toFilled)}`,
+    )
+    r = await send({ kind: 'setText', text: 'Tere! Tulen homme kell kümme.' })
+    const bodyNow = await mailTab.evaluate(() => document.getElementById('body')?.innerText ?? '')
+    check('setText: the dictated body is in the mail', r !== 'timeout' && r.ok && bodyNow === 'Tere! Tulen homme kell kümme.', JSON.stringify(bodyNow))
+    await mkdir(join(extensionDir, 'test/out'), { recursive: true })
+    await mailTab.screenshot({ path: join(extensionDir, 'test/out/mail.png') })
+    copyFileSync(join(extensionDir, 'test/out/mail.png'), join(repoRoot, 'docs/proof/r8-mail.png'))
+    // "saada" is pressSend (src/core/mail.test.ts): in a compose window it clicks Send, never Enter.
+    r = await send({ kind: 'pressSend' })
+    const mailRecord = async (): Promise<{ mails: Array<{ to: string; cc: string; subject: string; body: string }>; clicks: string[] }> =>
+      mailTab.evaluate(() => {
+        const w = window as unknown as { sentMails: Array<{ to: string; cc: string; subject: string; body: string }>; clicks: string[] }
+        return { mails: w.sentMails, clicks: w.clicks }
+      })
+    let record = await mailRecord()
+    line(
+      'pressSend',
+      '"saada": the stand-in recorded the Send click with To, subject and body',
+      r !== 'timeout' && r.ok && record.clicks.includes('send') && record.mails.length === 1 && record.mails[0]?.to === firstAddress && record.mails[0].subject === 'Teie CV' && record.mails[0].body === 'Tere! Tulen homme kell kümme.',
+      `${describe(r)} ${JSON.stringify(record)}`,
+    )
+    // compose on Gmail: no window open now, so Compose ("Koosta") is clicked; To is armed and reports kind email.
+    r = await send({ kind: 'compose' })
+    record = await mailRecord()
+    line('compose', 'on Gmail with no window: Koosta clicked, To armed, single, fieldKind email', r !== 'timeout' && r.ok && record.clicks.includes('koosta') && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'email' && r.box.label === 'Saaja', `${describe(r)} clicks=${JSON.stringify(record.clicks)}`)
+    await send({ kind: 'setText', text: 'Mari' })
+    // "valmis" in To is pressKey Tab (src/core/mail.test.ts): the next field of the group, Subject.
+    r = await send({ kind: 'pressKey', key: 'Tab' })
+    check('pressKey Tab ("valmis") in To: Subject armed, single, fieldKind text', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'text' && r.box.label === 'Teema', describe(r))
+    r = await send({ kind: 'mailField', field: 'subject', text: 'Koosolek' })
+    line('mailField', '"teema: Koosolek": Subject typed, the body armed next', r !== 'timeout' && r.ok && (await mailValue('subject')) === 'Koosolek' && r.box?.armed === true && r.box.kind === 'composer', `${describe(r)} subject=${JSON.stringify(await mailValue('subject'))}`)
+    r = await send({ kind: 'mailField', field: 'cc' })
+    record = await mailRecord()
+    line('mailField', '"lisa koopia": the Cc button clicked, the Cc field armed, fieldKind email', r !== 'timeout' && r.ok && record.clicks.includes('cc') && r.box?.armed === true && r.box.fieldKind === 'email' && r.box.label === 'Koopia', `${describe(r)} clicks=${JSON.stringify(record.clicks)}`)
+    // compose to a name with a body, while the window in front is written in: a fresh window.
+    r = await send({ kind: 'compose', to: 'Jaan', body: 'Tere, Jaan!' })
+    record = await mailRecord()
+    const freshTo = await mailValue('to')
+    const freshBody = await mailTab.evaluate(() => document.getElementById('body')?.innerText ?? '')
+    line('compose', '"kirjuta meil Jaanile, et …" on a written window: a fresh one, To and body filled, body armed', r !== 'timeout' && r.ok && record.clicks.filter((c) => c === 'koosta').length === 2 && freshTo === 'Jaan' && freshBody === 'Tere, Jaan!' && r.box?.kind === 'composer' && r.box.armed === true, `${describe(r)} to=${JSON.stringify(freshTo)} body=${JSON.stringify(freshBody)}`)
+    await send({ kind: 'closeTab' })
+    await sw.evaluate(() => chrome.storage.local.remove('mailHome'))
 
     // ---------- Round 5 (fields): a Smart-ID-like login, one-line fields of every kind ----------
     await send({ kind: 'goTo', url: `${T}/login.html` })

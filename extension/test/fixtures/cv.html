@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mari Maasikas – CV</title>
+    <style>
+      /* Round 8 (29.3): a CV page with two e-mail addresses (one as text, one as a mailto: link), one
+         phone number as a tel: link, and things that only look like one: a version, an ID code, a
+         price, a street number with a postal code, and a date. One more address is hidden, so it is
+         not on the page for anyone who reads it. */
+      body { margin: 0; font: 16px system-ui, sans-serif; color: #222; }
+      main { max-width: 640px; padding: 24px; }
+      h1 { margin: 0 0 8px; }
+      dl { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; }
+      dt { color: #666; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Mari Maasikas</h1>
+      <p>Projektijuht, kümme aastat kogemust tarkvaraarenduses.</p>
+      <dl>
+        <dt>E-post</dt>
+        <dd>mari.maasikas@example.ee</dd>
+        <dt>Tööalane</dt>
+        <dd><a href="mailto:mari.tookoht@firma.ee?subject=CV">Kirjuta mulle</a></dd>
+        <dt>Telefon</dt>
+        <dd><a href="tel:+37251234567">+372 5123 4567</a></dd>
+        <dt>Aadress</dt>
+        <dd>Akadeemia tee 15, 12618 Tallinn</dd>
+        <dt>Isikukood</dt>
+        <dd>39001010000</dd>
+        <dt>Sündinud</dt>
+        <dd>10.03.2024</dd>
+      </dl>
+      <h2>Projektid</h2>
+      <ul>
+        <li>Ütle v2.10.3: häälega brauser</li>
+        <li>Koolitus, hind 19.99 €</li>
+      </ul>
+      <p class="hidden">vana.aadress@example.ee</p>
+    </main>
+  </body>
+</html>

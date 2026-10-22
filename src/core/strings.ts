@@ -579,6 +579,13 @@ const ET: Strings = {
         return command.section === 'andmed' ? 'Avan minu andmed.' : 'Avan seaded.'
       case 'savedEntry':
         return ''
+      // ---------- mail (29.3) ----------
+      case 'compose':
+        return command.to ? `Uus kiri: ${command.to}.` : 'Uus kiri.'
+      case 'composeTo':
+        return `Uus kiri: ${command.address}.`
+      case 'mailField':
+        return command.field === 'subject' ? `Teema: ${command.text ?? ''}`.trim() : 'Lisan koopia.'
     }
   },
   browserDone(command, title, hints) {
@@ -631,6 +638,9 @@ const ET: Strings = {
         if (command.kind === 'clearField' || command.kind === 'arm') return 'Ühtegi kasti ei ole valitud. Ütle „näita numbreid“ ja number.'
         if (command.kind === 'caret' || command.kind === 'select') return 'Seda teksti kastis ei ole.'
         if (command.kind === 'typeText') return 'Ühtegi kasti ei ole valitud, kuhu kirjutada.'
+        // mail (29.3)
+        if (command.kind === 'compose' || command.kind === 'composeTo') return 'Uut kirja ei saanud avada. Ava Gmail ja ütle uuesti.'
+        if (command.kind === 'mailField') return 'Siin ei ole avatud kirja. Ütle „uus meil“.'
         return 'Seda ei leitud.'
       case 'not_allowed':
         return 'Seda lehte ei saa Ütle juhtida.'
@@ -1035,6 +1045,13 @@ const EN: Strings = {
         return command.section === 'andmed' ? 'Opening my details.' : 'Opening the settings.'
       case 'savedEntry':
         return ''
+      // ---------- mail (29.3) ----------
+      case 'compose':
+        return command.to ? `New mail: ${command.to}.` : 'New mail.'
+      case 'composeTo':
+        return `New mail: ${command.address}.`
+      case 'mailField':
+        return command.field === 'subject' ? `Subject: ${command.text ?? ''}`.trim() : 'Adding a Cc.'
     }
   },
   browserDone(command, title, hints) {
@@ -1087,6 +1104,9 @@ const EN: Strings = {
         if (command.kind === 'clearField' || command.kind === 'arm') return 'No field is picked. Say "show numbers" and a number.'
         if (command.kind === 'caret' || command.kind === 'select') return 'That text is not in the field.'
         if (command.kind === 'typeText') return 'No field is picked to write in.'
+        // mail (29.3)
+        if (command.kind === 'compose' || command.kind === 'composeTo') return 'Could not open a new mail. Open Gmail and say it again.'
+        if (command.kind === 'mailField') return 'There is no open mail here. Say "new email".'
         return 'That was not found.'
       case 'not_allowed':
         return 'Ütle cannot control this page.'
