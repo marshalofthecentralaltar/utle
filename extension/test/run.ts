@@ -16,6 +16,9 @@ import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
+// ---------- wake word and places (29.4) ----------
+import { placeCommand, placesFrom } from '../../src/core/places.ts'
+// ---------- end of wake word and places ----------
 import { createUtleServer } from '../../server/app.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -1017,6 +1020,60 @@ async function main(): Promise<void> {
       r = await send({ kind: 'savedEntry', utterance: 'r' })
       line('savedEntry', 'with the options page closed -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
     }
+
+    // ---------- wake word and places (29.4): Minu kohad on the settings page, a place opened by its noun, the wake mode's wiring ----------
+    {
+      const extensionId = new URL(sw.url()).host
+      const options = await ctx.newPage()
+      await options.setViewportSize({ width: 1280, height: 1100 })
+      await options.goto(`chrome-extension://${extensionId}/options.html#kohad`)
+      await options.waitForSelector('#placeList .place-item', { timeout: 5000 }).catch(() => undefined)
+      const listed = await options.evaluate(() => [...document.querySelectorAll<HTMLElement>('#placeList .place-item')].map((e) => e.dataset.noun ?? ''))
+      check('kohad: the settings page lists the seven default places', JSON.stringify(listed) === JSON.stringify(['uudised', 'raadio', 'ilm', 'mail', 'kalender', 'kaart', 'video']), JSON.stringify(listed))
+      // His own news site, by the form: the fixture page stands in for it.
+      const mine = `${T}/page-two.html`
+      await options.mouse.move(0, 0)
+      await options.fill('#placeNoun', 'uudised')
+      await options.fill('#placeUrl', mine)
+      await options.click('#placeAdd')
+      const storedRows = await waitUntil(async () => (await sw.evaluate(async () => ((await chrome.storage.local.get('places')).places as unknown[] | undefined)?.length ?? 0)) === 1, 3000)
+      const shownUrl = await options.evaluate(() => document.querySelector('#placeList .place-item[data-noun="uudised"] .place-url')?.textContent ?? '')
+      check('kohad: the form adds his row, which replaces the default', storedRows && shownUrl === mine, `stored=${storedRows} shown=${shownUrl}`)
+      await mkdir(join(extensionDir, 'test/out'), { recursive: true })
+      await options.evaluate(() => document.getElementById('kohad')?.scrollIntoView({ block: 'start' }))
+      await options.locator('#kohad').screenshot({ path: join(extensionDir, 'test/out/places.png') })
+
+      // Wake mode: the choice shows the word's field, the word is stored, and the offscreen document is made with it.
+      const wakeChoice = options.locator('#listenMode .choice').nth(2)
+      await wakeChoice.scrollIntoViewIfNeeded()
+      await options.mouse.move(0, 0)
+      await wakeChoice.click()
+      const panelShown = await waitUntil(async () => (await options.evaluate(() => document.getElementById('wakePanel')?.hidden === false)) === true, 3000)
+      await options.fill('#wakeWord', 'Kuule')
+      await options.mouse.move(0, 0)
+      await options.click('#wakeWordSave')
+      const offscreenUrl = async (): Promise<string> =>
+        sw.evaluate(async () => (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] }))[0]?.documentUrl ?? '')
+      const wakeDoc = await waitUntil(async () => (await offscreenUrl()).includes('&wake=Kuule'), 5000)
+      const word = await sw.evaluate(async () => (await chrome.storage.local.get('wakeWord')).wakeWord)
+      check('wake: the mode shows the word field, stores the word, and the offscreen document gets &wake=', panelShown && word === 'Kuule' && wakeDoc, `panel=${panelShown} word=${JSON.stringify(word)} offscreen=${await offscreenUrl()}`)
+      await options.locator('#listenMode').screenshot({ path: join(extensionDir, 'test/out/wake-settings.png') })
+      // Back to the toggle: the document made for wake mode is replaced, so no gate stays behind.
+      await options.mouse.move(0, 0)
+      await options.locator('#listenMode .choice').nth(0).click()
+      const gateGone = await waitUntil(async () => !(await offscreenUrl()).includes('&wake='), 5000)
+      check('wake: back to the toggle, the offscreen document has no gate', gateGone, `offscreen=${await offscreenUrl()}`)
+      await options.close()
+      // "vaata uudiseid": the real rules of places.ts over what the settings page stored, as the engine resolves it.
+      const rows = await sw.evaluate(async () => (await chrome.storage.local.get('places')).places)
+      const place = placeCommand('vaata uudiseid', placesFrom(rows))
+      r = place === null ? 'timeout' : await send({ kind: 'goTo', url: place.url })
+      const opened = await activeTab()
+      line('goTo', '"vaata uudiseid" -> his place for uudised (page two)', r !== 'timeout' && r.ok && opened?.url === mine && opened.title === 'Page two', `${describe(r)} place=${JSON.stringify(place)} tab=${JSON.stringify(opened)}`)
+
+      await sw.evaluate(() => chrome.storage.local.remove(['places', 'wakeWord']))
+    }
+    // ---------- end of wake word and places ----------
 
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })
