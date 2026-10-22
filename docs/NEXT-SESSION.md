@@ -63,6 +63,31 @@ The loop for each round:
 
 ## Where things stand
 
+### Round 8 (2026-10-22 night, overnight and unattended): done, merged into main, not pushed
+
+Ralf's list of 2026-10-22 (17 items), triaged in `docs/plans/2026-10-22-round-8-plan.md`; `HANDOFF.md` 1j has
+what works and by what it is proven; `docs/ARCHITECTURE.md` section 29 is the spec. Six lanes, each an Opus 5.5
+agent in its own worktree, reviewed by the orchestrator against the full diff with every proof re-run: MEDIA
+(29.1, seek by an amount, one round), FLOW (29.6, dictation cleaning measured on a stand-in set, two rounds: the
+ee/ei negation hazard was added in review), DOCS (29.2, document mode and formatting, one round), MAIL (29.3,
+mail by voice and addresses off the page, two rounds: "teema …" swallowed dictation everywhere), WAKE (29.4,
+wake word and Minu kohad, two rounds: a place could not be added without hands, a weak suite check, the strip
+covered the form), READ (29.5, two checkpoints: the measurement found an Estonian voice only in Edge, then the
+reader was built; two rounds on the build: the microphone was muted for the whole article so "stopp" could not
+be spoken, and `read` dropped the box undo). Merged in that order; WAKE and READ conflicted with the earlier
+lanes in 10 and 17 files, all "both appended here", resolved keep-both (the `BrowserCommand` union needed its
+members reordered by hand).
+
+Final `main` 1394b91: `npm run check` green (44 files, 3499 tests); `npx tsx extension/test/run.ts` ALL PASS
+twice (282 checks); `UTLE_REAL=1 npx tsx extension/test/voice.ts` ALL PASS twice (30 checks, dev server on port
+5194); one live `/api/intent` ask with a page address logged `[intent] kind=command done=true plan=0 care=quick
+ms=2185` and nothing else. Push to origin is disabled in this checkout: `main` is ahead of `origin/main` by the
+whole round and the hosted server was not redeployed (no Railway project; `railway whoami` Unauthorized).
+
+Still only Ralf can do: the Railway deploy, the calibration with a friend (1g), the read-backs, and everything
+listed under "Not verified" in 1j. Parked with kill tests in the plan's section 5: speech impairments, video
+calls, people who cannot write. The one question (plan section 6, "Linear"): nothing was created in Linear.
+
 ### Round 5 (2026-10-06): done
 
 The owner's words after the demo with the real user, five of them: an e-mail, a phone number or an ID

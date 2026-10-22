@@ -449,8 +449,8 @@ taken from a lane's report):
   scripts/flow-eval.ts` on `scripts/fixtures/flow-set.tsv`. The real measurement needs Ralf's own 20 captured
   finals (`UTLE_CAPTURE`, 1g).
 
-**The merged tree:** the final numbers (gate, suite, two voice runs) are in the round log in
-`docs/NEXT-SESSION.md`. The voice test ran on a dev server at port 5194: port 5193 was held by a process this
+**The merged tree** (`main` 1394b91): `npm run check` green (44 files, 3499 tests); `npx tsx extension/test/run.ts`
+ALL PASS twice (282 checks); `UTLE_REAL=1 npx tsx extension/test/voice.ts` ALL PASS twice (30 checks). The voice test ran on a dev server at port 5194: port 5193 was held by a process this
 session was not allowed to stop.
 
 **Not verified by anyone** (in addition to 1g and 1h): a real voice through any round 8 feature; real YouTube's
