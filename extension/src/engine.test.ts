@@ -5,7 +5,7 @@ import { pageIntentFrom } from '../../src/core/pageIntent.ts'
 import { applyIntent, initialInpage, inpageInstant, inpagePreview, inpageResult, inpageStep } from '../../src/core/inpage.ts'
 import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
+import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, PLACE_ASK_MS, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
@@ -2169,6 +2169,74 @@ describe('Minu kohad in the engine (29.4.2)', () => {
     t.say('ava mu pank palun kohe')
     await t.engine.idle()
     expect(t.ran.some((c) => c.kind === 'goTo')).toBe(false)
+  })
+})
+describe('saving a place by voice (29.4.3)', () => {
+  const NO_BOX: BoxState = { present: false, text: '', armed: false }
+  const onPage = (command: BrowserCommand): BrowserResult =>
+    command.kind === 'savePlace' || command.kind === 'removePlace' ? { ok: true, tab: { title: 'Postimees', url: 'https://www.postimees.ee/' } } : { ok: true }
+
+  it('voice place: "lisa koht uudised" sends savePlace for the tab in front and the strip names the address', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: NO_BOX, answers: onPage })
+    t.say('lisa koht uudised')
+    await t.engine.idle()
+    expect(t.ran).toContainEqual({ kind: 'savePlace', noun: 'uudised' })
+    expect(t.state.line).toBe('Koht „uudised“ salvestatud: postimees.ee')
+    expect(seen).toEqual([])
+  })
+
+  it('voice place: "lisa koht" alone asks for the word, and the next final is it', async () => {
+    const t = setup({ box: NO_BOX, answers: onPage })
+    t.say('lisa koht')
+    await t.engine.idle()
+    expect(t.state.line).toBe(STRINGS.et.wake.placeAsk)
+    expect(t.ran.some((c) => c.kind === 'savePlace')).toBe(false)
+    t.say('Uudised.')
+    await t.engine.idle()
+    expect(t.ran).toContainEqual({ kind: 'savePlace', noun: 'uudised' })
+    // Asked once: a later word is ordinary speech again.
+    t.say('pank')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'savePlace')).toHaveLength(1)
+  })
+
+  it('voice place: an answer that is a command ends the question and runs as usual; the question lapses after 20 s', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: NO_BOX, answers: onPage })
+    t.say('lisa koht')
+    await t.engine.idle()
+    t.say('mine')
+    await t.engine.idle()
+    expect(seen).toEqual(['mine'])
+    t.say('lisa koht')
+    await t.engine.idle()
+    await vi.advanceTimersByTimeAsync(PLACE_ASK_MS + 1)
+    t.say('uudised')
+    await t.engine.idle()
+    expect(t.ran.some((c) => c.kind === 'savePlace')).toBe(false)
+    expect(seen).toEqual(['mine', 'uudised'])
+  })
+
+  it('voice place: "eemalda koht uudised" removes his place; an unknown one is named, with no command', async () => {
+    const t = setup({ box: NO_BOX, answers: onPage })
+    t.engine.setPlaces([{ noun: 'uudised', url: 'https://www.postimees.ee/', label: 'Postimees' }])
+    t.say('eemalda koht uudised')
+    await t.engine.idle()
+    expect(t.ran).toContainEqual({ kind: 'removePlace', noun: 'uudised' })
+    expect(t.state.line).toBe(STRINGS.et.wake.placeRemoved('uudised'))
+    t.say('eemalda koht pank')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'removePlace')).toHaveLength(1)
+    expect(t.state.line).toBe(STRINGS.et.wake.placeNotThere('pank'))
+  })
+
+  it('voice place: a page that cannot be saved says so', async () => {
+    const t = setup({ box: NO_BOX, answers: (c) => (c.kind === 'savePlace' ? { ok: false, code: 'not_allowed', message: 'chrome://' } : { ok: true }) })
+    t.say('see on mu uudised')
+    await t.engine.idle()
+    expect(t.state.line).toBe(STRINGS.et.wake.placeNotSaved)
   })
 })
 // ---------- end of wake word and places ----------

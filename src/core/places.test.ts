@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PLACES, placeByNoun, placeCommand, placeNamed, placeNouns, placeRowsFrom, placeUrl, placesFrom } from './places.ts'
+import { DEFAULT_PLACES, placeByNoun, placeCommand, placeHost, placeNamed, placeNounSaid, placeNouns, placeRowsFrom, placeRowsWith, placeUrl, placeVoice, placesFrom } from './places.ts'
 
 const places = placesFrom(undefined)
 
@@ -78,3 +78,49 @@ describe('Minu kohad (29.4.2)', () => {
     expect(placeNamed(nouns, 'https://www.postimees.ee/')).toBe(false)
   })
 })
+
+// ---------- saving a place by voice (29.4.3) ----------
+describe('saving a place by voice (29.4.3)', () => {
+  it('voice place: the save and remove phrases, with the noun', () => {
+    const cases: ReadonlyArray<readonly [string, unknown]> = [
+      ['lisa koht uudised', { action: 'save', noun: 'uudised' }],
+      ['salvesta see koht uudised', { action: 'save', noun: 'uudised' }],
+      ['Salvesta see koht: pank.', { action: 'save', noun: 'pank' }],
+      ['lisa koht nimega töö meil', { action: 'save', noun: 'töö meil' }],
+      ['see on mu uudised', { action: 'save', noun: 'uudised' }],
+      ['save this place as news', { action: 'save', noun: 'news' }],
+      ['save this page as my bank', { action: 'save', noun: 'bank' }],
+      ['eemalda koht uudised', { action: 'remove', noun: 'uudised' }],
+      ['remove place news', { action: 'remove', noun: 'news' }],
+    ]
+    for (const [said, want] of cases) expect([said, placeVoice(said, false)]).toEqual([said, want])
+  })
+
+  it('voice place: "lisa koht" alone asks for the noun', () => {
+    expect(placeVoice('lisa koht', false)).toEqual({ action: 'save', noun: null })
+    expect(placeVoice('salvesta see koht', true)).toEqual({ action: 'save', noun: null })
+    expect(placeVoice('save this place', false)).toEqual({ action: 'save', noun: null })
+    expect(placeVoice('eemalda koht', false)).toEqual({ action: 'remove', noun: null })
+  })
+
+  it('voice place: a command word is never a noun, three words are too many, and "see on mu …" is a message in an armed box', () => {
+    for (const said of ['lisa koht saada', 'lisa koht keri alla', 'see on mu vaata', 'lisa koht üks kaks kolm', 'tere', 'vaata uudiseid', 'lisa uus e-post']) {
+      expect([said, placeVoice(said, false)]).toEqual([said, null])
+    }
+    expect(placeVoice('see on mu uudised', true)).toBeNull()
+    expect(placeVoice('lisa koht uudised', true)).toEqual({ action: 'save', noun: 'uudised' })
+    expect(placeNounSaid('Uudised!')).toBe('uudised')
+    expect(placeNounSaid('ava')).toBe('')
+  })
+
+  it('voice place: a saved row replaces his row for the noun, and opens on "vaata uudiseid"', () => {
+    let rows = placeRowsWith([], { noun: 'uudised', url: 'https://www.err.ee/' })
+    rows = placeRowsWith(rows, { noun: 'uudised', url: 'https://news.ee/' })
+    expect(rows).toEqual([{ noun: 'uudised', url: 'https://news.ee/' }])
+    expect(placeCommand('vaata uudiseid', placesFrom(rows))?.url).toBe('https://news.ee/')
+    rows = placeRowsWith(rows, { noun: 'uudised', url: '' })
+    expect(placeCommand('vaata uudiseid', placesFrom(rows))).toBeNull()
+    expect(placeHost('https://www.postimees.ee/x')).toBe('postimees.ee')
+  })
+})
+// ---------- end of saving a place by voice ----------
