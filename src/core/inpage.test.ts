@@ -2362,7 +2362,8 @@ describe('reading back (29.2): "loe viimane lause ette"', () => {
     const empty = inpageStep(session(), 'loe viimane lause ette', doc(''))
     expect(empty.speak).toBeUndefined()
     expect(empty.line).toBe(ET.inpage.boxEmpty)
-    expect(inpageStep(session(), 'loe see ette', NO_BOX).line).toBe(ET.inpage.pickField)
+    // 29.5 (merge of READ and DOCS): with no armed box holding words, "loe see ette" reads the page's article.
+    expect(inpageStep(session(), 'loe see ette', NO_BOX).commands).toEqual([{ kind: 'read', what: 'page' }])
     expect(inpageInstant(session(), 'loe viimane lause ette')).toBe(true)
   })
 })
@@ -2394,3 +2395,16 @@ describe('document mode (29.2): outside it, the chat box is byte-identical', () 
 function capitalise(word: string): string {
   return word.charAt(0).toLocaleUpperCase() + word.slice(1)
 }
+// ---------- reading aloud (29.5) ----------
+describe('reading aloud (29.5): a reading keeps the box undo', () => {
+  it('read: after "loe ette", "võta tagasi" still undoes the last dictation', () => {
+    const typed = inpageStep(initialInpage('et'), 'Ma jõuan homme', { present: true, text: 'Tere', armed: true })
+    const afterTyped = inpageResult(typed.session, typed.commands, { ok: true }).session
+    expect(afterTyped.undo).toEqual(['Tere'])
+    const read = inpageStep(afterTyped, 'loe lehte ette', { present: true, text: 'Tere Ma jõuan homme', armed: true })
+    expect(read.commands).toEqual([{ kind: 'read', what: 'page' }])
+    const afterRead = inpageResult(read.session, read.commands, { ok: true }).session
+    const undo = inpageStep(afterRead, 'võta tagasi', { present: true, text: 'Tere Ma jõuan homme', armed: true })
+    expect(undo.commands).toEqual([{ kind: 'setText', text: 'Tere' }])
+  })
+})

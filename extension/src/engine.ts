@@ -14,6 +14,8 @@ import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import { documentPaused } from '../../src/core/documentMode.ts'
 import { speak as synthSpeak } from '../../src/speech/synth.ts'
+// ---------- reading aloud (29.5) ----------
+import { isReadStop } from '../../src/core/reading.ts'
 import type { StripState } from './messages.ts'
 // ---------- wake word and places (29.4) ----------
 import { placeByNoun, placeCommand, placeHost, placeNounSaid, placeNouns, placeVoice } from '../../src/core/places.ts'
@@ -86,6 +88,9 @@ export interface EngineDeps {
   /** Round 8 (29.4.1): the wake word while listenMode is wake; absent in the other modes. */
   wakeWord?: string
   // ---------- end of wake word and places ----------
+  // ---------- reading aloud (29.5) ----------
+  /** A reading aloud is in progress: a stop word (isReadStop) stops it first and does nothing else. Absent: never. */
+  reading?(): boolean
 }
 
 export interface Engine {
@@ -1101,10 +1106,30 @@ export function createEngine(deps: EngineDeps): Engine {
     showWake(true)
   }
   // ---------- end of wake word and places ----------
+  // ---------- reading aloud (29.5) ----------
+  /**
+   * While a reading is in progress the microphone stays live and hears the synthesised voice too, so
+   * every final is taken here: a stop word (isReadStop: "stopp", "aitab", "lõpeta lugemine", "paus",
+   * "peata", …) stops the reading at once, outside the queue and before the rules (which would stop a
+   * scroll or type a one-word reply); anything else is dropped unseen (no heard line, no typing). True
+   * when a reading took the utterance.
+   */
+  const whileReading = (utterance: string): boolean => {
+    if (deps.reading?.() !== true) return false
+    dropLive()
+    if (!isReadStop(utterance)) return true
+    deps.publish({ heard: utterance })
+    const stop: BrowserCommand = { kind: 'read', what: 'stop' }
+    say(STRINGS[deps.lang].browserDoing(stop))
+    void runSafe(stop)
+    return true
+  }
+  // ---------- end of reading aloud ----------
 
   const handlers: EngineHandlers = {
     onUtterance(utterance) {
       if (enrolling) return
+      if (whileReading(utterance)) return
       deps.publish({ heard: utterance })
       if (entry) {
         toEntry(utterance)
@@ -1129,6 +1154,7 @@ export function createEngine(deps: EngineDeps): Engine {
       if (enrolling) return
       // Round 4: "siis ava Karin" soon after the last utterance goes on from it: no barge-in, and
       // the new words are asked as the next goal of the chain the last utterance was.
+      if (whileReading(added)) return
       deps.publish({ heard: text })
       const u = live
       live = null
@@ -1142,6 +1168,8 @@ export function createEngine(deps: EngineDeps): Engine {
     onInterim(interim) {
       // An empty interim keeps the last words on the strip until new speech arrives.
       if (interim === '' || enrolling) return
+      // 29.5: while reading, the partials are the reader's own voice (or a stop word, taken as a final): never shown or typed.
+      if (deps.reading?.() === true) return
       deps.publish({ heard: interim })
       // Round 6: while saving by voice, partials are shown, never typed.
       if (!listening || entry) return
@@ -1186,6 +1214,8 @@ export function createEngine(deps: EngineDeps): Engine {
     const ungated = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
     const gated = (): boolean => !entry && !enrolling
     handlers.onUtterance = (utterance) => {
+      // 29.5: while reading, the reading's filter comes before the gate: a stop word stops it without the wake word.
+      if (!enrolling && whileReading(utterance)) return
       if (!gated()) return ungated.onUtterance(utterance)
       const passed = wakeFilter(utterance)
       if (passed === null) {
@@ -1203,6 +1233,7 @@ export function createEngine(deps: EngineDeps): Engine {
       }
     }
     handlers.onUtteranceContinued = (text, added) => {
+      if (!enrolling && whileReading(added)) return
       if (!gated()) return ungated.onUtteranceContinued(text, added)
       if (lastPassed && wake !== null) {
         const rest = wakeStarts(wake, added)
@@ -1214,6 +1245,7 @@ export function createEngine(deps: EngineDeps): Engine {
       handlers.onUtterance(added)
     }
     handlers.onInterim = (interim) => {
+      if (deps.reading?.() === true) return
       if (!gated() || interim === '' || wake === null) return ungated.onInterim(interim)
       wake = wakeHeard(wake, Date.now())
       showWake()

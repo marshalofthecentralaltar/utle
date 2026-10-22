@@ -41,9 +41,11 @@ export interface StripSettings {
   speechEngine: SpeechEngine
   /** Round 4: only the owner's voice is obeyed (needs an enrolled voice on the dev server). */
   onlyOwner: boolean
+  /** 29.5: "Loe riba ette": the bar's new amber lines are spoken (the offscreen document does it). */
+  readBar: boolean
 }
-export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local', onlyOwner: false }
-export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine', 'onlyOwner'] as const
+export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local', onlyOwner: false, readBar: false }
+export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine', 'onlyOwner', 'readBar'] as const
 
 /** Reads the strip's settings out of a chrome.storage.local answer, defaults for anything missing. */
 export function settingsFrom(stored: Record<string, unknown>): StripSettings {
@@ -58,6 +60,7 @@ export function settingsFrom(stored: Record<string, unknown>): StripSettings {
     gazeTarget: stored.gazeTarget === 'bar' ? 'bar' : 'mic',
     speechEngine: stored.speechEngine === 'soniox' ? 'soniox' : 'local',
     onlyOwner: stored.onlyOwner === true,
+    readBar: stored.readBar === true,
   }
 }
 

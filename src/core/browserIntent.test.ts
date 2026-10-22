@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { BrowserCommand } from '../browser/protocol.ts'
 import { browserIntent, SITES } from './browserIntent.ts'
 import { STRINGS } from './strings.ts'
+import { initialInpage, inpageStep } from './inpage.ts'
 
 const ROWS: Array<[string, BrowserCommand]> = [
   // New tab
@@ -340,5 +341,78 @@ describe('round 8: the line for a seek says the amount (29.1)', () => {
     expect(STRINGS.et.browserDoing({ kind: 'media', action: 'forward' })).toBe('Edasi kümme sekundit.')
     expect(STRINGS.en.browserDoing({ kind: 'media', action: 'back', seconds: 30 })).toBe('Back 30 seconds.')
     expect(STRINGS.en.browserDoing({ kind: 'media', action: 'forward', seconds: 60 })).toBe('Forward one minute.')
+  })
+})
+
+// ---------- reading aloud (29.5) ----------
+describe('reading aloud (29.5): read phrases', () => {
+  const READ_ROWS: Array<[string, BrowserCommand]> = [
+    ['loe ette', { kind: 'read', what: 'page' }],
+    ['Loe lehte ette.', { kind: 'read', what: 'page' }],
+    ['loe leht ette', { kind: 'read', what: 'page' }],
+    ['loe see leht ette', { kind: 'read', what: 'page' }],
+    ['read the page', { kind: 'read', what: 'page' }],
+    ['Read it out', { kind: 'read', what: 'page' }],
+    ['read this page', { kind: 'read', what: 'page' }],
+    ['loe see ette', { kind: 'read', what: 'box' }],
+    ['loe kasti ette', { kind: 'read', what: 'box' }],
+    ['loe kast ette', { kind: 'read', what: 'box' }],
+    ['read this', { kind: 'read', what: 'box' }],
+    ['read the box', { kind: 'read', what: 'box' }],
+    ['loe valitud ette', { kind: 'read', what: 'selection' }],
+    ['loe valik ette', { kind: 'read', what: 'selection' }],
+    ['read the selection', { kind: 'read', what: 'selection' }],
+    ['loe edasi', { kind: 'read', what: 'continue' }],
+    ['Jätka lugemist!', { kind: 'read', what: 'continue' }],
+    ['continue reading', { kind: 'read', what: 'continue' }],
+    ['lõpeta lugemine', { kind: 'read', what: 'stop' }],
+    ['stop reading', { kind: 'read', what: 'stop' }],
+    ['lugemine seis', { kind: 'read', what: 'stop' }],
+  ]
+  for (const [said, command] of READ_ROWS) {
+    it(`read: "${said}" is ${command.kind === 'read' ? command.what : ''}`, () => {
+      expect(browserIntent(said)).toEqual(command)
+    })
+  }
+
+  it('read: "stopp" and "aitab" alone stay the scroll stop in the table (the engine stops a reading first)', () => {
+    expect(browserIntent('stopp')).toEqual({ kind: 'scroll', direction: 'down', mode: 'stop' })
+    expect(browserIntent('aitab')).toEqual({ kind: 'scroll', direction: 'down', mode: 'stop' })
+    expect(browserIntent('edasi')).toEqual({ kind: 'history', direction: 'forward' })
+  })
+
+  it('read: the rules turn the read phrases into the read command, with and without an armed box with words', () => {
+    const session = initialInpage('et')
+    for (const box of [{ present: false, text: '', armed: false }, { present: true, text: 'Tere, kuidas läheb', armed: true }]) {
+      expect(inpageStep(session, 'loe lehte ette', box).commands).toEqual([{ kind: 'read', what: 'page' }])
+      expect(inpageStep(session, 'loe kasti ette', box).commands).toEqual([{ kind: 'read', what: 'box' }])
+      expect(inpageStep(session, 'loe edasi', box).commands).toEqual([{ kind: 'read', what: 'continue' }])
+      expect(inpageStep(session, 'lõpeta lugemine', box).commands).toEqual([{ kind: 'read', what: 'stop' }])
+    }
+  })
+
+  it('read: "loe ette" and "loe see ette" read the armed box with words aloud (DOCS, 29.2), and the page without one', () => {
+    const session = initialInpage('et')
+    for (const said of ['loe ette', 'loe see ette']) {
+      const inBox = inpageStep(session, said, { present: true, text: 'Tere, kuidas läheb', armed: true })
+      expect(inBox.commands).toEqual([])
+      expect(inBox.speak).toBe('Tere, kuidas läheb')
+      for (const box of [{ present: false, text: '', armed: false }, { present: true, text: 'kassid', armed: false }, { present: true, text: '', armed: true }]) {
+        expect(inpageStep(session, said, box).commands).toEqual([{ kind: 'read', what: 'page' }])
+      }
+    }
+  })
+
+  it('read: the lines say what is happening, in Estonian and English', () => {
+    expect(STRINGS.et.browserDoing({ kind: 'read', what: 'page' })).toBe('Loen ette…')
+    expect(STRINGS.en.browserDoing({ kind: 'read', what: 'box' })).toBe('Reading…')
+    expect(STRINGS.et.browserDoing({ kind: 'read', what: 'continue' })).toBe('Loen edasi…')
+    expect(STRINGS.et.browserDoing({ kind: 'read', what: 'stop' })).toBe('Lugemine seis.')
+    expect(STRINGS.et.browserFailed({ kind: 'read', what: 'page' }, 'not_allowed')).toBe("Selles brauseris pole eesti häält. Edge'is on.")
+    expect(STRINGS.en.browserFailed({ kind: 'read', what: 'page' }, 'not_allowed')).toBe('This browser has no Estonian voice; Edge has one.')
+    expect(STRINGS.et.browserFailed({ kind: 'read', what: 'continue' }, 'not_found')).toBe('Lugemine on lõppenud.')
+    expect(STRINGS.en.browserFailed({ kind: 'read', what: 'continue' }, 'not_found')).toBe('Nothing more to read.')
+    expect(STRINGS.et.browserFailed({ kind: 'read', what: 'page' }, 'not_found')).toBe('Siin pole midagi ette lugeda.')
+    expect(STRINGS.et.read.skipped).toBe('Jätsin ühe lause vahele.')
   })
 })

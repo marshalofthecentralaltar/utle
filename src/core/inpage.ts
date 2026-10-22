@@ -393,7 +393,7 @@ const KEEPS_HINTS = new Set<BrowserCommand['kind']>([
   'openSettings', 'savedEntry',
 ])
 /** Commands that leave the same message box in front, so the undo texts still belong to it. */
-const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints'])
+const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints', 'read'])
 
 // Round 3 (editing): the caret, a selection, typing at the caret and the editing keys all stay in the
 // box in front; Escape, Enter and Tab leave it (a dialog closes, a form submits, the focus moves).
@@ -942,6 +942,8 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
     }
     case 'speak': {
       // Round 8 (29.2): read aloud by the engine; nothing on the page changes.
+      // 29.5 (merge of READ and DOCS): "loe ette" with no armed box holding words reads the page's article instead.
+      if (action.what === 'box' && !(box.present && box.armed && box.text.trim() !== '')) return run({ kind: 'read', what: 'page' })
       if (!box.present) return none(s.inpage.pickField)
       const text = action.what === 'box' ? box.text.trim() : lastSentenceOf(box.text)
       if (text === '') return none(s.inpage.boxEmpty)

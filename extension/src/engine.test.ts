@@ -2448,3 +2448,103 @@ describe('saving a place by voice (29.4.3)', () => {
   })
 })
 // ---------- end of wake word and places ----------
+// ---------- reading aloud (29.5) ----------
+describe('reading aloud (29.5): "stopp" while reading stops the reading first', () => {
+  const real: InpageLogic = { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom }
+  /** An engine on the real rules; reading: undefined leaves the dependency out, as before this round. */
+  const make = (reading: (() => boolean) | undefined, box: BoxState) => {
+    const ran: BrowserCommand[] = []
+    const lines: string[] = []
+    const heard: string[] = []
+    let handlers: EngineHandlers | null = null
+    let page = { ...box }
+    const engine = createEngine({
+      logic: real,
+      lang: 'et',
+      run: (command) => {
+        ran.push(command)
+        if (command.kind === 'readBox') return Promise.resolve({ ok: true, box: { ...page } })
+        if (command.kind === 'setText') page = { ...page, text: command.text }
+        return Promise.resolve({ ok: true })
+      },
+      publish: (patch) => {
+        if (patch.line !== undefined) lines.push(patch.line)
+        if (patch.heard !== undefined) heard.push(patch.heard)
+      },
+      recognizer: (h) => {
+        handlers = h
+        return { supported: true, start: () => undefined, stop: () => undefined, setLang: () => undefined }
+      },
+      micBlocked: () => undefined,
+      ask: () => Promise.resolve({ error: 'unreachable' }),
+      tabs: () => Promise.resolve([]),
+      status: () => Promise.resolve('live'),
+      ...(reading === undefined ? {} : { reading }),
+    })
+    return { engine, ran, lines, heard, say: (t: string) => handlers?.onUtterance(t), continued: (t: string, added: string) => handlers?.onUtteranceContinued(t, added), partial: (t: string) => handlers?.onInterim(t) }
+  }
+  const WORDS: BoxState = { present: true, text: 'Tere, kuidas läheb', armed: true }
+  const EMPTY: BoxState = { present: false, text: '', armed: false }
+  const pageCommands = (ran: BrowserCommand[]): BrowserCommand[] => ran.filter((c) => c.kind !== 'readBox')
+
+  for (const word of ['stopp', 'Aitab.', 'stop', 'lõpeta lugemine', 'seis', 'stop reading', 'paus', 'Peata.']) {
+    it(`read: "${word}" while reading runs read stop at once (in the handler), and nothing else, even with words in the box`, async () => {
+      const t = make(() => true, WORDS)
+      t.say(word)
+      // In the handler itself: not behind the queue.
+      expect(t.ran).toEqual([{ kind: 'read', what: 'stop' }])
+      await t.engine.idle()
+      expect(pageCommands(t.ran)).toEqual([{ kind: 'read', what: 'stop' }])
+      expect(t.lines.at(-1)).toBe('Lugemine seis.')
+    })
+  }
+
+  it('read: a continued utterance ending in "stopp" while reading stops the reading too', async () => {
+    const t = make(() => true, EMPTY)
+    t.continued('keri alla stopp', 'stopp')
+    await t.engine.idle()
+    expect(pageCommands(t.ran)).toEqual([{ kind: 'read', what: 'stop' }])
+  })
+
+  it('read: the filter: while reading every other final and every partial is dropped unseen (the echo of the voice is never shown, typed or run)', async () => {
+    const t = make(() => true, WORDS)
+    t.partial('tartu raamatukogu avab')
+    t.say('Tartu raamatukogu avab uue lugemissaali')
+    t.say('keri alla')
+    t.say('loe edasi')
+    t.continued('keri alla ja ava seaded', 'ava seaded')
+    await t.engine.idle()
+    expect(t.ran).toEqual([])
+    expect(t.heard).toEqual([])
+    t.say('stopp')
+    expect(t.ran).toEqual([{ kind: 'read', what: 'stop' }])
+    expect(t.heard).toEqual(['stopp'])
+  })
+
+  it('read: the filter ends with the reading: the same words are heard and run again', async () => {
+    let reading = true
+    const t = make(() => reading, EMPTY)
+    t.say('keri alla')
+    reading = false
+    t.say('keri alla')
+    await t.engine.idle()
+    expect(pageCommands(t.ran)).toEqual([{ kind: 'scroll', direction: 'down' }])
+    expect(t.heard).toEqual(['keri alla'])
+  })
+
+  for (const box of [WORDS, EMPTY]) {
+    for (const word of ['stopp', 'aitab']) {
+      it(`read: "${word}" when not reading does exactly what it did before this round (box ${box.text === '' ? 'empty' : 'with words'})`, async () => {
+        const before = make(undefined, box)
+        before.say(word)
+        await before.engine.idle()
+        const now = make(() => false, box)
+        now.say(word)
+        await now.engine.idle()
+        expect(now.ran).toEqual(before.ran)
+        expect(now.lines).toEqual(before.lines)
+        expect(now.ran.some((c) => c.kind === 'read')).toBe(false)
+      })
+    }
+  }
+})

@@ -9,6 +9,8 @@ import { CONNECTION_KEYS, connectionFrom } from './connection.ts'
 import type { Connection } from './connection.ts'
 import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.ts'
 import type { PageCommand } from './page.ts'
+// ---------- reading aloud (29.5) ----------
+import type { ReadBarAnswer, RunAnswer } from './messages.ts'
 import { SITES, siteOf } from './sites.ts'
 import type { SiteName, SiteSettings } from './sites.ts'
 // mail (29.3)
@@ -287,8 +289,8 @@ async function runInPage(tab: Tab, command: BrowserCommand): Promise<PageAnswer>
 /** A page answer without the page's own fields (href, settled). */
 function clean(answer: PageAnswer): BrowserResult {
   if (!answer.ok) return answer
-  const { tab, hints, box, page } = answer as Extract<BrowserResult, { ok: true }>
-  return ok({ ...(tab ? { tab } : {}), ...(hints !== undefined ? { hints } : {}), ...(box ? { box } : {}), ...(page ? { page } : {}) })
+  const { tab, hints, box, page, reading } = answer as Extract<BrowserResult, { ok: true }>
+  return ok({ ...(tab ? { tab } : {}), ...(hints !== undefined ? { hints } : {}), ...(box ? { box } : {}), ...(page ? { page } : {}), ...(reading ? { reading } : {}) })
 }
 
 // ---------- commands ----------
@@ -438,6 +440,10 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
       if (!result.ok) return result
       return freshTab(tabId)
     }
+    // ---------- reading aloud (29.5) ----------
+    case 'read':
+      // The page answers with the text; continue and stop belong to the reading in the offscreen document (readInOffscreen).
+      return command.what === 'continue' || command.what === 'stop' ? fail('failed', 'A reading is continued or stopped in the offscreen document.') : clean(await runInPage(tab, command))
   }
 }
 
@@ -468,6 +474,17 @@ async function composeMail(tab: Tab, command: Extract<BrowserCommand, { kind: 'c
   return result.ok ? { ...result, tab: tabInfo(opened) } : result
 }
 // ---------- end mail (29.3) ----------
+
+// ---------- reading aloud (29.5) ----------
+/** A read command from the harness's bridge: the page's text is fetched for the sender's target window, then the offscreen document reads it. */
+async function readInOffscreen(command: Extract<BrowserCommand, { kind: 'read' }>, senderWindowId: number | undefined): Promise<BrowserResult> {
+  const fetched = command.what === 'continue' || command.what === 'stop' ? undefined : await execute(command, senderWindowId)
+  if (fetched !== undefined && !fetched.ok) return fetched
+  await ensureOffscreen()
+  const message: ToOffscreen = fetched === undefined ? { target: 'offscreen', type: 'read', command } : { target: 'offscreen', type: 'read', command, fetched }
+  const answer = (await chrome.runtime.sendMessage(message).catch(() => undefined)) as RunAnswer | undefined
+  return answer?.result ?? fail('failed', 'The offscreen document did not answer.')
+}
 
 async function history(tab: Tab, tabId: number, back: boolean): Promise<BrowserResult> {
   const nothing = fail('not_found', back ? 'There is no page to go back to.' : 'There is no page to go forward to.')
@@ -671,6 +688,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   chrome.runtime.sendMessage(message).catch(() => undefined)
 })
 
+// ---------- reading aloud (29.5): "Loe riba ette" follows the settings page ----------
+chrome.storage.onChanged.addListener((changes, area) => {
+  const change = changes.readBar
+  if (area !== 'local' || change === undefined) return
+  const message: ToOffscreen = { target: 'offscreen', type: 'readBar', on: change.newValue === true }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+})
+
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') void openPermissionPage()
 })
@@ -742,6 +767,14 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       void chrome.storage.session.set({ [ENTRY_KEY]: message.on })
       chrome.runtime.sendMessage({ target: 'offscreen', type: 'entry', on: message.on } satisfies ToOffscreen).catch(() => undefined)
       return false
+    // ---------- reading aloud (29.5) ----------
+    case 'utle-read-bar':
+      if (sender.tab) return false
+      stored('readBar').then(
+        (on) => sendResponse({ on: on === true } satisfies ReadBarAnswer),
+        () => sendResponse({ on: false } satisfies ReadBarAnswer),
+      )
+      return true
     case 'utle-tabs': {
       // From the offscreen engine (M7): the tabs of the window being driven, for the model.
       if (sender.tab) return false
@@ -767,7 +800,7 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       void (async () => {
         if (sender.origin !== (await utleOrigin())) return { ignored: true }
         try {
-          return { result: await execute(message.command, tab.windowId) }
+          return { result: message.command.kind === 'read' ? await readInOffscreen(message.command, tab.windowId) : await execute(message.command, tab.windowId) }
         } catch (error) {
           return { result: fail('failed', errorText(error)) }
         }

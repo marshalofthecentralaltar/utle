@@ -344,6 +344,14 @@ phrases({ kind: 'format', style: 'list' }, 'loendiks', 'tee loendiks', 'täpploe
 phrases({ kind: 'format', style: 'paragraph' }, 'uus lõik', 'new paragraph')
 phrases({ kind: 'select', what: 'paragraph' }, 'vali lõik', 'vali see lõik', 'select the paragraph', 'select this paragraph')
 // ---------- end of document mode ----------
+// ---------- reading aloud (29.5) ----------
+// "stopp" and "aitab" stay the scroll stop above; while reading, the engine stops the reading first (isReadStop).
+phrases({ kind: 'read', what: 'page' }, 'loe ette', 'loe lehte ette', 'loe leht ette', 'loe see leht ette', 'read the page', 'read it out', 'read this page')
+phrases({ kind: 'read', what: 'box' }, 'loe see ette', 'loe kasti ette', 'loe kast ette', 'read this', 'read the box')
+phrases({ kind: 'read', what: 'selection' }, 'loe valitud ette', 'loe valik ette', 'read the selection')
+phrases({ kind: 'read', what: 'continue' }, 'loe edasi', 'jätka lugemist', 'continue reading')
+phrases({ kind: 'read', what: 'stop' }, 'lõpeta lugemine', 'stop reading', 'lugemine seis')
+// ---------- end of reading aloud ----------
 
 const ORDINALS: Record<string, number> = {
   esimene: 1, teine: 2, kolmas: 3, neljas: 4, viies: 5, kuues: 6, seitsmes: 7, kaheksas: 8, üheksas: 9, kümnes: 10,

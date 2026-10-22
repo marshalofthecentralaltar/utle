@@ -423,6 +423,24 @@ export interface Strings {
     placeNotThere(noun: string): string
   }
   // ---------- end of wake word and places ----------
+
+  // ---------- reading aloud (29.5) ----------
+  read: {
+    /** The amber line while a reading is in progress. */
+    now: string
+    onward: string
+    stopped: string
+    noVoice: string
+    skipped: string
+    ended: string
+    nothing: string
+    failed: string
+    /** The settings page: "Loe riba ette" (readBar). */
+    barTitle: string
+    barOn: string
+    barOff: string
+    barNote: string
+  }
 }
 
 /** The address without scheme and www, or the search words of a Google search. */
@@ -669,6 +687,9 @@ const ET: Strings = {
         return `Salvestan koha „${command.noun}“.`
       case 'removePlace':
         return `Eemaldan koha „${command.noun}“.`
+      // ---------- reading aloud (29.5) ----------
+      case 'read':
+        return command.what === 'continue' ? ET.read.onward : command.what === 'stop' ? ET.read.stopped : ET.read.now
     }
   },
   browserDone(command, title, hints) {
@@ -705,6 +726,10 @@ const ET: Strings = {
     }
   },
   browserFailed(command, code) {
+    // ---------- reading aloud (29.5) ----------
+    if (command.kind === 'read' && code === 'not_allowed') return ET.read.noVoice
+    if (command.kind === 'read' && code === 'not_found') return command.what === 'continue' ? ET.read.ended : ET.read.nothing
+    if (command.kind === 'read' && code === 'failed') return ET.read.failed
     switch (code) {
       case 'no_extension':
         return 'Brauseri laiendus ei vasta. Paigalda Ütle laiendus ja laadi see leht uuesti.'
@@ -1039,6 +1064,21 @@ const ET: Strings = {
     placeNotThere: (noun) => `Kohta „${noun}“ pole.`,
   },
   // ---------- end of wake word and places ----------
+  // ---------- reading aloud (29.5) ----------
+  read: {
+    now: 'Loen ette…',
+    onward: 'Loen edasi…',
+    stopped: 'Lugemine seis.',
+    noVoice: "Selles brauseris pole eesti häält. Edge'is on.",
+    skipped: 'Jätsin ühe lause vahele.',
+    ended: 'Lugemine on lõppenud.',
+    nothing: 'Siin pole midagi ette lugeda.',
+    failed: 'Ette lugeda ei õnnestunud.',
+    barTitle: 'Loe riba ette',
+    barOn: 'Loe ette',
+    barOff: 'Ära loe',
+    barNote: "Riba uued read loetakse eesti häälega ette (Edge'is on see hääl). Kui riba räägib, mikrofon ei kuula.",
+  },
 }
 
 const EN: Strings = {
@@ -1174,6 +1214,9 @@ const EN: Strings = {
         return `Saving the place "${command.noun}".`
       case 'removePlace':
         return `Removing the place "${command.noun}".`
+      // ---------- reading aloud (29.5) ----------
+      case 'read':
+        return command.what === 'continue' ? EN.read.onward : command.what === 'stop' ? EN.read.stopped : EN.read.now
     }
   },
   browserDone(command, title, hints) {
@@ -1210,6 +1253,10 @@ const EN: Strings = {
     }
   },
   browserFailed(command, code) {
+    // ---------- reading aloud (29.5) ----------
+    if (command.kind === 'read' && code === 'not_allowed') return EN.read.noVoice
+    if (command.kind === 'read' && code === 'not_found') return command.what === 'continue' ? EN.read.ended : EN.read.nothing
+    if (command.kind === 'read' && code === 'failed') return EN.read.failed
     switch (code) {
       case 'no_extension':
         return 'The browser extension is not answering. Install the Ütle extension and reload this page.'
@@ -1544,6 +1591,21 @@ const EN: Strings = {
     placeNotThere: (noun) => `There is no place "${noun}".`,
   },
   // ---------- end of wake word and places ----------
+  // ---------- reading aloud (29.5) ----------
+  read: {
+    now: 'Reading…',
+    onward: 'Reading on…',
+    stopped: 'Reading stopped.',
+    noVoice: 'This browser has no Estonian voice; Edge has one.',
+    skipped: 'I skipped one sentence.',
+    ended: 'Nothing more to read.',
+    nothing: 'Nothing here to read.',
+    failed: 'Could not read aloud.',
+    barTitle: 'Read the bar aloud',
+    barOn: 'Read aloud',
+    barOff: 'Silent',
+    barNote: 'New lines of the bar are read in an Estonian voice (Edge has one). While the bar speaks, the microphone does not listen.',
+  },
 }
 
 export const STRINGS: Record<Lang, Strings> = { et: ET, en: EN }

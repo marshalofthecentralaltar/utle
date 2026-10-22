@@ -131,6 +131,9 @@ export const PRESSABLE_KEYS = ['Escape', 'Enter', 'Tab', 'Backspace', 'Delete', 
 
 export const MEDIA_ACTIONS = ['play', 'pause', 'toggle', 'mute', 'unmute', 'volumeUp', 'volumeDown', 'fullscreen', 'exitFullscreen', 'forward', 'back'] as const
 
+// ---------- reading aloud (29.5) ----------
+export const READ_WHATS = ['page', 'box', 'selection', 'continue', 'stop'] as const
+
 const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('newTab'), url: z.string().url().optional() }),
   z.object({ kind: z.literal('closeTab') }),
@@ -172,6 +175,8 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('composeTo'), address: z.string().min(3).max(254), subject: Short.min(1).optional(), body: Text.optional() }),
   z.object({ kind: z.literal('mailField'), field: z.enum(['subject', 'cc']), text: Short.min(1).optional() }),
   // ---------- end mail (29.3) ----------
+  // ---------- reading aloud (29.5) ----------
+  z.object({ kind: z.literal('read'), what: z.enum(READ_WHATS) }),
 ])
 
 const EditSchema = z.discriminatedUnion('kind', [
