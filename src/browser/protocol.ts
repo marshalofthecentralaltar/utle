@@ -60,8 +60,11 @@ export type BrowserCommand =
   | { kind: 'scrollTo'; id: number }
   /** Types the query into the site's own search field and presses Enter. Arms nothing. */
   | { kind: 'siteSearch'; query: string }
-  /** Acts on the largest visible video or audio element. */
-  | { kind: 'media'; action: MediaAction }
+  /**
+   * Acts on the largest visible video or audio element. seconds (round 8, 29.1): only on forward and
+   * back, an integer from 1 to 3600; absent means 10.
+   */
+  | { kind: 'media'; action: MediaAction; seconds?: number }
   /** A key on the focused element. */
   | { kind: 'pressKey'; key: PressableKey; times?: number }
   // M8 (round 3): editing inside the armed box, like a keyboard would.

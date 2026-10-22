@@ -460,6 +460,17 @@ const MEDIA_EN: Record<MediaAction, string> = {
   back: 'Back ten seconds.',
 }
 
+/** Round 8 (29.1): the line for a seek by an amount, "Edasi üks minut.", "Tagasi 90 sekundit.". */
+function seekEt(action: MediaAction, seconds: number): string {
+  const amount = seconds === 60 ? 'üks minut' : seconds % 60 === 0 ? `${seconds / 60} minutit` : seconds === 1 ? 'üks sekund' : `${seconds} sekundit`
+  return `${action === 'back' ? 'Tagasi' : 'Edasi'} ${amount}.`
+}
+
+function seekEn(action: MediaAction, seconds: number): string {
+  const amount = seconds === 60 ? 'one minute' : seconds % 60 === 0 ? `${seconds / 60} minutes` : seconds === 1 ? 'one second' : `${seconds} seconds`
+  return `${action === 'back' ? 'Back' : 'Forward'} ${amount}.`
+}
+
 const ET: Strings = {
   promptListening: 'Ütle, mida muuta, või lõigu number.',
   promptThinking: 'Hetk.',
@@ -558,7 +569,7 @@ const ET: Strings = {
       case 'siteSearch':
         return `Otsin siit: ${command.query}`
       case 'media':
-        return MEDIA_ET[command.action]
+        return command.seconds === undefined ? MEDIA_ET[command.action] : seekEt(command.action, command.seconds)
       case 'pressKey':
         return KEY_ET[command.key]
       case 'caret':
@@ -1014,7 +1025,7 @@ const EN: Strings = {
       case 'siteSearch':
         return `Searching here: ${command.query}`
       case 'media':
-        return MEDIA_EN[command.action]
+        return command.seconds === undefined ? MEDIA_EN[command.action] : seekEn(command.action, command.seconds)
       case 'pressKey':
         return KEY_EN[command.key]
       case 'caret':

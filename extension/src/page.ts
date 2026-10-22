@@ -2122,29 +2122,70 @@ function shortcutFor(action: MediaAction, el: HTMLMediaElement): { key: string; 
   }
 }
 
-/** On YouTube, the player's own keyboard shortcut; true when the element shows it worked. */
-async function youtubeShortcut(player: HTMLElement, el: HTMLMediaElement, action: MediaAction): Promise<boolean> {
-  const shortcut = shortcutFor(action, el)
-  if (!shortcut) return false
-  if (shortcut.key === '') return true
-  const key = shortcut.key
+/** One key press on the YouTube player, as its keyboard shortcuts expect it. */
+function pressPlayerKey(player: HTMLElement, key: string): void {
   const code = key.length === 1 ? `Key${key.toUpperCase()}` : key
   const init = { key, code, bubbles: true, cancelable: true, composed: true }
   player.focus()
   player.dispatchEvent(new KeyboardEvent('keydown', init))
   player.dispatchEvent(new KeyboardEvent('keyup', init))
+}
+
+/** On YouTube, the player's own keyboard shortcut; true when the element shows it worked. */
+async function youtubeShortcut(player: HTMLElement, el: HTMLMediaElement, action: MediaAction): Promise<boolean> {
+  const shortcut = shortcutFor(action, el)
+  if (!shortcut) return false
+  if (shortcut.key === '') return true
+  pressPlayerKey(player, shortcut.key)
   await sleep(SHORTCUT_MS)
   return shortcut.done(el)
 }
 
-async function media(action: MediaAction): Promise<BrowserResult> {
+/** YouTube's l and j move this many seconds each. */
+const YOUTUBE_SEEK_STEP = 10
+
+/**
+ * Round 8 (29.1): forward or back by an amount. On a plain video or audio element, currentTime
+ * moves by seconds, clamped to [0, duration]. On YouTube, whose l/j/arrow shortcuts move a fixed
+ * 5 or 10 s, path 1 writes currentTime on the element directly too; when it has not moved toward
+ * the target within SHORTCUT_MS (a player that ignores or resets the write), path 2 presses l or j
+ * round(seconds / 10) times, at least once, so the amount is rounded to the nearest 10 s.
+ */
+async function seekBy(el: HTMLMediaElement, player: HTMLElement | null, action: 'forward' | 'back', seconds: number): Promise<BrowserResult> {
+  const before = el.currentTime
+  const wanted = before + (action === 'back' ? -seconds : seconds)
+  const target = Math.max(0, Number.isFinite(el.duration) ? Math.min(el.duration, wanted) : wanted)
+  try {
+    el.currentTime = target
+  } catch (error) {
+    if (!player) return fail('failed', `The video did not take "${action}": ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (!player) {
+    await sleep(60)
+    return ok()
+  }
+  // Path 1 (YouTube): the element took the write when it is now nearer the target than halfway.
+  await sleep(SHORTCUT_MS)
+  if (Math.abs(el.currentTime - target) <= Math.abs(before - target) / 2) return ok()
+  // Path 2 (YouTube): the write was ignored; the player's own 10 s shortcut, repeated.
+  const presses = Math.max(1, Math.round(seconds / YOUTUBE_SEEK_STEP))
+  for (let i = 0; i < presses; i++) {
+    pressPlayerKey(player, action === 'forward' ? 'l' : 'j')
+    await sleep(60)
+  }
+  await sleep(SHORTCUT_MS)
+  return ok()
+}
+
+async function media(action: MediaAction, seconds?: number): Promise<BrowserResult> {
   const el = mediaElement()
   if (!el) return fail('not_found', 'There is no video or audio on this page.')
+  const player = document.querySelector<HTMLElement>('#movie_player')
+  if (seconds !== undefined && (action === 'forward' || action === 'back')) return seekBy(el, player && player.contains(el) ? player : null, action, seconds)
   if (action === 'exitFullscreen') {
     if (document.fullscreenElement) await document.exitFullscreen()
     return ok()
   }
-  const player = document.querySelector<HTMLElement>('#movie_player')
   if (player && player.contains(el) && (await youtubeShortcut(player, el, action))) return ok()
   try {
     switch (action) {
@@ -2381,7 +2422,7 @@ async function run(command: PageCommand): Promise<PageResult> {
       case 'siteSearch':
         return await siteSearch(String(command.query), site)
       case 'media':
-        return await media(command.action)
+        return await media(command.action, command.seconds)
       case 'pressKey':
         return await pressKey(command.key, command.times, site)
       case 'caret':
