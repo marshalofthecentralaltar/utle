@@ -12,6 +12,8 @@ import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
+// ---------- reading aloud (29.5) ----------
+import { isReadStop } from '../../src/core/reading.ts'
 import type { StripState } from './messages.ts'
 
 /** The functions of src/core/inpage.ts the engine calls. The test build passes a stand-in. */
@@ -66,6 +68,9 @@ export interface EngineDeps {
   tabs(): Promise<TabSummary[]>
   /** M7: whether the server has a model, checked once when the engine starts. bad_token (27.3): it answered 401. */
   status(): Promise<'live' | 'no_key' | 'bad_token' | 'unreachable'>
+  // ---------- reading aloud (29.5) ----------
+  /** A reading aloud is in progress: a stop word (isReadStop) stops it first and does nothing else. Absent: never. */
+  reading?(): boolean
 }
 
 export interface Engine {
@@ -940,10 +945,27 @@ export function createEngine(deps: EngineDeps): Engine {
       .catch(() => undefined)
   }
 
+  // ---------- reading aloud (29.5) ----------
+  /**
+   * While a reading is in progress, "stopp", "aitab", "lõpeta lugemine" stop the reading at once:
+   * outside the queue, before the rules (which would stop a scroll or type a one-word reply), and
+   * nothing else is done with the words. True when the utterance was taken.
+   */
+  const stopsReading = (utterance: string): boolean => {
+    if (deps.reading?.() !== true || !isReadStop(utterance)) return false
+    dropLive()
+    const stop: BrowserCommand = { kind: 'read', what: 'stop' }
+    say(STRINGS[deps.lang].browserDoing(stop))
+    void runSafe(stop)
+    return true
+  }
+  // ---------- end of reading aloud ----------
+
   const handlers: EngineHandlers = {
     onUtterance(utterance) {
       if (enrolling) return
       deps.publish({ heard: utterance })
+      if (stopsReading(utterance)) return
       if (entry) {
         toEntry(utterance)
         return
@@ -967,6 +989,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // Round 4: "siis ava Karin" soon after the last utterance goes on from it: no barge-in, and
       // the new words are asked as the next goal of the chain the last utterance was.
       deps.publish({ heard: text })
+      if (stopsReading(added)) return
       const u = live
       live = null
       if (u !== null) u.over = true
