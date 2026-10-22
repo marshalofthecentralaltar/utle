@@ -2130,3 +2130,17 @@ describe('review R3 M6: "kustuta see" / "delete this" takes back the last uttera
     }
   })
 })
+
+// ---------- reading aloud (29.5) ----------
+describe('reading aloud (29.5): a reading keeps the box undo', () => {
+  it('read: after "loe ette", "võta tagasi" still undoes the last dictation', () => {
+    const typed = inpageStep(initialInpage('et'), 'Ma jõuan homme', { present: true, text: 'Tere', armed: true })
+    const afterTyped = inpageResult(typed.session, typed.commands, { ok: true }).session
+    expect(afterTyped.undo).toEqual(['Tere'])
+    const read = inpageStep(afterTyped, 'loe ette', { present: true, text: 'Tere Ma jõuan homme', armed: true })
+    expect(read.commands).toEqual([{ kind: 'read', what: 'page' }])
+    const afterRead = inpageResult(read.session, read.commands, { ok: true }).session
+    const undo = inpageStep(afterRead, 'võta tagasi', { present: true, text: 'Tere Ma jõuan homme', armed: true })
+    expect(undo.commands).toEqual([{ kind: 'setText', text: 'Tere' }])
+  })
+})
