@@ -45,6 +45,27 @@ describe('round 6: the request carries saved names within limits (26.1)', () => 
   })
 })
 
+describe('round 8: media forward and back carry seconds from 1 to 3600 (29.1)', () => {
+  const MEDIA_PAGE: PageContext = { ...PAGE, media: { playing: true, muted: false, volume: 1, fullscreen: false } }
+  const seek = (command: Record<string, unknown>): unknown => pageIntentFrom({ kind: 'command', command: { kind: 'media', ...command } }, request(MEDIA_PAGE))
+  it('accepts forward and back with 1, 60 and 3600 seconds, and without seconds', () => {
+    expect(seek({ action: 'forward', seconds: 1 })).toEqual({ kind: 'command', command: { kind: 'media', action: 'forward', seconds: 1 } })
+    expect(seek({ action: 'back', seconds: 60 })).toEqual({ kind: 'command', command: { kind: 'media', action: 'back', seconds: 60 } })
+    expect(seek({ action: 'forward', seconds: 3600 })).toEqual({ kind: 'command', command: { kind: 'media', action: 'forward', seconds: 3600 } })
+    expect(seek({ action: 'forward' })).toEqual({ kind: 'command', command: { kind: 'media', action: 'forward' } })
+  })
+  it('rejects 0, a negative, a fraction and above 3600', () => {
+    for (const seconds of [0, -5, 1.5, 3601]) {
+      expect(seek({ action: 'forward', seconds })).toBeNull()
+      expect(seek({ action: 'back', seconds })).toBeNull()
+    }
+  })
+  it('rejects seconds on any other media action', () => {
+    for (const action of ['pause', 'play', 'mute', 'volumeUp']) expect(seek({ action, seconds: 10 })).toBeNull()
+    expect(seek({ action: 'pause' })).toEqual({ kind: 'command', command: { kind: 'media', action: 'pause' } })
+  })
+})
+
 // ---------- mail (29.3) ----------
 describe('mail (29.3.3): composeTo is validated against the page\'s contacts', () => {
   const CV: PageContext = {

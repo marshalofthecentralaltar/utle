@@ -60,8 +60,11 @@ export type BrowserCommand =
   | { kind: 'scrollTo'; id: number }
   /** Types the query into the site's own search field and presses Enter. Arms nothing. */
   | { kind: 'siteSearch'; query: string }
-  /** Acts on the largest visible video or audio element. */
-  | { kind: 'media'; action: MediaAction }
+  /**
+   * Acts on the largest visible video or audio element. seconds (round 8, 29.1): only on forward and
+   * back, an integer from 1 to 3600; absent means 10.
+   */
+  | { kind: 'media'; action: MediaAction; seconds?: number }
   /** A key on the focused element. */
   | { kind: 'pressKey'; key: PressableKey; times?: number }
   // M8 (round 3): editing inside the armed box, like a keyboard would.
@@ -93,6 +96,12 @@ export type BrowserCommand =
   /** In the open compose window: subject types text into Subject and arms the body; cc opens the Cc field, arms it, and types text when given. */
   | { kind: 'mailField'; field: MailField; text?: string }
   // ---------- end mail (29.3) ----------
+  // ---------- document mode (29.2) ----------
+  /** Formats the selection (bold, italic, underline) or the paragraph at the caret; paragraph starts a new one at the end. The page picks the editor's chord. */
+  | { kind: 'format'; style: FormatStyle }
+
+/** Round 8 (29.2): what "paksuks", "kaldkirja", "pealkirjaks", "loendiks", "uus lõik" ask for. */
+export type FormatStyle = 'bold' | 'italic' | 'underline' | 'heading' | 'normal' | 'list' | 'paragraph'
 
 // ---------- mail (29.3) ----------
 export type MailField = 'subject' | 'cc'
@@ -141,6 +150,9 @@ export type CaretTarget =
   | { find: string; where: 'before' | 'after' }
 
 export type SelectTarget = 'all' | 'word' | 'sentence' | 'line' | 'lastWord' | 'lastSentence' | { find: string }
+  // Round 8 (29.2): "vali lõik" (the line the caret is on, between two line breaks), "vali viimased kolm sõna".
+  | 'paragraph'
+  | { lastWords: number }
 
 export type MediaAction =
   | 'play'
@@ -209,6 +221,12 @@ export interface BoxState {
   single?: boolean
   /** The field's label or placeholder, at most 60 characters. */
   label?: string
+  /**
+   * Round 8 (29.2): the box is a document: Google Docs, a textarea or contenteditable over 500
+   * characters, or a rich editor with headings, lists or a multiline textbox of blocks; never a
+   * site's composer. Absent or false: a message box, as before.
+   */
+  document?: boolean
 }
 
 export type BrowserFailure = 'no_extension' | 'no_target' | 'not_found' | 'not_allowed' | 'failed'

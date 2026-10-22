@@ -363,6 +363,8 @@ interface Expectation {
   query?: string
   /** For media: the action. */
   media?: string
+  /** Round 8: for media forward and back, the seconds (absent: any). */
+  seconds?: number
   /** For edit: the edit kind. */
   edit?: string
   /** For scroll: the direction. */
@@ -418,7 +420,7 @@ const focus = (id: number): Expectation => ({ kind: 'command', command: 'focusIt
 const hover = (id: number): Expectation => ({ kind: 'command', command: 'hover', id })
 const goTo = (url: string): Expectation => ({ kind: 'command', command: 'goTo', url })
 const search = (query: string): Expectation => ({ kind: 'command', command: 'siteSearch', query })
-const media = (action: string): Expectation => ({ kind: 'command', command: 'media', media: action })
+const media = (action: string, seconds?: number): Expectation => ({ kind: 'command', command: 'media', media: action, ...(seconds === undefined ? {} : { seconds }) })
 const open = (name: string): Expectation => ({ kind: 'command', command: 'openConversation', name })
 const scroll = (direction: string): Expectation => ({ kind: 'command', command: 'scroll', direction })
 const UNCLEAR: Expectation = { kind: 'unclear' }
@@ -478,6 +480,9 @@ const CASES: Case[] = [
   one('teine video', YOUTUBE_WATCH, click(10)),
   one('tulen homme kell viis', YOUTUBE_WATCH, UNCLEAR),
   one('turn it up', YOUTUBE_WATCH, media('volumeUp'), { lang: 'en' }),
+  // Round 8 (29.1): a seek by an amount.
+  one('keri minut edasi', YOUTUBE_WATCH, media('forward', 60)),
+  one('keri kaks minutit tagasi', YOUTUBE_WATCH, media('back', 120)),
 
   // --- YouTube home and results: ordinals among same-role items, searching ----------------------
   one('ava esimene video', YOUTUBE_HOME, click(3)),
@@ -624,6 +629,7 @@ function matchesOne(intent: PageIntent, e: Expectation): string | null {
     if (!q.includes(e.query)) return `to ${JSON.stringify(c.to)}`
   }
   if (e.media && c.kind === 'media' && c.action !== e.media) return `media ${c.action}`
+  if (e.seconds !== undefined && c.kind === 'media' && c.seconds !== e.seconds) return `seconds ${c.seconds}`
   if (e.direction && c.kind === 'scroll' && c.direction !== e.direction) return `direction ${c.direction}`
   // mail (29.3)
   if (e.address && c.kind === 'composeTo' && c.address.toLowerCase() !== e.address) return `address ${c.address}`

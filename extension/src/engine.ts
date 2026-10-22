@@ -12,6 +12,8 @@ import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
+import { documentPaused } from '../../src/core/documentMode.ts'
+import { speak as synthSpeak } from '../../src/speech/synth.ts'
 import type { StripState } from './messages.ts'
 
 /** The functions of src/core/inpage.ts the engine calls. The test build passes a stand-in. */
@@ -66,6 +68,12 @@ export interface EngineDeps {
   tabs(): Promise<TabSummary[]>
   /** M7: whether the server has a model, checked once when the engine starts. bad_token (27.3): it answered 401. */
   status(): Promise<'live' | 'no_key' | 'bad_token' | 'unreachable'>
+  // ---------- document mode (29.2) ----------
+  /**
+   * Reads text aloud ("loe viimane lause ette"); onEnd once when it is over. Optional: the default
+   * is src/speech/synth.ts. Listening is not paused meanwhile (the READ lane's pause, 29.5).
+   */
+  speak?(text: string, lang: string, onEnd: () => void): void
 }
 
 export interface Engine {
@@ -188,6 +196,8 @@ interface Live {
   typing: Promise<void> | null
   /** The utterance has ended (a final, or the microphone stopped): type no more previews. */
   over: boolean
+  /** Round 8 (29.2): it began more than DOCUMENT_PAUSE_MS after the previous final (a document closes the open sentence first). */
+  paused?: boolean
 }
 
 export function createEngine(deps: EngineDeps): Engine {
@@ -245,7 +255,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const wanted = (u: Live): string | null => {
     const base = u.base
     if (base === null || !base.present) return null
-    const preview = deps.logic.inpagePreview(session, u.partial, base)
+    const preview = deps.logic.inpagePreview(base.document === true ? { ...session, paused: u.paused === true } : session, u.partial, base)
     if (preview !== null) return preview
     // The words may be a command now: take back a preview already typed.
     return u.inBox !== null ? base.text : null
@@ -333,6 +343,8 @@ export function createEngine(deps: EngineDeps): Engine {
     watchdog: ReturnType<typeof setTimeout> | null
     /** Round 5: "katkesta": the job does nothing more, not even the rules' step. */
     dropped: boolean
+    /** Round 8 (29.2): it came more than DOCUMENT_PAUSE_MS after the previous final; in a document the open sentence is closed first. */
+    paused?: boolean
   }
 
   /** Every job not finished: the one in its turn of the queue, those waiting for it, the verifications. */
@@ -606,6 +618,8 @@ export function createEngine(deps: EngineDeps): Engine {
     const withSuffix = (line: string): string => (suffix === '' || line === '' ? line : `${line} ${suffix}`)
     session = step.session
     say(withSuffix(step.line))
+    // Round 8 (29.2): "loe viimane lause ette": the text is read aloud; nothing runs on the page.
+    if (step.speak !== undefined) speakAloud(step.speak)
     // A command, or nothing at all: the preview must not stay in the box.
     if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
     if (step.commands.length === 0) return { ok: true, line: step.line }
@@ -834,6 +848,8 @@ export function createEngine(deps: EngineDeps): Engine {
         // the box since the base was read (review): it reads the box as it is now.
         box = job.send ? await readBox() : (u.base ?? NO_BOX)
       }
+      // Round 8 (29.2): in a document the rules hear whether the pause before this final was a long one.
+      if (box.document === true) session = { ...session, paused: job.paused === true }
       const before = session
       const recentBefore = recent
       const rules = deps.logic.inpageStep(session, job.utterance, box)
@@ -849,7 +865,8 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       // Round 5: a single-line field (a form's name, email, code) is verified before anything is typed.
       const single = box.single === true
-      if (box.armed && !single) {
+      // Round 8 (29.2): never in a document: there the model is asked first, and only about a command verb.
+      if (box.armed && !single && box.document !== true) {
         // Type first, verify after: the words are in the box at once, and the model only takes
         // them back when it is sure they were something else. The verification does not hold the
         // queue (round 3).
@@ -895,7 +912,7 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   const begin = (): Live => {
-    const u: Live = { base: null, ready: Promise.resolve(), partial: '', inBox: null, typing: null, over: false }
+    const u: Live = { base: null, ready: Promise.resolve(), partial: '', inBox: null, typing: null, over: false, paused: pausedNow() }
     // The base is read once, after every earlier utterance's commands have run.
     u.ready = queue.then(async () => {
       u.base = await readBox()
@@ -940,6 +957,27 @@ export function createEngine(deps: EngineDeps): Engine {
       .catch(() => undefined)
   }
 
+  // ---------- document mode (29.2): the pause window and reading aloud ----------
+  /** Date.now() of the last final handed to a job, or null before the first. */
+  let lastFinalAt: number | null = null
+  /** Whether speech starting now begins after the document pause window (DOCUMENT_PAUSE_MS). */
+  const pausedNow = (): boolean => documentPaused(lastFinalAt, Date.now())
+  /** A final arrived: the pause before it is measured from when its speech began (its first partial), else from now. */
+  const finalArrived = (job: Job, u: Live | null): void => {
+    job.paused = u?.paused ?? pausedNow()
+    lastFinalAt = Date.now()
+  }
+  const speakAloud = (text: string): void => {
+    const lang = deps.lang === 'et' ? 'et-EE' : 'en-US'
+    const read = deps.speak ?? synthSpeak
+    try {
+      read(text, lang, () => undefined)
+    } catch {
+      // Speech synthesis missing or refused: the strip line already says what was meant.
+    }
+  }
+  // ---------- end of document mode ----------
+
   const handlers: EngineHandlers = {
     onUtterance(utterance) {
       if (enrolling) return
@@ -958,6 +996,7 @@ export function createEngine(deps: EngineDeps): Engine {
       live = null
       if (u !== null) u.over = true
       const job = newJob(utterance, isPlainSend(utterance))
+      finalArrived(job, u)
       interrupt(job)
       // A step that throws must not stop every utterance after it: the queue stays a resolved promise.
       queue = queue.then(() => handle(job, u)).catch(() => undefined)
@@ -971,6 +1010,7 @@ export function createEngine(deps: EngineDeps): Engine {
       live = null
       if (u !== null) u.over = true
       const job = newJob(added, false)
+      finalArrived(job, u)
       job.continued = true
       job.chain = { original: text.slice(0, 1000), completed: [], goal: added.slice(0, GOAL_CHARS), remaining: [] }
       queue = queue.then(() => handle(job, u)).catch(() => undefined)

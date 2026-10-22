@@ -290,7 +290,7 @@ export function boxState(el: HTMLElement | null, site: Site | null): BoxState {
   if (el === null) return { present: false, text: '', armed: false, kind: 'none' }
   const kind = boxKind(el, site)
   const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el) }
-  if (!(el instanceof HTMLInputElement)) return base
+  if (!(el instanceof HTMLInputElement)) return documentBox(el, site, base)
   // mail (29.3.5): To and Cc take addresses, Subject plain text, whatever their own clues say.
   const part = mailPartOf(el)
   if (part === 'to' || part === 'cc') return { ...base, single: true, fieldKind: 'email' }
@@ -398,3 +398,46 @@ export function bottomBox(site: Site | null): HTMLElement | null {
     lowestPresent('textarea')
   )
 }
+
+// ---------- document mode (29.2) ----------
+//
+// A document is a box he writes in at length: a textarea or contenteditable over DOCUMENT_CHARS, a
+// contenteditable with headings or lists, or a multiline textbox of blocks. Never a site's composer
+// (nor a box with a send button beside it), a one-line input or a search field. Google Docs is a
+// document too; page.ts reports it from docsBox.
+
+/** A text this long is a document, whatever its editor. */
+export const DOCUMENT_CHARS = 500
+
+const DOCUMENT_BLOCKS = ':scope > :is(div, p, h1, h2, h3, h4, h5, h6, li, ul, ol)'
+
+/** True when the box is a document (29.2). */
+export function isDocument(el: HTMLElement, site: Site | null): boolean {
+  if (el instanceof HTMLInputElement) return false
+  if (boxKind(el, site) !== 'field') return false
+  if (readText(el).length > DOCUMENT_CHARS) return true
+  if (el instanceof HTMLTextAreaElement || !el.isContentEditable) return false
+  if (el.querySelector('h1, h2, h3, h4, h5, h6, ul, ol') !== null) return true
+  return el.getAttribute('role') === 'textbox' && (el.getAttribute('aria-multiline') === 'true' || el.querySelector(DOCUMENT_BLOCKS) !== null)
+}
+
+/**
+ * A document's text as the core joins onto it: readText, plus one line break when the text ends in
+ * an empty paragraph ("uus lõik" just made it), so the next dictation starts there with a capital.
+ */
+export function documentText(el: HTMLElement): string {
+  const text = readText(el)
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return text
+  return text !== '' && /\n\n$/u.test(el.innerText || '') ? `${text}\n` : text
+}
+
+/** The box text as boxState reports it: documentText in a document, readText elsewhere. */
+export function boxText(el: HTMLElement, site: Site | null): string {
+  return isDocument(el, site) ? documentText(el) : readText(el)
+}
+
+/** The box state with the document flag and text when it is one; the state unchanged when it is not. */
+function documentBox(el: HTMLElement, site: Site | null, base: BoxState): BoxState {
+  return isDocument(el, site) ? { ...base, text: documentText(el), document: true } : base
+}
+// ---------- end of document mode ----------

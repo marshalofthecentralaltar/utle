@@ -1,5 +1,6 @@
 import type { BrowserCommand, BrowserFailure, MediaAction, PressableKey } from '../browser/protocol.ts'
 import type { SavedKind } from './saved.ts'
+import type { FormatStyle } from '../browser/protocol.ts'
 
 /**
  * Every line a person can read in Ütle, in one table keyed by language, so a native speaker
@@ -147,6 +148,11 @@ export interface Strings {
     /** Added to the line when an armed field has a saved value of its kind: " Või ütle „minu e-post“." */
     savedHint(names: readonly string[]): string
     entryGone: string
+    // ---------- document mode (29.2) ----------
+    /** "saada" in a document: nothing is sent. */
+    documentNoSend: string
+    /** "loe viimane lause ette": the strip while the text is read aloud. */
+    reading: string
   }
 
   // The interpreter.
@@ -415,6 +421,28 @@ const KEY_ET: Record<PressableKey, string> = {
   SelectAll: 'Valin kõik.',
 }
 
+// ---------- document mode (29.2): what a format command does, for the strip ----------
+const FORMAT_ET: Record<FormatStyle, string> = {
+  bold: 'Paks kiri.',
+  italic: 'Kaldkiri.',
+  underline: 'Allajoonitud.',
+  heading: 'Pealkiri.',
+  normal: 'Tavaline tekst.',
+  list: 'Loend.',
+  paragraph: 'Uus lõik.',
+}
+
+const FORMAT_EN: Record<FormatStyle, string> = {
+  bold: 'Bold.',
+  italic: 'Italic.',
+  underline: 'Underlined.',
+  heading: 'Heading.',
+  normal: 'Normal text.',
+  list: 'Bulleted list.',
+  paragraph: 'New paragraph.',
+}
+// ---------- end of document mode ----------
+
 const KEY_EN: Record<PressableKey, string> = {
   Escape: 'Closing.',
   Enter: 'Confirming.',
@@ -458,6 +486,17 @@ const MEDIA_EN: Record<MediaAction, string> = {
   exitFullscreen: 'Leaving full screen.',
   forward: 'Forward ten seconds.',
   back: 'Back ten seconds.',
+}
+
+/** Round 8 (29.1): the line for a seek by an amount, "Edasi üks minut.", "Tagasi 90 sekundit.". */
+function seekEt(action: MediaAction, seconds: number): string {
+  const amount = seconds === 60 ? 'üks minut' : seconds % 60 === 0 ? `${seconds / 60} minutit` : seconds === 1 ? 'üks sekund' : `${seconds} sekundit`
+  return `${action === 'back' ? 'Tagasi' : 'Edasi'} ${amount}.`
+}
+
+function seekEn(action: MediaAction, seconds: number): string {
+  const amount = seconds === 60 ? 'one minute' : seconds % 60 === 0 ? `${seconds / 60} minutes` : seconds === 1 ? 'one second' : `${seconds} seconds`
+  return `${action === 'back' ? 'Back' : 'Forward'} ${amount}.`
 }
 
 const ET: Strings = {
@@ -558,7 +597,7 @@ const ET: Strings = {
       case 'siteSearch':
         return `Otsin siit: ${command.query}`
       case 'media':
-        return MEDIA_ET[command.action]
+        return command.seconds === undefined ? MEDIA_ET[command.action] : seekEt(command.action, command.seconds)
       case 'pressKey':
         return KEY_ET[command.key]
       case 'caret':
@@ -579,6 +618,8 @@ const ET: Strings = {
         return command.section === 'andmed' ? 'Avan minu andmed.' : 'Avan seaded.'
       case 'savedEntry':
         return ''
+      case 'format':
+        return FORMAT_ET[command.style]
       // ---------- mail (29.3) ----------
       case 'compose':
         return command.to ? `Uus kiri: ${command.to}.` : 'Uus kiri.'
@@ -705,6 +746,8 @@ const ET: Strings = {
     savedMissing: 'Seda pole enam salvestatud. Ütle „minu andmed“.',
     savedHint: (names) => ` Või ütle ${names.map((n) => `„${n}“`).join(' või ')}.`,
     entryGone: 'Minu andmete leht pole ees. Ütle „minu andmed“.',
+    documentNoSend: 'Dokumendis ei saadeta.',
+    reading: 'Loen ette.',
   },
 
   stillWorks: 'Jah, ei ja tagasivõtmine töötavad edasi.',
@@ -1024,7 +1067,7 @@ const EN: Strings = {
       case 'siteSearch':
         return `Searching here: ${command.query}`
       case 'media':
-        return MEDIA_EN[command.action]
+        return command.seconds === undefined ? MEDIA_EN[command.action] : seekEn(command.action, command.seconds)
       case 'pressKey':
         return KEY_EN[command.key]
       case 'caret':
@@ -1045,6 +1088,8 @@ const EN: Strings = {
         return command.section === 'andmed' ? 'Opening my details.' : 'Opening the settings.'
       case 'savedEntry':
         return ''
+      case 'format':
+        return FORMAT_EN[command.style]
       // ---------- mail (29.3) ----------
       case 'compose':
         return command.to ? `New mail: ${command.to}.` : 'New mail.'
@@ -1171,6 +1216,8 @@ const EN: Strings = {
     savedMissing: 'That is no longer saved. Say "my details".',
     savedHint: (names) => ` Or say ${names.map((n) => `"${n}"`).join(' or ')}.`,
     entryGone: 'The My details page is not in front. Say "my details".',
+    documentNoSend: 'Nothing is sent from a document.',
+    reading: 'Reading it out.',
   },
 
   stillWorks: 'Yes, no and undo still work.',

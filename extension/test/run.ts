@@ -7,7 +7,7 @@
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { readFile, mkdtemp, rm, mkdir } from 'node:fs/promises'
-import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, extname, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +16,9 @@ import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
+import { inpageResult } from '../../src/core/inpage.ts'
+import type { BoxState, BrowserResult } from '../../src/browser/protocol.ts'
+import { copyFileSync } from 'node:fs'
 import { createUtleServer } from '../../server/app.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -712,6 +715,27 @@ async function main(): Promise<void> {
     line('media', 'forward: +10 s', r !== 'timeout' && r.ok && afterForward >= 10 && afterForward < 15, `${describe(r)} t=${afterForward}`)
     r = await send({ kind: 'media', action: 'back' })
     line('media', 'back: -10 s', r !== 'timeout' && r.ok && (await vstate()).time < 5, `${describe(r)} t=${(await vstate()).time}`)
+    // Round 8 (29.1): seek by an amount. The fixture video is about 20 s, so 60 s forward clamps to
+    // its end; a 5 s seek checks the amount itself. Paused, so the looping video stays where it lands.
+    const duration = await video.evaluate(() => (document.getElementById('v') as HTMLVideoElement).duration)
+    await video.evaluate(() => {
+      const v = document.getElementById('v') as HTMLVideoElement
+      v.pause()
+      v.currentTime = 1
+    })
+    r = await send({ kind: 'media', action: 'forward', seconds: 5 })
+    const seek5 = (await vstate()).time
+    line('media', 'seek forward seconds 5: 1 -> 6 (+-1)', r !== 'timeout' && r.ok && Math.abs(seek5 - 6) <= 1, `${describe(r)} t=${seek5}`)
+    r = await send({ kind: 'media', action: 'forward', seconds: 60 })
+    const seek60 = (await vstate()).time
+    line('media', `seek forward seconds 60: clamped to the end (duration ${duration.toFixed(3)} s)`, r !== 'timeout' && r.ok && Math.abs(seek60 - duration) < 0.05, `${describe(r)} t=${seek60} duration=${duration}`)
+    r = await send({ kind: 'media', action: 'back', seconds: 5 })
+    const back5 = (await vstate()).time
+    line('media', 'seek back seconds 5: end -> end - 5 (+-1)', r !== 'timeout' && r.ok && Math.abs(back5 - (duration - 5)) <= 1, `${describe(r)} t=${back5}`)
+    r = await send({ kind: 'media', action: 'back', seconds: 60 })
+    const back60 = (await vstate()).time
+    line('media', 'seek back seconds 60: clamped to 0', r !== 'timeout' && r.ok && back60 === 0, `${describe(r)} t=${back60}`)
+    await video.evaluate(() => (document.getElementById('v') as HTMLVideoElement).play())
     r = await send({ kind: 'media', action: 'exitFullscreen' })
     line('media', 'exitFullscreen when not fullscreen is fine', r !== 'timeout' && r.ok, describe(r))
     r = await send({ kind: 'readPage' })
@@ -973,6 +997,103 @@ async function main(): Promise<void> {
     line('pressKey', 'Tab moves to the next field and arms it', r !== 'timeout' && r.ok && tabbedTo === 'essay-area' && r.box?.armed === true && r.box.label === 'Kirjand tekstina', `${describe(r)} focused=${tabbedTo}`)
     await send({ kind: 'arm', on: false })
     await essay.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    // ---------- round 8, document mode (29.2): two paragraphs, a sentence made italic; the Docs key path and M5 ----------
+    {
+      // The engine's loop for one utterance, with the real rules: the box, the step, its commands, the result.
+      let docSession = initialInpage('et')
+      const speakTo = async (utterance: string): Promise<ReturnType<typeof inpageStep>> => {
+        const read = await send({ kind: 'readBox' })
+        const box = read !== 'timeout' && read.ok && read.box ? (read.box as BoxState) : { present: false, text: '', armed: false }
+        const step = inpageStep(docSession, utterance, box)
+        let last: BrowserResult = { ok: true }
+        for (const command of step.commands) {
+          const answer = await send(command)
+          last = answer === 'timeout' ? { ok: false, code: 'failed', message: 'timeout' } : (answer as BrowserResult)
+          if (!last.ok) break
+        }
+        docSession = inpageResult(step.session, step.commands, last).session
+        return step
+      }
+      const isDocumentBox = (x: Result | 'timeout'): boolean => x !== 'timeout' && x.ok && (x.box as { document?: boolean } | undefined)?.document === true
+
+      // The essay editor emptied to one paragraph, as an editor starts: a textbox of blocks, so a document.
+      await essay.evaluate(() => {
+        const el = document.getElementById('essay')
+        if (el) el.innerHTML = '<div><br></div>'
+        el?.focus()
+      })
+      r = await send({ kind: 'arm', on: true })
+      check('document mode: the emptied essay editor is a document', isDocumentBox(r), describe(r))
+      for (const u of ['eesti suvi on lühike', 'punkt', 'päike paistab hilisõhtuni', 'punkt', 'uus lõik', 'sügis toob vihma', 'punkt', 'lehed langevad puudelt', 'punkt']) await speakTo(u)
+      const ESSAY = 'Eesti suvi on lühike. Päike paistab hilisõhtuni.\nSügis toob vihma. Lehed langevad puudelt.'
+      const essayText = async (): Promise<string> => essay.evaluate(() => (window as unknown as { textOf: (id: string) => string }).textOf('essay'))
+      const blocks = await essay.evaluate(() => [...(document.getElementById('essay')?.children ?? [])].map((c) => c.textContent))
+      line('format', 'essay: two paragraphs dictated ("punkt", "uus lõik")', (await essayText()) === ESSAY && blocks.length >= 2, `${JSON.stringify(await essayText())} blocks=${JSON.stringify(blocks)}`)
+      await speakTo('mine sõna paistab ette')
+      const selectStep = await speakTo('vali see lause')
+      const italicStep = await speakTo('kaldkirja')
+      const styled = await essay.evaluate(() => {
+        const el = document.getElementById('essay')
+        const marks = [...(el?.querySelectorAll('i, em, [style*="italic"]') ?? [])]
+        return { count: marks.length, text: marks.map((m) => m.textContent ?? '').join('|'), html: el?.innerHTML ?? '' }
+      })
+      line(
+        'format',
+        'essay: "vali see lause", "kaldkirja": <i> around exactly sentence 2',
+        selectStep.commands[0]?.kind === 'select' && italicStep.commands[0]?.kind === 'format' && styled.count === 1 && styled.text === 'Päike paistab hilisõhtuni.',
+        JSON.stringify(styled),
+      )
+      check('essay: the words are unchanged by the formatting', (await essayText()) === ESSAY, JSON.stringify(await essayText()))
+      await essay.locator('#essay').screenshot({ path: join(here, 'out/essay.png') })
+      copyFileSync(join(here, 'out/essay.png'), join(repoRoot, 'docs/proof/r8-essay.png'))
+      // A textarea has no italics: the page says so instead of doing nothing.
+      await send({ kind: 'arm', on: false })
+      await essay.evaluate(() => document.getElementById('essay-area')?.focus())
+      r = await send({ kind: 'format', style: 'bold' })
+      line('format', 'textarea: bold refused, the box untouched', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
+      await essay.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+
+      // The Google Docs stand-in, served at docs.google.com (page.ts recognises Docs by its hostname).
+      const DOCS = 'https://docs.google.com/document/d/stand-in/edit'
+      const docsHtml = readFileSync(join(here, 'fixtures/docs.html'), 'utf8')
+      await ctx.route('https://docs.google.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: docsHtml }))
+      await send({ kind: 'goTo', url: DOCS })
+      const docsPage = pageAt(DOCS)
+      if (!docsPage) throw new Error('docs stand-in not found')
+      await docsPage.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.querySelector('[contenteditable]')?.getAttribute('data-wired') === '1', undefined, { timeout: 5000 })
+      const received = async (): Promise<string> => docsPage.evaluate(() => (window as unknown as { docsReceived: string }).docsReceived)
+      const chords = async (): Promise<string[]> => docsPage.evaluate(() => (window as unknown as { docsChords: string[] }).docsChords)
+      docSession = initialInpage('et')
+      r = await send({ kind: 'readBox' })
+      check('Docs stand-in: readBox is Google Docs, a document', isDocumentBox(r) && r !== 'timeout' && r.ok && r.box?.label === 'Google Docs', describe(r))
+      await speakTo('tere')
+      await speakTo('punkt')
+      // REVIEW-R3 M5: past DOCS_TYPED_RESET_MS (4 s) the memory of what Ütle typed used to empty, and the next sentence was glued on.
+      await new Promise((resolve) => setTimeout(resolve, 4500))
+      await speakTo('uus lause on siin')
+      line('setText', 'Docs M5: after the 4 s reset, "Tere. Uus lause on siin"', (await received()) === 'Tere. Uus lause on siin', JSON.stringify(await received()))
+      const CHORDS: ReadonlyArray<readonly [string, string]> = [
+        ['paksuks', 'Ctrl+B'],
+        ['kaldkirja', 'Ctrl+I'],
+        ['allajoonitud', 'Ctrl+U'],
+        ['pealkirjaks', 'Ctrl+Alt+1'],
+        ['tavaline tekst', 'Ctrl+Alt+0'],
+        ['loendiks', 'Ctrl+Shift+8'],
+      ]
+      for (const [u, want] of CHORDS) {
+        const before = (await chords()).length
+        await speakTo(u)
+        const now = await chords()
+        line('format', `Docs: "${u}" sends ${want}`, now.length === before + 1 && now.at(-1) === want, JSON.stringify(now.slice(before)))
+      }
+      await speakTo('uus lõik')
+      await speakTo('teine lõik')
+      line('format', 'Docs: "uus lõik" is Enter Enter; the paragraph starts', (await received()) === 'Tere. Uus lause on siin\n\nTeine lõik', JSON.stringify(await received()))
+      const sendStep = await speakTo('saada')
+      check('Docs: "saada" runs nothing and says so', sendStep.commands.length === 0 && sendStep.line === 'Dokumendis ei saadeta.', sendStep.line)
+      await docsPage.screenshot({ path: join(here, 'out/docs.png') })
+      await ctx.unroute('https://docs.google.com/**')
+    }
     await send({ kind: 'goTo', url: `${T}/page-one.html` })
     r = await send({ kind: 'typeText', text: 'tere' })
     line('typeText', 'page without a field -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))

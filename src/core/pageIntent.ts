@@ -139,7 +139,10 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('contextMenu'), id: Id }),
   z.object({ kind: z.literal('scrollTo'), id: Id }),
   z.object({ kind: z.literal('siteSearch'), query: Text }),
-  z.object({ kind: z.literal('media'), action: z.enum(MEDIA_ACTIONS) }),
+  // Round 8 (29.1): seconds only on forward and back.
+  z
+    .object({ kind: z.literal('media'), action: z.enum(MEDIA_ACTIONS), seconds: z.number().int().min(1).max(3600).optional() })
+    .refine((m) => m.seconds === undefined || m.action === 'forward' || m.action === 'back', { message: 'seconds only on forward and back' }),
   z.object({ kind: z.literal('pressKey'), key: z.enum(PRESSABLE_KEYS), times: z.number().int().min(1).max(50).optional() }),
   z.object({
     kind: z.literal('caret'),

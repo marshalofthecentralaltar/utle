@@ -1952,3 +1952,212 @@ describe('round 6: saved values (Minu andmed: names only, insertSaved, entry mod
     expect(t.ran.filter((c) => c.kind === 'savedEntry')).toHaveLength(1)
   })
 })
+
+// ---------- document mode (29.2) ----------
+
+/** The real core, so the engine's document mode is tested with the rules it runs in the extension. */
+const REAL: InpageLogic = { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom }
+
+interface DocOptions {
+  ask?: (request: IntentRequest) => Promise<IntentAnswer | AskFailure>
+}
+
+/** An engine on one page whose box keeps its document flag (the shared setup's page does not). */
+function docSetup(start: BoxState, options: DocOptions = {}) {
+  let handlers: EngineHandlers | null = null
+  let page: BoxState = { ...start }
+  const ran: BrowserCommand[] = []
+  const asked: IntentRequest[] = []
+  const spoken: Array<{ text: string; lang: string }> = []
+  const state: Partial<StripState> = {}
+  const engine = createEngine({
+    logic: REAL,
+    lang: 'et',
+    run: async (command) => {
+      ran.push(command)
+      if (command.kind === 'readBox') return { ok: true, box: { ...page } }
+      if (command.kind === 'readPage') return { ok: true, page: { url: 'https://kirjand.example/', title: 'Kirjand', box: { ...page }, items: [], media: null, hints: false } }
+      if (command.kind === 'setText') page = { ...page, text: command.text }
+      if (command.kind === 'format' && command.style === 'paragraph') page = { ...page, text: `${page.text}\n` }
+      return { ok: true, box: { ...page } }
+    },
+    publish: (patch) => {
+      Object.assign(state, patch)
+    },
+    recognizer: (h) => {
+      handlers = h
+      return { supported: true, start: () => undefined, stop: () => undefined, setLang: () => undefined }
+    },
+    micBlocked: () => undefined,
+    ask: (request) => {
+      asked.push(request)
+      return options.ask ? options.ask(request) : Promise.resolve({ error: 'unreachable' })
+    },
+    tabs: () => Promise.resolve([]),
+    status: () => Promise.resolve('live'),
+    speak: (text, lang, onEnd) => {
+      spoken.push({ text, lang })
+      onEnd()
+    },
+  })
+  engine.start()
+  return {
+    engine,
+    ran,
+    asked,
+    spoken,
+    state,
+    say: (text: string): void => handlers?.onUtterance(text),
+    page: () => page,
+  }
+}
+
+const DOC = (text: string): BoxState => ({ present: true, text, armed: true, document: true })
+const CHAT = (text: string): BoxState => ({ present: true, text, armed: true, kind: 'composer' })
+
+describe('document mode (29.2): the engine', () => {
+  const WORDS: ReadonlyArray<readonly [string, BrowserCommand['kind']]> = [
+    ['välja', 'pressKey'],
+    ['sulge', 'closeTab'],
+    ['edasi', 'history'],
+    ['tagasi', 'history'],
+    ['paus', 'media'],
+  ]
+  for (const [word, kind] of WORDS) {
+    it(`document mode: in it, "${word}" is typed into the document and nothing else runs`, async () => {
+      const t = docSetup(DOC('Ta läks'))
+      t.say(word)
+      await t.engine.idle()
+      expect(t.page().text).toBe(`Ta läks ${word}`)
+      expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox')).toEqual(['setText'])
+      expect(t.asked).toHaveLength(0)
+    })
+    it(`document mode: outside it, "${word}" in an empty chat box runs ${kind}`, async () => {
+      const t = docSetup(CHAT(''))
+      t.say(word)
+      await t.engine.idle()
+      expect(t.page().text).toBe('')
+      expect(t.ran.map((c) => c.kind)).toContain(kind)
+    })
+  }
+
+  it('document mode: dictation goes straight in, the model is never asked to verify it', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'), { ask: () => Promise.resolve({ intent: { kind: 'command', command: { kind: 'scroll', direction: 'down' } }, say: 'kerin' }) })
+    t.say('päike paistab hilisõhtuni ja metsad on täis marju')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(0)
+    expect(t.page().text).toBe('Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju')
+  })
+
+  it('document mode: outside it, the same dictation is verified (and a command verdict takes it back)', async () => {
+    const t = docSetup(CHAT('Tere.'), { ask: () => Promise.resolve({ intent: { kind: 'command', command: { kind: 'scroll', direction: 'down' } }, say: 'kerin' }) })
+    t.say('päike paistab hilisõhtuni')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.page().text).toBe('Tere.')
+  })
+
+  it('document mode: an utterance with a command verb is asked before anything is typed; its dictation verdict types it', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'), { ask: () => Promise.resolve({ intent: { kind: 'dictate', text: 'muuda maailma paremaks' }, say: '' }) })
+    t.say('muuda maailma paremaks')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    // Only the model's typing: nothing was typed first and taken back.
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([{ kind: 'setText', text: 'Eesti suvi on lühike. Muuda maailma paremaks' }])
+  })
+
+  it('document mode: an utterance with a command verb and no model is typed by the rules', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'))
+    t.say('vali hea pealkiri')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.page().text).toBe('Eesti suvi on lühike. Vali hea pealkiri')
+  })
+
+  it('document mode: "saada" sends nothing and the strip says so', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'))
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox')).toEqual([])
+    expect(t.state.line).toBe('Dokumendis ei saadeta.')
+    expect(t.page().text).toBe('Eesti suvi on lühike.')
+  })
+})
+
+describe('document mode (29.2): a pause does not end the sentence', () => {
+  it('pause: 15 s between the two halves of a sentence yields one sentence', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    t.say('minu arvates on see')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see väga hea mõte')
+  })
+
+  it('pause: 25 s between them yields two sentences', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    t.say('minu arvates on see')
+    await vi.advanceTimersByTimeAsync(25_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see. Väga hea mõte')
+  })
+
+  it('pause: the window runs from the last final, so three halves 15 s apart stay one sentence', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    t.say('minu arvates')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('on see')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see väga hea mõte')
+  })
+
+  it('pause: "punkt" and "uus lõik" are the breaks', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    for (const u of ['eesti suvi on lühike', 'punkt', 'päike paistab', 'uus lõik', 'sügis toob vihma']) {
+      t.say(u)
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+    await t.engine.idle()
+    expect(t.page().text).toBe('Eesti suvi on lühike. Päike paistab\nSügis toob vihma')
+    expect(t.ran).toContainEqual({ kind: 'format', style: 'paragraph' })
+  })
+
+  it('pause: outside document mode a chat box closes each final as before', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(CHAT(''))
+    t.say('minu arvates on see')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see. Väga hea mõte.')
+  })
+})
+
+describe('reading back (29.2): the engine hands the text to speak', () => {
+  it('loe: "loe viimane lause ette" hands exactly the last sentence of the box to speak', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju.'))
+    t.say('loe viimane lause ette')
+    await t.engine.idle()
+    expect(t.spoken).toEqual([{ text: 'Päike paistab hilisõhtuni ja metsad on täis marju.', lang: 'et-EE' }])
+    expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox')).toEqual([])
+    expect(t.asked).toHaveLength(0)
+  })
+
+  it('loe: "loe see ette" hands the whole box, in a chat box too', async () => {
+    const t = docSetup(CHAT('Tere. Jõuan homme.'))
+    t.say('loe see ette')
+    await t.engine.idle()
+    expect(t.spoken).toEqual([{ text: 'Tere. Jõuan homme.', lang: 'et-EE' }])
+  })
+})
