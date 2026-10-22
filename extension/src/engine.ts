@@ -14,7 +14,7 @@ import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import type { StripState } from './messages.ts'
 // ---------- wake word and places (29.4) ----------
-import { placeByNoun, placeCommand, placeNouns, placesFrom } from '../../src/core/places.ts'
+import { placeByNoun, placeCommand, placeNouns } from '../../src/core/places.ts'
 import type { Place } from '../../src/core/places.ts'
 import { createWake, wakeClose, wakeGate, wakeHeard, wakeOpen, wakeOpenWindow, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
 import type { WakeState } from '../../src/core/wake.ts'
@@ -970,8 +970,8 @@ export function createEngine(deps: EngineDeps): Engine {
 
   // ---------- wake word and places (29.4) ----------
   const wakeText = STRINGS[deps.lang].wake
-  /** Round 8 (29.4.2): his places; the defaults until the service worker answers. */
-  let places: Place[] = placesFrom(undefined)
+  /** Round 8 (29.4.2): his places, merged over the defaults by the offscreen document (setPlaces); none until then. */
+  let places: Place[] = []
   /** The model's place, resolved here; a noun no longer set opens nothing. */
   const placeStep = (noun: string): InpageStep => {
     const place = placeByNoun(places, noun)
