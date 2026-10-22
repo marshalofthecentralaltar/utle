@@ -1444,6 +1444,8 @@ edasi" and "keri tagasi" alone are still the 10 s rows):
 shortcuts move a fixed 5 or 10 s, the explicit amount sets `currentTime` on the element directly;
 when `currentTime` has not moved within `SHORTCUT_MS` (a player that ignores or resets the write),
 it falls back to pressing `l` or `j` (10 s each) `round(seconds / 10)` times, at least once.
+The line the bar shows and speaks names the amount (`browserDoing` in `src/core/strings.ts`:
+"Edasi üks minut.", "Tagasi 90 sekundit.", "Back 30 seconds."); without seconds it is unchanged.
 
 ### 29.2 Document mode (DOCS lane)
 
