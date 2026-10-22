@@ -14,7 +14,10 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { writeFileSync } from 'node:fs'
 import { hasConnective } from '../src/core/chain.ts'
-import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, PageIntent, TabSummary } from '../src/core/pageIntent.ts'
+import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, TabSummary } from '../src/core/pageIntent.ts'
+// ---------- wake word and places (29.4) ----------
+import { DEFAULT_PLACES, placeNouns } from '../src/core/places.ts'
+// ---------- end of wake word and places ----------
 import type { Lang } from '../src/core/strings.ts'
 import type { PageContext } from '../src/browser/protocol.ts'
 import { pageIntent } from '../server/intent.ts'
@@ -327,7 +330,7 @@ const GOOGLE_AND_YOUTUBE: TabSummary[] = [
 // ---------------------------------------------------------------------------------------------
 
 interface Expectation {
-  kind: PageIntent['kind']
+  kind: ModelIntent['kind']
   /** For command: the command kind. */
   command?: string
   /** For clickItem and focusItem: the id. */
@@ -346,6 +349,8 @@ interface Expectation {
   direction?: string
   /** Round 6: for insertSaved, the saved name. */
   saved?: string
+  /** Round 8 (29.4.2): for place, the noun. */
+  noun?: string
 }
 
 /** One ask of the simulated loop. */
@@ -410,6 +415,11 @@ const YT_CHAIN = "mine youtube'i otsi kassivideod mängi esimene ja pane heli va
 const YT_GOALS = ["mine youtube'i", 'otsi kassivideod', 'mängi esimene', 'pane heli vaiksemaks']
 const WA_CHAIN = 'mine whatsappi, ava Karini viimane sõnum, kustuta see kõigi jaoks'
 const WA_GOALS = ['mine whatsappi', 'ava Karini viimane sõnum', 'kustuta see kõigi jaoks']
+
+// ---------- wake word and places (29.4) ----------
+/** Round 8: a new tab with his places' nouns in the context, as the engine sends it. */
+const PLACES_PAGE: PageContext = { ...NEW_TAB, places: placeNouns(DEFAULT_PLACES) }
+// ---------- end of wake word and places ----------
 
 const CASES: Case[] = [
   // --- Round 4: chains of goals. The first ask has no chain and must plan the rest; each later ask
@@ -571,14 +581,24 @@ const CASES: Case[] = [
   one('kirjuta midagi', NEW_TAB, UNCLEAR),
   one('mis kell on', NEW_TAB, UNCLEAR),
   one('tere', NEW_TAB, UNCLEAR),
+
+  // ---------- wake word and places (29.4) ----------
+  // Round 8: his places by noun. The page lists the nouns only; the answer must be place with the noun.
+  one('vaata uudiseid', PLACES_PAGE, { kind: 'place', noun: 'uudised' }),
+  one('pane raadio käima', PLACES_PAGE, { kind: 'place', noun: 'raadio' }),
+  one('mis ilm on', PLACES_PAGE, { kind: 'place', noun: 'ilm' }),
+  one('ava mu mail', PLACES_PAGE, { kind: 'place', noun: 'mail' }),
+  // ---------- end of wake word and places ----------
 ]
 
 // ---------------------------------------------------------------------------------------------
 // Matching and the simulated loop
 // ---------------------------------------------------------------------------------------------
 
-function matchesOne(intent: PageIntent, e: Expectation): string | null {
+function matchesOne(intent: ModelIntent, e: Expectation): string | null {
   if (intent.kind !== e.kind) return `kind ${intent.kind}`
+  // Round 8 (29.4.2): the noun as listed, never an address.
+  if (intent.kind === 'place') return e.noun && intent.noun.trim().toLowerCase() !== e.noun ? `noun ${intent.noun}` : null
   if (intent.kind === 'edit') return e.edit && intent.edit.kind !== e.edit ? `edit ${intent.edit.kind}` : null
   if (intent.kind === 'insertSaved') return e.saved && intent.name.trim().toLowerCase() !== e.saved ? `name ${intent.name}` : null
   if (intent.kind !== 'command') return null
@@ -598,7 +618,7 @@ function matchesOne(intent: PageIntent, e: Expectation): string | null {
 }
 
 /** null when the intent matches any accepted expectation, else the first mismatch. */
-function matches(intent: PageIntent, expected: Expectation | Expectation[]): string | null {
+function matches(intent: ModelIntent, expected: Expectation | Expectation[]): string | null {
   const options = Array.isArray(expected) ? expected : [expected]
   let first: string | null = null
   for (const option of options) {
@@ -609,8 +629,10 @@ function matches(intent: PageIntent, expected: Expectation | Expectation[]): str
   return first
 }
 
-function describe(intent: PageIntent): string {
+function describe(intent: ModelIntent): string {
   switch (intent.kind) {
+    case 'place':
+      return `place ${JSON.stringify(intent.noun)}`
     case 'command':
       return `command ${JSON.stringify(intent.command)}`
     case 'dictate':
@@ -627,7 +649,7 @@ function describe(intent: PageIntent): string {
 }
 
 /** The step's action string, as the engine reports it back: "command clickItem 12", "dictate". */
-function actionOf(intent: PageIntent): string {
+function actionOf(intent: ModelIntent): string {
   if (intent.kind === 'edit') return `edit ${intent.edit.kind}`
   if (intent.kind !== 'command') return intent.kind
   const c = intent.command

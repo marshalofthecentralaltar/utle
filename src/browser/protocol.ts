@@ -160,6 +160,10 @@ export interface PageContext {
   hints: boolean
   /** Round 6 (26.1): the NAMES of his saved values, never the values. Added by the engine, not the page. */
   saved?: string[]
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.2): the NOUNS of his places (Minu kohad), never an address. Added by the engine. */
+  places?: string[]
+  // ---------- end of wake word and places ----------
 }
 
 /**
