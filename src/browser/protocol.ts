@@ -88,6 +88,20 @@ export type BrowserCommand =
   | { kind: 'openSettings'; section?: 'andmed'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
   /** One utterance for the entry flow on the options page; only that page answers it. */
   | { kind: 'savedEntry'; utterance: string }
+  // ---------- reading aloud (29.5) ----------
+  /**
+   * page, box, selection: the page answers with `reading` (the text and its sentences) and the
+   * offscreen document speaks it; continue and stop act on the reading in progress there.
+   */
+  | { kind: 'read'; what: ReadWhat }
+
+// ---------- reading aloud (29.5) ----------
+export type ReadWhat = 'page' | 'box' | 'selection' | 'continue' | 'stop'
+/** What a read page, box or selection answers: the text read (capped at 20 000 characters) and its sentences in order. */
+export interface ReadingText {
+  text: string
+  sentences: string[]
+}
 
 export type FieldKind = 'email' | 'tel' | 'code' | 'number' | 'password' | 'text'
 
@@ -192,7 +206,7 @@ export interface BoxState {
 export type BrowserFailure = 'no_extension' | 'no_target' | 'not_found' | 'not_allowed' | 'failed'
 
 export type BrowserResult =
-  | { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxState; page?: PageContext }
+  | { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxState; page?: PageContext; reading?: ReadingText }
   | { ok: false; code: BrowserFailure; message: string }
 
 /** Posted by the page with window.postMessage(request, window.location.origin). */
