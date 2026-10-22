@@ -379,7 +379,7 @@ const KEEPS_HINTS = new Set<BrowserCommand['kind']>([
   'openSettings', 'savedEntry',
 ])
 /** Commands that leave the same message box in front, so the undo texts still belong to it. */
-const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints'])
+const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints', 'read'])
 
 // Round 3 (editing): the caret, a selection, typing at the caret and the editing keys all stay in the
 // box in front; Escape, Enter and Tab leave it (a dialog closes, a form submits, the focus moves).
