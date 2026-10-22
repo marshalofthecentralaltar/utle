@@ -17,7 +17,7 @@ import { buildExtension } from '../../scripts/ext.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
 // ---------- wake word and places (29.4) ----------
-import { placeCommand, placesFrom } from '../../src/core/places.ts'
+import { placeCommand, placeRowsFrom, placeVoice, placesFrom } from '../../src/core/places.ts'
 // ---------- end of wake word and places ----------
 import { createUtleServer } from '../../server/app.ts'
 
@@ -1021,27 +1021,58 @@ async function main(): Promise<void> {
       line('savedEntry', 'with the options page closed -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
     }
 
-    // ---------- wake word and places (29.4): Minu kohad on the settings page, a place opened by its noun, the wake mode's wiring ----------
+    // ---------- wake word and places (29.4): a place saved by voice and opened by its noun, Minu kohad on the settings page, the wake mode's wiring ----------
     {
       const extensionId = new URL(sw.url()).host
+      const storedPlaces = async (): Promise<unknown> => sw.evaluate(async () => (await chrome.storage.local.get('places')).places)
+      // On page two he says "lisa koht uudised": the real rules of places.ts make the command the engine sends.
+      const newsPage = `${T}/page-two.html`
+      await send({ kind: 'goTo', url: newsPage })
+      const voice = placeVoice('lisa koht uudised', false)
+      const saveCommand = voice?.noun ? { kind: 'savePlace', noun: voice.noun } : null
+      r = saveCommand === null ? 'timeout' : await send(saveCommand)
+      const savedRows = placeRowsFrom(await storedPlaces())
+      line('savePlace', '"lisa koht uudised" on page two -> his row', r !== 'timeout' && r.ok && r.tab?.url === newsPage && JSON.stringify(savedRows) === JSON.stringify([{ noun: 'uudised', url: newsPage }]), `${describe(r)} command=${JSON.stringify(saveCommand)} rows=${JSON.stringify(savedRows)}`)
+      // Elsewhere, "vaata uudiseid" opens it.
+      await send({ kind: 'goTo', url: `${T}/page-three.html` })
+      const place = placeCommand('vaata uudiseid', placesFrom(await storedPlaces()))
+      r = place === null ? 'timeout' : await send({ kind: 'goTo', url: place.url })
+      const opened = await activeTab()
+      line('goTo', '"vaata uudiseid" from page three -> page two', r !== 'timeout' && r.ok && opened?.url === newsPage && opened.title === 'Page two', `${describe(r)} place=${JSON.stringify(place)} tab=${JSON.stringify(opened)}`)
+
       const options = await ctx.newPage()
       await options.setViewportSize({ width: 1280, height: 1100 })
       await options.goto(`chrome-extension://${extensionId}/options.html#kohad`)
       await options.waitForSelector('#placeList .place-item', { timeout: 5000 }).catch(() => undefined)
       const listed = await options.evaluate(() => [...document.querySelectorAll<HTMLElement>('#placeList .place-item')].map((e) => e.dataset.noun ?? ''))
-      check('kohad: the settings page lists the seven default places', JSON.stringify(listed) === JSON.stringify(['uudised', 'raadio', 'ilm', 'mail', 'kalender', 'kaart', 'video']), JSON.stringify(listed))
-      // His own news site, by the form: the fixture page stands in for it.
-      const mine = `${T}/page-two.html`
+      const shownVoice = await options.evaluate(() => document.querySelector('#placeList .place-item[data-noun="uudised"] .place-url')?.textContent ?? '')
+      check('kohad: the settings page lists the seven places, uudised as saved by voice', JSON.stringify(listed) === JSON.stringify(['uudised', 'raadio', 'ilm', 'mail', 'kalender', 'kaart', 'video']) && shownVoice === newsPage, `${JSON.stringify(listed)} uudised=${shownVoice}`)
+      // The helper's path: the form adds a place that has no default.
+      const bank = `${T}/page-one.html`
       await options.mouse.move(0, 0)
-      await options.fill('#placeNoun', 'uudised')
-      await options.fill('#placeUrl', mine)
+      await options.fill('#placeNoun', 'pank')
+      await options.fill('#placeUrl', bank)
       await options.click('#placeAdd')
-      const storedRows = await waitUntil(async () => (await sw.evaluate(async () => ((await chrome.storage.local.get('places')).places as unknown[] | undefined)?.length ?? 0)) === 1, 3000)
-      const shownUrl = await options.evaluate(() => document.querySelector('#placeList .place-item[data-noun="uudised"] .place-url')?.textContent ?? '')
-      check('kohad: the form adds his row, which replaces the default', storedRows && shownUrl === mine, `stored=${storedRows} shown=${shownUrl}`)
+      const twoRows = await waitUntil(async () => placeRowsFrom(await storedPlaces()).length === 2, 3000)
+      const shownBank = await options.evaluate(() => document.querySelector('#placeList .place-item[data-noun="pank"] .place-url')?.textContent ?? '')
+      check('kohad: the form adds a place of his own (pank)', twoRows && shownBank === bank, `rows=${JSON.stringify(placeRowsFrom(await storedPlaces()))} shown=${shownBank}`)
+      // The page keeps the strip's height free at its end (options.html pads <main>): scrolled to the bottom,
+      // the last of the page ends above the bar, so nothing on it stays hidden under the strip.
+      await options.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+      await options.waitForTimeout(200)
+      const clear = await options.evaluate(() => {
+        const end = document.querySelector('main')?.lastElementChild?.getBoundingClientRect().bottom ?? -1
+        const pad = Number.parseFloat(getComputedStyle(document.documentElement).paddingBottom) || 0
+        return { pageEnd: Math.round(end), barTop: Math.round(window.innerHeight - pad), pad }
+      })
+      check('kohad: scrolled to the end, the settings page ends above the strip', clear.pad >= 96 && clear.pageEnd > 0 && clear.pageEnd <= clear.barTop, JSON.stringify(clear))
       await mkdir(join(extensionDir, 'test/out'), { recursive: true })
+      // The whole section in one picture: a tall window, so the strip sits below it.
+      await options.setViewportSize({ width: 1280, height: 1900 })
       await options.evaluate(() => document.getElementById('kohad')?.scrollIntoView({ block: 'start' }))
+      await options.waitForTimeout(200)
       await options.locator('#kohad').screenshot({ path: join(extensionDir, 'test/out/places.png') })
+      await options.setViewportSize({ width: 1280, height: 1100 })
 
       // Wake mode: the choice shows the word's field, the word is stored, and the offscreen document is made with it.
       const wakeChoice = options.locator('#listenMode .choice').nth(2)
@@ -1058,19 +1089,20 @@ async function main(): Promise<void> {
       const word = await sw.evaluate(async () => (await chrome.storage.local.get('wakeWord')).wakeWord)
       check('wake: the mode shows the word field, stores the word, and the offscreen document gets &wake=', panelShown && word === 'Kuule' && wakeDoc, `panel=${panelShown} word=${JSON.stringify(word)} offscreen=${await offscreenUrl()}`)
       await options.locator('#listenMode').screenshot({ path: join(extensionDir, 'test/out/wake-settings.png') })
-      // Back to the toggle: the document made for wake mode is replaced, so no gate stays behind.
+      // Back to the toggle: the document made for wake mode is replaced by one without the gate.
       await options.mouse.move(0, 0)
       await options.locator('#listenMode .choice').nth(0).click()
-      const gateGone = await waitUntil(async () => !(await offscreenUrl()).includes('&wake='), 5000)
-      check('wake: back to the toggle, the offscreen document has no gate', gateGone, `offscreen=${await offscreenUrl()}`)
+      const replaced = await waitUntil(async () => {
+        const url = await offscreenUrl()
+        return url.includes('/offscreen.html?') && !url.includes('&wake=')
+      }, 5000)
+      check('wake: back to the toggle, a new offscreen document without &wake=', replaced, `offscreen=${await offscreenUrl()}`)
       await options.close()
-      // "vaata uudiseid": the real rules of places.ts over what the settings page stored, as the engine resolves it.
-      const rows = await sw.evaluate(async () => (await chrome.storage.local.get('places')).places)
-      const place = placeCommand('vaata uudiseid', placesFrom(rows))
-      r = place === null ? 'timeout' : await send({ kind: 'goTo', url: place.url })
-      const opened = await activeTab()
-      line('goTo', '"vaata uudiseid" -> his place for uudised (page two)', r !== 'timeout' && r.ok && opened?.url === mine && opened.title === 'Page two', `${describe(r)} place=${JSON.stringify(place)} tab=${JSON.stringify(opened)}`)
 
+      // "eemalda koht uudised": his row hides it, so the default is gone too.
+      r = await send({ kind: 'removePlace', noun: 'uudised' })
+      const afterRemove = placesFrom(await storedPlaces())
+      line('removePlace', '"eemalda koht uudised" -> no uudised place', r !== 'timeout' && r.ok && !afterRemove.some((p) => p.noun === 'uudised') && placeCommand('vaata uudiseid', afterRemove) === null, `${describe(r)} nouns=${afterRemove.map((p) => p.noun).join(',')}`)
       await sw.evaluate(() => chrome.storage.local.remove(['places', 'wakeWord']))
     }
     // ---------- end of wake word and places ----------

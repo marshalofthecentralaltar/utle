@@ -228,9 +228,12 @@ What the listing needs that the repository cannot hold:
   uudised → Postimees, raadio → Vikerraadio's live page (otse.err.ee), ilm → Ilmateenistus, mail →
   Gmail, kalender → Google Kalender, kaart → Google Maps, video → YouTube; no bank. The model is told
   only the words and may answer one of them in other phrasings; it never sees an address. Another
-  station once the radio page is open: `vajuta Raadio 2` or the numbers, as on any page. The settings
-  page's **Minu kohad** section lists them; type a word and an address (`postimees.ee`) and **Lisa
-  koht** to add one or replace a default; **Eemalda** removes one. Stored under `places`.
+  station once the radio page is open: `vajuta Raadio 2` or the numbers, as on any page. To add your
+  own by voice, open the page and say `lisa koht uudised` (or `salvesta see koht uudised`, `see on mu
+  uudised`, `save this place as news`): the address of the tab in front is saved under that word and
+  the strip says so. `lisa koht` alone asks for the word; say it next. `eemalda koht uudised` removes
+  one. The settings page's **Minu kohad** section lists them; a helper can also type a word and an
+  address (`postimees.ee`) and press **Lisa koht**; **Eemalda** removes one. Stored under `places`.
 - When the speech server falls behind by more than one second, a thin dim line under the amber
   one says "Kõne jääb maha N s" until it has caught up. While a chain of goals runs (below) a
   line in the same place says where it is: "2/4 · ava Karini viimane sõnum".
