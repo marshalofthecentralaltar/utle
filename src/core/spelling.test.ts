@@ -209,3 +209,18 @@ describe('review of round 5', () => {
     expect(spokenValueOnly(text)).toBe(value)
   })
 })
+
+// ---------- mail (29.3.6) ----------
+// The plan's three read-backs (round 8, section 2 step 3). Ralf's real-voice list was not made, so
+// these are the shapes he named, through the same typedFromSpoken the e-mail, tel and code fields use.
+describe('mail (29.3.6): the three read-backs of round 8', () => {
+  it('read-back 1: an ID code said digit by digit is the eleven digits', () => {
+    expect(typedFromSpoken('kolm üheksa null null üks null üks null null null null', 'code')).toBe('39001010000')
+  })
+  it('read-back 2: a phone number with the country code is +372 and the digits', () => {
+    expect(typedFromSpoken('pluss kolm seitse kaks viis üks kaks kolm neli viis kuus seitse', 'tel')).toBe('+37251234567')
+  })
+  it('read-back 3: an e-mail with "punkt" and "ät" is the address', () => {
+    expect(typedFromSpoken('mari punkt maasikas ät example punkt ee', 'email')).toBe('mari.maasikas@example.ee')
+  })
+})

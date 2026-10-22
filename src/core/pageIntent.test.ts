@@ -44,3 +44,62 @@ describe('round 6: the request carries saved names within limits (26.1)', () => 
     expect(IntentRequestSchema.safeParse({ ...base, page: { ...PAGE, saved: ['x'.repeat(61)] } }).success).toBe(false)
   })
 })
+
+// ---------- mail (29.3) ----------
+describe('mail (29.3.3): composeTo is validated against the page\'s contacts', () => {
+  const CV: PageContext = {
+    url: 'https://www.cv.ee/mari-maasikas',
+    title: 'Mari Maasikas – CV',
+    box: { present: false, text: '', armed: false, kind: 'none' },
+    items: [{ id: 1, role: 'link', text: 'Kirjuta mulle' }],
+    media: null,
+    hints: false,
+    contacts: [
+      { kind: 'email', value: 'mari.maasikas@example.ee', label: '' },
+      { kind: 'email', value: 'mari.tookoht@firma.ee', label: 'Kirjuta mulle' },
+      { kind: 'tel', value: '+37251234567', label: '+372 5123 4567' },
+    ],
+  }
+  const composeTo = (address: string, extra: Record<string, string> = {}): unknown => ({ kind: 'command', command: { kind: 'composeTo', address, ...extra } })
+
+  it('composeTo: an address of the page is accepted, ignoring case, with a subject and a body', () => {
+    expect(pageIntentFrom(composeTo('mari.maasikas@example.ee'), request(CV))).toEqual({ kind: 'command', command: { kind: 'composeTo', address: 'mari.maasikas@example.ee' } })
+    expect(pageIntentFrom(composeTo('Mari.Tookoht@Firma.ee', { subject: 'CV', body: 'Tulen homme.' }), request(CV))).toEqual({
+      kind: 'command',
+      command: { kind: 'composeTo', address: 'Mari.Tookoht@Firma.ee', subject: 'CV', body: 'Tulen homme.' },
+    })
+  })
+
+  it('composeTo: an address that is not on the page is rejected: the model never invents a recipient', () => {
+    expect(pageIntentFrom(composeTo('mari@gmail.com'), request(CV))).toBeNull()
+    expect(pageIntentFrom(composeTo('mari.maasikas@example.ee'), request({ ...CV, contacts: undefined }))).toBeNull()
+  })
+
+  it('composeTo: a bad e-mail shape is rejected, so is a phone number', () => {
+    expect(pageIntentFrom(composeTo('mari.maasikas@example'), request(CV))).toBeNull()
+    expect(pageIntentFrom(composeTo('mari.maasikas@example.ee extra'), request(CV))).toBeNull()
+    expect(pageIntentFrom(composeTo('+37251234567'), request(CV))).toBeNull()
+    expect(pageIntentFrom(composeTo(''), request(CV))).toBeNull()
+    expect(pageIntentFrom({ kind: 'command', command: { kind: 'composeTo' } }, request(CV))).toBeNull()
+  })
+
+  it('compose: a name is accepted anywhere; an address in to only when it is on the page', () => {
+    expect(pageIntentFrom({ kind: 'command', command: { kind: 'compose', to: 'Mari' } }, request(CV))).toEqual({ kind: 'command', command: { kind: 'compose', to: 'Mari' } })
+    expect(pageIntentFrom({ kind: 'command', command: { kind: 'compose', to: 'mari.maasikas@example.ee' } }, request(CV))).not.toBeNull()
+    expect(pageIntentFrom({ kind: 'command', command: { kind: 'compose', to: 'keegi@muu.ee' } }, request(CV))).toBeNull()
+  })
+
+  it('mailField: subject and cc', () => {
+    expect(pageIntentFrom({ kind: 'command', command: { kind: 'mailField', field: 'subject', text: 'Koosolek' } }, request(CV))).not.toBeNull()
+    expect(pageIntentFrom({ kind: 'command', command: { kind: 'mailField', field: 'cc' } }, request(CV))).not.toBeNull()
+    expect(pageIntentFrom({ kind: 'command', command: { kind: 'mailField', field: 'bcc' } }, request(CV))).toBeNull()
+  })
+
+  it('the request carries at most 20 contacts', () => {
+    const base: IntentRequest = { lang: 'et', utterance: 'kirjuta talle meil', page: CV, tabs: [], recent: [] }
+    expect(IntentRequestSchema.safeParse(base).success).toBe(true)
+    const many = Array.from({ length: 21 }, (_, i) => ({ kind: 'email' as const, value: `a${i}@b.ee`, label: '' }))
+    expect(IntentRequestSchema.safeParse({ ...base, page: { ...CV, contacts: many } }).success).toBe(false)
+    expect(IntentRequestSchema.safeParse({ ...base, page: { ...CV, contacts: [{ kind: 'fax', value: '1', label: '' }] } }).success).toBe(false)
+  })
+})

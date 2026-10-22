@@ -348,3 +348,58 @@ describe('round 6: saved values (26.1, 26.3)', () => {
     expect(INTENT_SYSTEM_PROMPT).toContain('insertSaved')
   })
 })
+
+// ---------- mail (29.3) ----------
+describe('mail (29.3.3, 29.3.7): composeTo', () => {
+  const CV: IntentRequest['page'] = {
+    url: 'https://www.cv.ee/mari-maasikas',
+    title: 'Mari Maasikas – CV',
+    box: { present: false, text: '', armed: false, kind: 'none' },
+    items: [
+      { id: 1, role: 'other', text: '[pealkiri] Mari Maasikas' },
+      { id: 2, role: 'link', text: 'Kirjuta mulle' },
+      { id: 3, role: 'text', text: 'Projektijuht, kümme aastat kogemust' },
+    ],
+    media: null,
+    hints: false,
+    contacts: [
+      { kind: 'email', value: 'mari.maasikas@example.ee', label: 'Saladus silt' },
+      { kind: 'tel', value: '+37251234567', label: 'helista mulle' },
+    ],
+  }
+  const UTTERANCE = 'võta see meiliaadress siit lehelt ja kirjuta talle, et tulen homme'
+  const COMPOSE = answer({ intent: { kind: 'command', command: { kind: 'composeTo', address: 'mari.maasikas@example.ee', subject: null, body: 'Tulen homme.' } }, say: 'kirjutan Marile', done: true, plan: [] })
+
+  it('the user turn lists the contacts as values only, never their labels', async () => {
+    const { client, calls } = fakeClient(COMPOSE)
+    await pageIntent(request({ page: CV, utterance: UTTERANCE, care: 'careful' }), { client, model: 'm' })
+    const turn = JSON.stringify(calls[0]?.messages)
+    expect(turn).toContain('contacts: e-mail mari.maasikas@example.ee, tel +37251234567')
+    expect(turn).not.toContain('Saladus silt')
+    expect(turn).not.toContain('helista mulle')
+  })
+
+  it('a page without contacts says none', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client, model: 'm' })
+    expect(JSON.stringify(calls[0]?.messages)).toContain('contacts: none')
+  })
+
+  it('an address on the page is answered; one the model made up is unclear', async () => {
+    const { client } = fakeClient(COMPOSE, answer({ intent: { kind: 'command', command: { kind: 'composeTo', address: 'keegi@muu.ee', subject: null, body: null } }, say: '', done: true, plan: [] }))
+    const good = await pageIntent(request({ page: CV, utterance: UTTERANCE }), { client, model: 'm' })
+    expect(good.intent).toEqual({ kind: 'command', command: { kind: 'composeTo', address: 'mari.maasikas@example.ee', body: 'Tulen homme.' } })
+    const invented = await pageIntent(request({ page: CV, utterance: 'kirjuta talle meil' }), { client, model: 'm' })
+    expect(invented.intent.kind).toBe('unclear')
+  })
+
+  it('logs the kind and the time for a composeTo ask, never the address, the body or the page text', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}))
+    const { client } = fakeClient(COMPOSE)
+    await pageIntent(request({ page: CV, utterance: UTTERANCE, care: 'careful' }), { client, model: 'm' })
+    const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
+    expect(logged.some((line) => /^\[intent\] kind=command done=true plan=0 care=careful ms=\d+$/.test(line))).toBe(true)
+    const all = logged.join('\n')
+    for (const secret of ['mari.maasikas', 'example.ee', '37251234567', 'Tulen homme', 'tulen homme', 'Projektijuht', 'Mari Maasikas', 'cv.ee', 'composeTo']) expect(all).not.toContain(secret)
+  })
+})
