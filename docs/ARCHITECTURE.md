@@ -1465,4 +1465,119 @@ The line the bar shows and speaks names the amount (`browserDoing` in `src/core/
 
 ### 29.6 Dictation cleaning: the measurement (FLOW lane)
 
-(filled by the FLOW lane)
+**Stand-in, not the measurement the plan asked for.** The plan wanted 20 of Ralf's own captured
+finals. They do not exist: `UTLE_CAPTURE` was never run, there is no `log.tsv`. Everything below is
+measured on a set this lane wrote, spoken by a synthetic voice. The verdict is provisional until the
+same script runs on his 20 finals.
+
+**Prior art** (web, 2026-10-22; vendor pages unless marked)
+
+| Product | What it does to raw speech | Mechanism (as far as public) | Latency claimed | Estonian | Price |
+|---|---|---|---|---|---|
+| Wispr Flow | Drops "um"/"uh" and pauses; backtrack ("2… actually 3" becomes 3); punctuation from pauses plus spoken marks; spoken numbering becomes a list; tone per app ("styles", English and desktop only); learns a dictionary; snippets. Command Mode on Pro (third-party source) | Cloud only. ASR, then a fine-tuned Llama cleanup pass on dedicated Baseten inference | Under 700 ms end to end, measured at p99 (Baseten case study) | Unknown: "100+ languages", no list found | Free; Pro $15/mo ($12 annual); Growth $23/mo |
+| Superwhisper | "Voice to Text" mode: no AI. Message, Mail and Note modes: an LLM cleans the transcript, with a tone slider. Super mode adds context (app, copied text, selected text). Custom modes take your own prompt. A mode can switch on by app | Two stages: speech model (local or cloud, picked per mode), then LLM processing. App context is read between the two. Its docs warn that custom prompts make the LLM answer the dictation or add content | None found | Likely through Whisper-class models ("100+ languages"); not verified | $8.49/mo, $84.99/yr, $249.99 lifetime |
+| Aqua Voice | "Cleaned up and formatted for wherever you're typing"; custom instructions; Deep Context reads the screen for names and terms; dictionary. Filler handling not spelled out | Own ASR model (Avalon), cloud. Instant mode and Realtime (streaming) mode | Inserts text in about 1 s, "as fast as ~450 ms" | **Yes** (49 languages) | Free 1,000 words; Pro $8/mo annual, $10 monthly; Max $24/mo annual |
+| macOS Dictation | Auto-punctuation (commas, periods, question marks) in some languages; spoken punctuation and editing commands. No filler removal | On-device on Apple silicon for supported languages, otherwise Apple's servers | None | **No** (not in the Dictation list) | Built in |
+| Windows 11 voice typing (Win+H) | Optional auto-punctuation; Estonian spoken commands "koma", "punkt", "küsimärk", "hüüumärk", "uus rida", "kustuta see". Fluid dictation (fillers out, grammar fixed) is English only, on-device, Copilot+ PCs | Online (Azure Speech) | None | **Yes** for voice typing and its commands; no for Fluid dictation | Built in |
+
+Sources: wisprflow.ai/features, wisprflow.ai/pricing, docs.wisprflow.ai/articles/3191899797-use-flow-with-multiple-languages,
+baseten.co/customers/wispr-flow, eesel.ai/blog/wispr-flow-pricing (Command Mode; third party);
+superwhisper.com/docs/modes, ai.superwhisper.com/docs/modes/custom, superwhisper.com/docs/common-issues/context,
+ai.superwhisper.com/docs/common-issues/hallucinations.md, superwhisper.com/docs/billing/plans.md;
+aquavoice.com/llms.txt, aquavoice.com/faq, aquavoice.com/guide/languages;
+apple.com/macos/feature-availability, support.apple.com/guide/mac-help/use-dictation-mh40584/mac;
+support.microsoft.com/en-us/windows/use-voice-typing-to-talk-instead-of-type-on-your-pc-fec94565-c4bd-329d-e59a-af033fa5689f.
+
+Three things carry over from all of them. The cleaning step is a separate LLM pass after the
+recogniser. It is tuned per app. Speed is sold at well under a second. The only Estonian-capable
+products with any cleaning are Aqua (unverified for Estonian fillers) and Windows (spoken marks only).
+
+**What Ütle already does to dictation, and what it does not**
+
+| Behaviour | Ütle today |
+|---|---|
+| Punctuation and capitals | The TalTech decoder writes them itself ("Tere, Mari. Ma jõuan homme kell kolm."), but not every time: one voice got none at all, and another got a stray opening quote (lines 5 and 6 of the set). `joinDictation` (`src/core/inpage.ts`) capitalises a sentence start and adds a full stop after three or more words. |
+| Spoken numbers | `typedFromSpoken` text mode turns three or more number words in a row into digits. A decoder comma ends the run, so "viis, viis, viis üks kaks kolm neli" is typed as "viis, viis, 51234" (checked). |
+| Spoken punctuation ("koma", "punkt") | Only in e-mail and code fields. In a message the words "koma" and "punkt" are typed as words (checked). |
+| Fillers, restarts, self-corrections | Nothing. The words are typed as heard. |
+| Repair by voice | "võta tagasi" (the undo stack of earlier box texts), "kustuta viimane sõna/lause", "asenda X sõnaga Y", "mitte X vaid Y". In document mode the model proposes ops and the preview shows the diff (`diffSegments`). |
+| The model and dictation | Type first, verify after (22.2). The intent model's `dictate.text` ("tidied into a sentence") is never typed: when it says `dictate`, the rules' words stay. |
+
+New finding from the decoder: **the TalTech model hears the filler "ee" as "ei" ("no", "not")**.
+It did so in both lines where the voice said it: "Ei noh, ma arvan…" and "Ei, Eesti kirjandus ei
+kujunes…". So a filler turns into a negation. That is the most dangerous kind of change to
+remove automatically, because a real "ei" must stay (line 19).
+
+**The set** (`scripts/fixtures/flow-set.tsv`, 20 lines, `raw<TAB>meant`). Every `raw` is real
+decoder output (`scripts/asr-file.ts`, TalTech model with the Silero detector) from a synthetic
+voice (TartuNLP). Lines 1 to 6 are the repository's fixtures: `et-dictate-send`, `live-vad-saada`,
+`et-jah`, `et-sentence`, `speaker-set/other-kalev-3` and `speaker-set/other-albert-3`. Lines 1 to 3
+are the controls. Lines 7 to 20 this lane wrote, spoke with the voice "mari" and decoded. They
+cover fillers (7, 8, 14, 17, 18), restarts (11, 15), self-corrections (9, 10, 16), a phone number
+(12), spoken punctuation (13), and traps where "ei" and "tegelikult" are meant (19, 20). The
+decoder added its own errors, and they stay in `raw`: "võitu" for "võid", "Egaarel … tööl" for
+"ee Kaarel", "trend" for "trenn", "igav igav", a trailing "siis".
+
+**The measurement** (`scripts/flow-eval.ts`). WER is Levenshtein distance over lowercase words with
+punctuation stripped, against `meant`. Effort is `low`, as the server's quick asks use, and
+temperature is the API default. Runs a to c went in parallel with the haiku and sonnet runs. "Ütle
+today" means `raw` plus the rules above; it differs from `raw` only on line 12.
+
+| Model | Output | Runs | WER raw / Ütle today | WER cleaned | p50 / p90 latency | Tokens in / out per line | USD per 1000 | Meaning changes |
+|---|---|---|---|---|---|---|---|---|
+| claude-opus-5-5 | plain text | 3 (+1 earlier) | 28.0 % / 25.2 % | **3.5, 3.5, 3.5 %** (earlier run 4.2 %) | 1350, 1720, 1281 ms (earlier 1282) / 3136, 3415, 3173 ms | 709 / 61–63 | 4.05–4.10 | **0 of 20** in every run |
+| claude-opus-5-5 (orchestrator re-run) | plain text | 1 | 28.0 % | 4.2 % (6/143) | 1370 ms / not reported | not reported | not reported | 0 of 20 (flagged #10 võitu, #14 ei, #17 egaarel tööl, #19 trend; none a meaning change) |
+| claude-sonnet-5-5 | plain text | 1 | 28.0 % | 13.3 % | 1100 / 2799 ms | 709 / 55 | 1.97 | 1 of 20 |
+| claude-haiku-5-5 | plain text | 1 | 28.0 % | 72.7 % | 854 / 1324 ms | 709 / 40 | 0.09 | 3 of 20 |
+| claude-opus-5-5 | structured `{text}` | 1 | 28.0 % | 2.1 % | 3481 / 4966 ms | 893 / 31 | 4.19 | 0 of 20 |
+| claude-sonnet-5-5 | structured `{text}` | 1 | 28.0 % | 3.5 % | 1441 / 3724 ms | 893 / 46 | 2.25 | 0 of 20 |
+| claude-haiku-5-5 | structured `{text}` | 1 | 28.0 % | 5.6 % | 1537 / 2417 ms | 893 / 32 | 0.11 | 2 of 20 |
+
+**Meaning changes, read line by line.** A meaning change is something the cleaning added, dropped,
+or got the wrong way round compared with `raw`. A decoder word the cleaning left in is not one.
+
+- Sonnet, plain text, #10: "Too poest piima ja leiba ei, ma mõtlen piima ja võitu" became "Too poest piima ja võid.", then a blank line, "Hmm, "võitu" — ära paranda sõnu. Jätan öeldud kujul.", then "Too poest piima ja võitu.". Its own deliberation went into the answer and would have been typed.
+- Haiku, plain text, the same failure on three lines: #16 "Uuringus osales kakskümmend vabandust kolmkümmend õpilast" became a first try, then "Hmm, wait: the rules say…", then a second try; #17 "…Tartus tööl." became "…Tartus. Tööl." plus "Hmm, "tööl" on siin eraldi lausena…"; #19 "…mul on trend." became "…mul on tren." plus "Hmm, "trend" ei sobi siin…".
+- Haiku, structured: #16 "kakskümmend vabandust kolmkümmend" became "kakskümmend, õigemini kolmkümmend": the retracted number stays. #17 "…ma elan Tartus tööl." became "…ma elan Tartus. Töötan.": a sentence he did not say.
+- Opus (all four plain runs and the structured run) and Sonnet structured: none.
+
+Left in by every model, and not counted: #17 "Egaarel" and "tööl" (decoder). #19 "trend" (decoder; Opus structured changed it to "trenn"). #14 and #7 the leading "Ei," that was a misheard "ee": Opus plain kept it on #14, Opus structured removed it, Sonnet structured kept it on both. #9 a trailing "siis". In the earlier Opus run, #10 kept "võitu".
+
+**The ee/ei hazard.** The 0 of 20 above holds only because this set's `meant` says which "ei" was a
+negation and which was a misheard "ee". The cleaner has no such knowledge: it guesses, from the
+sentence alone, whether he said "not" or hesitated, on a decoder that turns his "ee" into "ei".
+Line 14 shows one side of it. Raw "Ei, Eesti kirjandus ei kujunes välja…" was cleaned to "…kirjandus
+kujunes välja…" in every Opus run. The cleaner removed a mid-sentence "ei". Here that was right, by
+this set's word. In a sentence where he meant "ei", the same rule removes his negation and types the
+opposite of what he said. Line 19 shows the other side. "Ei, ma ei saa täna tulla" kept both of its
+"ei", correctly. These two lines differ only in whether the sentence still parses with "ei" in it.
+That is the model's guess, not a fact the server can check. A dropped "not" reads fluently, and a
+person who cannot use his hands may not see it before "saada". It is the most dangerous change this
+lane found.
+
+**Verdict per the kill rule (kill if cleaning changes meaning in more than 1 of 20):** as applied, 0
+of 20 on this stand-in for Opus, in each of four runs plus the orchestrator's re-run. Word error
+fell from 28.0 % (25.2 % after Ütle's own rules) to 3.5–4.2 %. So cleaning is not killed for Opus.
+Haiku is killed (2 to 3 of 20). Sonnet passes only with structured output (0 of 20); in plain text
+it typed its own monologue once. This 0 of 20 is not the test. These are the lane's sentences in a
+synthetic voice, and a prompt rule ("ee" heard as "ei") came from the same decoder run. The real test
+is Ralf's 20 captured finals, with his own fillers, run through `npx tsx scripts/flow-eval.ts` (replace
+the TSV). The thing to count there is the ee/ei hazard: every line where cleaning removed or added a
+negation word, judged against what he meant.
+
+**Proposed next step** (only after the real 20 pass). Add a `clean` option to the preview path, on
+the server, under the same rule as editing: the model proposes ops, and the server and the reducer
+validate them. The box text becomes a one-block `Doc`. The model answers `replace_text` ops (exact
+`find`, `replace`), never a rewritten string. `applyOps` refuses a `find` that is not in the text,
+and an op that adds a content word the utterance lacks is refused too (a new check, the same test
+as this script's INVENTED flag). **Negation rule:** the cleaner may never remove or add a negation
+word ("ei", "mitte", "pole", "ära") unless it is the first word of the utterance. The ops validator
+refuses any op whose `find` and `replace` differ in the count of those words outside the first
+word, and the model is told the same. Under this rule, line 14 keeps its mid-sentence "ei" ("Eesti
+kirjandus ei kujunes"): wrong grammar he can see and repair, instead of a silently flipped meaning.
+Order: type first (as today), clean after, show the change with
+`diffSegments`, and let "võta tagasi" undo it. Measured cost, plain text: Opus about $4.1 per 1000
+utterances at 709 in and 62 out tokens, p50 about 1.3 s after the final. Sonnet structured: about
+$2.3 per 1000 at about 1.4 s. Answering as ops roughly doubles the output tokens (estimated, not
+measured): Opus about $5.3 per 1000 (709 in, about 124 out). Two fixes need no model and are cheaper than any of this: type
+spoken "koma"/"punkt" as marks in a message, and stop a decoder comma from splitting a digit run.
