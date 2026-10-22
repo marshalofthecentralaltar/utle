@@ -1671,7 +1671,116 @@ values are the model's input, sent once in the user turn, never logged.
 
 ### 29.4 Wake word and "Minu kohad" (WAKE lane)
 
-(filled by the WAKE lane)
+Two things for a no-hands day: the bar listens all day and acts only on what starts with a word he
+chose, and plain nouns ("uudised", "raadio", "ilm") open the places he set once.
+
+**29.4.1 The listening mode "Äratussõnaga".** A third `listenMode`, `wake`, beside `toggle` and
+`gaze` (settings page group "Kuulamine"; `settingsFrom` in `strip.ts` reads it). The service worker
+puts `&wake=<word>` into the offscreen document's address while the mode is on (the offscreen
+document cannot read storage, as with the token), so a changed word or mode makes a new document,
+and it starts listening when the browser starts (`onStartup`) and when the mode or the word is
+changed to it. The microphone button still turns listening off; nothing turns it back on by itself
+until the next browser start or settings change.
+
+The word is the setting `wakeWord` in `chrome.storage.local`, default "Ütle". `wakeWordFrom` takes
+one or two words of letters (Estonian letters included), at most 20 letters each; anything else is
+the default. The settings page edits it with a small text field and a save button under the mode's
+choices (shown only in wake mode): a helper types it once, so the voice entry flow of 26.5 was not
+worth its weight here.
+
+**The gate** (`src/core/wake.ts`, pure, `wakeGate(state, final, now) → { state, utterance | null }`)
+sits in the engine, in front of everything a final does; the recogniser and the server are unchanged.
+The state is the word's phonetic keys and `openUntil` (0 when the window is closed). The state machine:
+
+1. Closed. A final whose first word (first two, for a two-word setting) is the wake word is acted on
+   with the word and the punctuation after it stripped ("Ütle, keri alla" → "keri alla"). Any other
+   final is dropped: not typed, not previewed, never sent to the rules or the model. The strip's
+   upper line still shows the words heard, so he sees it listens.
+2. A woken final that the rules type into an armed box (their step has a `setText`) opens the
+   dictation window: `openUntil = now + WAKE_WINDOW_MS` (20 000 ms). A woken command into an armed
+   box ("Ütle, keri alla" in WhatsApp) does not: the room's talk after a command must not be typed.
+   The bare word alone ("Ütle.") opens it too, whatever the box.
+3. Open. Every final is acted on without the word (the word is still stripped when he says it), and
+   each final and each partial moves `openUntil` to now + 20 s, so "20 s of silence" means 20 s with
+   no speech heard.
+4. Open → closed: 20 s with nothing heard (a timer in the engine publishes it); "aitab", "see on
+   kõik", "that's all" (with or without the word: nothing is typed, the strip says the window
+   closed); a plain send ("saada") is acted on and closes it (the message is gone; the room's talk
+   after it must not be typed); stopping listening.
+5. While open the strip shows a small amber disc on the microphone (`wakeOpen: true` in the strip
+   state; false when closed).
+
+The match: each word's `phoneticKey` (after Cyrillic look-alike letters are read as Latin: the model
+has written "Üтле") equals the wake word's key, or both keys have the same length of at least four
+and differ by one letter or one swapped pair. So "ütle", "Ütle,", "Üтле" and "ütel" wake; "ütlesin",
+"ütles", "ütleb" (a letter added) and "ma tahtsin ütelda" (not first) do not. `soundsLike` is not
+used: it lets one added letter through, and "ütles, et tuleb" is ordinary speech.
+
+Details: the options page's voice entry (26.5) bypasses the gate (spelling letter by letter with a
+word before each would be unusable); a continued utterance (round 4's "siis …") passes when the final
+it continues passed; the instant release of a one-word reply from a partial (21.3) is off while the
+window is closed (a partial cannot be gated before its final), so a woken "saada" waits for its final,
+about half a second.
+
+**What the server sees.** Nothing new. The word is stripped on the client, not on the server as the
+round 8 plan said: the server never sees settings, and a dropped final must cost nothing beyond the
+socket. The cost of wake mode is the always-on socket: the client streams 16 kHz float32 mono, 64 000
+bytes a second, 230.4 MB an hour (16-bit would be half: 32 000 B/s, 115.2 MB/h). The speech detector
+(24.2) runs the decoder only on speech, so room noise yields no finals: a minute of pink noise at
+-30 dBFS through `scripts/asr-file.ts` gives 0 finals (log in the WAKE lane report).
+
+**29.4.2 Minu kohad.** `src/core/places.ts`: `Place { noun, url, label }`, stored in
+`chrome.storage.local` under `places` as the user's rows; `placesFrom(stored)` merges them over the
+defaults (a user row with the same noun wins; a row with an empty url removes a default).
+
+| noun | address | label |
+|---|---|---|
+| uudised | https://www.postimees.ee/ | Postimees |
+| raadio | https://otse.err.ee/k/vikerraadio | Vikerraadio otse |
+| ilm | https://www.ilmateenistus.ee/ | Ilmateenistus |
+| mail (also meil, post) | https://mail.google.com/ | Gmail |
+| kalender | https://calendar.google.com/ | Google Kalender |
+| kaart | https://www.google.com/maps | Google Maps |
+| video | https://www.youtube.com/ | YouTube |
+| pank | none by default | |
+
+The radio address is ERR's live stream page for Vikerraadio (found by search, not opened). Changing
+the station is the existing click intent on that page ("vali Raadio 2"): no code.
+
+**By the rules** (`placeCommand(utterance, places)`), only when the box is not armed (in an armed box
+"mis ilm on" may be a message): "vaata uudiseid", "näita uudiseid", "ava uudised", "pane raadio
+mängima", "pane raadio käima", "ava raadio", "mis ilm on", "näita ilma", "ava mu mail", "ava meil",
+"vaata videoid", in the general shapes `(ava|vaata|näita|mine) [mu|minu] <noun>`, `pane <noun>
+(mängima|käima|tööle)`, `mis <noun> on`. The noun is matched after a case ending comes off
+(uudiseid → uudis, raadiot → raadio, ilma → ilm, videoid → video) and by `soundsLike`. The engine
+checks it before the rules of `inpage.ts` and runs `goTo` with the stored address. The engine holds
+no places until the offscreen document hands it the merged list (`utle-places` at start, a `places`
+message on every change; the service worker sends his raw rows, merged on the engine's side).
+
+**By the model.** The page context carries `places: ["uudised", "raadio", …]`, the nouns only, never
+an address. The model may answer `place { noun }`; `pageIntentFrom` accepts it only when the noun is
+one of `page.places`, and the engine resolves the address from storage on his machine. A new intent
+kind outside `PageIntent` (`ModelIntent = PageIntent | PlaceIntent`), so `applyIntent` in `inpage.ts`
+is unchanged; the engine turns it into a `goTo` step.
+
+**29.4.3 Adding a place by voice, and the settings page.** By voice, with no spelling: on the page
+he wants, "lisa koht uudised", "salvesta see koht uudised", "save this place as news" (anywhere), or
+"see on mu uudised" (only when no box is armed: there it may be a message) saves the address of the tab
+in front under that noun; "eemalda koht uudised" / "remove place news" removes it (his row with an
+empty address, so a default is hidden too). `placeVoice` in `places.ts` holds the rules; the noun is
+one or two words through `placeNoun` and none of them a command word (`COMMAND_WORDS`: the command
+heads of `ENROL_COMMAND_WORDS` and the place shapes' own words), else the utterance is not this. The
+engine checks it before the place rules and sends a new command, `{ kind: 'savePlace' | 'removePlace';
+noun }`, which the service worker resolves with the active tab's address and writes into `places`;
+the strip says "Koht „uudised“ salvestatud: postimees.ee". "lisa koht" alone asks "Ütle, mis sõnaga
+seda kohta kutsuda." and the next final within 20 s (`PLACE_ASK_MS`) is the noun, as the entry flow
+of 26.5 does; an answer that is not a usable noun ends the question and is handled as usual. The
+model never answers these (they are not in its command schema).
+
+The settings page has a "Minu kohad" section after "Minu andmed": every place as noun → label and
+address, a remove button on each (click or dwell), and a small form (noun, address) that adds one or
+replaces the row with that noun, the helper's path. The page's `<main>` keeps 240 px free at its end
+(the strip at its tallest is 192 px), so the last of the page scrolls clear of the bar.
 
 ### 29.5 Reading aloud: the measurement (READ lane)
 

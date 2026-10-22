@@ -2,7 +2,8 @@ import type { IntentRequest } from '../../src/core/pageIntent.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STRINGS } from '../../src/core/strings.ts'
 import { DEFAULT_ASR_URL, authHeaders, connectionFrom, serverCheck, serverStatus, socketAddress } from './connection.ts'
-import { ENOUGH_PHRASES, asrAddress, askIntent, enrolledLine, foreignNotice, serverUrl } from './offscreenMain.ts'
+import { ENOUGH_PHRASES, asrAddress, askIntent, enrolledLine, foreignNotice, serverUrl, wakeWordParam } from './offscreenMain.ts'
+import { INITIAL_STATE } from './messages.ts'
 
 describe('the server address (27.3)', () => {
   it('derives the http base from a ws address and https from wss', () => {
@@ -107,3 +108,19 @@ describe('strict mode lines on the strip (round 7)', () => {
     expect(enrolledLine(true, ENOUGH_PHRASES - 1, lines)).toBe(`few ${ENOUGH_PHRASES - 1}/${ENOUGH_PHRASES}`)
   })
 })
+
+// ---------- wake word and places (29.4) ----------
+describe('wake mode in the offscreen document (29.4.1)', () => {
+  it('the dictation window: wake mode and its word come from the address, else there is no gate', () => {
+    expect(wakeWordParam(new URLSearchParams('asr=x&engine=local'))).toBeUndefined()
+    expect(wakeWordParam(new URLSearchParams(`asr=x&wake=${encodeURIComponent('Ütle')}`))).toBe('Ütle')
+    expect(wakeWordParam(new URLSearchParams(`wake=${encodeURIComponent('hei arvuti')}`))).toBe('hei arvuti')
+    // A word the setting would refuse is the default.
+    expect(wakeWordParam(new URLSearchParams('wake=r2d2'))).toBe('Ütle')
+  })
+
+  it('the dictation window starts closed in the strip state (wakeOpen false)', () => {
+    expect(INITIAL_STATE.wakeOpen).toBe(false)
+  })
+})
+// ---------- end of wake word and places ----------

@@ -436,3 +436,28 @@ describe('mail (29.3.3, 29.3.7): composeTo', () => {
     for (const secret of ['mari.maasikas', 'example.ee', '37251234567', 'Tulen homme', 'tulen homme', 'Projektijuht', 'Mari Maasikas', 'cv.ee', 'composeTo']) expect(all).not.toContain(secret)
   })
 })
+// ---------- wake word and places (29.4) ----------
+describe('round 8: my places (29.4.2)', () => {
+  it('places: the user turn lists the nouns, never an address, or none', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request({ page: { ...YOUTUBE, places: ['uudised', 'raadio', 'ilm'] } }), { client, model: 'm' })
+    const turn = String(calls[0]?.messages[0]?.content)
+    expect(turn).toContain('places: "uudised" | "raadio" | "ilm"')
+    expect(turn).not.toContain('postimees.ee')
+    const { client: fresh, calls: freshCalls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client: fresh, model: 'm' })
+    expect(String(freshCalls[0]?.messages[0]?.content)).toContain('places: none')
+    expect(INTENT_SYSTEM_PROMPT).toContain('# My places')
+  })
+
+  it('places: a place answer with a listed noun passes; an unlisted noun or an address is unclear', async () => {
+    const page = { ...YOUTUBE, places: ['uudised', 'raadio'] }
+    const { client } = fakeClient(answer({ intent: { kind: 'place', noun: 'uudised' }, say: 'avan uudised', done: true, plan: [] }))
+    expect((await pageIntent(request({ page, utterance: 'vaata uudiseid' }), { client, model: 'm' })).intent).toEqual({ kind: 'place', noun: 'uudised' })
+    const { client: other } = fakeClient(answer({ intent: { kind: 'place', noun: 'pank' }, say: '', done: true, plan: [] }))
+    expect((await pageIntent(request({ page }), { client: other, model: 'm' })).intent.kind).toBe('unclear')
+    const { client: address } = fakeClient(answer({ intent: { kind: 'place', noun: 'https://www.postimees.ee/' }, say: '', done: true, plan: [] }))
+    expect((await pageIntent(request({ page }), { client: address, model: 'm' })).intent.kind).toBe('unclear')
+  })
+})
+// ---------- end of wake word and places ----------

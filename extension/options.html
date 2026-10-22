@@ -8,7 +8,8 @@
       :root { --bg: #141414; --ink: #f5f1e8; --dim: #a8a399; --edge: #3a3a3a; --panel: #242424; --green: #3ddc84; --amber: #f0b429; }
       html, body { margin: 0; background: var(--bg); color: var(--ink); }
       body { font: 22px/1.4 "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, "Segoe UI", sans-serif; }
-      main { max-width: 1100px; margin: 0 auto; padding: 32px 24px 48px; }
+      /* Round 8 (29.4.3): the end of the page clears the strip at its tallest (192 px) plus the usual 48 px. */
+      main { max-width: 1100px; margin: 0 auto; padding: 32px 24px 240px; }
       h1 { font-size: 40px; margin: 0 0 12px; }
       h2 { font-size: 28px; margin: 0 0 4px; }
       .en { color: var(--dim); font-size: 18px; margin: 0; }
@@ -78,6 +79,14 @@
       #savedSave > span { position: relative; z-index: 1; }
       #savedSave .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--amber); opacity: .35; }
       #savedSave.dwelling .fill { height: 100%; transition: height 1s linear; }
+      /* Round 8 (29.4): Minu kohad, and the wake word under the listening mode. */
+      #kohad { margin-top: 24px; padding: 20px 24px 24px; border: 3px solid var(--edge); border-radius: 20px; background: #1b1b1b; }
+      #kohad .help { margin-top: 8px; }
+      .place-url { font: 600 22px/1.3 ui-monospace, "Cascadia Mono", Consolas, monospace; margin-top: 4px; word-break: break-all; color: var(--dim); }
+      .place-actions { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
+      #placeForm, #wakePanel { margin-top: 20px; max-width: 640px; }
+      #wakePanel[hidden] { display: none; }
+      #placeForm .choices, #wakePanel .choices { margin-top: 16px; }
     </style>
   </head>
   <body>
@@ -110,6 +119,7 @@
           <button id="savedSave" type="button"><span class="fill"></span><span id="savedSaveLabel"></span></button>
         </div>
       </section>
+      <section id="kohad"></section>
       <div id="groups"></div>
       <details id="advanced">
         <summary id="advancedTitle"></summary>

@@ -15,6 +15,10 @@ import type { SiteName, SiteSettings } from './sites.ts'
 import { isEmailAddress } from '../../src/core/contacts.ts'
 import { GMAIL_HOME, composeUrl } from '../../src/core/mail.ts'
 import { isMailPage } from './sites.ts'
+// ---------- wake word and places (29.4) ----------
+import { PLACES_KEY, placeNoun, placeRowsFrom, placeRowsWith } from '../../src/core/places.ts'
+import { WAKE_WORD_KEY, wakeWordFrom } from '../../src/core/wake.ts'
+// ---------- end of wake word and places ----------
 
 /** Where the section 20 development page runs unless the options page says otherwise. */
 const DEFAULT_UTLE_URL = 'http://localhost:5173'
@@ -410,6 +414,11 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
       return openConversation(tab, command)
     case 'openSettings':
       return openSettings(tab, command)
+    // ---------- wake word and places (29.4) ----------
+    case 'savePlace':
+    case 'removePlace':
+      return placeByVoice(tab, command)
+    // ---------- end of wake word and places ----------
     case 'savedEntry':
       // Round 6 (26.5): only the options page holds the entry flow; anywhere else he has left it.
       if (!(tab.url ?? tab.pendingUrl ?? '').startsWith(chrome.runtime.getURL('options.html'))) return fail('not_found', 'The Minu andmed page is not in front.')
@@ -555,13 +564,59 @@ async function onlyOwner(): Promise<boolean> {
   return (await stored('onlyOwner')) === true
 }
 
+// ---------- wake word and places (29.4) ----------
+/** Round 8 (29.4.1): `&wake=<word>` while listenMode is wake, else ''. A changed word makes a new document. */
+async function wakeParam(): Promise<string> {
+  const { listenMode, [WAKE_WORD_KEY]: word } = await chrome.storage.local.get(['listenMode', WAKE_WORD_KEY])
+  return listenMode === 'wake' ? `&wake=${encodeURIComponent(wakeWordFrom(word))}` : ''
+}
+
+/** Round 8 (29.4.1): in wake mode listening starts by itself: at browser start, and when the mode or the word is set. */
+async function startIfWake(): Promise<void> {
+  if ((await stored('listenMode')) === 'wake') {
+    await toOffscreen('start')
+    return
+  }
+  // Out of wake mode: a document made for it is replaced (listening off), so no gate stays behind.
+  const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
+  if (contexts.some((c) => (c.documentUrl ?? '').includes('&wake='))) await ensureOffscreen()
+}
+chrome.runtime.onStartup.addListener(() => {
+  void startIfWake()
+})
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return
+  if (changes.listenMode !== undefined || changes[WAKE_WORD_KEY] !== undefined) void startIfWake()
+  // Round 8 (29.4.2): a change to his places reaches the engine at once, when it runs.
+  const places = changes[PLACES_KEY]
+  if (places === undefined) return
+  const message: ToOffscreen = { target: 'offscreen', type: 'places', rows: placeRowsFrom(places.newValue) }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+})
+// ---------- end of wake word and places ----------
+
+/**
+ * Round 8 (29.4.3): "lisa koht uudised" saves the address of the tab in front under the noun, and
+ * "eemalda koht uudised" hides it, in his rows under `places`. The tab is the answer, so the strip
+ * can say which address was saved.
+ */
+async function placeByVoice(tab: Tab, command: Extract<BrowserCommand, { kind: 'savePlace' | 'removePlace' }>): Promise<BrowserResult> {
+  const noun = placeNoun(command.noun)
+  if (noun === '') return fail('not_allowed', 'A place needs a word.')
+  const url = command.kind === 'savePlace' ? (tab.url ?? '') : ''
+  if (command.kind === 'savePlace' && !webAddress(url)) return fail('not_allowed', `Only web addresses can be saved: ${url}`)
+  const rows = placeRowsFrom((await chrome.storage.local.get(PLACES_KEY))[PLACES_KEY])
+  await chrome.storage.local.set({ [PLACES_KEY]: placeRowsWith(rows, { noun, url }) })
+  return ok({ tab: tabInfo(tab) })
+}
+
 async function ensureOffscreen(): Promise<void> {
   const base = chrome.runtime.getURL('offscreen.html')
   // The engine, the only-owner mode and the server (27.3) are in the address, so a changed setting makes a new document on the next start.
   // The token rides here because an offscreen document can only use chrome.runtime, not the storage.
   const server = await connection()
   const token = server.token === '' ? '' : `&token=${encodeURIComponent(server.token)}`
-  const wanted = `${base}?asr=${encodeURIComponent(server.asrUrl)}${token}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}`
+  const wanted = `${base}?asr=${encodeURIComponent(server.asrUrl)}${token}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}${await wakeParam()}`
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
   const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
   if (existing && existing.documentUrl === wanted) return
@@ -671,6 +726,14 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       void Promise.all([chrome.storage.local.get(SAVED_KEY), chrome.storage.session.get(ENTRY_KEY)]).then(
         ([local, session]) => sendResponse({ items: savedFrom(local[SAVED_KEY]), entry: session[ENTRY_KEY] === true }),
         () => sendResponse({ items: [], entry: false }),
+      )
+      return true
+    }
+    case 'utle-places': {
+      // Round 8 (29.4.2): the offscreen engine cannot read storage; it asks once at start.
+      void chrome.storage.local.get(PLACES_KEY).then(
+        (local) => sendResponse({ rows: placeRowsFrom(local[PLACES_KEY]) }),
+        () => sendResponse({ rows: [] }),
       )
       return true
     }

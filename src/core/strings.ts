@@ -386,6 +386,43 @@ export interface Strings {
     done: string
     cancel: string
   }
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8: the wake word mode and Minu kohad. */
+  wake: {
+    /** The strip's line when listening starts in wake mode. */
+    prompt(word: string): string
+    /** The dictation window closed ("aitab", or 20 s of silence). */
+    closed: string
+    /** The settings page: the mode's choice and the word's field. */
+    listenWake: string
+    listenWakeEn: string
+    wordLabel: string
+    wordHelp: string
+    wordSave: string
+    wordSaved(word: string): string
+    /** A place opened by its noun. */
+    opening(label: string): string
+    /** The model named a place that is no longer set. */
+    missing: string
+    placesTitle: string
+    placesTitleEn: string
+    placesHelp: string
+    placeNoun: string
+    placeUrl: string
+    placeAdd: string
+    placeRemove: string
+    placeAdded(noun: string): string
+    placeRemoved(noun: string): string
+    placeBad: string
+    sayLine(noun: string): string
+    /** Round 8 (29.4.3): saving the tab in front as a place, by voice. */
+    placeSaved(noun: string, host: string): string
+    placeAsk: string
+    placeAskRemove: string
+    placeNotSaved: string
+    placeNotThere(noun: string): string
+  }
+  // ---------- end of wake word and places ----------
 }
 
 /** The address without scheme and www, or the search words of a Google search. */
@@ -627,6 +664,11 @@ const ET: Strings = {
         return `Uus kiri: ${command.address}.`
       case 'mailField':
         return command.field === 'subject' ? `Teema: ${command.text ?? ''}`.trim() : 'Lisan koopia.'
+      // Round 8 (29.4.3): the engine says these itself, with the address.
+      case 'savePlace':
+        return `Salvestan koha „${command.noun}“.`
+      case 'removePlace':
+        return `Eemaldan koha „${command.noun}“.`
     }
   },
   browserDone(command, title, hints) {
@@ -967,6 +1009,36 @@ const ET: Strings = {
     done: 'Valmis',
     cancel: 'Katkesta',
   },
+  // ---------- wake word and places (29.4) ----------
+  wake: {
+    prompt: (word) => `Kuulan. Alusta sõnaga „${word}“.`,
+    closed: 'Dikteerimine lõpetatud.',
+    listenWake: 'Äratussõnaga',
+    listenWakeEn: 'Wake word: always listening, acts on what starts with the word',
+    wordLabel: 'Äratussõna · Wake word',
+    wordHelp: 'Üks või kaks sõna. Kõik, mis ei alga selle sõnaga, jäetakse vahele.',
+    wordSave: 'Salvesta sõna',
+    wordSaved: (word) => `Äratussõna on nüüd „${word}“.`,
+    opening: (label) => `Avan: ${label}.`,
+    missing: 'Seda kohta pole enam seadetes.',
+    placesTitle: 'Minu kohad',
+    placesTitleEn: 'My places: a word opens a site',
+    placesHelp: 'Ütle näiteks „vaata uudiseid“, „pane raadio käima“ või „mis ilm on“. Oma koha lisamiseks ava leht ja ütle „lisa koht uudised“; eemaldamiseks „eemalda koht uudised“. Sinu rida asendab vaikimisi rea.',
+    placeNoun: 'Sõna (nt uudised)',
+    placeUrl: 'Aadress (nt postimees.ee)',
+    placeAdd: 'Lisa koht',
+    placeRemove: 'Eemalda',
+    placeAdded: (noun) => `Koht „${noun}“ salvestatud.`,
+    placeRemoved: (noun) => `Koht „${noun}“ eemaldatud.`,
+    placeBad: 'Kirjuta sõna ja aadress (https://… või nimi.ee).',
+    sayLine: (noun) => `Ütle: ava ${noun}`,
+    placeSaved: (noun, host) => `Koht „${noun}“ salvestatud: ${host}`,
+    placeAsk: 'Ütle, mis sõnaga seda kohta kutsuda.',
+    placeAskRemove: 'Ütle, mis koht eemaldada.',
+    placeNotSaved: 'Seda lehte ei saa kohaks salvestada.',
+    placeNotThere: (noun) => `Kohta „${noun}“ pole.`,
+  },
+  // ---------- end of wake word and places ----------
 }
 
 const EN: Strings = {
@@ -1097,6 +1169,11 @@ const EN: Strings = {
         return `New mail: ${command.address}.`
       case 'mailField':
         return command.field === 'subject' ? `Subject: ${command.text ?? ''}`.trim() : 'Adding a Cc.'
+      // Round 8 (29.4.3): the engine says these itself, with the address.
+      case 'savePlace':
+        return `Saving the place "${command.noun}".`
+      case 'removePlace':
+        return `Removing the place "${command.noun}".`
     }
   },
   browserDone(command, title, hints) {
@@ -1437,6 +1514,36 @@ const EN: Strings = {
     done: 'Done',
     cancel: 'Cancel',
   },
+  // ---------- wake word and places (29.4) ----------
+  wake: {
+    prompt: (word) => `Listening. Start with "${word}".`,
+    closed: 'Dictation ended.',
+    listenWake: 'Wake word',
+    listenWakeEn: 'Always listening, acts on what starts with the word',
+    wordLabel: 'Wake word',
+    wordHelp: 'One or two words. Anything that does not start with it is skipped.',
+    wordSave: 'Save the word',
+    wordSaved: (word) => `The wake word is now "${word}".`,
+    opening: (label) => `Opening ${label}.`,
+    missing: 'That place is no longer in the settings.',
+    placesTitle: 'My places',
+    placesTitleEn: 'A word opens a site',
+    placesHelp: 'Say "show the news", "open the radio" or "what is the weather". To add your own, open the page and say "save this place as news"; "remove place news" removes it. Your row replaces the default one.',
+    placeNoun: 'Word (e.g. news)',
+    placeUrl: 'Address (e.g. postimees.ee)',
+    placeAdd: 'Add the place',
+    placeRemove: 'Remove',
+    placeAdded: (noun) => `Place "${noun}" saved.`,
+    placeRemoved: (noun) => `Place "${noun}" removed.`,
+    placeBad: 'Type a word and an address (https://… or name.ee).',
+    sayLine: (noun) => `Say: open ${noun}`,
+    placeSaved: (noun, host) => `Place "${noun}" saved: ${host}`,
+    placeAsk: 'Say what word to call this place.',
+    placeAskRemove: 'Say which place to remove.',
+    placeNotSaved: 'This page cannot be saved as a place.',
+    placeNotThere: (noun) => `There is no place "${noun}".`,
+  },
+  // ---------- end of wake word and places ----------
 }
 
 export const STRINGS: Record<Lang, Strings> = { et: ET, en: EN }

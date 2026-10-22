@@ -99,6 +99,12 @@ export type BrowserCommand =
   // ---------- document mode (29.2) ----------
   /** Formats the selection (bold, italic, underline) or the paragraph at the caret; paragraph starts a new one at the end. The page picks the editor's chord. */
   | { kind: 'format'; style: FormatStyle }
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.3): saves the address of the tab in front as his place for noun (Minu kohad), by voice. */
+  | { kind: 'savePlace'; noun: string }
+  /** Round 8 (29.4.3): removes his place for noun (a default is hidden). */
+  | { kind: 'removePlace'; noun: string }
+  // ---------- end of wake word and places ----------
 
 /** Round 8 (29.2): what "paksuks", "kaldkirja", "pealkirjaks", "loendiks", "uus lõik" ask for. */
 export type FormatStyle = 'bold' | 'italic' | 'underline' | 'heading' | 'normal' | 'list' | 'paragraph'
@@ -197,6 +203,10 @@ export interface PageContext {
   saved?: string[]
   /** Round 8 (29.3.3): the e-mail addresses and phone numbers on the page, at most 20, visible first. Absent when none. */
   contacts?: PageContact[]
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.2): the NOUNS of his places (Minu kohad), never an address. Added by the engine. */
+  places?: string[]
+  // ---------- end of wake word and places ----------
 }
 
 /**
