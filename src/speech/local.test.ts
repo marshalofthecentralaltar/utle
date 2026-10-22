@@ -717,3 +717,29 @@ describe('local recogniser (browser side)', () => {
     })
   })
 })
+
+// ---------- wake word and places (29.4) ----------
+describe('wake mode and the recogniser (29.4.1)', () => {
+  it("wake: the recogniser delivers every final as heard, the word included; the gate is the engine's", () => {
+    vi.useFakeTimers()
+    FakeSocket.made = []
+    const got: string[] = []
+    const r = createLocalRecognizer({ onUtterance: (text) => got.push(text), onInterim: () => undefined, onError: () => undefined }, () => false, {
+      onUnavailable: () => undefined,
+      connect: (events) => new FakeSocket(events),
+      audio: () => new FakeAudio(),
+      holdMs: 150,
+    })
+    r.start()
+    const s = FakeSocket.made.at(-1)
+    s?.says({ type: 'ready' })
+    for (const text of ['Ütle, keri alla', 'tere Mari', 'ütel saada']) {
+      s?.says({ type: 'final', text })
+      vi.advanceTimersByTime(150)
+    }
+    expect(got).toEqual(['Ütle, keri alla', 'tere Mari', 'ütel saada'])
+    r.stop()
+    vi.useRealTimers()
+  })
+})
+// ---------- end of wake word and places ----------
