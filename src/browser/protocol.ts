@@ -85,6 +85,12 @@ export type BrowserCommand =
   | { kind: 'openSettings'; section?: 'andmed'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
   /** One utterance for the entry flow on the options page; only that page answers it. */
   | { kind: 'savedEntry'; utterance: string }
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.3): saves the address of the tab in front as his place for noun (Minu kohad), by voice. */
+  | { kind: 'savePlace'; noun: string }
+  /** Round 8 (29.4.3): removes his place for noun (a default is hidden). */
+  | { kind: 'removePlace'; noun: string }
+  // ---------- end of wake word and places ----------
 
 export type FieldKind = 'email' | 'tel' | 'code' | 'number' | 'password' | 'text'
 

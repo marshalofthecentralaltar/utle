@@ -1,3 +1,4 @@
+import { ENROL_COMMAND_WORDS } from './enrolPhrases.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise } from './quickReply.ts'
 
@@ -155,3 +156,73 @@ export function placeNamed(nouns: readonly string[], noun: string): boolean {
   const n = placeNoun(noun)
   return n !== '' && nouns.includes(n)
 }
+
+// ---------- saving a place by voice (29.4.3) ----------
+
+/** Words that are commands, never a place's noun: the command heads, and the words of the place shapes themselves. */
+export const COMMAND_WORDS: ReadonlySet<string> = new Set([
+  ...ENROL_COMMAND_WORDS,
+  'vaata', 'pane', 'mis', 'eemalda', 'koht', 'kohta', 'see', 'seda', 'mu', 'minu', 'oma', 'aitab', 'tere', 'jah', 'ei',
+  'open', 'show', 'save', 'remove', 'place', 'this', 'my', 'the',
+])
+
+/** A noun he may give a place: one or two words, not a command word. '' when it is not one. */
+export function placeNounSaid(text: string): string {
+  const noun = placeNoun(text)
+  const words = noun.split(' ').filter((w) => w !== '')
+  if (words.length < 1 || words.length > 2 || words.some((w) => COMMAND_WORDS.has(w))) return ''
+  return noun
+}
+
+/** What saving by voice wants: save or remove, with the noun, or null for the noun still to be asked. */
+export interface PlaceVoice {
+  action: 'save' | 'remove'
+  noun: string | null
+}
+
+const SAVE_SHAPES: readonly RegExp[] = [
+  /^(?:lisa|salvesta)(?: see| uus)? koht(?: nimega)?(?: (.+))?$/u,
+  /^save (?:this|the) (?:place|page|site)(?: as(?: my)? (.+))?$/u,
+]
+const REMOVE_SHAPES: readonly RegExp[] = [/^(?:eemalda|kustuta) koht(?: (.+))?$/u, /^remove (?:the )?place(?: (.+))?$/u]
+/** Only where no box is armed: there "see on mu uudised" could be a message. */
+const LOOSE_SAVE = /^see on (?:mu|minu) (.+)$/u
+
+/**
+ * "lisa koht uudised", "salvesta see koht uudised", "see on mu uudised", "save this place as news";
+ * "eemalda koht uudised". "lisa koht" alone wants the noun next. Null when the utterance is not one,
+ * or names a noun that is a command word.
+ */
+export function placeVoice(utterance: string, armed: boolean): PlaceVoice | null {
+  const s = normalise(utterance)
+  const pick = (shapes: readonly RegExp[], action: PlaceVoice['action']): PlaceVoice | null | undefined => {
+    for (const shape of shapes) {
+      const m = shape.exec(s)
+      if (!m) continue
+      if (m[1] === undefined) return { action, noun: null }
+      const noun = placeNounSaid(m[1])
+      return noun === '' ? null : { action, noun }
+    }
+    return undefined
+  }
+  const save = pick(SAVE_SHAPES, 'save')
+  if (save !== undefined) return save
+  const remove = pick(REMOVE_SHAPES, 'remove')
+  if (remove !== undefined) return remove
+  if (armed) return null
+  const loose = LOOSE_SAVE.exec(s)
+  if (!loose?.[1]) return null
+  const noun = placeNounSaid(loose[1])
+  return noun === '' ? null : { action: 'save', noun }
+}
+
+/** His rows with this one in place of any row he had for the noun; an empty url hides a default. */
+export function placeRowsWith(rows: readonly PlaceRow[], row: PlaceRow): PlaceRow[] {
+  return [...rows.filter((r) => r.noun !== row.noun), row].slice(-MAX_PLACES)
+}
+
+/** The host of an address, without www, for the strip and a row's default label. */
+export function placeHost(url: string): string {
+  return hostOf(url)
+}
+// ---------- end of saving a place by voice ----------

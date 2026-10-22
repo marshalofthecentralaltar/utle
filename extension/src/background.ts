@@ -12,7 +12,7 @@ import type { PageCommand } from './page.ts'
 import { SITES, siteOf } from './sites.ts'
 import type { SiteName, SiteSettings } from './sites.ts'
 // ---------- wake word and places (29.4) ----------
-import { PLACES_KEY, placeRowsFrom } from '../../src/core/places.ts'
+import { PLACES_KEY, placeNoun, placeRowsFrom, placeRowsWith } from '../../src/core/places.ts'
 import { WAKE_WORD_KEY, wakeWordFrom } from '../../src/core/wake.ts'
 // ---------- end of wake word and places ----------
 
@@ -408,6 +408,11 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
       return openConversation(tab, command)
     case 'openSettings':
       return openSettings(tab, command)
+    // ---------- wake word and places (29.4) ----------
+    case 'savePlace':
+    case 'removePlace':
+      return placeByVoice(tab, command)
+    // ---------- end of wake word and places ----------
     case 'savedEntry':
       // Round 6 (26.5): only the options page holds the entry flow; anywhere else he has left it.
       if (!(tab.url ?? tab.pendingUrl ?? '').startsWith(chrome.runtime.getURL('options.html'))) return fail('not_found', 'The Minu andmed page is not in front.')
@@ -549,6 +554,21 @@ chrome.storage.onChanged.addListener((changes, area) => {
   chrome.runtime.sendMessage(message).catch(() => undefined)
 })
 // ---------- end of wake word and places ----------
+
+/**
+ * Round 8 (29.4.3): "lisa koht uudised" saves the address of the tab in front under the noun, and
+ * "eemalda koht uudised" hides it, in his rows under `places`. The tab is the answer, so the strip
+ * can say which address was saved.
+ */
+async function placeByVoice(tab: Tab, command: Extract<BrowserCommand, { kind: 'savePlace' | 'removePlace' }>): Promise<BrowserResult> {
+  const noun = placeNoun(command.noun)
+  if (noun === '') return fail('not_allowed', 'A place needs a word.')
+  const url = command.kind === 'savePlace' ? (tab.url ?? '') : ''
+  if (command.kind === 'savePlace' && !webAddress(url)) return fail('not_allowed', `Only web addresses can be saved: ${url}`)
+  const rows = placeRowsFrom((await chrome.storage.local.get(PLACES_KEY))[PLACES_KEY])
+  await chrome.storage.local.set({ [PLACES_KEY]: placeRowsWith(rows, { noun, url }) })
+  return ok({ tab: tabInfo(tab) })
+}
 
 async function ensureOffscreen(): Promise<void> {
   const base = chrome.runtime.getURL('offscreen.html')

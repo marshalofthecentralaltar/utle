@@ -409,6 +409,12 @@ export interface Strings {
     placeRemoved(noun: string): string
     placeBad: string
     sayLine(noun: string): string
+    /** Round 8 (29.4.3): saving the tab in front as a place, by voice. */
+    placeSaved(noun: string, host: string): string
+    placeAsk: string
+    placeAskRemove: string
+    placeNotSaved: string
+    placeNotThere(noun: string): string
   }
   // ---------- end of wake word and places ----------
 }
@@ -610,6 +616,11 @@ const ET: Strings = {
         return command.section === 'andmed' ? 'Avan minu andmed.' : 'Avan seaded.'
       case 'savedEntry':
         return ''
+      // Round 8 (29.4.3): the engine says these itself, with the address.
+      case 'savePlace':
+        return `Salvestan koha „${command.noun}“.`
+      case 'removePlace':
+        return `Eemaldan koha „${command.noun}“.`
     }
   },
   browserDone(command, title, hints) {
@@ -959,7 +970,7 @@ const ET: Strings = {
     missing: 'Seda kohta pole enam seadetes.',
     placesTitle: 'Minu kohad',
     placesTitleEn: 'My places: a word opens a site',
-    placesHelp: 'Ütle näiteks „vaata uudiseid“, „pane raadio käima“ või „mis ilm on“. Sinu rida asendab vaikimisi rea.',
+    placesHelp: 'Ütle näiteks „vaata uudiseid“, „pane raadio käima“ või „mis ilm on“. Oma koha lisamiseks ava leht ja ütle „lisa koht uudised“; eemaldamiseks „eemalda koht uudised“. Sinu rida asendab vaikimisi rea.',
     placeNoun: 'Sõna (nt uudised)',
     placeUrl: 'Aadress (nt postimees.ee)',
     placeAdd: 'Lisa koht',
@@ -968,6 +979,11 @@ const ET: Strings = {
     placeRemoved: (noun) => `Koht „${noun}“ eemaldatud.`,
     placeBad: 'Kirjuta sõna ja aadress (https://… või nimi.ee).',
     sayLine: (noun) => `Ütle: ava ${noun}`,
+    placeSaved: (noun, host) => `Koht „${noun}“ salvestatud: ${host}`,
+    placeAsk: 'Ütle, mis sõnaga seda kohta kutsuda.',
+    placeAskRemove: 'Ütle, mis koht eemaldada.',
+    placeNotSaved: 'Seda lehte ei saa kohaks salvestada.',
+    placeNotThere: (noun) => `Kohta „${noun}“ pole.`,
   },
   // ---------- end of wake word and places ----------
 }
@@ -1091,6 +1107,11 @@ const EN: Strings = {
         return command.section === 'andmed' ? 'Opening my details.' : 'Opening the settings.'
       case 'savedEntry':
         return ''
+      // Round 8 (29.4.3): the engine says these itself, with the address.
+      case 'savePlace':
+        return `Saving the place "${command.noun}".`
+      case 'removePlace':
+        return `Removing the place "${command.noun}".`
     }
   },
   browserDone(command, title, hints) {
@@ -1440,7 +1461,7 @@ const EN: Strings = {
     missing: 'That place is no longer in the settings.',
     placesTitle: 'My places',
     placesTitleEn: 'A word opens a site',
-    placesHelp: 'Say "show the news", "open the radio" or "what is the weather". Your row replaces the default one.',
+    placesHelp: 'Say "show the news", "open the radio" or "what is the weather". To add your own, open the page and say "save this place as news"; "remove place news" removes it. Your row replaces the default one.',
     placeNoun: 'Word (e.g. news)',
     placeUrl: 'Address (e.g. postimees.ee)',
     placeAdd: 'Add the place',
@@ -1449,6 +1470,11 @@ const EN: Strings = {
     placeRemoved: (noun) => `Place "${noun}" removed.`,
     placeBad: 'Type a word and an address (https://… or name.ee).',
     sayLine: (noun) => `Say: open ${noun}`,
+    placeSaved: (noun, host) => `Place "${noun}" saved: ${host}`,
+    placeAsk: 'Say what word to call this place.',
+    placeAskRemove: 'Say which place to remove.',
+    placeNotSaved: 'This page cannot be saved as a place.',
+    placeNotThere: (noun) => `There is no place "${noun}".`,
   },
   // ---------- end of wake word and places ----------
 }

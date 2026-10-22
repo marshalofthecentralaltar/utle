@@ -14,10 +14,12 @@ import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import type { StripState } from './messages.ts'
 // ---------- wake word and places (29.4) ----------
-import { placeByNoun, placeCommand, placeNouns } from '../../src/core/places.ts'
+import { placeByNoun, placeCommand, placeHost, placeNounSaid, placeNouns, placeVoice } from '../../src/core/places.ts'
 import type { Place } from '../../src/core/places.ts'
 import { createWake, wakeClose, wakeGate, wakeHeard, wakeOpen, wakeOpenWindow, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
 import type { WakeState } from '../../src/core/wake.ts'
+/** Round 8 (29.4.3): how long "lisa koht" waits for the word. */
+export const PLACE_ASK_MS = 20_000
 // ---------- end of wake word and places ----------
 
 /** The functions of src/core/inpage.ts the engine calls. The test build passes a stand-in. */
@@ -852,6 +854,11 @@ export function createEngine(deps: EngineDeps): Engine {
         box = job.send ? await readBox() : (u.base ?? NO_BOX)
       }
       // ---------- wake word and places (29.4) ----------
+      // Round 8 (29.4.3): "lisa koht uudised" saves the tab in front; "lisa koht" asks for the word first.
+      if (await placeByVoice(job, box, u)) {
+        lastDone = clipGoals([job.utterance])
+        return
+      }
       // Round 8: "vaata uudiseid" opens his place, before the rules; never in an armed box (it may be a message).
       const place = box.armed ? null : placeCommand(job.utterance, places)
       if (place !== null) {
@@ -976,6 +983,36 @@ export function createEngine(deps: EngineDeps): Engine {
   const placeStep = (noun: string): InpageStep => {
     const place = placeByNoun(places, noun)
     return place === undefined ? { session, commands: [], line: wakeText.missing } : { session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.label) }
+  }
+  /** Round 8 (29.4.3): "lisa koht" asked for the word; the next final within PLACE_ASK_MS is it. */
+  let placeAsk: { action: 'save' | 'remove'; until: number } | null = null
+  /**
+   * Saving or removing a place by voice. True when the utterance was that (done, or asking for the
+   * word). An answer to the question that is not a usable word ends the question and goes on as usual.
+   */
+  const placeByVoice = async (job: Job, box: BoxState, u: Live | null): Promise<boolean> => {
+    let want = placeVoice(job.utterance, box.armed)
+    const asked = placeAsk
+    placeAsk = null
+    if (want === null && asked !== null && Date.now() < asked.until) {
+      const noun = placeNounSaid(job.utterance)
+      if (noun !== '') want = { action: asked.action, noun }
+    }
+    if (want === null) return false
+    if (u !== null) await takeBack(u)
+    if (want.noun === null) {
+      placeAsk = { action: want.action, until: Date.now() + PLACE_ASK_MS }
+      say(want.action === 'save' ? wakeText.placeAsk : wakeText.placeAskRemove)
+      return true
+    }
+    if (want.action === 'remove' && placeByNoun(places, want.noun) === undefined) {
+      say(wakeText.placeNotThere(want.noun))
+      return true
+    }
+    const result = await runSafe(want.action === 'save' ? { kind: 'savePlace', noun: want.noun } : { kind: 'removePlace', noun: want.noun })
+    if (!result.ok) say(wakeText.placeNotSaved)
+    else say(want.action === 'save' ? wakeText.placeSaved(want.noun, placeHost(result.tab?.url ?? '')) : wakeText.placeRemoved(want.noun))
+    return true
   }
   /** Round 8 (29.4.1): the wake gate while listenMode is wake, else null. */
   let wake: WakeState | null = deps.wakeWord === undefined ? null : createWake(deps.wakeWord)
