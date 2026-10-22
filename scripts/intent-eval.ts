@@ -315,6 +315,29 @@ const savedForm = (box: PageContext['box']): PageContext => ({ ...FORM, items: F
 const FORM_SAVED = savedForm({ present: true, text: '', armed: false, kind: 'field', label: 'Eesnimi' })
 const armedField = (label: string, fieldKind: 'email' | 'tel' | 'code'): PageContext => savedForm({ present: true, text: '', armed: true, kind: 'field', fieldKind, single: true, label })
 
+// ---------- mail (29.3) ----------
+/** A CV page with one e-mail address and one phone number among its contacts (29.3.3). */
+const CV_PAGE: PageContext = {
+  url: 'https://www.cv.ee/kandidaat/mari-maasikas',
+  title: 'Mari Maasikas – CV',
+  box: NO_BOX,
+  items: [
+    { id: 1, role: 'link', text: 'Töökuulutused' },
+    { id: 2, role: 'link', text: 'mari.maasikas@example.ee' },
+    { id: 3, role: 'link', text: '+372 5123 4567' },
+    { id: 4, role: 'button', text: 'Laadi CV alla' },
+    { id: 5, role: 'other', text: '[pealkiri] Mari Maasikas' },
+    { id: 6, role: 'text', text: 'Projektijuht, kümme aastat kogemust tarkvaraarenduses.' },
+  ],
+  media: null,
+  hints: false,
+  contacts: [
+    { kind: 'email', value: 'mari.maasikas@example.ee', label: 'mari.maasikas@example.ee' },
+    { kind: 'tel', value: '+37251234567', label: '+372 5123 4567' },
+  ],
+}
+// ---------- end mail (29.3) ----------
+
 const oneTab = (page: PageContext): TabSummary[] => [{ index: 1, title: page.title, active: true }]
 const GOOGLE_AND_YOUTUBE: TabSummary[] = [
   { index: 1, title: 'ilm tallinnas - Google otsing', active: true },
@@ -346,6 +369,9 @@ interface Expectation {
   direction?: string
   /** Round 6: for insertSaved, the saved name. */
   saved?: string
+  /** mail (29.3): for composeTo, the address it must be; body true or false: whether it must carry a body. */
+  address?: string
+  body?: boolean
 }
 
 /** One ask of the simulated loop. */
@@ -571,6 +597,11 @@ const CASES: Case[] = [
   one('kirjuta midagi', NEW_TAB, UNCLEAR),
   one('mis kell on', NEW_TAB, UNCLEAR),
   one('tere', NEW_TAB, UNCLEAR),
+
+  // --- mail (29.3): an address off the page, never an invented one ------------------------------
+  one('võta see meiliaadress siit lehelt ja kirjuta talle, et tulen homme', CV_PAGE, { kind: 'command', command: 'composeTo', address: 'mari.maasikas@example.ee', body: true }, { plan: 0 }),
+  one('kirjuta talle meil', CV_PAGE, { kind: 'command', command: 'composeTo', address: 'mari.maasikas@example.ee', body: false }),
+  one('helista talle', CV_PAGE, [UNCLEAR, click(3)]),
 ]
 
 // ---------------------------------------------------------------------------------------------
@@ -594,6 +625,9 @@ function matchesOne(intent: PageIntent, e: Expectation): string | null {
   }
   if (e.media && c.kind === 'media' && c.action !== e.media) return `media ${c.action}`
   if (e.direction && c.kind === 'scroll' && c.direction !== e.direction) return `direction ${c.direction}`
+  // mail (29.3)
+  if (e.address && c.kind === 'composeTo' && c.address.toLowerCase() !== e.address) return `address ${c.address}`
+  if (e.body !== undefined && c.kind === 'composeTo' && (c.body !== undefined && c.body.trim() !== '') !== e.body) return `body ${JSON.stringify(c.body ?? null)}`
   return null
 }
 
