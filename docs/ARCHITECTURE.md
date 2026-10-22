@@ -1441,8 +1441,10 @@ answers `not_found`. "saada" is the existing `pressSend`: inside a compose windo
 window's Send ("Saada" / "Send") and never presses Enter (Enter is a new line in a mail body); sent
 means the window closed or the body emptied.
 
-**29.3.2 The rules** (`mailCommand`, tried in `inpage.ts` before the conversation rules, so "kirjuta
-meil Marile" is never a chat with "Meil Mari"; that one line is the whole change to `inpage.ts`):
+**29.3.2 The rules** (`mailCommand`, tried in `inpage.ts` before the spelled values and the
+conversation rules, so "kirjuta meil Marile" is never a chat with "Meil Mari" nor the address
+"marile"; that hook and one line keeping mail out of the sound-alike corrections are the whole change
+to `inpage.ts`):
 
 | Said | Command |
 |---|---|
@@ -1466,9 +1468,9 @@ text of the page (text nodes outside Ütle's strip, scripts and hidden elements)
 plain text). Values: an e-mail lower-cased; a phone compacted (spaces, dashes and brackets dropped).
 The regexes (`src/core/contacts.ts`):
 
-- e-mail: `(?<![\w.+%-])[a-z0-9](?:[a-z0-9._%+-]{0,62}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-]|\.[a-z0-9])`, case-insensitive, no ".." in it.
+- e-mail: `(?<![\w.+%-])[a-z0-9](?:[\w.%+-]{0,62}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-]|\.[a-z0-9])`, case-insensitive, no ".." in it.
 - phone, international: `(?<![\w+])\+\d{1,3}(?:[ -]?\d){6,11}(?!\d)`; with +372 the rest is 7 or 8 digits.
-- phone, Estonian without the prefix: `(?<![\w+.,/-])[3-8]\d{2,3} ?\d{3,4}(?!\d|[.,/-]\d)`, 7 or 8 digits in all.
+- phone, Estonian without the prefix: `(?<![\w+.,/-])(?<!\d )[3-8]\d{2,3} ?\d{3,4}(?!\d|[ .,/-]\d)`, 7 or 8 digits in all; the international ones are blanked out first, so "+372 5123 4567" is not found again as "5123 4567".
 - a `tel:` href is a phone only when its compacted value is one of those shapes; a `mailto:` href
   gives each address before the `?` that is an e-mail as a whole.
 
@@ -1495,7 +1497,8 @@ which reads `to`, `su` and `body` from its query as Gmail does.
 **29.3.5 The compose window as one field group.** In a compose window the box reports, for the
 field under focus: To and Cc `single`, `fieldKind: email`; Subject `single`, `fieldKind: text`; the
 body `kind: composer`. So dictation into To is converted as an address ("ät", "punkt"), "valmis"
-moves To to Subject to the body (Tab inside the window), and "saada" from the body sends. The
+moves To, Cc, Subject, body in turn (Tab inside the window walks the fields of the group, past the
+window's buttons), and "saada" from the body sends. The
 selectors are in `sites.ts` `MAIL`, each marked; **all unverified on real Gmail**: Compose
 `[gh="cm"]` or a button named Koosta / Compose; the window `[role="dialog"]` holding a subject
 field; To `input[aria-label*="recipient" i]`, `input[name="to"]`, or a field labelled Saaja / To /
@@ -1505,9 +1508,13 @@ textbox; Send `[role="button"][aria-label^="Send"]`, `[role="button"][aria-label
 button named Saada / Send; Cc a button or link named Koopia / Cc / Add Cc. Only the stand-in proves
 them.
 
-**29.3.6 Spelled addresses.** Unchanged from rounds 5 and 6 (25.1, 26). The three read-backs the
-plan names are tests of `typedFromSpoken` in `src/core/spelling.test.ts`: an ID code digit by digit,
-a phone number, an e-mail with "punkt" and "ät".
+**29.3.6 Spelled addresses.** Unchanged from rounds 5 and 6 (25.1, 26): "kirjuta meil ralf ät gmail
+punkt com" is still the spelled address (a name must be one or two words in the allative), and a
+sound-alike correction never reaches a mail command ("kirjuta meile" stays dictation). The three
+read-backs the plan names are tests of `typedFromSpoken` in `src/core/spelling.test.ts`: an ID code
+digit by digit, a phone number, an e-mail with "punkt" and "ät". A name is typed into To as the chat
+rules take it off the allative ("Jaanile" is "Jaani", as for chats); Gmail's suggestions then match
+on that prefix or not: unverified.
 
 **29.3.7 Privacy.** The server logs for a mail ask what it logs for any ask (`[intent] kind=… done=…
 plan=… care=… ms=…`): no address, no body, no page text (`server/intent.test.ts`). The contacts'
