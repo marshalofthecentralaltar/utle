@@ -1448,7 +1448,8 @@ async function pressKey(key: PressableKey, times = 1, site: Site | null): Promis
       continue
     }
     if (key === 'Tab') {
-      target = focusNext(target) ?? target
+      // mail (29.3.5): inside a compose window Tab goes to the next field of the group, past its buttons.
+      target = mailNextField(target) ?? focusNext(target) ?? target
       continue
     }
     const through = dispatchKey(target, key)
@@ -2504,6 +2505,25 @@ async function mailField(field: MailField, text: string | undefined): Promise<Br
   }
   pick(cc)
   return ok({ box: boxState(cc, null) })
+}
+
+/** The order "valmis" walks a compose window in: To, Cc, Subject, the body. */
+const MAIL_ORDER: readonly MailPart[] = ['to', 'cc', 'subject', 'body']
+
+/** Tab from a field of a compose window: the next field of the group, focused and armed; null outside one or after the body. */
+function mailNextField(from: Element): HTMLElement | null {
+  if (!(from instanceof HTMLElement)) return null
+  const win = composeWindowOf(from)
+  const part = mailPartOf(from)
+  if (win === null || part === null) return null
+  for (const next of MAIL_ORDER.slice(MAIL_ORDER.indexOf(part) + 1)) {
+    const field = mailFieldIn(win, next)
+    if (field) {
+      pick(field)
+      return field
+    }
+  }
+  return null
 }
 
 /** The page's e-mail addresses and phone numbers (29.3.3): its text and its mailto:/tel: links. */
