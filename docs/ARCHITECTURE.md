@@ -1580,8 +1580,11 @@ Rules (`src/core/browserIntent.ts`, the fixed table, whole utterances after `cle
 
 "stopp" and "aitab" keep their meanings (stop a slow scroll; typed as a one-word reply while the box
 has words) everywhere except while reading: the engine (`extension/src/engine.ts`, `deps.reading`)
-checks `isReadStop` (`src/core/reading.ts`) on every final before the rules see it, and while a
-reading is in progress such a final runs `read stop` at once, outside the queue, and nothing else.
+takes every final before the rules see it while a reading is in progress; a stop word (`isReadStop`
+in `src/core/reading.ts`: "stopp", "stop", "aitab", "seis", "lõpeta", "lõpeta lugemine", "stop
+reading", "lugemine seis", and "paus" / "peata", which stop a reading like any playing thing) runs
+`read stop` at once, outside the queue, and nothing else; every other final and every partial is
+dropped unseen (the pause rule below).
 The model (`CommandSchema`, the tool schema's `kind('read', { what })`) may answer the same command;
 its rules line: "loe ette", "loe mulle seda lehte", "ma ei näe, loe" read page; "loe see ette" with
 an armed box read box; "loe edasi" continue; "lõpeta lugemine" stop; "ma ei näe" alone is still zoom
@@ -1634,35 +1637,44 @@ up to 1.5 s (network voices arrive late, as measured above). With no such voice 
 the command fails `not_allowed`; the bar says "Selles brauseris pole eesti häält. Edge'is on." /
 "This browser has no Estonian voice; Edge has one.". Every utterance gets `lang` from the voice, rate 1.
 
-**The pause rule.** While anything is spoken aloud (a sentence of a reading, or a bar line below),
-the offscreen document's microphone source (`mutedSource` in `offscreenMain.ts`) hands the
-recogniser silence instead of the microphone's samples: the track stays open and the socket stays
-up, so the server ends any utterance in progress on that silence and hears nothing of the synthesised
-voice. Listening comes back 150 ms (`RESUME_MS`) after the last sentence ends or after a stop, so
-within 300 ms. The strip state's `micMuted` says which. Consequence: a spoken "stopp" is not heard
-while a sentence is being read; the bar's microphone or the toolbar icon stops a reading, and a
-"stopp" final that was already on its way still stops it first.
+**The pause rule** (changed in review round 1, so a person without hands can stop a reading by
+voice). While an article, a box or a selection is read, the microphone stays live and the recogniser
+hears the room, the synthesised voice included. The engine is the filter: while `reading` is true it
+drops every partial and every final unless the final is a stop word, and dropped words are neither
+published to the strip's heard line nor typed nor run, so the echo of the voice never shows. A spoken
+"stopp" (or "paus", "aitab", "lõpeta lugemine") is heard over the voice and cancels it at once
+(measured below 300 ms in the suite). Strict mode and the speaker gate (24.2) still work underneath:
+a final the server judges `other` (as a synthesised voice may be) is dropped before the engine sees
+it. The cost of the echo: while an article plays, the server receives and decodes the speaker's voice
+as speech (its CPU, and the audio bytes on the socket); no text of it is logged (the server never
+logs text) and nothing of it reaches the page. Only a "Loe riba ette" line (under 200 characters, a
+second or two) mutes the microphone: `mutedSource` in `offscreenMain.ts` hands the recogniser
+silence while the line is spoken and for 150 ms (`RESUME_MS`) after it ends; the strip state's
+`micMuted` says when. The bar's microphone or the toolbar icon pressed while reading also stops it.
 
 **"Loe riba ette"** (`readBar`, settings page, last group, default off). When on, each new amber line
-the offscreen document publishes is spoken with the same voice and the same pause rule, when it is
+the offscreen document publishes is spoken with the same voice, the microphone muted while it speaks, when it is
 under 200 characters, not the same line as the one spoken in the last 1.5 s, and no reading is in
 progress; the live words (`heard`) are never spoken. The setting reaches the offscreen document at
 its start (`utle-read-bar`) and on every change (`readBar`).
 
 **Tests.** `src/core/reading.test.ts` (the splitter, the cap, the state machine, the stop words),
 `src/core/browserIntent.test.ts`, `src/core/pageIntent.test.ts`, `server/intent.test.ts` (phrases and
-schemas), `extension/src/engine.test.ts` (the precedence of "stopp" while reading, and its absence
-otherwise), `extension/src/offscreenMain.test.ts` (no final while reading through the real local
-recogniser and a fake server that finalises any non-silent frame; the voice rule; retry and skip;
-the stop within 300 ms on fake timers; "Loe riba ette"). The browser suite reads
+schemas), `src/core/inpage.test.ts` (a reading keeps the box undo), `extension/src/engine.test.ts`
+(the precedence of "stopp" while reading, the filter that drops every other word unseen, and nothing
+changed outside a reading), `extension/src/offscreenMain.test.ts` (the engine, the real local
+recogniser and a fake server that finalises any sound: the voice's echo is dropped unseen and a
+spoken "stopp" stops the reading within 300 ms; the voice rule; retry and skip; "Loe riba ette"
+mutes only its own lines). The browser suite reads
 `extension/test/fixtures/news.html` with a fake `speechSynthesis` injected into the offscreen
 document over the DevTools protocol (`Target.attachToTarget`; Playwright lists no offscreen page),
 through the same bridge `send` as every other case; the suite has no spoken-utterance path.
 
 **Not verified:** a human ear on Anu or Kert reading a real article; Edge in daily use (the suite's
 Chromium has no Estonian voice, so the real voice was only probed in checkpoint 1); the
-`synthesis-failed` rate over a real session (1 in 18 starts in the probe); whether the 150 ms tail is
-enough for a loud speaker's echo in a real room; Chrome's own long-utterance cut-off on a network
+`synthesis-failed` rate over a real session (1 in 18 starts in the probe); how well TalTech's model
+hears "stopp" over Anu's voice from a loudspeaker in a real room, and whether the 150 ms tail after a
+bar line is enough for its echo; Chrome's own long-utterance cut-off on a network
 voice (sentences are capped at 300 characters against it, not measured).
 
 ### 29.6 Dictation cleaning: the measurement (FLOW lane)
