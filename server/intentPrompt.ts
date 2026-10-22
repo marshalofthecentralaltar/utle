@@ -49,6 +49,7 @@ Messages, headings and paragraphs are "text" items. A text item can be hovered (
 - The page's size ("tee suuremaks", "suurenda", "suurem kiri", "ma ei näe", "liiga väike", "zoom in"): zoom in; "tee väiksemaks", "vähenda", "liiga suur": zoom out; "tavaline suurus", "algne suurus": zoom reset. The page's own zoom, never a media volume.
 - Searching ("otsi kassivideod", "find cat videos"): siteSearch with the query without the verb, when the page has a search field (video sites, Google, shops, mail, chat lists). From a page without one, "otsi X" / "guugelda X": goTo https://www.google.com/search?q=X. A named site from elsewhere ("otsi youtube'ist X"): goTo that site with done:false, then siteSearch there.
 - Media, only when media is present: "mängi" play, "paus" / "peata" pause, "vaigista" mute, "heli peale" unmute, "valjemaks" / "turn it up" volumeUp, "vaiksemaks" volumeDown, "täisekraan" fullscreen, "välja täisekraanist" exitFullscreen, "keri edasi" forward, "keri tagasi" back.
+- A seek by an amount: forward or back with seconds, a whole number from 1 to 3600: "keri edasi üks minut" forward with seconds 60, "poolteist minutit" 90, "pool minutit" 30, "keri kaks minutit tagasi" back with seconds 120, "skip back thirty seconds" back with seconds 30. Bare "keri edasi" / "keri tagasi" without an amount: seconds null (the player's 10 s). seconds is null on every other media action.
 - Labels: "näita numbreid" showHints; "peida numbrid" / "stopp" while they show: hideHints; a number while they show: clickHint. When nothing on a crowded page matches what he asked for, showHints is a good answer: he then picks by number.
 - The box: "kirjuta siia" arm on; "vabasta" arm off. "tühjenda" / "kustuta kõik": edit clear when the box is armed, else clearField. "kustuta sõna" deleteWord, "kustuta lause" deleteSentence. "X asemel Y" / "mitte X vaid Y": edit replace. "peida riba" / "näita riba": bar. "esc" / "enter": pressKey.
 
@@ -125,7 +126,11 @@ const COMMAND = {
     kind('contextMenu', { id: { ...ID, description: 'The id of an item to open the right-click menu of. Answer done:false with it.' } }),
     kind('scrollTo', { id: { ...ID, description: 'The id of an item to scroll into view.' } }),
     kind('siteSearch', { query: STRING }),
-    kind('media', { action: { type: 'string', enum: [...MEDIA_ACTIONS] } }),
+    kind('media', {
+      action: { type: 'string', enum: [...MEDIA_ACTIONS] },
+      // Round 8 (29.1): the same bounds as CommandSchema; the tool is not strict, so minimum and maximum are sent.
+      seconds: { anyOf: [{ type: 'integer', minimum: 1, maximum: 3600 }, { type: 'null' }], description: 'forward and back only: how far, in whole seconds, when he said an amount; null for the default 10 s and on every other action.' },
+    }),
     kind('pressKey', { key: { type: 'string', enum: [...PRESSABLE_KEYS] }, times: { anyOf: [{ type: 'integer' }, { type: 'null' }], description: 'How many times, or null for once.' } }),
     kind('caret', {
       to: {

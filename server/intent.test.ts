@@ -5,7 +5,7 @@ import { STRINGS } from '../src/core/strings.ts'
 import { InterpretError } from './interpret.ts'
 import type { MessagesClient, ModelReply } from './interpret.ts'
 import { INTENT_TIMEOUT_CAREFUL_MS, INTENT_TIMEOUT_MS, careSettings, pageIntent } from './intent.ts'
-import { CAREFUL_PROMPT, INTENT_SYSTEM_PROMPT } from './intentPrompt.ts'
+import { ANSWER_TOOL, CAREFUL_PROMPT, INTENT_SYSTEM_PROMPT } from './intentPrompt.ts'
 
 type CreateParams = Parameters<MessagesClient['messages']['create']>[0]
 
@@ -346,5 +346,38 @@ describe('round 6: saved values (26.1, 26.3)', () => {
   it('the prompt explains saved values', () => {
     expect(INTENT_SYSTEM_PROMPT).toContain('# Saved values')
     expect(INTENT_SYSTEM_PROMPT).toContain('insertSaved')
+  })
+})
+
+describe('round 8: media seconds (29.1)', () => {
+  it('the tool schema gives media seconds, an integer from 1 to 3600 or null', () => {
+    const found: Array<Record<string, unknown>> = []
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) return node.forEach(walk)
+      if (node === null || typeof node !== 'object') return
+      const o = node as Record<string, unknown>
+      const props = o.properties as Record<string, { enum?: unknown[] }> | undefined
+      if (props?.kind?.enum?.[0] === 'media') found.push(o)
+      for (const v of Object.values(o)) walk(v)
+    }
+    walk(ANSWER_TOOL.input_schema)
+    expect(found).toHaveLength(1)
+    const props = found[0]?.properties as Record<string, unknown>
+    expect(found[0]?.required).toEqual(['kind', 'action', 'seconds'])
+    expect(props.seconds).toMatchObject({ anyOf: [{ type: 'integer', minimum: 1, maximum: 3600 }, { type: 'null' }] })
+  })
+
+  it('a null seconds becomes absent; a seek by an amount passes; seconds on pause is unclear', async () => {
+    const { client } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'media', action: 'forward', seconds: null } }, say: '' }))
+    expect((await pageIntent(request({ utterance: 'keri edasi' }), { client, model: 'm' })).intent).toEqual({ kind: 'command', command: { kind: 'media', action: 'forward' } })
+    const { client: minute } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'media', action: 'back', seconds: 120 } }, say: '' }))
+    expect((await pageIntent(request({ utterance: 'keri kaks minutit tagasi' }), { client: minute, model: 'm' })).intent).toEqual({ kind: 'command', command: { kind: 'media', action: 'back', seconds: 120 } })
+    const { client: wrong } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'media', action: 'pause', seconds: 30 } }, say: '' }))
+    expect((await pageIntent(request({ utterance: 'paus' }), { client: wrong, model: 'm' })).intent.kind).toBe('unclear')
+  })
+
+  it('the prompt has the rules line for an amount', () => {
+    expect(INTENT_SYSTEM_PROMPT).toContain('"keri edasi üks minut" forward with seconds 60')
+    expect(INTENT_SYSTEM_PROMPT).toContain('"keri kaks minutit tagasi" back with seconds 120')
   })
 })

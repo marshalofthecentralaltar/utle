@@ -710,6 +710,27 @@ async function main(): Promise<void> {
     line('media', 'forward: +10 s', r !== 'timeout' && r.ok && afterForward >= 10 && afterForward < 15, `${describe(r)} t=${afterForward}`)
     r = await send({ kind: 'media', action: 'back' })
     line('media', 'back: -10 s', r !== 'timeout' && r.ok && (await vstate()).time < 5, `${describe(r)} t=${(await vstate()).time}`)
+    // Round 8 (29.1): seek by an amount. The fixture video is about 20 s, so 60 s forward clamps to
+    // its end; a 5 s seek checks the amount itself. Paused, so the looping video stays where it lands.
+    const duration = await video.evaluate(() => (document.getElementById('v') as HTMLVideoElement).duration)
+    await video.evaluate(() => {
+      const v = document.getElementById('v') as HTMLVideoElement
+      v.pause()
+      v.currentTime = 1
+    })
+    r = await send({ kind: 'media', action: 'forward', seconds: 5 })
+    const seek5 = (await vstate()).time
+    line('media', 'seek forward seconds 5: 1 -> 6 (+-1)', r !== 'timeout' && r.ok && Math.abs(seek5 - 6) <= 1, `${describe(r)} t=${seek5}`)
+    r = await send({ kind: 'media', action: 'forward', seconds: 60 })
+    const seek60 = (await vstate()).time
+    line('media', `seek forward seconds 60: clamped to the end (duration ${duration.toFixed(3)} s)`, r !== 'timeout' && r.ok && Math.abs(seek60 - duration) < 0.05, `${describe(r)} t=${seek60} duration=${duration}`)
+    r = await send({ kind: 'media', action: 'back', seconds: 5 })
+    const back5 = (await vstate()).time
+    line('media', 'seek back seconds 5: end -> end - 5 (+-1)', r !== 'timeout' && r.ok && Math.abs(back5 - (duration - 5)) <= 1, `${describe(r)} t=${back5}`)
+    r = await send({ kind: 'media', action: 'back', seconds: 60 })
+    const back60 = (await vstate()).time
+    line('media', 'seek back seconds 60: clamped to 0', r !== 'timeout' && r.ok && back60 === 0, `${describe(r)} t=${back60}`)
+    await video.evaluate(() => (document.getElementById('v') as HTMLVideoElement).play())
     r = await send({ kind: 'media', action: 'exitFullscreen' })
     line('media', 'exitFullscreen when not fullscreen is fine', r !== 'timeout' && r.ok, describe(r))
     r = await send({ kind: 'readPage' })

@@ -429,6 +429,62 @@ const GOOGLE = /^(?:(?:otsi|search) (?:googlest|googlist|googleist|googlei|googl
 /** "otsi youtube'ist X", "otsi youtubest X", "search youtube for X". */
 const YOUTUBE = /^(?:otsi|search) (?:you ?tubest|you ?tubeist|you ?tubist|you ?tubei|you ?tube)(?: for)? (.+)$/
 
+/** Round 8 (29.1): the units of a seek amount, in seconds. */
+const SEEK_UNITS: Record<string, number> = {
+  sekund: 1, sekundi: 1, sekundit: 1, sek: 1, second: 1, seconds: 1, sec: 1, secs: 1,
+  minut: 60, minuti: 60, minutit: 60, min: 60, minute: 60, minutes: 60, mins: 60,
+}
+const SEEK_UNIT = Object.keys(SEEK_UNITS).join('|')
+const AMOUNT = new RegExp(`^(?:(.+) )?(${SEEK_UNIT})( and a half)?$`)
+const ET_DIRECTION: Record<string, 'forward' | 'back'> = { edasi: 'forward', tagasi: 'back' }
+const EN_DIRECTION: Record<string, 'forward' | 'back'> = { forward: 'forward', ahead: 'forward', back: 'back', backward: 'back', backwards: 'back' }
+const EN_DIRECTIONS = Object.keys(EN_DIRECTION).join('|')
+
+/** How many units a count before the unit means: "pool" 0.5, "poolteist" 1.5, "kaks ja pool" 2.5, "30" 30. */
+function seekCount(count: string): number | null {
+  if (count === '' || count === 'a' || count === 'an') return 1
+  if (count === 'pool' || count === 'half' || count === 'half a') return 0.5
+  if (count === 'poolteist') return 1.5
+  const half = /^(.+) (?:ja pool|and a half)$/.exec(count)
+  const whole = half?.[1] ?? count
+  const n = /^\d{1,4}$/.test(whole) ? Number(whole) : spokenNumber(whole)
+  return n === null ? null : n + (half ? 0.5 : 0)
+}
+
+/** "üks minut", "poolteist minutit", "a minute and a half" in whole seconds, 1 to 3600; else null. */
+function seekSeconds(amount: string): number | null {
+  const m = AMOUNT.exec(amount)
+  const unit = m?.[2] === undefined ? undefined : SEEK_UNITS[m[2]]
+  if (!m || unit === undefined) return null
+  const count = seekCount(m[1] ?? '')
+  if (count === null || (m[3] !== undefined && count % 1 !== 0)) return null
+  const seconds = Math.round((count + (m[3] === undefined ? 0 : 0.5)) * unit)
+  return seconds >= 1 && seconds <= 3600 ? seconds : null
+}
+
+/**
+ * Round 8 (29.1): "keri edasi üks minut", "keri kaks minutit tagasi", "skip back thirty seconds",
+ * "rewind 10 seconds". Bare "keri edasi" is the fixed table's (no seconds); without "edasi" or
+ * "tagasi" (a scroll phrase) this is never a seek.
+ */
+function seekCommand(s: string): BrowserCommand | null {
+  const seek = (action: 'forward' | 'back' | undefined, amount: string | undefined): BrowserCommand | null => {
+    const seconds = amount === undefined ? null : seekSeconds(amount)
+    return action === undefined || seconds === null ? null : { kind: 'media', action, seconds }
+  }
+  let m = /^keri (edasi|tagasi) (.+)$/.exec(s)
+  if (m?.[1]) return seek(ET_DIRECTION[m[1]], m[2])
+  m = /^keri (.+) (edasi|tagasi)$/.exec(s)
+  if (m?.[2]) return seek(ET_DIRECTION[m[2]], m[1])
+  m = new RegExp(`^(?:(?:skip|go|jump) )?(${EN_DIRECTIONS}) (.+)$`).exec(s)
+  if (m?.[1]) return seek(EN_DIRECTION[m[1]], m[2])
+  m = new RegExp(`^(?:skip|go|jump) (.+) (${EN_DIRECTIONS})$`).exec(s)
+  if (m?.[2]) return seek(EN_DIRECTION[m[2]], m[1])
+  m = /^rewind (.+)$/.exec(s)
+  if (m?.[1]) return seek('back', m[1])
+  return null
+}
+
 /** Every fixed phrase of the table, for the in-page command vocabulary (section 21.3). */
 export const BROWSER_PHRASES: readonly string[] = Object.keys(FIXED)
 
@@ -447,6 +503,9 @@ export function browserUnderstood(text: string): { command: BrowserCommand; unde
 
   const fixed = FIXED[s]
   if (fixed) return plain(fixed)
+
+  const seek = seekCommand(s)
+  if (seek) return plain(seek)
 
   const index = tabIndex(s)
   if (index !== null && index >= 1) return plain({ kind: 'switchTab', to: { index } })

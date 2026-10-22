@@ -271,6 +271,8 @@ What the listing needs that the repository cannot hold:
     stopped), `stopp`, `seis`, `aitab`, `lõpeta`, `lõpeta kerimine`, `kerimine seis` (stop), `lehe algusesse`,
     `lehe lõppu`. While there are words in the box a one-word `stopp` or `aitab` is typed (it is a reply);
     `lõpeta kerimine` always stops. `keri edasi` and `keri tagasi` skip in the video.
+  - seek by an amount (round 8): `keri edasi üks minut`, `keri kaks minutit tagasi`, `keri tagasi pool minutit`,
+    `keri edasi poolteist minutit`, `keri edasi 30 sekundit`, `skip back thirty seconds`; bare `keri edasi` is 10 s.
   - sound-alikes (round 3): a command heard the Estonian way is still understood, and the amber line says
     what it took it to be ("Sain aru: „ava juutuub“"): `ava juutuba`, `mine guugel`, `aga whatsapp` (for
     "ava whatsapp"), `vatsap`, `keri ala`, `geri alla`, `saadake`. Site names with case endings too
