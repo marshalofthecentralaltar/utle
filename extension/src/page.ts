@@ -7,6 +7,8 @@ import type { BoxState, BrowserCommand, BrowserResult, CaretTarget, MediaAction,
 import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
 import { armElement, armedElement, boxState, disarm, elementAt, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
+import { boxText, isDocument } from './box.ts'
+import type { FormatStyle } from '../../src/browser/protocol.ts'
 
 /** What background.ts sends: a command plus which messaging site the page is. */
 export type PageCommand = BrowserCommand & { site: SiteName | null }
@@ -878,7 +880,7 @@ function readPage(site: Site | null): BrowserResult {
   const page: PageContext = {
     url: location.href,
     title: document.title,
-    box: boxState(findMessageBox(site), site),
+    box: docsBox() ?? boxState(findMessageBox(site), site),
     items,
     media: mediaState(mediaElement()),
     hints: hintLayer !== null,
@@ -1246,13 +1248,13 @@ async function setText(text: string, site: Site | null): Promise<BrowserResult> 
   // Live dictation (21.3) mostly adds words at the end: type only those, so the box never blanks.
   // Round 5: a one-line input is never previewed, so it is always selected and replaced whole,
   // with the text as the core converted it (digits, an address), never appended to.
-  const current = readText(el)
+  const current = boxText(el, site)
   const tail = text.slice(current.length)
   if (!(el instanceof HTMLInputElement) && current !== '' && text.startsWith(current) && !/[\r\n]/.test(tail)) {
-    if (caretAtEnd(el)) await sleep(30)
+    if (isDocument(el, site) ? documentCaretAtEnd(el) : caretAtEnd(el)) await sleep(30)
     if (tail !== '') await typeAtSelection(el, tail)
     await sleep(30)
-    if (readText(el) === text) return ok({ box: boxState(el, site) })
+    if (boxText(el, site) === text) return ok({ box: boxState(el, site) })
   }
   await emptyField(el)
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
@@ -1888,6 +1890,8 @@ function docsSelect(el: HTMLElement, what: SelectTarget): BrowserResult {
     dispatchKey(el, 'End', { shift: true })
     return ok()
   }
+  const more = docsSelectDocument(el, what)
+  if (more !== null) return more
   return fail('failed', DOCS_NO_TEXT)
 }
 
@@ -1947,9 +1951,11 @@ async function select(what: SelectTarget, site: Site | null): Promise<BrowserRes
   const { text } = model
   const span = spanOf(el, model)
   let chosen: Span | null
-  if (typeof what === 'object') {
+  if (typeof what === 'object' && 'find' in what) {
     chosen = findSpan(text, span.start, what.find)
     if (!chosen) return fail('not_found', 'That text is not in the field.')
+  } else if (typeof what === 'object') {
+    chosen = lastWordsOf(text, what.lastWords)
   } else {
     switch (what) {
       case 'all':
@@ -1970,6 +1976,9 @@ async function select(what: SelectTarget, site: Site | null): Promise<BrowserRes
       case 'lastSentence':
         chosen = lastSentenceOf(text)
         break
+      case 'paragraph':
+        chosen = paragraphAt(text, span.start)
+        break
     }
   }
   await setSpan(el, model, chosen)
@@ -1989,14 +1998,14 @@ const DOCS_TYPED_RESET_MS = 4000
 function docsBox(): BoxState | null {
   const docs = docsEditor()
   if (docs === null || docs === 'missing') return null
-  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
-  return { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' }
+  docsForget()
+  return { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs', document: true }
 }
 
 function docsSetText(text: string): BrowserResult {
   const docs = docsEditor()
   if (docs === null || docs === 'missing') return fail('not_found', DOCS_MISSING)
-  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
+  docsForget()
   let common = 0
   while (common < docsTyped.length && common < text.length && docsTyped[common] === text[common]) common += 1
   const erase = docsTyped.length - common
@@ -2011,7 +2020,7 @@ function docsSetText(text: string): BrowserResult {
   if (tail !== '') docsType(docs, tail)
   docsTyped = text
   docsTypedAt = Date.now()
-  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' } })
+  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs', document: true } })
 }
 
 /** Types at the caret, replacing a selection, through the same typing path as setText, with the join rules of joinAtCaret. */
@@ -2033,6 +2042,188 @@ async function typeText(text: string, site: Site | null): Promise<BrowserResult>
   return ok({ box: boxState(el, site) })
 }
 
+// ---------- document mode (29.2): formatting, the paragraph, the selections, the Docs memory ----------
+
+/** A chord: one key with its modifiers. */
+interface Chord {
+  key: string
+  code: string
+  keyCode: number
+  ctrl: boolean
+  alt: boolean
+  shift: boolean
+}
+
+/** Google Docs' shortcuts (Windows), which TipTap-based editors share; the fallback covers a plain contenteditable. */
+const FORMAT_CHORDS: Record<Exclude<FormatStyle, 'paragraph'>, Chord> = {
+  bold: { key: 'b', code: 'KeyB', keyCode: 66, ctrl: true, alt: false, shift: false },
+  italic: { key: 'i', code: 'KeyI', keyCode: 73, ctrl: true, alt: false, shift: false },
+  underline: { key: 'u', code: 'KeyU', keyCode: 85, ctrl: true, alt: false, shift: false },
+  heading: { key: '1', code: 'Digit1', keyCode: 49, ctrl: true, alt: true, shift: false },
+  normal: { key: '0', code: 'Digit0', keyCode: 48, ctrl: true, alt: true, shift: false },
+  list: { key: '*', code: 'Digit8', keyCode: 56, ctrl: true, alt: false, shift: true },
+}
+
+const PLAIN_NO_FORMAT = 'A plain text box has no bold, italics, headings or lists; "uus lõik" works here.'
+const LINE_NO_PARAGRAPH = 'A one-line field has no paragraphs.'
+
+/** Sends the chord to the target. True when the page let it through (nobody cancelled the keydown). */
+function sendChord(target: Element, chord: Chord): boolean {
+  const init = { key: chord.key, code: chord.code, keyCode: chord.keyCode, which: chord.keyCode, charCode: 0, ctrlKey: chord.ctrl, altKey: chord.alt, shiftKey: chord.shift, bubbles: true, cancelable: true, composed: true }
+  const through = target.dispatchEvent(new KeyboardEvent('keydown', init))
+  target.dispatchEvent(new KeyboardEvent('keyup', init))
+  return through
+}
+
+/** "paksuks", "kaldkirja", "pealkirjaks", "loendiks", "uus lõik": the editor's chord, else execCommand (29.2). */
+async function format(style: FormatStyle, site: Site | null): Promise<BrowserResult> {
+  const docs = docsEditor()
+  if (docs === 'missing') return fail('failed', DOCS_MISSING)
+  if (docs !== null) return docsFormat(docs, style)
+  const el = editTarget(site)
+  if (!el) return fail('not_found', 'No field is picked to write in.')
+  if (el instanceof HTMLInputElement) return fail('failed', style === 'paragraph' ? LINE_NO_PARAGRAPH : PLAIN_NO_FORMAT)
+  if (style === 'paragraph') {
+    await paragraphAtEnd(el)
+    return ok({ box: boxState(el, site) })
+  }
+  if (el instanceof HTMLTextAreaElement) return fail('failed', PLAIN_NO_FORMAT)
+  el.focus()
+  if (style === 'bold' || style === 'italic' || style === 'underline') await trimSelection(el)
+  const before = el.innerHTML
+  const through = sendChord(el, FORMAT_CHORDS[style])
+  await sleep(30)
+  if (through && el.innerHTML === before) formatFallback(el, style)
+  await sleep(30)
+  return ok({ box: boxState(el, site) })
+}
+
+/** What a plain contenteditable cannot do from a key: the browser's own editing commands. */
+function formatFallback(el: HTMLElement, style: Exclude<FormatStyle, 'paragraph'>): void {
+  switch (style) {
+    case 'bold':
+    case 'italic':
+    case 'underline':
+      exec(style)
+      return
+    case 'heading':
+      exec('formatBlock', 'h1')
+      return
+    case 'list':
+      exec('insertUnorderedList')
+      return
+    case 'normal': {
+      const anchor = window.getSelection()?.anchorNode ?? null
+      const item = (anchor instanceof Element ? anchor : anchor?.parentElement ?? null)?.closest('li') ?? null
+      if (item !== null && el.contains(item)) exec('insertUnorderedList')
+      else exec('formatBlock', 'div')
+    }
+  }
+}
+
+/** A selection that starts or ends in spaces (as "vali see lause" leaves it) is shrunk to its letters, so exactly the words are styled. */
+async function trimSelection(el: HTMLElement): Promise<void> {
+  const model = modelOf(el)
+  const span = spanOf(el, model)
+  let { start, end } = span
+  while (end > start && /\s/u.test(model.text.charAt(end - 1))) end--
+  while (start < end && /\s/u.test(model.text.charAt(start))) start++
+  if (start !== span.start || end !== span.end) await setSpan(el, model, { start, end })
+}
+
+/** "uus lõik" at the end, where dictation goes: a blank line in a textarea, a new block in a rich editor. */
+async function paragraphAtEnd(el: HTMLElement): Promise<void> {
+  if (el instanceof HTMLTextAreaElement) {
+    caretAtEnd(el)
+    await typeAtSelection(el, '\n\n')
+    return
+  }
+  if (documentCaretAtEnd(el)) await sleep(30)
+  const handled = !el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: 'insertParagraph' }))
+  if (!handled) exec('insertParagraph')
+  await sleep(30)
+}
+
+/**
+ * The caret at the end of a document's text: inside its last text node, or before the <br> of an
+ * empty last paragraph, so typing continues there and never starts a block of its own. True when it moved.
+ */
+function documentCaretAtEnd(el: HTMLElement): boolean {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return caretAtEnd(el)
+  el.focus()
+  const selection = window.getSelection()
+  if (!selection) return false
+  if (selection.rangeCount > 0 && selection.isCollapsed && el.contains(selection.anchorNode)) {
+    const rest = document.createRange()
+    rest.selectNodeContents(el)
+    rest.setStart(selection.getRangeAt(0).endContainer, selection.getRangeAt(0).endOffset)
+    if (rest.toString() === '' && rest.cloneContents().querySelector('div, p, li, h1, h2, h3, h4, h5, h6') === null) return false
+  }
+  let node: Node = el
+  while (node.lastChild !== null) node = node.lastChild
+  const range = document.createRange()
+  if (node instanceof Text) range.setStart(node, node.data.length)
+  else if (node instanceof HTMLBRElement) range.setStartBefore(node)
+  else range.setStart(node, node.childNodes.length)
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return true
+}
+
+/** "vali lõik": the paragraph at the caret, from one line break to the next. */
+function paragraphAt(text: string, pos: number): Span {
+  return { start: lineStartOf(text, pos), end: lineEndOf(text, pos) }
+}
+
+/** "vali viimased kolm sõna": the last n words with their marks, and the spaces before them on that line. */
+function lastWordsOf(text: string, n: number): Span {
+  let pos = text.length
+  while (pos > 0 && /\s/u.test(text.charAt(pos - 1))) pos--
+  for (let i = 0; i < Math.max(1, Math.min(n, 50)); i++) {
+    if (i > 0) while (pos > 0 && /\s/u.test(text.charAt(pos - 1))) pos--
+    while (pos > 0 && !/\s/u.test(text.charAt(pos - 1))) pos--
+  }
+  while (pos > 0 && isSpace(text.charAt(pos - 1))) pos--
+  return { start: pos, end: text.length }
+}
+
+/** On Docs (unverified): the paragraph by Ctrl+Up then Ctrl+Shift+Down, the last words by Ctrl+Shift+Left. Null for the other targets. */
+function docsSelectDocument(el: HTMLElement, what: SelectTarget): BrowserResult | null {
+  if (what === 'paragraph') {
+    dispatchKey(el, 'ArrowUp', { ctrl: true })
+    dispatchKey(el, 'ArrowDown', { ctrl: true, shift: true })
+    return ok()
+  }
+  if (typeof what === 'object' && 'lastWords' in what) {
+    for (let i = 0; i < Math.max(1, Math.min(what.lastWords, 50)); i++) dispatchKey(el, 'ArrowLeft', { ctrl: true, shift: true })
+    return ok()
+  }
+  return null
+}
+
+/** Docs: the chord on its keyboard target; "uus lõik" is Enter twice, and the memory learns the break. */
+function docsFormat(el: HTMLElement, style: FormatStyle): BrowserResult {
+  el.focus()
+  if (style !== 'paragraph') {
+    sendChord(el, FORMAT_CHORDS[style])
+    return ok()
+  }
+  docsForget()
+  docsType(el, '\n\n')
+  docsTyped = `${docsTyped}\n\n`
+  docsTypedAt = Date.now()
+  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs', document: true } })
+}
+
+/**
+ * REVIEW-R3 M5: after DOCS_TYPED_RESET_MS the memory of what Ütle typed keeps its last character
+ * instead of emptying, so the next utterance is joined onto it ("Tere. Uus lause", not "Tere.Uus lause").
+ */
+function docsForget(): void {
+  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = docsTyped.slice(-1)
+}
+// ---------- end of document mode ----------
 // ---------- siteSearch ----------
 
 const GENERIC_SEARCH_FIELDS = [
@@ -2394,6 +2585,8 @@ async function run(command: PageCommand): Promise<PageResult> {
         return await clearField(site)
       case 'arm':
         return arm(command.on === true, site)
+      case 'format':
+        return await format(command.style, site)
       default:
         return fail('failed', `The page does not know the command "${command.kind}".`)
     }

@@ -377,6 +377,8 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     case 'typeText':
     case 'clearField':
     case 'arm':
+    // Round 8 (29.2): formatting runs in the page like the other editing commands.
+    case 'format':
       return clean(await runInPage(tab, command))
     case 'siteSearch': {
       // The search submits and usually loads a results page.
