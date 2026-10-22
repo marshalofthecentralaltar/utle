@@ -1104,15 +1104,15 @@ async function main(): Promise<void> {
       const expected = norm(await news.evaluate(() => ['h1', '#p1', '#p2', '#p3'].map((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '').join(' ')))
 
       // 1. The whole article, read to the end.
-      const seen = { reading: false, muted: false, line: '' }
+      const seen = { reading: false, mutedWhileReading: false, line: '' }
       r = await send({ kind: 'read', what: 'page' })
       const readResult = r
       const ended = await waitUntil(async () => {
         const s = await stripNow()
         if (s.reading === true) seen.reading = true
-        if (s.micMuted === true) seen.muted = true
+        if (s.reading === true && s.micMuted === true) seen.mutedWhileReading = true
         if (s.reading === true && s.line !== undefined) seen.line = s.line
-        return seen.reading && s.reading === false && s.micMuted === false
+        return seen.reading && s.reading === false && s.micMuted !== true
       }, 15_000)
       const spoken = ((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]
       const said = norm(spoken.join(' '))
@@ -1125,7 +1125,7 @@ async function main(): Promise<void> {
         `${describe(readResult)} sentences=${spoken.length} first 60: ${JSON.stringify(said.slice(0, 60))} equals headline+paragraphs=${said === expected} markers ${markers.join('/')} absent=${leaked.length === 0}${leaked.length > 0 ? ` (found ${leaked.join(',')})` : ''}`,
       )
       check('read: the strip state showed reading: true and the amber line "Loen ette…" while reading', seen.reading && seen.line === 'Loen ette…', JSON.stringify(seen))
-      check('read: listening was paused while reading (micMuted true) and resumed after the last sentence', seen.muted && ended, JSON.stringify(seen))
+      check('read: the microphone stays live while an article is read (micMuted false throughout)', seen.reading && !seen.mutedWhileReading && ended, JSON.stringify(seen))
 
       // 2. A slow voice: read again, screenshot while reading, then "stopp" as the command.
       await inOffscreen('globalThis.__fakeSpeech.endMs = 4000')
@@ -1159,6 +1159,17 @@ async function main(): Promise<void> {
       check('read: continue after the stop starts at the next sentence and reads to the end', r !== 'timeout' && r.ok && continued[stoppedSpoken] === spoken[stoppedSpoken - spokenBefore] && continued.length === spokenBefore + spoken.length, `next=${JSON.stringify(continued[stoppedSpoken]?.slice(0, 40))} total=${continued.length}`)
       r = await send({ kind: 'read', what: 'continue' })
       check('read: continue after the end fails not_found ("Lugemine on lõppenud.")', r !== 'timeout' && !r.ok && r.code === 'not_found' && (await stripNow()).line === 'Lugemine on lõppenud.', describe(r))
+
+      // 4. "Loe riba ette" on: a bar line is spoken, and the microphone is muted only while it speaks.
+      await sw.evaluate(() => chrome.storage.local.set({ readBar: true }))
+      await news.waitForTimeout(300)
+      await inOffscreen('globalThis.__fakeSpeech.endMs = 1500')
+      await send({ kind: 'read', what: 'continue' })
+      const barMuted = await waitUntil(async () => (await stripNow()).micMuted === true, 3000)
+      const barSpoken = (((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]).at(-1)
+      const barUnmuted = await waitUntil(async () => (await stripNow()).micMuted === false, 5000)
+      line('read', 'Loe riba ette: a bar line mutes the microphone', barMuted && barSpoken === 'Lugemine on lõppenud.' && barUnmuted, `spoken=${JSON.stringify(barSpoken)} micMuted true while it spoke=${barMuted}, false after=${barUnmuted}`)
+      await sw.evaluate(() => chrome.storage.local.remove('readBar'))
       await cdp.detach().catch(() => undefined)
     }
 
