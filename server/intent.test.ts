@@ -381,3 +381,34 @@ describe('round 8: media seconds (29.1)', () => {
     expect(INTENT_SYSTEM_PROMPT).toContain('"keri kaks minutit tagasi" back with seconds 120')
   })
 })
+
+// ---------- reading aloud (29.5) ----------
+describe('reading aloud (29.5): the model may answer read', () => {
+  it('read: the tool schema has read with what page, box, selection, continue or stop', () => {
+    const found: Array<Record<string, unknown>> = []
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) return node.forEach(walk)
+      if (node === null || typeof node !== 'object') return
+      const o = node as Record<string, unknown>
+      const props = o.properties as Record<string, { enum?: unknown[] }> | undefined
+      if (props?.kind?.enum?.[0] === 'read') found.push(o)
+      for (const v of Object.values(o)) walk(v)
+    }
+    walk(ANSWER_TOOL.input_schema)
+    expect(found).toHaveLength(1)
+    expect(found[0]?.required).toEqual(['kind', 'what'])
+    expect((found[0]?.properties as Record<string, unknown>).what).toEqual({ type: 'string', enum: ['page', 'box', 'selection', 'continue', 'stop'] })
+  })
+
+  it('read: an answer of read page passes; an unknown what is unclear', async () => {
+    const { client } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'read', what: 'page' } }, say: '' }))
+    expect((await pageIntent(request({ utterance: 'loe mulle seda lehte' }), { client, model: 'm' })).intent).toEqual({ kind: 'command', command: { kind: 'read', what: 'page' } })
+    const { client: wrong } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'read', what: 'all' } }, say: '' }))
+    expect((await pageIntent(request({ utterance: 'loe kõik' }), { client: wrong, model: 'm' })).intent.kind).toBe('unclear')
+  })
+
+  it('read: the prompt has the rules line', () => {
+    expect(INTENT_SYSTEM_PROMPT).toContain('"loe ette", "loe mulle seda lehte", "ma ei näe, loe": read page')
+    expect(INTENT_SYSTEM_PROMPT).toContain('"loe see ette" with an armed box: read box')
+  })
+})

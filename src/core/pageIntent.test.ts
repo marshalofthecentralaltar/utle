@@ -65,3 +65,16 @@ describe('round 8: media forward and back carry seconds from 1 to 3600 (29.1)', 
     expect(seek({ action: 'pause' })).toEqual({ kind: 'command', command: { kind: 'media', action: 'pause' } })
   })
 })
+
+// ---------- reading aloud (29.5) ----------
+describe('reading aloud (29.5): the schema accepts read and rejects an unknown what', () => {
+  const read = (command: Record<string, unknown>): unknown => pageIntentFrom({ kind: 'command', command: { kind: 'read', ...command } }, request())
+  it('read: page, box, selection, continue and stop pass', () => {
+    for (const what of ['page', 'box', 'selection', 'continue', 'stop']) expect(read({ what })).toEqual({ kind: 'command', command: { kind: 'read', what } })
+  })
+  it('read: an unknown or missing what is rejected', () => {
+    expect(read({ what: 'everything' })).toBeNull()
+    expect(read({ what: 'sentence' })).toBeNull()
+    expect(read({})).toBeNull()
+  })
+})
