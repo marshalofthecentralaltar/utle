@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BrowserCommand } from '../browser/protocol.ts'
 import { browserIntent, SITES } from './browserIntent.ts'
+import { STRINGS } from './strings.ts'
 
 const ROWS: Array<[string, BrowserCommand]> = [
   // New tab
@@ -233,5 +234,67 @@ describe('browserIntent: what is not a browser command', () => {
     'delete this',
   ])('%s', (text) => {
     expect(browserIntent(text)).toBeNull()
+  })
+})
+
+describe('round 8: media forward and back by an amount (29.1)', () => {
+  const ROWS_SEEK: Array<[string, 'forward' | 'back', number]> = [
+    ['keri edasi üks minut', 'forward', 60],
+    ['keri üks minut edasi', 'forward', 60],
+    ['keri edasi minut', 'forward', 60],
+    ['keri tagasi kolmkümmend sekundit', 'back', 30],
+    ['keri kolmkümmend sekundit tagasi', 'back', 30],
+    ['keri edasi poolteist minutit', 'forward', 90],
+    ['keri tagasi pool minutit', 'back', 30],
+    ['keri kaks minutit edasi', 'forward', 120],
+    ['keri edasi kümme sekundit', 'forward', 10],
+    ['keri edasi 30 sekundit', 'forward', 30],
+    ['keri edasi kaks ja pool minutit', 'forward', 150],
+    ['keri tagasi viis minutit', 'back', 300],
+    ['keri minut edasi', 'forward', 60],
+    ['Keri edasi üks minut.', 'forward', 60],
+    ['KERI TAGASI VIIS MINUTIT!', 'back', 300],
+    ['keri edasi kolm kümmend sekundit', 'forward', 30],
+    ['keri edasi 120 sekundit', 'forward', 120],
+    ['skip forward one minute', 'forward', 60],
+    ['skip back thirty seconds', 'back', 30],
+    ['forward 90 seconds', 'forward', 90],
+    ['go back two minutes', 'back', 120],
+    ['skip ahead a minute and a half', 'forward', 90],
+    ['rewind 10 seconds', 'back', 10],
+  ]
+  it.each(ROWS_SEEK)('%s -> %s %d s', (text, action, seconds) => {
+    expect(browserIntent(text)).toEqual({ kind: 'media', action, seconds })
+  })
+
+  it('"keri edasi" and "keri tagasi" alone carry no seconds (the 10 s default)', () => {
+    expect(browserIntent('keri edasi')).toEqual({ kind: 'media', action: 'forward' })
+    expect(browserIntent('keri tagasi')).toEqual({ kind: 'media', action: 'back' })
+    expect(browserIntent('skip forward')).toEqual({ kind: 'media', action: 'forward' })
+    expect(browserIntent('Keri tagasi.')).toEqual({ kind: 'media', action: 'back' })
+  })
+
+  it('a scroll phrase is never a seek', () => {
+    for (const text of ['keri alla kolm korda', 'keri alla', 'keri natuke alla', 'keri üles kaks minutit', 'keri alla edasi']) {
+      expect(browserIntent(text)?.kind).not.toBe('media')
+    }
+    expect(browserIntent('keri alla')).toEqual({ kind: 'scroll', direction: 'down' })
+  })
+
+  it('an amount out of bounds, or not an amount, is not a seek', () => {
+    for (const text of ['keri edasi null sekundit', 'keri edasi 5000 sekundit', 'keri edasi kolm korda', 'keri edasi kiiresti', 'go back two pages']) {
+      expect(browserIntent(text)).toBeNull()
+    }
+  })
+})
+
+describe('round 8: the line for a seek says the amount (29.1)', () => {
+  it('Estonian and English', () => {
+    expect(STRINGS.et.browserDoing({ kind: 'media', action: 'forward', seconds: 60 })).toBe('Edasi üks minut.')
+    expect(STRINGS.et.browserDoing({ kind: 'media', action: 'back', seconds: 120 })).toBe('Tagasi 2 minutit.')
+    expect(STRINGS.et.browserDoing({ kind: 'media', action: 'forward', seconds: 90 })).toBe('Edasi 90 sekundit.')
+    expect(STRINGS.et.browserDoing({ kind: 'media', action: 'forward' })).toBe('Edasi kümme sekundit.')
+    expect(STRINGS.en.browserDoing({ kind: 'media', action: 'back', seconds: 30 })).toBe('Back 30 seconds.')
+    expect(STRINGS.en.browserDoing({ kind: 'media', action: 'forward', seconds: 60 })).toBe('Forward one minute.')
   })
 })
