@@ -1462,8 +1462,9 @@ The line the bar shows and speaks names the amount (`browserDoing` in `src/core/
 ### 29.5 Reading aloud: the measurement (READ lane)
 
 **Verdict: an Estonian voice exists in Microsoft Edge only** (two network voices, Anu and Kert).
-Playwright's Chromium and installed Google Chrome list none, so the reading feature was not built
-this round (the plan's gate: an `et` voice in the suite's Chromium or in Chrome). Measured on this
+Playwright's Chromium and installed Google Chrome list none, so checkpoint 1 did not build the
+reading feature (the plan's gate: an `et` voice in the suite's Chromium or in Chrome); checkpoint 2
+built it on the orchestrator's ruling ("Built (checkpoint 2)" below). Measured on this
 machine (Windows 11 Pro 10.0.26200, English UI, Russian and English speech voices installed) on
 2026-10-22 with `npx tsx scripts/tts-voices.ts` (every browser headed; the voice list is read once
 its length has not changed for 1 s, at most 6 s; then five runs of `speak()` to `onstart` on a
@@ -1552,12 +1553,117 @@ product: `chrome.tts` works but gives nothing the offscreen document's `speechSy
   gate on, which is the owner's choice of trade-off. The server never logs the text, like every
   other route.
 
-Not built and not verified: the commands ("loe ette", "loe see ette", "loe edasi", "stopp"), the
-"Loe riba ette" setting, `fixtures/news.html` and its suite case, because no voice passed the gate.
+Not built in checkpoint 1 (built in checkpoint 2, below): the commands ("loe ette", "loe see ette",
+"loe edasi", "stopp"), the "Loe riba ette" setting, `fixtures/news.html` and its suite case.
 Not measured: how either Estonian voice sounds to a person (the owner's ear), the real content
 script's world in Edge (a page's `evaluate` stood in for it), Edge's voices in a profile signed in
 to a work account or with policies, and a recording of Edge's Anu (the browser's speech output
 cannot be captured from a test without a loopback device).
+
+#### Built (checkpoint 2)
+
+The orchestrator's ruling on the measurement above: the feature is built browser-independently on
+`speechSynthesis` in the offscreen document (no `tts` permission, no server route); where no `et`
+voice exists the bar says so instead of reading Estonian with an English voice. TartuNLP stays the
+Chrome-side proposal, not built.
+
+**Commands.** `BrowserCommand` gains `{ kind: 'read'; what: 'page' | 'box' | 'selection' | 'continue' | 'stop' }`.
+Rules (`src/core/browserIntent.ts`, the fixed table, whole utterances after `cleanForBrowser`):
+
+| Said | Command |
+|---|---|
+| "loe ette", "loe lehte ette", "loe leht ette", "loe see leht ette", "read the page", "read it out", "read this page" | read page |
+| "loe see ette", "loe kasti ette", "loe kast ette", "read this", "read the box" | read box (the armed box's text; no armed box with text: the page) |
+| "loe valitud ette", "loe valik ette", "read the selection" | read selection (the page's selected text; none: the page) |
+| "loe edasi", "jätka lugemist", "continue reading" | continue |
+| "lõpeta lugemine", "stop reading", "lugemine seis"; while reading also "stopp", "stop", "aitab", "seis", "lõpeta" | stop |
+
+"stopp" and "aitab" keep their meanings (stop a slow scroll; typed as a one-word reply while the box
+has words) everywhere except while reading: the engine (`extension/src/engine.ts`, `deps.reading`)
+checks `isReadStop` (`src/core/reading.ts`) on every final before the rules see it, and while a
+reading is in progress such a final runs `read stop` at once, outside the queue, and nothing else.
+The model (`CommandSchema`, the tool schema's `kind('read', { what })`) may answer the same command;
+its rules line: "loe ette", "loe mulle seda lehte", "ma ei näe, loe" read page; "loe see ette" with
+an armed box read box; "loe edasi" continue; "lõpeta lugemine" stop; "ma ei näe" alone is still zoom
+in. "loe viimane lause ette" is the DOCS lane's.
+
+**What is read** (`read` in `extension/src/page.ts`). The root is the first `main` / `[role=main]`,
+else `article`, else `#content` / `#primary`, else `body`. Inside it, in document order, every
+`h1` to `h6`, `p`, `li` and `blockquote` that holds no other such block, skipping: anything inside
+`nav`, `aside`, `footer`, `form`, `button`, a dialog (`dialog`, `[role=dialog]`, `[role=alertdialog]`,
+`[aria-modal=true]`), the navigation, complementary, contentinfo, banner and search roles, `[hidden]`,
+`[aria-hidden=true]`, `figcaption`, `address`, a byline (`[class*=byline]`, `[rel=author]`,
+`[itemprop=author]`), Ütle's own `utle-*` elements, a `header` that is not inside an `article` or
+`main`, anything in a fixed or sticky layer (a cookie banner without a role), and anything
+`checkVisibility()` says is not rendered. A heading of 2 characters or more is kept; a paragraph or
+list item is kept from 40 characters, or shorter when it ends with `.`, `!`, `?` or `…` (a crumb, a
+byline and a menu item are shorter and unpunctuated). The same text twice is read once. `read box`
+reads the armed box's text (Google Docs' text where it is the box); `read selection` the page's
+selection; either falls back to the page when empty. The answer is `{ ok: true, reading: { text,
+sentences } }`: the blocks joined, capped at 20 000 characters (`READ_MAX_CHARS`) at a block or
+sentence boundary, and split by `readingText` in `src/core/reading.ts`.
+
+**Sentences** (`splitSentences`, pure). Each block is split on its own, so a heading is one
+sentence. A sentence ends at `.`, `!`, `?` or `…` (repeated, then optional closing quotes or
+brackets) followed by white space or the end, except: when the next word begins with a lower-case
+letter or a digit ("nt. kui", "22. oktoobril", "3. koht"); and after a title or an abbreviation that
+never ends a sentence (`nt`, `vt`, `dr`, `hr`, `pr`, `prl`, `mr`, `mrs`, `ms`, `st`, `nr`, `lk`, `u`,
+`ca`, `e.g`, `i.e`, `vs`, a single capital letter as in "A. Tamm"). "jne." and "jms." end a sentence
+when a capital follows. A decimal ("3.5") has no space and is never split. A sentence over 300
+characters (`MAX_SENTENCE_CHARS`) is cut at its last comma, semicolon or colon before the limit,
+else its last space, so no single utterance runs long.
+
+**The reader** (`extension/src/reader.ts` over the pure `readStep` of `src/core/reading.ts`). States:
+`idle`, `speaking` (sentence `at`), `ended`, `stopped`. Events: `start(sentences)` from any state (a
+new reading replaces the old: its sentence is cancelled first); `sentenceEnd` moves to `at + 1`, or
+to `ended` after the last (the bar says "Lugemine on lõppenud." / "Nothing more to read.");
+`sentenceError` retries the same sentence once, then skips it (`skipped` counts; the bar says
+"Jätsin ühe lause vahele." / "I skipped one sentence." once per reading); `stop` while speaking
+cancels (`speechSynthesis.cancel()`, synchronously in the command's handler) and goes to `stopped`;
+`continue` from `stopped` speaks `at + 1`, and with nothing after it (or from idle or ended) the
+command fails `not_found` and the bar says "Lugemine on lõppenud." / "Nothing more to read.". A
+sentence that has not ended within 5 s plus 120 ms per character (`sentenceTimeoutMs`) counts as an
+error, so a voice that never answers cannot hold the microphone shut. Events of a cancelled
+utterance are ignored (each `speak` has a token). While a reading is in progress the strip state has
+`reading: true` and the amber line says "Loen ette…" / "Reading…"; the toolbar icon or the bar's
+microphone pressed while reading stops the reading and leaves listening as it was.
+
+**The voice rule.** The first voice of `speechSynthesis.getVoices()` whose `lang` is `et` or starts
+with `et-` / `et_` (case-insensitive). When the list is empty the reader looks again every 100 ms for
+up to 1.5 s (network voices arrive late, as measured above). With no such voice nothing is spoken and
+the command fails `not_allowed`; the bar says "Selles brauseris pole eesti häält. Edge'is on." /
+"This browser has no Estonian voice; Edge has one.". Every utterance gets `lang` from the voice, rate 1.
+
+**The pause rule.** While anything is spoken aloud (a sentence of a reading, or a bar line below),
+the offscreen document's microphone source (`mutedSource` in `offscreenMain.ts`) hands the
+recogniser silence instead of the microphone's samples: the track stays open and the socket stays
+up, so the server ends any utterance in progress on that silence and hears nothing of the synthesised
+voice. Listening comes back 150 ms (`RESUME_MS`) after the last sentence ends or after a stop, so
+within 300 ms. The strip state's `micMuted` says which. Consequence: a spoken "stopp" is not heard
+while a sentence is being read; the bar's microphone or the toolbar icon stops a reading, and a
+"stopp" final that was already on its way still stops it first.
+
+**"Loe riba ette"** (`readBar`, settings page, last group, default off). When on, each new amber line
+the offscreen document publishes is spoken with the same voice and the same pause rule, when it is
+under 200 characters, not the same line as the one spoken in the last 1.5 s, and no reading is in
+progress; the live words (`heard`) are never spoken. The setting reaches the offscreen document at
+its start (`utle-read-bar`) and on every change (`readBar`).
+
+**Tests.** `src/core/reading.test.ts` (the splitter, the cap, the state machine, the stop words),
+`src/core/browserIntent.test.ts`, `src/core/pageIntent.test.ts`, `server/intent.test.ts` (phrases and
+schemas), `extension/src/engine.test.ts` (the precedence of "stopp" while reading, and its absence
+otherwise), `extension/src/offscreenMain.test.ts` (no final while reading through the real local
+recogniser and a fake server that finalises any non-silent frame; the voice rule; retry and skip;
+the stop within 300 ms on fake timers; "Loe riba ette"). The browser suite reads
+`extension/test/fixtures/news.html` with a fake `speechSynthesis` injected into the offscreen
+document over the DevTools protocol (`Target.attachToTarget`; Playwright lists no offscreen page),
+through the same bridge `send` as every other case; the suite has no spoken-utterance path.
+
+**Not verified:** a human ear on Anu or Kert reading a real article; Edge in daily use (the suite's
+Chromium has no Estonian voice, so the real voice was only probed in checkpoint 1); the
+`synthesis-failed` rate over a real session (1 in 18 starts in the probe); whether the 150 ms tail is
+enough for a loud speaker's echo in a real room; Chrome's own long-utterance cut-off on a network
+voice (sentences are capped at 300 characters against it, not measured).
 
 ### 29.6 Dictation cleaning: the measurement (FLOW lane)
 
