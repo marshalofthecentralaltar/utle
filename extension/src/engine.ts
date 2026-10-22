@@ -947,13 +947,17 @@ export function createEngine(deps: EngineDeps): Engine {
 
   // ---------- reading aloud (29.5) ----------
   /**
-   * While a reading is in progress, "stopp", "aitab", "lõpeta lugemine" stop the reading at once:
-   * outside the queue, before the rules (which would stop a scroll or type a one-word reply), and
-   * nothing else is done with the words. True when the utterance was taken.
+   * While a reading is in progress the microphone stays live and hears the synthesised voice too, so
+   * every final is taken here: a stop word (isReadStop: "stopp", "aitab", "lõpeta lugemine", "paus",
+   * "peata", …) stops the reading at once, outside the queue and before the rules (which would stop a
+   * scroll or type a one-word reply); anything else is dropped unseen (no heard line, no typing). True
+   * when a reading took the utterance.
    */
-  const stopsReading = (utterance: string): boolean => {
-    if (deps.reading?.() !== true || !isReadStop(utterance)) return false
+  const whileReading = (utterance: string): boolean => {
+    if (deps.reading?.() !== true) return false
     dropLive()
+    if (!isReadStop(utterance)) return true
+    deps.publish({ heard: utterance })
     const stop: BrowserCommand = { kind: 'read', what: 'stop' }
     say(STRINGS[deps.lang].browserDoing(stop))
     void runSafe(stop)
@@ -964,8 +968,8 @@ export function createEngine(deps: EngineDeps): Engine {
   const handlers: EngineHandlers = {
     onUtterance(utterance) {
       if (enrolling) return
+      if (whileReading(utterance)) return
       deps.publish({ heard: utterance })
-      if (stopsReading(utterance)) return
       if (entry) {
         toEntry(utterance)
         return
@@ -988,8 +992,8 @@ export function createEngine(deps: EngineDeps): Engine {
       if (enrolling) return
       // Round 4: "siis ava Karin" soon after the last utterance goes on from it: no barge-in, and
       // the new words are asked as the next goal of the chain the last utterance was.
+      if (whileReading(added)) return
       deps.publish({ heard: text })
-      if (stopsReading(added)) return
       const u = live
       live = null
       if (u !== null) u.over = true
@@ -1001,6 +1005,8 @@ export function createEngine(deps: EngineDeps): Engine {
     onInterim(interim) {
       // An empty interim keeps the last words on the strip until new speech arrives.
       if (interim === '' || enrolling) return
+      // 29.5: while reading, the partials are the reader's own voice (or a stop word, taken as a final): never shown or typed.
+      if (deps.reading?.() === true) return
       deps.publish({ heard: interim })
       // Round 6: while saving by voice, partials are shown, never typed.
       if (!listening || entry) return

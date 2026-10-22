@@ -89,8 +89,11 @@ export function readingText(blocks: readonly string[]): { text: string; sentence
   return { text: parts.join('\n\n'), sentences }
 }
 
-/** Whole utterances that stop a reading in progress (29.5). Outside a reading "stopp" and "aitab" keep their meanings. */
-const READ_STOPS = new Set(['stopp', 'stop', 'aitab', 'seis', 'lõpeta', 'lõpeta lugemine', 'stop reading', 'lugemine seis'])
+/**
+ * Whole utterances that stop a reading in progress (29.5); "paus" and "peata" too, since a reading is
+ * what is playing. Outside a reading they all keep their meanings.
+ */
+const READ_STOPS = new Set(['stopp', 'stop', 'aitab', 'seis', 'lõpeta', 'lõpeta lugemine', 'stop reading', 'lugemine seis', 'paus', 'peata'])
 
 export function isReadStop(utterance: string): boolean {
   const s = utterance

@@ -129,9 +129,9 @@ export const BAR_LINE_MAX = 200
 export const BAR_REPEAT_MS = 1500
 
 /**
- * The pause rule (29.5): while muted() the recogniser gets silence of the same length instead of the
- * microphone's samples. The track and the socket stay open; the server ends an utterance in progress
- * on the silence and never hears the synthesised voice.
+ * The pause rule for "Loe riba ette" (29.5): while muted() (a bar line is spoken) the recogniser gets
+ * silence of the same length instead of the microphone's samples. The track and the socket stay open.
+ * An article being read does not mute: the engine filters the finals then, so "stopp" is heard.
  */
 export function mutedSource(inner: AudioSource, muted: () => boolean): AudioSource {
   return {

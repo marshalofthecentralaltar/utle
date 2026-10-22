@@ -70,7 +70,10 @@ export function browserSpeech(): SpeechPort | null {
 export interface ReaderDeps {
   /** The speech, looked up when a reading starts. Null: this browser cannot speak. */
   port(): SpeechPort | null
-  /** Something is being spoken aloud (a sentence or a bar line), or it has stopped RESUME_MS ago. The microphone is muted while on. */
+  /**
+   * A bar line ("Loe riba ette") is being spoken, or it stopped RESUME_MS ago: the microphone is muted
+   * while on. A reading never mutes it (29.5): the engine filters the finals while reading, so "stopp" is heard.
+   */
   onAloud(on: boolean): void
   /** A reading is in progress, or not. */
   onReading(on: boolean): void
@@ -143,7 +146,6 @@ export function createReader(deps: ReaderDeps): Reader {
         break
       case 'reading':
         deps.onReading(effect.on)
-        if (!effect.on) setAloud(false)
         break
       case 'line':
         deps.onLine(effect.line)
@@ -161,7 +163,6 @@ export function createReader(deps: ReaderDeps): Reader {
       apply({ kind: 'sentenceError' })
       return
     }
-    setAloud(true)
     const fail = (): void => {
       if (mine !== token) return
       token += 1
@@ -201,6 +202,7 @@ export function createReader(deps: ReaderDeps): Reader {
       if (state.phase !== 'speaking') {
         token += 1
         p.cancel()
+        setAloud(false)
       }
       port = p
       voice = v
