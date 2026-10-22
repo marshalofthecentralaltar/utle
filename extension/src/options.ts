@@ -16,6 +16,11 @@ import { STATE_KEY } from './messages.ts'
 import type { StripState, ToBackground, ToPage } from './messages.ts'
 import { BAR_HEIGHTS, SETTING_KEYS, mountStrip, settingsFrom } from './strip.ts'
 import type { StripSettings } from './strip.ts'
+// ---------- wake word and places (29.4) ----------
+import { PLACES_KEY, placeNoun, placeRowsFrom, placeUrl, placesFrom } from '../../src/core/places.ts'
+import type { PlaceRow } from '../../src/core/places.ts'
+import { WAKE_WORD_KEY, wakeWordFrom } from '../../src/core/wake.ts'
+// ---------- end of wake word and places ----------
 
 const text = STRINGS.et.strip
 const en = STRINGS.en.strip
@@ -109,6 +114,8 @@ const GROUPS: Group[] = [
     choices: [
       { value: 'toggle', label: text.listenToggle, sub: text.listenToggleEn },
       { value: 'gaze', label: text.listenGaze, sub: text.listenGazeEn },
+      // Round 8 (29.4.1): always listening, acting on what starts with the wake word.
+      { value: 'wake', label: STRINGS.et.wake.listenWake, sub: STRINGS.et.wake.listenWakeEn },
     ],
   },
   {
@@ -252,6 +259,9 @@ function reflect(): void {
     const section = sections.get(group.key)
     if (section) section.hidden = group.when ? !group.when(current) : false
   }
+  // Round 8 (29.4.1): the wake word's field is shown in wake mode only.
+  const wakePanel = document.getElementById('wakePanel')
+  if (wakePanel) wakePanel.hidden = current.listenMode !== 'wake'
 }
 
 function choose(key: SettingKey, value: Choice['value']): void {
@@ -311,6 +321,7 @@ for (const group of GROUPS) {
   buttons.set(group.key, list)
   section.append(h2, sub, grid)
   if (group.key === 'onlyOwner') section.append(scriptPanel())
+  if (group.key === 'listenMode') section.append(wakeWordPanel())
   if (group.note !== undefined) {
     const note = document.createElement('p')
     note.className = 'note'
@@ -714,6 +725,149 @@ function serverSection(): void {
   })
 }
 serverSection()
+
+// ---------- wake word and places (29.4) ----------
+// Round 8: the wake word's field under the listening mode, and Minu kohad after Minu andmed. Both
+// are set once by a helper, so they are text forms (29.4.1, 29.4.3); every button also takes a dwell.
+
+function wakeWordPanel(): HTMLElement {
+  const W = STRINGS.et.wake
+  const panel = document.createElement('div')
+  panel.id = 'wakePanel'
+  panel.hidden = true
+  const label = document.createElement('label')
+  label.htmlFor = 'wakeWord'
+  label.textContent = W.wordLabel
+  const input = document.createElement('input')
+  input.id = 'wakeWord'
+  input.type = 'text'
+  input.autocomplete = 'off'
+  const help = document.createElement('p')
+  help.className = 'note'
+  help.textContent = W.wordHelp
+  const row = document.createElement('div')
+  row.className = 'choices'
+  const save = smallButton(W.wordSave, () => {
+    const word = wakeWordFrom(input.value)
+    input.value = word
+    chrome.storage.local.set({ [WAKE_WORD_KEY]: word }).then(
+      () => say(W.wordSaved(word)),
+      () => say(W.wordSaved(word)),
+    )
+  })
+  save.id = 'wakeWordSave'
+  row.append(save)
+  panel.append(label, input, help, row)
+  void chrome.storage.local.get(WAKE_WORD_KEY).then((stored) => {
+    input.value = wakeWordFrom(stored[WAKE_WORD_KEY])
+  })
+  return panel
+}
+
+const P = STRINGS.et.wake
+let placeRows: PlaceRow[] = []
+
+async function storePlaces(next: PlaceRow[]): Promise<void> {
+  placeRows = next
+  renderPlaces()
+  await chrome.storage.local.set({ [PLACES_KEY]: next }).catch(() => undefined)
+}
+
+/** His row for the noun replaces any row he had for it; an empty url removes a default. */
+function withRow(row: PlaceRow): PlaceRow[] {
+  return [...placeRows.filter((r) => r.noun !== row.noun), row]
+}
+
+function renderPlaces(): void {
+  const list = el<HTMLDivElement>('placeList')
+  if (!list) return
+  list.replaceChildren()
+  for (const place of placesFrom(placeRows)) {
+    const card = document.createElement('div')
+    card.className = 'saved-item place-item'
+    card.dataset.noun = place.noun
+    const name = document.createElement('div')
+    name.className = 'saved-name'
+    name.textContent = `${place.noun} → ${place.label}`
+    const url = document.createElement('div')
+    url.className = 'place-url'
+    url.textContent = place.url
+    const sayLine = document.createElement('div')
+    sayLine.className = 'saved-say'
+    sayLine.textContent = P.sayLine(place.noun)
+    const row = document.createElement('div')
+    row.className = 'place-actions'
+    row.append(
+      smallButton(P.placeRemove, () => {
+        void storePlaces(withRow({ noun: place.noun, url: '' })).then(() => strip(P.placeRemoved(place.noun)))
+      }),
+    )
+    card.append(name, url, sayLine, row)
+    list.append(card)
+  }
+}
+
+function placesSection(): void {
+  const section = el<HTMLElement>('kohad')
+  if (!section) return
+  const h2 = document.createElement('h2')
+  h2.id = 'kohadTitle'
+  h2.textContent = P.placesTitle
+  const en = document.createElement('p')
+  en.className = 'en'
+  en.textContent = P.placesTitleEn
+  const help = document.createElement('p')
+  help.className = 'help'
+  help.textContent = P.placesHelp
+  const list = document.createElement('div')
+  list.className = 'saved-list'
+  list.id = 'placeList'
+  const form = document.createElement('div')
+  form.id = 'placeForm'
+  const field = (id: string, text: string): HTMLInputElement => {
+    const label = document.createElement('label')
+    label.htmlFor = id
+    label.textContent = text
+    const input = document.createElement('input')
+    input.id = id
+    input.type = 'text'
+    input.autocomplete = 'off'
+    form.append(label, input)
+    return input
+  }
+  const noun = field('placeNoun', P.placeNoun)
+  const address = field('placeUrl', P.placeUrl)
+  const row = document.createElement('div')
+  row.className = 'choices'
+  const add = smallButton(P.placeAdd, () => {
+    const n = placeNoun(noun.value)
+    const u = placeUrl(address.value)
+    if (n === '' || u === '') {
+      strip(P.placeBad)
+      return
+    }
+    noun.value = ''
+    address.value = ''
+    void storePlaces(withRow({ noun: n, url: u })).then(() => strip(P.placeAdded(n)))
+  })
+  add.id = 'placeAdd'
+  row.append(add)
+  form.append(row)
+  section.append(h2, en, help, list, form)
+  renderPlaces()
+  void chrome.storage.local.get(PLACES_KEY).then((stored) => {
+    placeRows = placeRowsFrom(stored[PLACES_KEY])
+    renderPlaces()
+  })
+  chrome.storage.onChanged.addListener((changes, area) => {
+    const change = changes[PLACES_KEY]
+    if (area !== 'local' || change === undefined) return
+    placeRows = placeRowsFrom(change.newValue)
+    renderPlaces()
+  })
+}
+placesSection()
+// ---------- end of wake word and places ----------
 
 // ---------- the strip and page commands ----------
 
