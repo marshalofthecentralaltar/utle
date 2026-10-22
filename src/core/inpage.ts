@@ -2,7 +2,9 @@ import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, FieldKind
 import type { PageIntent } from './pageIntent.ts'
 import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
 import { endsWithConnective } from './chain.ts'
+import { closeSentence, lastSentenceOf } from './documentMode.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
+import { mailCommand, mailFieldCommand } from './mail.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
 import { savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
@@ -47,6 +49,11 @@ export interface InpageSession {
    * selection (Backspace); otherwise it takes back the last utterance. Set by inpageResult.
    */
   lastWasSelect?: boolean
+  /**
+   * Round 8 (29.2): in document mode, more than DOCUMENT_PAUSE_MS passed since the previous final:
+   * an open sentence is closed before the next words. Set by the engine; ignored outside a document.
+   */
+  paused?: boolean
 }
 
 export interface InpageStep {
@@ -66,6 +73,8 @@ export interface InpageStep {
   ask?: boolean
   /** Round 5: "katkesta": the engine drops every job, chain and verification in flight and clears the bar. */
   cancel?: boolean
+  /** Round 8 (29.2): "loe viimane lause ette": the text the engine reads aloud. */
+  speak?: string
 }
 
 export function initialInpage(lang: Lang): InpageSession {
@@ -91,11 +100,14 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
   // "kinnita" / "logi sisse" submit, whatever the box holds; elsewhere the words keep their meaning.
   const formKey = box.present && box.armed && box.single === true && !session.asleep ? FORM_KEYS[normalise(utterance)] : undefined
   if (formKey !== undefined) return act(session, { kind: 'browser', command: { kind: 'pressKey', key: formKey } }, box)
-  const classified = classify(session, utterance)
+  // mail (29.3.2): "teema …" and "lisa koopia" only in a field of a compose window; elsewhere they are words.
+  const mailField = box.present && box.mail === true && !session.asleep ? mailFieldCommand(utterance) : null
+  if (mailField !== null) return act(session, { kind: 'browser', command: mailField }, box)
+  const classified = documentClassified(classify(session, utterance), box)
   const spoken: Action = { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
   // One ordinary word while he is writing is a word of the message, not a command (section 22, "Soft words").
   // With the labels showing he is navigating, not writing: "stopp" hides them whatever the box holds.
-  const soft = classified.action.kind === 'browser' && !session.hints && SOFT_WORDS.has(normalise(utterance)) && box.present && box.armed && box.text.trim() !== ''
+  const soft = (classified.action.kind === 'browser' && !session.hints && SOFT_WORDS.has(normalise(utterance)) && box.present && box.armed && box.text.trim() !== '') || documentWord(session, utterance, box, classified.action)
   // "mine X juurde", "vali X": the caret or a selection only when X is in the box; else the words go to the model,
   // which may mean a section of the page or a choice in a list (round 3, editing).
   const wanted = classified.action.kind === 'browser' ? findOf(classified.action.command) : classified.action.kind === 'deleteNamed' ? classified.action.find : null
@@ -106,7 +118,7 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
   // "kirjuta kood X" named its kind: it is a command in its own right, not words to verify.
   // Review of round 5: nor are digits into a code, phone or number field, or anything into a
   // password field (a secret is never sent to the model; "kolm üheksa null kaks" is never a tab).
-  const asked = action.kind === 'dictate' && action.spell === undefined && !directValue(session, utterance, box) ? { ...step, ask: true } : step
+  const asked = action.kind === 'dictate' && action.spell === undefined && !directValue(session, utterance, box) && documentAsks(utterance, box) ? { ...step, ask: true } : step
   if (understood === null) return asked
   return { ...asked, line: `${STRINGS[session.lang].inpage.understood(understood)} ${asked.line}` }
 }
@@ -250,6 +262,8 @@ type Action =
   | { kind: 'dictate'; text: string; spell?: FieldKind }
   /** Round 5: "katkesta": the engine drops everything in flight. Instant, never previewed, never soft. */
   | { kind: 'cancel' }
+  /** Round 8 (29.2): "loe viimane lause ette" (lastSentence), "loe see ette" (box): the text is read aloud. */
+  | { kind: 'speak'; what: 'lastSentence' | 'box' }
   /** Round 6 (26.2): one saved value typed whole; or the question which of several. */
   | { kind: 'insertSaved'; item: SavedItem }
   | { kind: 'whichSaved'; items: SavedItem[] }
@@ -384,7 +398,7 @@ const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints', 
 // Round 3 (editing): the caret, a selection, typing at the caret and the editing keys all stay in the
 // box in front; Escape, Enter and Tab leave it (a dialog closes, a form submits, the focus moves).
 const LEAVING_KEYS = new Set<PressableKey>(['Escape', 'Enter', 'Tab'])
-const EDITING_KINDS = new Set<BrowserCommand['kind']>(['caret', 'select', 'typeText'])
+const EDITING_KINDS = new Set<BrowserCommand['kind']>(['caret', 'select', 'typeText', 'format'])
 
 /** An editing command: it needs a box in front (act refuses it with pickField otherwise). */
 function isEditing(c: BrowserCommand): boolean {
@@ -407,7 +421,7 @@ function pushesUndo(c: BrowserCommand): boolean {
 /** The text a caret or select command looks for, or null for the other commands. */
 function findOf(c: BrowserCommand): string | null {
   if (c.kind === 'caret' && typeof c.to === 'object') return c.to.find
-  if (c.kind === 'select' && typeof c.what === 'object') return c.what.find
+  if (c.kind === 'select' && typeof c.what === 'object' && 'find' in c.what) return c.what.find
   return null
 }
 
@@ -576,11 +590,16 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
   if (BACK.has(clean)) return plain({ kind: 'back' })
   if (DELETE_THIS.has(clean)) return plain({ kind: 'deleteThis' })
 
+  const reading = READ_BACK[clean]
+  if (reading) return plain({ kind: 'speak', what: reading })
   const fixed = EDITS[clean]
   if (fixed) return plain({ kind: 'edit', edit: fixed })
   const replace = replaceEdit(utterance)
   if (replace) return plain({ kind: 'edit', edit: replace })
   if (Object.hasOwn(SPELL_MODES, clean)) return plain({ kind: 'spell', spell: SPELL_MODES[clean] ?? null })
+  // ---------- mail (29.3): before the spelled values and the chats, so "kirjuta meil Marile" is a mail ----------
+  const mail = mailCommand(utterance)
+  if (mail) return plain({ kind: 'browser', command: mail })
   const spelled = spelledDictation(utterance)
   if (spelled) return plain(spelled)
   const typing = typeTextPattern(utterance)
@@ -593,6 +612,8 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
   if (bare) return plain({ kind: 'browser', command: bare })
   const browser = browserUnderstood(utterance)
   if (browser) return { action: { kind: 'browser', command: browser.command }, understood: browser.understood }
+  const lastWords = lastWordsPattern(clean)
+  if (lastWords) return plain(lastWords)
   const editing = editingPattern(clean)
   if (editing) return plain(editing)
 
@@ -783,6 +804,8 @@ function misheard(session: InpageSession, utterance: string): Classified | null 
     if (action.kind === 'browser' && (action.command.kind === 'arm' || action.command.kind === 'pressKey')) return
     // Nor is free text: "vali X", "mine X juurde", "kirjuta siia vahele X" (round 3).
     if (action.kind === 'deleteNamed' || (action.kind === 'browser' && (action.command.kind === 'typeText' || findOf(action.command) !== null))) return
+    // mail (29.3): nor a mail ("kirjuta meile" is not "kirjuta meil").
+    if (action.kind === 'browser' && (action.command.kind === 'compose' || action.command.kind === 'mailField')) return
     const key = JSON.stringify(action)
     const before = found.get(key)
     if (before === undefined || cost < before.cost) found.set(key, { classified: { action, understood: text }, cost })
@@ -881,6 +904,8 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       return { session: pushUndo(afterCommands(session, commands), box.text), commands, line: s.inpage.deletingNamed(action.find) }
     }
     case 'send':
+      // Round 8 (29.2): a document is written, never sent.
+      if (box.document === true) return none(s.inpage.documentNoSend)
       if (!box.present) return none(s.inpage.nothingToSend)
       if (!box.armed) return none(s.inpage.noPlaceToWrite)
       if (box.text.trim() === '') return none(s.inpage.nothingToSend)
@@ -915,6 +940,15 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       const line = s.inpage.insertedSaved(readBack(value, box.fieldKind === 'password' ? 'password' : 'text'), name)
       return { session: pushUndo(session, box.text), commands: [{ kind: 'setText', text }], line }
     }
+    case 'speak': {
+      // Round 8 (29.2): read aloud by the engine; nothing on the page changes.
+      // 29.5 (merge of READ and DOCS): "loe ette" with no armed box holding words reads the page's article instead.
+      if (action.what === 'box' && !(box.present && box.armed && box.text.trim() !== '')) return run({ kind: 'read', what: 'page' })
+      if (!box.present) return none(s.inpage.pickField)
+      const text = action.what === 'box' ? box.text.trim() : lastSentenceOf(box.text)
+      if (text === '') return none(s.inpage.boxEmpty)
+      return { session, commands: [], line: s.inpage.reading, speak: text }
+    }
     case 'whichSaved':
       return { session: { ...session, choosing: action.items.map((item) => item.id) }, commands: [], line: s.inpage.whichSaved(action.items.map((item) => item.name)) }
     case 'spell':
@@ -923,7 +957,7 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       const refused = armed()
       if (refused) return refused
       const kind = action.spell ?? session.spell ?? box.fieldKind ?? 'text'
-      const command: BrowserCommand = { kind: 'setText', text: joinField(box.text, action.text, kind) }
+      const command: BrowserCommand = { kind: 'setText', text: joinField(documentBase(session, box), action.text, kind, box.document !== true) }
       // A one-line form field reads back what it now holds (a PIN is counted, not shown, whatever mode "numbritena" set).
       const line = box.single === true ? s.inpage.typedInto(readBack(command.text, box.fieldKind === 'password' ? 'password' : kind)) : s.browserDoing(command)
       return { session: pushUndo(session, box.text), commands: [command], line }
@@ -1050,7 +1084,9 @@ export function inpagePreview(session: InpageSession, partial: string, box: BoxS
   if (savedAction(session, partial, box) !== null) return null
   const clean = normalise(partial)
   if (clean === '' || mayBeCommand(session, partial, clean)) return null
-  return joinField(box.text, partial.trim().replace(/\s+/g, ' '), session.spell ?? box.fieldKind ?? 'text', false)
+  // Round 8 (29.2): in a document a command verb is asked before anything is typed, so it is never previewed.
+  if (box.document === true && DOCUMENT_VERBS.has(clean.split(' ')[0] ?? '')) return null
+  return joinField(documentBase(session, box), partial.trim().replace(/\s+/g, ' '), session.spell ?? box.fieldKind ?? 'text', false)
 }
 
 /** Starts of pattern commands that are not complete yet (section 21.3), over normalised text. */
@@ -1114,3 +1150,66 @@ function mayBeCommand(session: InpageSession, partial: string, clean: string): b
   if (action.kind !== 'dictate' || action.spell !== undefined) return true
   return startsPhrase(words) || PENDING.some((pattern) => pattern.test(clean)) || pendingMessage(words)
 }
+
+// ---------- document mode (29.2) ----------
+// When the armed box is a document (BoxState.document: Google Docs, a long text, a rich editor), a
+// silence does not close the sentence, one-word ordinary words are dictation, the model is asked
+// only about an utterance that starts with a command verb, and "saada" sends nothing. Outside a
+// document every rule above stands as it was.
+
+/** Round 7's one-word commands and the verbs that start an edit: in a document only these reach the model. */
+export const DOCUMENT_VERBS: ReadonlySet<string> = new Set([...COMMAND_WORDS, 'vali', 'tee', 'muuda', 'loe', 'kustuta'])
+
+/** One-word commands that are ordinary words of a text: in a document they are typed (section 22's soft words and more). */
+const DOCUMENT_WORDS: ReadonlySet<string> = new Set([...SOFT_WORDS, 'tagasi', 'back', 'veel', 'järgmine', 'eelmine', 'next', 'previous'])
+
+/** "loe viimane lause ette" and its kin (whole utterance, normalised): what is read aloud. */
+const READ_BACK: Record<string, 'lastSentence' | 'box'> = {
+  'loe viimane lause ette': 'lastSentence',
+  'loe viimane lause': 'lastSentence',
+  'loe ette viimane lause': 'lastSentence',
+  'read the last sentence': 'lastSentence',
+  'read the last sentence back': 'lastSentence',
+  'read back the last sentence': 'lastSentence',
+  'loe see ette': 'box',
+  'loe ette': 'box',
+  'loe tekst ette': 'box',
+  'read it back': 'box',
+  'read this back': 'box',
+}
+
+/** "vali viimased kolm sõna", "select the last three words": the last n words, 1 to 50. */
+const LAST_WORDS: readonly RegExp[] = [/^vali viimased (.+?) sõna$/u, /^select the last (.+?) words$/u]
+
+function lastWordsPattern(clean: string): Action | null {
+  for (const pattern of LAST_WORDS) {
+    const count = pattern.exec(clean)?.[1]
+    const n = count === undefined ? null : spokenNumber(count)
+    if (n !== null && n >= 1 && n <= 50) return { kind: 'browser', command: { kind: 'select', what: { lastWords: n } } }
+  }
+  return null
+}
+
+/** "uus lõik" is the paragraph in a document; in any other box it is the new line of "uus rida" (a paragraph could send a chat). */
+function documentClassified(classified: Classified, box: BoxState): Classified {
+  const a = classified.action
+  if (box.document === true || a.kind !== 'browser' || a.command.kind !== 'format' || a.command.style !== 'paragraph') return classified
+  return { action: { kind: 'edit', edit: { kind: 'newLine' } }, understood: classified.understood }
+}
+
+/** In a document he armed, a one-word ordinary word is a word of the text, whatever the box holds; with the labels showing he is navigating. */
+function documentWord(session: InpageSession, utterance: string, box: BoxState, action: Action): boolean {
+  return box.document === true && box.present && box.armed && !session.hints && action.kind !== 'dictate' && DOCUMENT_WORDS.has(normalise(utterance))
+}
+
+/** Whether a dictation may be asked about: always outside a document he armed; in one, only when it starts with a command verb. */
+function documentAsks(utterance: string, box: BoxState): boolean {
+  if (box.document !== true || !box.armed) return true
+  return DOCUMENT_VERBS.has(normalise(utterance).split(' ')[0] ?? '')
+}
+
+/** The text a dictation joins onto: in a document after the pause window, with its open sentence closed. */
+function documentBase(session: InpageSession, box: BoxState): string {
+  return box.document === true && session.paused === true ? closeSentence(box.text) : box.text
+}
+// ---------- end of document mode ----------

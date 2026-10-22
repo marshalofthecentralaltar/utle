@@ -185,3 +185,88 @@ export function searchFieldFor(hostname: string): string | null {
   const bare = host.replace(/^www\./, '')
   return SEARCH_FIELDS[host] ?? SEARCH_FIELDS[bare] ?? null
 }
+
+// ---------- mail (29.3) ----------
+// Gmail's compose window. All UNVERIFIED 2026-10-22: written from Gmail's public markup as it is
+// known, never read from a logged-in Gmail; only the stand-in (extension/test/fixtures/gmail.html)
+// proves them. page.ts falls back to the controls' names (MAIL_NAMES) when no selector hits. If
+// something misses on real Gmail, this is the one place to fix (docs/ARCHITECTURE.md 29.3.5).
+
+export interface MailSelectors {
+  /** The Compose button of the inbox. */
+  composeButton: string
+  /** A compose window: page.ts takes the one that holds a subject field. */
+  window: string
+  to: string
+  cc: string
+  subject: string
+  body: string
+  send: string
+  /** The row of contact suggestions under To; Enter takes the first. */
+  suggestion: string
+}
+
+export const MAIL: MailSelectors = {
+  composeButton: [
+    '[gh="cm"]', // UNVERIFIED
+    '[role="button"][aria-label^="Compose"]', // UNVERIFIED
+    '[role="button"][aria-label^="Koosta"]', // UNVERIFIED (Estonian interface)
+  ].join(', '),
+  window: [
+    '[role="dialog"]', // UNVERIFIED: the compose window, popped out or in the corner
+    '[role="region"][aria-label*="message" i]', // UNVERIFIED
+  ].join(', '),
+  to: [
+    'input[aria-label*="recipient" i]', // UNVERIFIED: "To recipients"
+    'input[aria-label*="saaja" i]', // UNVERIFIED (Estonian interface)
+    'input[name="to"]', // UNVERIFIED: older builds
+    'textarea[name="to"]', // UNVERIFIED: older builds
+  ].join(', '),
+  cc: [
+    'input[aria-label*="Cc recipient" i]', // UNVERIFIED
+    'input[aria-label*="koopia" i]', // UNVERIFIED (Estonian interface)
+    'input[name="cc"]', // UNVERIFIED: older builds
+    'textarea[name="cc"]', // UNVERIFIED: older builds
+  ].join(', '),
+  subject: [
+    'input[name="subjectbox"]', // UNVERIFIED
+    'input[aria-label="Subject"]', // UNVERIFIED
+    'input[aria-label="Teema"]', // UNVERIFIED (Estonian interface)
+  ].join(', '),
+  body: [
+    '[aria-label="Message Body"][contenteditable="true"]', // UNVERIFIED
+    '[aria-label="Sõnumi sisu"][contenteditable="true"]', // UNVERIFIED (Estonian interface)
+    'div[role="textbox"][contenteditable="true"]', // UNVERIFIED: any rich box of the window
+  ].join(', '),
+  send: [
+    '[role="button"][aria-label^="Send"]', // UNVERIFIED: "Send ‪(Ctrl-Enter)‬"
+    '[role="button"][aria-label^="Saada"]', // UNVERIFIED (Estonian interface)
+    '[role="button"][data-tooltip^="Send"]', // UNVERIFIED
+  ].join(', '),
+  suggestion: [
+    '[role="listbox"] [role="option"]', // UNVERIFIED: the contact suggestions under To
+  ].join(', '),
+}
+
+/** The controls by their visible name or label, for the stand-in and when a selector misses. */
+export const MAIL_NAMES = {
+  compose: /^(?:koosta|compose|uus kiri|new message)$/i,
+  send: /^(?:saada|send)(?:\s|$)/i,
+  cc: /^(?:koopia|cc|lisa koopia|add cc|cc recipients)$/i,
+  to: /^(?:saaja|saajad|kellele|to|recipients|to recipients)$/i,
+  ccField: /^(?:koopia|cc|koopia saajad)$/i,
+  subject: /^(?:teema|subject)$/i,
+  body: /^(?:sõnum|sõnumi sisu|message|message body)$/i,
+}
+
+/** True for a Gmail page: mail.google.com, or an address under the mailHome setting (the browser suite's stand-in). */
+export function isMailPage(url: string | undefined, mailHome: string | null): boolean {
+  if (!url) return false
+  if (mailHome !== null && mailHome !== '' && url.startsWith(mailHome)) return true
+  try {
+    return new URL(url).hostname === 'mail.google.com'
+  } catch {
+    return false
+  }
+}
+// ---------- end mail (29.3) ----------

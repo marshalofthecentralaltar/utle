@@ -88,12 +88,47 @@ export type BrowserCommand =
   | { kind: 'openSettings'; section?: 'andmed'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
   /** One utterance for the entry flow on the options page; only that page answers it. */
   | { kind: 'savedEntry'; utterance: string }
+  // ---------- mail (29.3) ----------
+  /** On Gmail: a new message (Compose), to (a name or an address) into To, body into the message; the body is armed when To has something. Elsewhere Gmail's compose page opens in a new tab first. */
+  | { kind: 'compose'; to?: string; body?: string }
+  /** Opens Gmail's compose page in a new tab with address in To (and subject, body), then arms the body. address is one of the page's contacts. */
+  | { kind: 'composeTo'; address: string; subject?: string; body?: string }
+  /** In the open compose window: subject types text into Subject and arms the body; cc opens the Cc field, arms it, and types text when given. */
+  | { kind: 'mailField'; field: MailField; text?: string }
+  // ---------- end mail (29.3) ----------
+  // ---------- document mode (29.2) ----------
+  /** Formats the selection (bold, italic, underline) or the paragraph at the caret; paragraph starts a new one at the end. The page picks the editor's chord. */
+  | { kind: 'format'; style: FormatStyle }
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.3): saves the address of the tab in front as his place for noun (Minu kohad), by voice. */
+  | { kind: 'savePlace'; noun: string }
+  /** Round 8 (29.4.3): removes his place for noun (a default is hidden). */
+  | { kind: 'removePlace'; noun: string }
+  // ---------- end of wake word and places ----------
   // ---------- reading aloud (29.5) ----------
   /**
    * page, box, selection: the page answers with `reading` (the text and its sentences) and the
    * offscreen document speaks it; continue and stop act on the reading in progress there.
    */
   | { kind: 'read'; what: ReadWhat }
+
+/** Round 8 (29.2): what "paksuks", "kaldkirja", "pealkirjaks", "loendiks", "uus lõik" ask for. */
+export type FormatStyle = 'bold' | 'italic' | 'underline' | 'heading' | 'normal' | 'list' | 'paragraph'
+
+// ---------- mail (29.3) ----------
+export type MailField = 'subject' | 'cc'
+
+export type ContactKind = 'email' | 'tel'
+
+/** Round 8 (29.3.3): an e-mail address or a phone number on the page (text, mailto: or tel: links). */
+export interface PageContact {
+  kind: ContactKind
+  /** An e-mail lower-cased, a phone compacted (+37251234567). */
+  value: string
+  /** The link's text, at most 40 characters; '' for plain text. Never sent to the model. */
+  label: string
+}
+// ---------- end mail (29.3) ----------
 
 // ---------- reading aloud (29.5) ----------
 export type ReadWhat = 'page' | 'box' | 'selection' | 'continue' | 'stop'
@@ -135,6 +170,9 @@ export type CaretTarget =
   | { find: string; where: 'before' | 'after' }
 
 export type SelectTarget = 'all' | 'word' | 'sentence' | 'line' | 'lastWord' | 'lastSentence' | { find: string }
+  // Round 8 (29.2): "vali lõik" (the line the caret is on, between two line breaks), "vali viimased kolm sõna".
+  | 'paragraph'
+  | { lastWords: number }
 
 export type MediaAction =
   | 'play'
@@ -177,6 +215,12 @@ export interface PageContext {
   hints: boolean
   /** Round 6 (26.1): the NAMES of his saved values, never the values. Added by the engine, not the page. */
   saved?: string[]
+  /** Round 8 (29.3.3): the e-mail addresses and phone numbers on the page, at most 20, visible first. Absent when none. */
+  contacts?: PageContact[]
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.2): the NOUNS of his places (Minu kohad), never an address. Added by the engine. */
+  places?: string[]
+  // ---------- end of wake word and places ----------
 }
 
 /**
@@ -201,6 +245,14 @@ export interface BoxState {
   single?: boolean
   /** The field's label or placeholder, at most 60 characters. */
   label?: string
+  /**
+   * Round 8 (29.2): the box is a document: Google Docs, a textarea or contenteditable over 500
+   * characters, or a rich editor with headings, lists or a multiline textbox of blocks; never a
+   * site's composer. Absent or false: a message box, as before.
+   */
+  document?: boolean
+  /** Round 8 (29.3.5): true for a field of a compose window (To, Cc, Subject, the body); "teema …" and "lisa koopia" act only there. */
+  mail?: boolean
 }
 
 export type BrowserFailure = 'no_extension' | 'no_target' | 'not_found' | 'not_allowed' | 'failed'

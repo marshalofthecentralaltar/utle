@@ -194,7 +194,8 @@ What the listing needs that the repository cannot hold:
 - Settings (the **Seaded** control, or the extension's options page) are large buttons that a
   click or a one-second dwell toggles, saved at once: bar height (Väike 96 / Tavaline 128 / Suur
   192, `barHeight`), microphone side (`micSide`: Vasakul / Paremal), and whether the bar starts
-  folded (`barHiddenDefault`), how listening is triggered (`listenMode`: Lülitiga / Vaatamisega),
+  folded (`barHiddenDefault`), how listening is triggered (`listenMode`: Lülitiga / Vaatamisega /
+  Äratussõnaga, the last with a field for the wake word, `wakeWord`, default "Ütle"),
   what the gaze rests on (`gazeTarget`: Mikrofon / Kogu riba, shown only for Vaatamisega) and the
   speech model (`speechEngine`: Arvutis (TalTech) / Soniox (pilves); Soniox needs `SONIOX_API_KEY`
   on the dev server and takes effect the next time listening starts), and since round 4 the group
@@ -213,6 +214,26 @@ What the listing needs that the repository cannot hold:
   nothing in this mode. The folded pill is a gaze target too (resting on it for two seconds no
   longer unfolds the bar in this mode; use **Näita**). When a page swallows the pointer-leave
   event, a one-second poll of the pointer's last position ends listening instead.
+- **Wake word** (`listenMode: wake`, round 8, ARCHITECTURE 29.4.1): listening starts by itself when
+  the browser starts and when the mode or the word is set, and stays on; the microphone button still
+  turns it off. Only what starts with the wake word is acted on: "Ütle, keri alla". Everything else
+  is shown on the strip's upper line and goes nowhere (not typed, not sent to the model). Dictating:
+  "Ütle, tulen kell viis" into an armed box types it and opens the dictation window, shown as a small
+  amber disc on the microphone; while it is open, sentences need no word. It closes after 20 s with
+  nothing said, on `aitab` / `see on kõik` / `that's all`, or after `saada`. "Ütle" alone opens it too.
+  The word is matched by sound ("ütel", "Ütle," pass; "ütlesin", "ütles" do not) and must be first.
+- **Minu kohad** (round 8, 29.4.2): `vaata uudiseid`, `näita uudiseid`, `ava uudised`, `pane raadio
+  käima`, `ava raadio`, `mis ilm on`, `näita ilma`, `ava mu mail`, `ava meil`, `vaata videoid` open
+  your place for that word (not while a message box is armed: there the words are typed). Defaults:
+  uudised → Postimees, raadio → Vikerraadio's live page (otse.err.ee), ilm → Ilmateenistus, mail →
+  Gmail, kalender → Google Kalender, kaart → Google Maps, video → YouTube; no bank. The model is told
+  only the words and may answer one of them in other phrasings; it never sees an address. Another
+  station once the radio page is open: `vajuta Raadio 2` or the numbers, as on any page. To add your
+  own by voice, open the page and say `lisa koht uudised` (or `salvesta see koht uudised`, `see on mu
+  uudised`, `save this place as news`): the address of the tab in front is saved under that word and
+  the strip says so. `lisa koht` alone asks for the word; say it next. `eemalda koht uudised` removes
+  one. The settings page's **Minu kohad** section lists them; a helper can also type a word and an
+  address (`postimees.ee`) and press **Lisa koht**; **Eemalda** removes one. Stored under `places`.
 - When the speech server falls behind by more than one second, a thin dim line under the amber
   one says "Kõne jääb maha N s" until it has caught up. While a chain of goals runs (below) a
   line in the same place says where it is: "2/4 · ava Karini viimane sõnum".
@@ -293,10 +314,40 @@ What the listing needs that the repository cannot hold:
   - `puhka` stops typing, `ärka üles` resumes.
   - push-to-talk by looking: nothing to say; look at the microphone (or the whole bar) and speak, look
     away and the words are delivered. Set it on the settings page (**Kuulamine: Vaatamisega**).
+- **Meil** (round 8, docs/ARCHITECTURE.md 29.3): `kirjuta meil Marile` (also `kirjuta kiri Marile`, `saada
+  meil Jaanile`, `write an email to Mari`) opens a new message in Gmail with Mari in To, and the message body is
+  ready for your words; `kirjuta meil Marile, et tulen homme` writes the body too; `uus meil` opens an empty one
+  with To ready. Off Gmail it opens Gmail's compose page in a new tab first. In the message, `teema Koosolek`
+  writes the subject, `lisa koopia` (`lisa koopia Jaanile`) opens Cc, `valmis` or `järgmine väli` moves To,
+  Cc, Subject, body in turn, and `saada` clicks Send (never Enter, which is a new line in a mail). Only
+  in the message: anywhere else a sentence that begins with "teema" is typed like any other. What you
+  say into To or Cc is written as an address ("ät", "punkt"). On any page the e-mail addresses and phone
+  numbers it shows are read off it (text and links, at most 20), so `võta see meiliaadress siit lehelt ja
+  kirjuta talle, et tulen homme` or `kirjuta talle meil` opens a new mail to that address; the model may only
+  pick an address the page shows, never one of its own. Tested on `fixtures/gmail.html` and `fixtures/cv.html`;
+  the Gmail selectors are unverified on real Gmail.
 - The toolbar icon also turns listening on and off.
 - When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.
 
+### Dokumendis (round 8, ARCHITECTURE 29.2)
+
+A box is a document when it is Google Docs, a textarea or rich editor holding over 500 characters, or
+a rich editor with headings, lists or paragraphs of its own (never a chat's message box, nor a box with
+a send button beside it). There a pause of up to 20 seconds does not end the sentence: the next words
+continue it with a small letter; after a longer pause the sentence gets its full stop and a new one
+starts. Only `punkt` (and `küsimärk`, `hüüumärk`) and `uus lõik` break a sentence. One-word words such as
+`välja`, `sulge`, `edasi`, `tagasi`, `paus` are typed, not obeyed. Nothing you say is taken back by the
+model's check; it is asked only when you start with a command word (`vali`, `tee`, `muuda`, `loe`,
+`kustuta`, `ava`, `mine`, `kirjuta` …), and then before anything is typed. `saada` sends nothing:
+"Dokumendis ei saadeta." Formatting works in any armed rich editor: `paksuks` / `tee paksuks`,
+`kaldkirja`, `allajoonitud`, `pealkirjaks`, `tavaline tekst`, `loendiks`, `uus lõik` (English `bold`,
+`italic`, `underline`, `heading`, `normal text`, `bulleted list`, `new paragraph`); select first with
+`vali see lause`, `vali lõik`, `vali viimased kolm sõna`, `vali sõna X`. On Google Docs they are Docs'
+own shortcuts (Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+Alt+1, Ctrl+Alt+0, Ctrl+Shift+8, Enter twice), tested on
+a stand-in only. A plain textarea has no bold or italics and says so. `loe viimane lause ette` reads the
+last sentence of the box aloud, `loe see ette` the whole box (the microphone may hear the voice until
+the reading pause of the READ lane lands).
 ### Lugemine: reading aloud (round 8, ARCHITECTURE 29.5)
 
 Say `loe ette` (also `loe lehte ette`, `read the page`) and Ütle reads the article of the page in

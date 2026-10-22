@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../browser/protocol.ts'
+import type { FormatStyle } from '../browser/protocol.ts'
 import { applyIntent, initialInpage, inpageInstant, inpageResult, inpageStep } from './inpage.ts'
 import type { PageIntent } from './pageIntent.ts'
 import type { InpageSession } from './inpage.ts'
@@ -8,6 +9,8 @@ import { browserIntent } from './browserIntent.ts'
 import { STRINGS } from './strings.ts'
 import { deepFreeze } from './testUtil.ts'
 import type { SavedItem } from './saved.ts'
+import { COMMAND_WORDS, DOCUMENT_VERBS } from './inpage.ts'
+import { DOCUMENT_PAUSE_MS, documentPaused, lastSentenceOf } from './documentMode.ts'
 
 const ET = STRINGS.et
 const EN = STRINGS.en
@@ -2131,13 +2134,274 @@ describe('review R3 M6: "kustuta see" / "delete this" takes back the last uttera
   })
 })
 
+// ---------- document mode (29.2) ----------
+
+/** A box that is a document (29.2): Google Docs, a long text, or a rich editor with headings. */
+function doc(text: string): BoxState {
+  return { present: true, text, armed: true, document: true }
+}
+
+const FORMAT_PHRASES: ReadonlyArray<readonly [FormatStyle, readonly string[]]> = [
+  ['bold', ['paksuks', 'tee paksuks', 'rasvaseks', 'tee rasvaseks', 'bold', 'make it bold']],
+  ['italic', ['kaldkirja', 'tee kaldkirja', 'kaldkirjas', 'kaldkirjaga', 'italic', 'italics', 'make it italic']],
+  ['underline', ['allajoonitud', 'jooni alla', 'tee allajoonituks', 'underline']],
+  ['heading', ['pealkirjaks', 'tee pealkirjaks', 'heading', 'make it a heading']],
+  ['normal', ['tavaline tekst', 'tavaliseks', 'tee tavaliseks', 'normal text']],
+  ['list', ['loendiks', 'tee loendiks', 'täpploendiks', 'bulleted list', 'make it a list']],
+]
+
+describe('format (29.2): formatting by voice, rules only', () => {
+  for (const [style, phrases] of FORMAT_PHRASES) {
+    it(`format ${style}: ${phrases.join(', ')} send { format ${style} } in a document and in any armed box`, () => {
+      for (const phrase of phrases) {
+        for (const b of [doc('Eesti suvi on lühike.'), box('Tere')]) {
+          const step = inpageStep(session(), phrase, b)
+          expect(step.commands, `${phrase} ${JSON.stringify(b)}`).toEqual(only({ kind: 'format', style }))
+          expect(step.ask, phrase).toBeUndefined()
+        }
+        // A format command needs no more words: it is instant, like the editing keys.
+        expect(inpageInstant(session(), phrase), phrase).toBe(true)
+      }
+    })
+  }
+
+  it('format paragraph: "uus lõik" / "new paragraph" is the paragraph in a document, a new line outside one', () => {
+    for (const phrase of ['uus lõik', 'Uus lõik.', 'new paragraph']) {
+      expect(inpageStep(session(), phrase, doc('Eesti suvi on lühike.')).commands, phrase).toEqual(only({ kind: 'format', style: 'paragraph' }))
+      // In a chat box a paragraph could be a send in some editors: it is the line break of "uus rida" there.
+      expect(inpageStep(session(), phrase, box('Tere')).commands, phrase).toEqual(only({ kind: 'setText', text: 'Tere\n' }))
+    }
+  })
+
+  it('format: the strip says what is done, in both languages', () => {
+    expect(inpageStep(session(), 'kaldkirja', doc('Tere.')).line).toBe(ET.browserDoing({ kind: 'format', style: 'italic' }))
+    expect(ET.browserDoing({ kind: 'format', style: 'italic' })).toBe('Kaldkiri.')
+    expect(EN.browserDoing({ kind: 'format', style: 'bold' })).toBe('Bold.')
+    expect(inpageStep(session({ lang: 'en' }), 'new paragraph', doc('Hello.')).line).toBe('New paragraph.')
+  })
+
+  it('format: without a box in front there is nothing to format', () => {
+    const step = inpageStep(session(), 'paksuks', NO_BOX)
+    expect(step.commands).toEqual([])
+    expect(step.line).toBe(ET.inpage.pickField)
+  })
+
+  it('format: the format step keeps the undo texts and the labels (it stays in the box)', () => {
+    const step = inpageStep(session({ undo: ['a'], hints: true }), 'paksuks', doc('Tere.'))
+    expect(step.session.undo).toEqual(['a'])
+    expect(step.session.hints).toBe(true)
+  })
+})
+
+describe('selection (29.2): "vali lõik" and "vali viimased kolm sõna"', () => {
+  it('"vali see lause" already exists; "vali lõik", "vali see lõik", "select the paragraph" select the paragraph', () => {
+    expect(inpageStep(session(), 'vali see lause', doc('Tere. Head aega.')).commands).toEqual(only({ kind: 'select', what: 'sentence' }))
+    for (const u of ['vali lõik', 'vali see lõik', 'select the paragraph', 'select this paragraph']) {
+      expect(inpageStep(session(), u, doc('Tere. Head aega.')).commands, u).toEqual(only({ kind: 'select', what: 'paragraph' }))
+    }
+  })
+
+  it('"vali viimased kolm sõna" selects the last three words; "vali viimased 2 sõna", "select the last five words"', () => {
+    expect(inpageStep(session(), 'vali viimased kolm sõna', doc('Üks kaks kolm neli.')).commands).toEqual(only({ kind: 'select', what: { lastWords: 3 } }))
+    expect(inpageStep(session(), 'vali viimased 2 sõna', doc('Üks kaks kolm neli.')).commands).toEqual(only({ kind: 'select', what: { lastWords: 2 } }))
+    expect(inpageStep(session({ lang: 'en' }), 'select the last five words', doc('One two three four five six.')).commands).toEqual(only({ kind: 'select', what: { lastWords: 5 } }))
+  })
+
+  it('a select by lastWords counts as a select for "kustuta see" (R3 M6)', () => {
+    const step = inpageStep(session(), 'vali viimased kolm sõna', doc('Üks kaks kolm neli.'))
+    const after = inpageResult(step.session, step.commands, OK)
+    expect(after.session.lastWasSelect).toBe(true)
+  })
+})
+
+describe('document mode (29.2): a silence does not close the sentence', () => {
+  it('document mode: a dictated final is typed without a closing full stop', () => {
+    expect(setTextOf(inpageStep(session(), 'eesti suvi on lühike', doc('')).commands)).toBe('Eesti suvi on lühike')
+    expect(setTextOf(inpageStep(session(), 'päike paistab hilisõhtuni', doc('Eesti suvi on lühike.')).commands)).toBe('Eesti suvi on lühike. Päike paistab hilisõhtuni')
+  })
+
+  it('document mode: outside it, the same final is closed with a full stop (chat box unchanged)', () => {
+    expect(setTextOf(inpageStep(session(), 'eesti suvi on lühike', box('')).commands)).toBe('Eesti suvi on lühike.')
+    expect(setTextOf(inpageStep(session(), 'päike paistab hilisõhtuni', box('Eesti suvi on lühike.')).commands)).toBe('Eesti suvi on lühike. Päike paistab hilisõhtuni.')
+  })
+
+  it('document mode: the next final continues the same sentence with a small first letter', () => {
+    expect(setTextOf(inpageStep(session(), 'Väga hea mõte', doc('Minu arvates on see')).commands)).toBe('Minu arvates on see väga hea mõte')
+    // A name he used keeps its capital (21.1).
+    expect(setTextOf(inpageStep(session(), 'Mari ütles', doc('Kui Mari tuli siis')).commands)).toBe('Kui Mari tuli siis Mari ütles')
+  })
+
+  it('document mode: after the pause window (session.paused) the open sentence is closed and a new one starts', () => {
+    expect(setTextOf(inpageStep(session({ paused: true }), 'väga hea mõte', doc('Minu arvates on see')).commands)).toBe('Minu arvates on see. Väga hea mõte')
+    // A sentence already closed, or a paragraph just opened, gets no second mark.
+    expect(setTextOf(inpageStep(session({ paused: true }), 'väga hea mõte', doc('Minu arvates on see.')).commands)).toBe('Minu arvates on see. Väga hea mõte')
+    expect(setTextOf(inpageStep(session({ paused: true }), 'väga hea mõte', doc('Minu arvates on see.\n')).commands)).toBe('Minu arvates on see.\nVäga hea mõte')
+  })
+
+  it('document mode: "punkt" closes the sentence; the next final starts with a capital', () => {
+    expect(setTextOf(inpageStep(session(), 'punkt', doc('Minu arvates on see')).commands)).toBe('Minu arvates on see.')
+    expect(setTextOf(inpageStep(session(), 'väga hea mõte', doc('Minu arvates on see.')).commands)).toBe('Minu arvates on see. Väga hea mõte')
+  })
+
+  it('document mode: after "uus lõik" (the box ends in a line break) the next final starts the paragraph', () => {
+    expect(setTextOf(inpageStep(session(), 'sügis toob vihma', doc('Eesti suvi on lühike.\n')).commands)).toBe('Eesti suvi on lühike.\nSügis toob vihma')
+  })
+
+  it('documentPaused: 20 000 ms is the window; the first final has nothing to continue', () => {
+    expect(DOCUMENT_PAUSE_MS).toBe(20_000)
+    expect(documentPaused(null, 1000)).toBe(false)
+    expect(documentPaused(0, 15_000)).toBe(false)
+    expect(documentPaused(0, 20_000)).toBe(false)
+    expect(documentPaused(0, 20_001)).toBe(true)
+    expect(documentPaused(0, 25_000)).toBe(true)
+  })
+
+  it('document mode: outside it, session.paused changes nothing', () => {
+    for (const u of ['väga hea mõte', 'saada', 'välja', 'punkt']) {
+      expect(inpageStep(session({ paused: true }), u, box('Tere')).commands, u).toEqual(inpageStep(session(), u, box('Tere')).commands)
+      expect(inpageStep(session({ paused: true }), u, box('Tere')).line, u).toEqual(inpageStep(session(), u, box('Tere')).line)
+    }
+  })
+})
+
+describe('document mode (29.2): one-word ordinary words are dictation', () => {
+  const PAIRS: ReadonlyArray<readonly [string, BrowserCommand | null]> = [
+    ['välja', { kind: 'pressKey', key: 'Escape' }],
+    ['sulge', { kind: 'closeTab' }],
+    ['edasi', { kind: 'history', direction: 'forward' }],
+    ['tagasi', { kind: 'history', direction: 'back' }],
+    ['enter', { kind: 'pressKey', key: 'Enter' }],
+    ['paus', { kind: 'media', action: 'pause' }],
+    ['veel', null],
+  ]
+  for (const [word, command] of PAIRS) {
+    it(`document mode: in it, "${word}" is typed as a word, into an empty document and after words`, () => {
+      expect(setTextOf(inpageStep(session(), word, doc('')).commands), word).toBe(capitalise(word))
+      expect(setTextOf(inpageStep(session(), word, doc('Ta läks')).commands), word).toBe(`Ta läks ${word}`)
+      expect(inpageStep(session(), word, doc('Ta läks')).ask, word).toBeUndefined()
+    })
+    it(`document mode: outside it, "${word}" in an empty chat box stays ${command === null ? 'dictation' : 'the command'}`, () => {
+      const step = inpageStep(session(), word, box(''))
+      if (command === null) expect(setTextOf(step.commands)).toBe(`${capitalise(word)}`)
+      else expect(step.commands).toEqual(only(command))
+    })
+  }
+
+  it('document mode: with the labels showing, "stopp" still hides them', () => {
+    expect(inpageStep(session({ hints: true }), 'stopp', doc('Tere')).commands).toEqual(only({ kind: 'hideHints' }))
+  })
+})
+
+describe('document mode (29.2): the model is asked only about a command verb', () => {
+  it('document mode: in it, plain dictation is not asked (no verification takes words back)', () => {
+    for (const u of ['päike paistab hilisõhtuni', 'ja metsad on täis marju', 'see on hea']) {
+      const step = inpageStep(session(), u, doc('Eesti suvi on lühike.'))
+      expect(step.ask, u).toBeUndefined()
+      expect(step.commands[0]?.kind, u).toBe('setText')
+    }
+  })
+
+  it('document mode: outside it, the same dictation is asked (the type-first verification)', () => {
+    for (const u of ['päike paistab hilisõhtuni', 'ja metsad on täis marju', 'see on hea']) {
+      expect(inpageStep(session(), u, box('Eesti suvi on lühike.')).ask, u).toBe(true)
+    }
+  })
+
+  it('document mode: in it, an utterance that starts with a command verb is asked', () => {
+    for (const u of ['muuda see lause lühemaks', 'tee see lõik paksuks', 'vali teine lause ja pane kaldkirja', 'loe esimene lõik ette', 'kustuta teine lõik', 'ava mu kirjandi lõpp', 'mine kolmanda lõigu algusesse']) {
+      expect(inpageStep(session(), u, doc('Eesti suvi on lühike.')).ask, u).toBe(true)
+    }
+  })
+
+  it('DOCUMENT_VERBS: COMMAND_WORDS and vali, tee, muuda, loe, kustuta', () => {
+    for (const w of [...COMMAND_WORDS, 'vali', 'tee', 'muuda', 'loe', 'kustuta']) expect(DOCUMENT_VERBS.has(w), w).toBe(true)
+  })
+})
+
+describe('document mode (29.2): "saada" does nothing in a document', () => {
+  it('document mode: "saada" types nothing, sends nothing, and the strip says so', () => {
+    for (const u of ['saada', 'saada ära', 'Saada.']) {
+      const step = inpageStep(session(), u, doc('Eesti suvi on lühike.'))
+      expect(step.commands, u).toEqual([])
+      expect(step.line, u).toBe('Dokumendis ei saadeta.')
+      expect(step.ask, u).toBeUndefined()
+    }
+    expect(ET.inpage.documentNoSend).toBe('Dokumendis ei saadeta.')
+    expect(EN.inpage.documentNoSend).toBe('Nothing is sent from a document.')
+    expect(inpageStep(session({ lang: 'en' }), 'send it', doc('Hello there.')).line).toBe(EN.inpage.documentNoSend)
+  })
+
+  it('document mode: outside it, "saada" sends', () => {
+    expect(inpageStep(session(), 'saada', box('Tere')).commands).toEqual(only({ kind: 'pressSend' }))
+  })
+})
+
+describe('reading back (29.2): "loe viimane lause ette"', () => {
+  const TEXT = 'Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju!'
+  it('loe: "loe viimane lause ette" hands exactly the last sentence to speak, and runs nothing on the page', () => {
+    for (const u of ['loe viimane lause ette', 'loe viimane lause', 'Loe viimane lause ette.']) {
+      const step = inpageStep(session(), u, doc(TEXT))
+      expect(step.speak, u).toBe('Päike paistab hilisõhtuni ja metsad on täis marju!')
+      expect(step.commands, u).toEqual([])
+    }
+    expect(inpageStep(session({ lang: 'en' }), 'read the last sentence', box('One. Two three.')).speak).toBe('Two three.')
+  })
+
+  it('loe: "loe see ette" / "read it back" hand the whole box; a box in a chat works too', () => {
+    expect(inpageStep(session(), 'loe see ette', box(TEXT)).speak).toBe(TEXT)
+    expect(inpageStep(session({ lang: 'en' }), 'read it back', doc('Line one.\nLine two')).speak).toBe('Line one.\nLine two')
+  })
+
+  it('loe: the last sentence after a line break, and an open sentence', () => {
+    expect(inpageStep(session(), 'loe viimane lause ette', doc('Esimene lõik.\nTeine lõik algab siin')).speak).toBe('Teine lõik algab siin')
+    expect(lastSentenceOf('Üks. Kaks. ')).toBe('Kaks.')
+    expect(lastSentenceOf('')).toBe('')
+  })
+
+  it('loe: an empty box has nothing to read; no box says to pick one', () => {
+    const empty = inpageStep(session(), 'loe viimane lause ette', doc(''))
+    expect(empty.speak).toBeUndefined()
+    expect(empty.line).toBe(ET.inpage.boxEmpty)
+    // 29.5 (merge of READ and DOCS): with no armed box holding words, "loe see ette" reads the page's article.
+    expect(inpageStep(session(), 'loe see ette', NO_BOX).commands).toEqual([{ kind: 'read', what: 'page' }])
+    expect(inpageInstant(session(), 'loe viimane lause ette')).toBe(true)
+  })
+})
+
+describe('document mode (29.2): outside it, the chat box is byte-identical', () => {
+  // Pinned from the chat-box steps of main bc4b78b: the same utterance into the same box.
+  const PINNED: ReadonlyArray<readonly [string, string, BrowserCommand[], boolean | undefined]> = [
+    ['tere tulemast koju', '', [{ kind: 'setText', text: 'Tere tulemast koju.' }], true],
+    ['ma tulen homme', 'Tere.', [{ kind: 'setText', text: 'Tere. Ma tulen homme.' }], true],
+    ['välja', '', [{ kind: 'pressKey', key: 'Escape' }], undefined],
+    ['välja', 'Ta läks', [{ kind: 'setText', text: 'Ta läks välja' }], true],
+    ['tagasi', '', [{ kind: 'history', direction: 'back' }], undefined],
+    ['saada', 'Tere', [{ kind: 'pressSend' }], undefined],
+    ['punkt', 'Tere', [{ kind: 'setText', text: 'Tere.' }], undefined],
+    ['uus rida', 'Tere', [{ kind: 'setText', text: 'Tere\n' }], undefined],
+    ['vali see lause', 'Tere. Head aega.', [{ kind: 'select', what: 'sentence' }], undefined],
+    ['keri alla', 'Tere', [{ kind: 'scroll', direction: 'down' }], undefined],
+  ]
+  for (const [u, text, commands, ask] of PINNED) {
+    it(`document mode: outside it, "${u}" into "${text}" is the chat-box step`, () => {
+      const step = inpageStep(session(), u, box(text))
+      expect(step.commands).toEqual(commands)
+      expect(step.ask).toBe(ask)
+      expect(step).toEqual(inpageStep(session(), u, { ...box(text), document: false }))
+    })
+  }
+})
+
+function capitalise(word: string): string {
+  return word.charAt(0).toLocaleUpperCase() + word.slice(1)
+}
 // ---------- reading aloud (29.5) ----------
 describe('reading aloud (29.5): a reading keeps the box undo', () => {
   it('read: after "loe ette", "võta tagasi" still undoes the last dictation', () => {
     const typed = inpageStep(initialInpage('et'), 'Ma jõuan homme', { present: true, text: 'Tere', armed: true })
     const afterTyped = inpageResult(typed.session, typed.commands, { ok: true }).session
     expect(afterTyped.undo).toEqual(['Tere'])
-    const read = inpageStep(afterTyped, 'loe ette', { present: true, text: 'Tere Ma jõuan homme', armed: true })
+    const read = inpageStep(afterTyped, 'loe lehte ette', { present: true, text: 'Tere Ma jõuan homme', armed: true })
     expect(read.commands).toEqual([{ kind: 'read', what: 'page' }])
     const afterRead = inpageResult(read.session, read.commands, { ok: true }).session
     const undo = inpageStep(afterRead, 'võta tagasi', { present: true, text: 'Tere Ma jõuan homme', armed: true })

@@ -18,6 +18,12 @@ import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
+import { inpageResult } from '../../src/core/inpage.ts'
+import type { BoxState, BrowserResult } from '../../src/browser/protocol.ts'
+import { copyFileSync } from 'node:fs'
+// ---------- wake word and places (29.4) ----------
+import { placeCommand, placeRowsFrom, placeVoice, placesFrom } from '../../src/core/places.ts'
+// ---------- end of wake word and places ----------
 import { createUtleServer } from '../../server/app.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -25,6 +31,8 @@ const extensionDir = resolve(here, '..')
 const repoRoot = resolve(extensionDir, '..')
 // The WhatsApp stand-in: the test maps this address prefix to the whatsapp entry of sites.ts.
 const WA_PREFIX = `http://127.0.0.1:5183/fixtures/whatsapp`
+/** mail (29.3.4): the mailHome setting points Gmail's compose address at the stand-in. */
+const GMAIL_PREFIX = `http://127.0.0.1:5183/fixtures/gmail.html`
 const PORT = 5183
 const UTLE = `http://localhost:${PORT}/fixtures/utle.html`
 const T = `http://127.0.0.1:${PORT}/fixtures`
@@ -37,8 +45,8 @@ const SERVE_TOKEN = 't1'
 // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
 const headed = true
 
-type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string; fieldKind?: string; single?: boolean }
-type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean }
+type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string; fieldKind?: string; single?: boolean; mail?: boolean }
+type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean; contacts?: { kind: string; value: string; label: string }[] }
 type Result = { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxInfo; page?: PageInfo } | { ok: false; code: string; message: string }
 
 const kindsSeen = new Set<string>()
@@ -780,7 +788,77 @@ async function main(): Promise<void> {
     r = await send({ kind: 'scroll', direction: 'down' })
     line('scroll', 'page that does not scroll -> failed', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
     r = await send({ kind: 'readBox' })
-    check('readBox: the To field is single, fieldKind text (no clue in its name), label from <label for>', r !== 'timeout' && r.ok && r.box?.single === true && r.box.fieldKind === 'text' && r.box.label === 'Saaja', describe(r))
+    // Round 8 (29.3.5): To of a compose window is an address field, whatever its own name says.
+    check('readBox: the To field is single, fieldKind email (a compose window, 29.3.5), label from <label for>', r !== 'timeout' && r.ok && r.box?.single === true && r.box.fieldKind === 'email' && r.box.label === 'Saaja', describe(r))
+
+    // ---------- mail (29.3): addresses off a CV page, composeTo into the Gmail stand-in, Send ----------
+    // The engine's Gmail is the stand-in: mailHome points the compose address at fixtures/gmail.html,
+    // which reads to, su and body from ?view=cm as Gmail does (29.3.4).
+    await sw.evaluate((home) => chrome.storage.local.set({ mailHome: home }), GMAIL_PREFIX)
+    await send({ kind: 'goTo', url: `${T}/cv.html` })
+    r = await send({ kind: 'readPage' })
+    const contacts = r !== 'timeout' && r.ok ? r.page?.contacts ?? [] : []
+    const contactValues = contacts.map((c) => `${c.kind} ${c.value}`)
+    line(
+      'readPage',
+      `cv contacts: ${contactValues.join(', ')}`,
+      contacts.length === 3 && contactValues[0] === 'email mari.maasikas@example.ee' && contactValues[1] === 'email mari.tookoht@firma.ee' && contactValues[2] === 'tel +37251234567',
+      `length=${contacts.length} (3 wanted; no version, ID code, price, street number, date or hidden address) ${JSON.stringify(contacts)}`,
+    )
+    const firstAddress = contacts.find((c) => c.kind === 'email')?.value ?? ''
+    const tabsBeforeMail = await tabCount()
+    r = await send({ kind: 'composeTo', address: firstAddress, subject: 'Teie CV' })
+    const mailTab = ctx.pages().find((p) => p.url().startsWith(`${GMAIL_PREFIX}?view=cm`))
+    if (!mailTab) throw new Error('the Gmail stand-in did not open')
+    const mailValue = async (id: string): Promise<string> => mailTab.evaluate((i) => (document.getElementById(i) as HTMLInputElement | null)?.value ?? '(none)', id)
+    const toFilled = await mailValue('to')
+    line(
+      'composeTo',
+      'a new tab at the compose address: To and Subject filled, the body armed',
+      r !== 'timeout' && r.ok && r.box?.armed === true && r.box.kind === 'composer' && toFilled === firstAddress && (await mailValue('subject')) === 'Teie CV' && (await tabCount()) === tabsBeforeMail + 1,
+      `${describe(r)} url=${mailTab.url()} to=${JSON.stringify(toFilled)}`,
+    )
+    r = await send({ kind: 'setText', text: 'Tere! Tulen homme kell kümme.' })
+    const bodyNow = await mailTab.evaluate(() => document.getElementById('body')?.innerText ?? '')
+    check('setText: the dictated body is in the mail', r !== 'timeout' && r.ok && bodyNow === 'Tere! Tulen homme kell kümme.', JSON.stringify(bodyNow))
+    await mkdir(join(extensionDir, 'test/out'), { recursive: true })
+    await mailTab.screenshot({ path: join(extensionDir, 'test/out/mail.png') })
+    copyFileSync(join(extensionDir, 'test/out/mail.png'), join(repoRoot, 'docs/proof/r8-mail.png'))
+    // "saada" is pressSend (src/core/mail.test.ts): in a compose window it clicks Send, never Enter.
+    r = await send({ kind: 'pressSend' })
+    const mailRecord = async (): Promise<{ mails: Array<{ to: string; cc: string; subject: string; body: string }>; clicks: string[] }> =>
+      mailTab.evaluate(() => {
+        const w = window as unknown as { sentMails: Array<{ to: string; cc: string; subject: string; body: string }>; clicks: string[] }
+        return { mails: w.sentMails, clicks: w.clicks }
+      })
+    let record = await mailRecord()
+    line(
+      'pressSend',
+      '"saada": the stand-in recorded the Send click with To, subject and body',
+      r !== 'timeout' && r.ok && record.clicks.includes('send') && record.mails.length === 1 && record.mails[0]?.to === firstAddress && record.mails[0].subject === 'Teie CV' && record.mails[0].body === 'Tere! Tulen homme kell kümme.',
+      `${describe(r)} ${JSON.stringify(record)}`,
+    )
+    // compose on Gmail: no window open now, so Compose ("Koosta") is clicked; To is armed and reports kind email.
+    r = await send({ kind: 'compose' })
+    record = await mailRecord()
+    line('compose', 'on Gmail with no window: Koosta clicked, To armed, single, fieldKind email, mail', r !== 'timeout' && r.ok && record.clicks.includes('koosta') && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'email' && r.box.label === 'Saaja' && r.box.mail === true, `${describe(r)} clicks=${JSON.stringify(record.clicks)}`)
+    await send({ kind: 'setText', text: 'Mari' })
+    // "valmis" in To is pressKey Tab (src/core/mail.test.ts): the next field of the group, Subject.
+    r = await send({ kind: 'pressKey', key: 'Tab' })
+    check('pressKey Tab ("valmis") in To: Subject armed, single, fieldKind text, mail', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'text' && r.box.label === 'Teema' && r.box.mail === true, describe(r))
+    r = await send({ kind: 'mailField', field: 'subject', text: 'Koosolek' })
+    line('mailField', '"teema: Koosolek": Subject typed, the body armed next', r !== 'timeout' && r.ok && (await mailValue('subject')) === 'Koosolek' && r.box?.armed === true && r.box.kind === 'composer', `${describe(r)} subject=${JSON.stringify(await mailValue('subject'))}`)
+    r = await send({ kind: 'mailField', field: 'cc' })
+    record = await mailRecord()
+    line('mailField', '"lisa koopia": the Cc button clicked, the Cc field armed, fieldKind email', r !== 'timeout' && r.ok && record.clicks.includes('cc') && r.box?.armed === true && r.box.fieldKind === 'email' && r.box.label === 'Koopia', `${describe(r)} clicks=${JSON.stringify(record.clicks)}`)
+    // compose to a name with a body, while the window in front is written in: a fresh window.
+    r = await send({ kind: 'compose', to: 'Jaan', body: 'Tere, Jaan!' })
+    record = await mailRecord()
+    const freshTo = await mailValue('to')
+    const freshBody = await mailTab.evaluate(() => document.getElementById('body')?.innerText ?? '')
+    line('compose', '"kirjuta meil Jaanile, et …" on a written window: a fresh one, To and body filled, body armed', r !== 'timeout' && r.ok && record.clicks.filter((c) => c === 'koosta').length === 2 && freshTo === 'Jaan' && freshBody === 'Tere, Jaan!' && r.box?.kind === 'composer' && r.box.armed === true, `${describe(r)} to=${JSON.stringify(freshTo)} body=${JSON.stringify(freshBody)}`)
+    await send({ kind: 'closeTab' })
+    await sw.evaluate(() => chrome.storage.local.remove('mailHome'))
 
     // ---------- Round 5 (fields): a Smart-ID-like login, one-line fields of every kind ----------
     await send({ kind: 'goTo', url: `${T}/login.html` })
@@ -924,6 +1002,103 @@ async function main(): Promise<void> {
     line('pressKey', 'Tab moves to the next field and arms it', r !== 'timeout' && r.ok && tabbedTo === 'essay-area' && r.box?.armed === true && r.box.label === 'Kirjand tekstina', `${describe(r)} focused=${tabbedTo}`)
     await send({ kind: 'arm', on: false })
     await essay.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    // ---------- round 8, document mode (29.2): two paragraphs, a sentence made italic; the Docs key path and M5 ----------
+    {
+      // The engine's loop for one utterance, with the real rules: the box, the step, its commands, the result.
+      let docSession = initialInpage('et')
+      const speakTo = async (utterance: string): Promise<ReturnType<typeof inpageStep>> => {
+        const read = await send({ kind: 'readBox' })
+        const box = read !== 'timeout' && read.ok && read.box ? (read.box as BoxState) : { present: false, text: '', armed: false }
+        const step = inpageStep(docSession, utterance, box)
+        let last: BrowserResult = { ok: true }
+        for (const command of step.commands) {
+          const answer = await send(command)
+          last = answer === 'timeout' ? { ok: false, code: 'failed', message: 'timeout' } : (answer as BrowserResult)
+          if (!last.ok) break
+        }
+        docSession = inpageResult(step.session, step.commands, last).session
+        return step
+      }
+      const isDocumentBox = (x: Result | 'timeout'): boolean => x !== 'timeout' && x.ok && (x.box as { document?: boolean } | undefined)?.document === true
+
+      // The essay editor emptied to one paragraph, as an editor starts: a textbox of blocks, so a document.
+      await essay.evaluate(() => {
+        const el = document.getElementById('essay')
+        if (el) el.innerHTML = '<div><br></div>'
+        el?.focus()
+      })
+      r = await send({ kind: 'arm', on: true })
+      check('document mode: the emptied essay editor is a document', isDocumentBox(r), describe(r))
+      for (const u of ['eesti suvi on lühike', 'punkt', 'päike paistab hilisõhtuni', 'punkt', 'uus lõik', 'sügis toob vihma', 'punkt', 'lehed langevad puudelt', 'punkt']) await speakTo(u)
+      const ESSAY = 'Eesti suvi on lühike. Päike paistab hilisõhtuni.\nSügis toob vihma. Lehed langevad puudelt.'
+      const essayText = async (): Promise<string> => essay.evaluate(() => (window as unknown as { textOf: (id: string) => string }).textOf('essay'))
+      const blocks = await essay.evaluate(() => [...(document.getElementById('essay')?.children ?? [])].map((c) => c.textContent))
+      line('format', 'essay: two paragraphs dictated ("punkt", "uus lõik")', (await essayText()) === ESSAY && blocks.length >= 2, `${JSON.stringify(await essayText())} blocks=${JSON.stringify(blocks)}`)
+      await speakTo('mine sõna paistab ette')
+      const selectStep = await speakTo('vali see lause')
+      const italicStep = await speakTo('kaldkirja')
+      const styled = await essay.evaluate(() => {
+        const el = document.getElementById('essay')
+        const marks = [...(el?.querySelectorAll('i, em, [style*="italic"]') ?? [])]
+        return { count: marks.length, text: marks.map((m) => m.textContent ?? '').join('|'), html: el?.innerHTML ?? '' }
+      })
+      line(
+        'format',
+        'essay: "vali see lause", "kaldkirja": <i> around exactly sentence 2',
+        selectStep.commands[0]?.kind === 'select' && italicStep.commands[0]?.kind === 'format' && styled.count === 1 && styled.text === 'Päike paistab hilisõhtuni.',
+        JSON.stringify(styled),
+      )
+      check('essay: the words are unchanged by the formatting', (await essayText()) === ESSAY, JSON.stringify(await essayText()))
+      await essay.locator('#essay').screenshot({ path: join(here, 'out/essay.png') })
+      copyFileSync(join(here, 'out/essay.png'), join(repoRoot, 'docs/proof/r8-essay.png'))
+      // A textarea has no italics: the page says so instead of doing nothing.
+      await send({ kind: 'arm', on: false })
+      await essay.evaluate(() => document.getElementById('essay-area')?.focus())
+      r = await send({ kind: 'format', style: 'bold' })
+      line('format', 'textarea: bold refused, the box untouched', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
+      await essay.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+
+      // The Google Docs stand-in, served at docs.google.com (page.ts recognises Docs by its hostname).
+      const DOCS = 'https://docs.google.com/document/d/stand-in/edit'
+      const docsHtml = readFileSync(join(here, 'fixtures/docs.html'), 'utf8')
+      await ctx.route('https://docs.google.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: docsHtml }))
+      await send({ kind: 'goTo', url: DOCS })
+      const docsPage = pageAt(DOCS)
+      if (!docsPage) throw new Error('docs stand-in not found')
+      await docsPage.waitForFunction(() => document.querySelector('iframe')?.contentDocument?.querySelector('[contenteditable]')?.getAttribute('data-wired') === '1', undefined, { timeout: 5000 })
+      const received = async (): Promise<string> => docsPage.evaluate(() => (window as unknown as { docsReceived: string }).docsReceived)
+      const chords = async (): Promise<string[]> => docsPage.evaluate(() => (window as unknown as { docsChords: string[] }).docsChords)
+      docSession = initialInpage('et')
+      r = await send({ kind: 'readBox' })
+      check('Docs stand-in: readBox is Google Docs, a document', isDocumentBox(r) && r !== 'timeout' && r.ok && r.box?.label === 'Google Docs', describe(r))
+      await speakTo('tere')
+      await speakTo('punkt')
+      // REVIEW-R3 M5: past DOCS_TYPED_RESET_MS (4 s) the memory of what Ütle typed used to empty, and the next sentence was glued on.
+      await new Promise((resolve) => setTimeout(resolve, 4500))
+      await speakTo('uus lause on siin')
+      line('setText', 'Docs M5: after the 4 s reset, "Tere. Uus lause on siin"', (await received()) === 'Tere. Uus lause on siin', JSON.stringify(await received()))
+      const CHORDS: ReadonlyArray<readonly [string, string]> = [
+        ['paksuks', 'Ctrl+B'],
+        ['kaldkirja', 'Ctrl+I'],
+        ['allajoonitud', 'Ctrl+U'],
+        ['pealkirjaks', 'Ctrl+Alt+1'],
+        ['tavaline tekst', 'Ctrl+Alt+0'],
+        ['loendiks', 'Ctrl+Shift+8'],
+      ]
+      for (const [u, want] of CHORDS) {
+        const before = (await chords()).length
+        await speakTo(u)
+        const now = await chords()
+        line('format', `Docs: "${u}" sends ${want}`, now.length === before + 1 && now.at(-1) === want, JSON.stringify(now.slice(before)))
+      }
+      await speakTo('uus lõik')
+      await speakTo('teine lõik')
+      line('format', 'Docs: "uus lõik" is Enter Enter; the paragraph starts', (await received()) === 'Tere. Uus lause on siin\n\nTeine lõik', JSON.stringify(await received()))
+      const sendStep = await speakTo('saada')
+      check('Docs: "saada" runs nothing and says so', sendStep.commands.length === 0 && sendStep.line === 'Dokumendis ei saadeta.', sendStep.line)
+      await docsPage.screenshot({ path: join(here, 'out/docs.png') })
+      await ctx.unroute('https://docs.google.com/**')
+    }
     await send({ kind: 'goTo', url: `${T}/page-one.html` })
     r = await send({ kind: 'typeText', text: 'tere' })
     line('typeText', 'page without a field -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
@@ -1041,6 +1216,91 @@ async function main(): Promise<void> {
       line('savedEntry', 'with the options page closed -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
     }
 
+    // ---------- wake word and places (29.4): a place saved by voice and opened by its noun, Minu kohad on the settings page, the wake mode's wiring ----------
+    {
+      const extensionId = new URL(sw.url()).host
+      const storedPlaces = async (): Promise<unknown> => sw.evaluate(async () => (await chrome.storage.local.get('places')).places)
+      // On page two he says "lisa koht uudised": the real rules of places.ts make the command the engine sends.
+      const newsPage = `${T}/page-two.html`
+      await send({ kind: 'goTo', url: newsPage })
+      const voice = placeVoice('lisa koht uudised', false)
+      const saveCommand = voice?.noun ? { kind: 'savePlace', noun: voice.noun } : null
+      r = saveCommand === null ? 'timeout' : await send(saveCommand)
+      const savedRows = placeRowsFrom(await storedPlaces())
+      line('savePlace', '"lisa koht uudised" on page two -> his row', r !== 'timeout' && r.ok && r.tab?.url === newsPage && JSON.stringify(savedRows) === JSON.stringify([{ noun: 'uudised', url: newsPage }]), `${describe(r)} command=${JSON.stringify(saveCommand)} rows=${JSON.stringify(savedRows)}`)
+      // Elsewhere, "vaata uudiseid" opens it.
+      await send({ kind: 'goTo', url: `${T}/page-three.html` })
+      const place = placeCommand('vaata uudiseid', placesFrom(await storedPlaces()))
+      r = place === null ? 'timeout' : await send({ kind: 'goTo', url: place.url })
+      const opened = await activeTab()
+      line('goTo', '"vaata uudiseid" from page three -> page two', r !== 'timeout' && r.ok && opened?.url === newsPage && opened.title === 'Page two', `${describe(r)} place=${JSON.stringify(place)} tab=${JSON.stringify(opened)}`)
+
+      const options = await ctx.newPage()
+      await options.setViewportSize({ width: 1280, height: 1100 })
+      await options.goto(`chrome-extension://${extensionId}/options.html#kohad`)
+      await options.waitForSelector('#placeList .place-item', { timeout: 5000 }).catch(() => undefined)
+      const listed = await options.evaluate(() => [...document.querySelectorAll<HTMLElement>('#placeList .place-item')].map((e) => e.dataset.noun ?? ''))
+      const shownVoice = await options.evaluate(() => document.querySelector('#placeList .place-item[data-noun="uudised"] .place-url')?.textContent ?? '')
+      check('kohad: the settings page lists the seven places, uudised as saved by voice', JSON.stringify(listed) === JSON.stringify(['uudised', 'raadio', 'ilm', 'mail', 'kalender', 'kaart', 'video']) && shownVoice === newsPage, `${JSON.stringify(listed)} uudised=${shownVoice}`)
+      // The helper's path: the form adds a place that has no default.
+      const bank = `${T}/page-one.html`
+      await options.mouse.move(0, 0)
+      await options.fill('#placeNoun', 'pank')
+      await options.fill('#placeUrl', bank)
+      await options.click('#placeAdd')
+      const twoRows = await waitUntil(async () => placeRowsFrom(await storedPlaces()).length === 2, 3000)
+      const shownBank = await options.evaluate(() => document.querySelector('#placeList .place-item[data-noun="pank"] .place-url')?.textContent ?? '')
+      check('kohad: the form adds a place of his own (pank)', twoRows && shownBank === bank, `rows=${JSON.stringify(placeRowsFrom(await storedPlaces()))} shown=${shownBank}`)
+      // The page keeps the strip's height free at its end (options.html pads <main>): scrolled to the bottom,
+      // the last of the page ends above the bar, so nothing on it stays hidden under the strip.
+      await options.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+      await options.waitForTimeout(200)
+      const clear = await options.evaluate(() => {
+        const end = document.querySelector('main')?.lastElementChild?.getBoundingClientRect().bottom ?? -1
+        const pad = Number.parseFloat(getComputedStyle(document.documentElement).paddingBottom) || 0
+        return { pageEnd: Math.round(end), barTop: Math.round(window.innerHeight - pad), pad }
+      })
+      check('kohad: scrolled to the end, the settings page ends above the strip', clear.pad >= 96 && clear.pageEnd > 0 && clear.pageEnd <= clear.barTop, JSON.stringify(clear))
+      await mkdir(join(extensionDir, 'test/out'), { recursive: true })
+      // The whole section in one picture: a tall window, so the strip sits below it.
+      await options.setViewportSize({ width: 1280, height: 1900 })
+      await options.evaluate(() => document.getElementById('kohad')?.scrollIntoView({ block: 'start' }))
+      await options.waitForTimeout(200)
+      await options.locator('#kohad').screenshot({ path: join(extensionDir, 'test/out/places.png') })
+      await options.setViewportSize({ width: 1280, height: 1100 })
+
+      // Wake mode: the choice shows the word's field, the word is stored, and the offscreen document is made with it.
+      const wakeChoice = options.locator('#listenMode .choice').nth(2)
+      await wakeChoice.scrollIntoViewIfNeeded()
+      await options.mouse.move(0, 0)
+      await wakeChoice.click()
+      const panelShown = await waitUntil(async () => (await options.evaluate(() => document.getElementById('wakePanel')?.hidden === false)) === true, 3000)
+      await options.fill('#wakeWord', 'Kuule')
+      await options.mouse.move(0, 0)
+      await options.click('#wakeWordSave')
+      const offscreenUrl = async (): Promise<string> =>
+        sw.evaluate(async () => (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] }))[0]?.documentUrl ?? '')
+      const wakeDoc = await waitUntil(async () => (await offscreenUrl()).includes('&wake=Kuule'), 5000)
+      const word = await sw.evaluate(async () => (await chrome.storage.local.get('wakeWord')).wakeWord)
+      check('wake: the mode shows the word field, stores the word, and the offscreen document gets &wake=', panelShown && word === 'Kuule' && wakeDoc, `panel=${panelShown} word=${JSON.stringify(word)} offscreen=${await offscreenUrl()}`)
+      await options.locator('#listenMode').screenshot({ path: join(extensionDir, 'test/out/wake-settings.png') })
+      // Back to the toggle: the document made for wake mode is replaced by one without the gate.
+      await options.mouse.move(0, 0)
+      await options.locator('#listenMode .choice').nth(0).click()
+      const replaced = await waitUntil(async () => {
+        const url = await offscreenUrl()
+        return url.includes('/offscreen.html?') && !url.includes('&wake=')
+      }, 5000)
+      check('wake: back to the toggle, a new offscreen document without &wake=', replaced, `offscreen=${await offscreenUrl()}`)
+      await options.close()
+
+      // "eemalda koht uudised": his row hides it, so the default is gone too.
+      r = await send({ kind: 'removePlace', noun: 'uudised' })
+      const afterRemove = placesFrom(await storedPlaces())
+      line('removePlace', '"eemalda koht uudised" -> no uudised place', r !== 'timeout' && r.ok && !afterRemove.some((p) => p.noun === 'uudised') && placeCommand('vaata uudiseid', afterRemove) === null, `${describe(r)} nouns=${afterRemove.map((p) => p.noun).join(',')}`)
+      await sw.evaluate(() => chrome.storage.local.remove(['places', 'wakeWord']))
+    }
+    // ---------- end of wake word and places ----------
     // ---------- reading aloud (29.5) ----------
     // The suite's Chromium has no Estonian voice, so a fake speechSynthesis (one et-EE voice, onstart
     // and onend 50 ms apart) is put into the offscreen document over the DevTools protocol: Playwright

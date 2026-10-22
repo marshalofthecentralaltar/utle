@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { MEDIA_ACTIONS, PRESSABLE_KEYS } from '../src/core/pageIntent.ts'
+import { contactsLine } from '../src/core/contacts.ts'
 import type { IntentRequest, IntentStep } from '../src/core/pageIntent.ts'
 // ---------- reading aloud (29.5) ----------
 import { READ_WHATS } from '../src/core/pageIntent.ts'
@@ -67,6 +68,13 @@ A box with single=true is a one-line form field (a login, an ID code, a phone nu
 # Saved values
 
 The user turn's "saved:" line lists the names of values he has saved once (an e-mail address, a phone number, an ID code), never the values. When he asks for one of them in any words ("pane mu email sinna", "täida see mu numbriga", "sisesta see gmaili aadress", "kirjuta mu isikukood siia", "my phone number here") and the box is armed, answer insertSaved with the name exactly as listed; the extension types the value itself. Pick the name by meaning: an e-mail, meil, mail or gmail address is the saved e-mail; telefon, number or mobiil the phone; isikukood, kood or ID code the code; a word of his own ("töö", "ema") the name that has it. When no box is armed and a field whose label matches is among the items, focusItem that field first with done:false, then insertSaved on the next ask. Never dictate the name as words, never answer insertSaved with a name that is not listed; when nothing listed fits, unclear and say he can save it with "minu andmed".
+
+# Mail
+
+The user turn's "contacts:" line lists the e-mail addresses and phone numbers shown on the page. composeTo { address, subject, body } opens a new mail to an address: the address MUST be one of the e-mail values on the contacts line, copied exactly; never an address from anywhere else, never one you made up or completed; with no e-mail on that line, never composeTo. "võta see meiliaadress siit lehelt ja kirjuta talle, et tulen homme", "kirjuta talle meil", "saada sellele aadressile kiri" on a page with one e-mail contact: composeTo with that address, body only the words he dictated ("Tulen homme.", else null), subject only when he said one; it is ONE goal, plan []. Several e-mail contacts and nothing in his words to choose by: the first one. A tel value is not an address: "helista talle" is clickItem on the link that carries the number, else unclear. On Gmail itself, a new mail to a name ("kirjuta meil Marile") is compose { to: "Mari", body: null }; "teema …" is mailField subject; "lisa koopia" mailField cc.
+# My places
+
+The user turn's "places:" line lists the nouns of places he has set once ("uudised", "raadio", "ilm", "mail", …), never their addresses. When he asks for one of them in any words ("vaata uudiseid", "näita uudiseid", "pane raadio käima", "pane raadio mängima", "mis ilm on", "kuidas ilm on", "ava mu mail", "vaata mu postkasti", "vaata videoid", "kus ma olen kaardil") answer place with the noun exactly as listed, done:true; the extension opens his own address for it. Pick the noun by meaning: news, uudised, värsked uudised is "uudised"; raadio, muusika raadiost the radio; ilm, ilmateade, kas sajab the weather; meil, mail, e-post, postkast the mail. Never invent an address and never goTo a site for a listed noun; a noun that is not listed is not a place (a site he names, like "postimees" or "youtube", is goTo as before). Changing the station once the radio page is open is clickItem on the station's button.
 
 # Dictation
 
@@ -148,6 +156,18 @@ const COMMAND = {
     kind('clearField'),
     kind('arm', { on: BOOLEAN }),
     kind('bar', { show: BOOLEAN }),
+    // ---------- mail (29.3) ----------
+    kind('compose', {
+      to: { anyOf: [STRING, { type: 'null' }], description: 'A name for the To field of Gmail, or null.' },
+      body: { anyOf: [STRING, { type: 'null' }], description: 'The words he dictated for the mail, or null.' },
+    }),
+    kind('composeTo', {
+      address: { type: 'string', description: 'One e-mail value of the contacts line, exactly as listed.' },
+      subject: { anyOf: [STRING, { type: 'null' }], description: 'The subject he said, or null.' },
+      body: { anyOf: [STRING, { type: 'null' }], description: 'The words he dictated for the mail, or null.' },
+    }),
+    kind('mailField', { field: { type: 'string', enum: ['subject', 'cc'] }, text: { anyOf: [STRING, { type: 'null' }], description: 'The subject, or the Cc name, or null.' } }),
+    // ---------- end mail (29.3) ----------
     // ---------- reading aloud (29.5) ----------
     kind('read', { what: { type: 'string', enum: [...READ_WHATS] } }),
   ],
@@ -167,6 +187,9 @@ const INTENT = {
     kind('wake'),
     kind('unclear', { say: { type: 'string', description: 'One short line in the request language with what he can say.' } }),
     kind('insertSaved', { name: { type: 'string', description: 'One of the names on the saved: line, exactly as listed. The extension types the value.' } }),
+    // ---------- wake word and places (29.4) ----------
+    kind('place', { noun: { type: 'string', description: 'One of the nouns on the places: line, exactly as listed. The extension opens his address for it.' } }),
+    // ---------- end of wake word and places ----------
   ],
 }
 
@@ -244,6 +267,10 @@ export function intentUserMessage(request: IntentRequest): string {
     `recent: ${request.recent.length > 0 ? request.recent.map((r) => JSON.stringify(r)).join(' | ') : 'none'}`,
     // Round 6 (26.1): the names of his saved values, never the values.
     `saved: ${page.saved && page.saved.length > 0 ? page.saved.map((n) => JSON.stringify(n)).join(' | ') : 'none'}`,
+    // mail (29.3.3): the page's addresses and numbers, values only, never the text around them.
+    `contacts: ${contactsLine(page.contacts)}`,
+    // Round 8 (29.4.2): the nouns of his places, never an address.
+    `places: ${page.places && page.places.length > 0 ? page.places.map((n) => JSON.stringify(n)).join(' | ') : 'none'}`,
     ...chainLines,
     `steps: ${steps || 'none (first ask)'}`,
     `items:\n${items || '(none)'}`,

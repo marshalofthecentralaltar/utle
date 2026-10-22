@@ -5,16 +5,26 @@
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
 import { chainLine, firstGoal, hasConnective } from '../../src/core/chain.ts'
-import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
+import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import { savedNames } from '../../src/core/saved.ts'
 import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
+import { documentPaused } from '../../src/core/documentMode.ts'
+import { speak as synthSpeak } from '../../src/speech/synth.ts'
 // ---------- reading aloud (29.5) ----------
 import { isReadStop } from '../../src/core/reading.ts'
 import type { StripState } from './messages.ts'
+// ---------- wake word and places (29.4) ----------
+import { placeByNoun, placeCommand, placeHost, placeNounSaid, placeNouns, placeVoice } from '../../src/core/places.ts'
+import type { Place } from '../../src/core/places.ts'
+import { createWake, wakeClose, wakeGate, wakeHeard, wakeOpen, wakeOpenWindow, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
+import type { WakeState } from '../../src/core/wake.ts'
+/** Round 8 (29.4.3): how long "lisa koht" waits for the word. */
+export const PLACE_ASK_MS = 20_000
+// ---------- end of wake word and places ----------
 
 /** The functions of src/core/inpage.ts the engine calls. The test build passes a stand-in. */
 export interface InpageLogic {
@@ -26,7 +36,7 @@ export interface InpageLogic {
   /** M7: the step for what the model said the utterance meant. */
   applyIntent(session: InpageSession, intent: PageIntent, page: PageContext, say?: string): InpageStep
   /** M7: the model's answer checked against the page, or null. */
-  pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'page' | 'tabs'>): PageIntent | null
+  pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'page' | 'tabs'>): ModelIntent | null
 }
 
 /**
@@ -68,6 +78,16 @@ export interface EngineDeps {
   tabs(): Promise<TabSummary[]>
   /** M7: whether the server has a model, checked once when the engine starts. bad_token (27.3): it answered 401. */
   status(): Promise<'live' | 'no_key' | 'bad_token' | 'unreachable'>
+  // ---------- document mode (29.2) ----------
+  /**
+   * Reads text aloud ("loe viimane lause ette"); onEnd once when it is over. Optional: the default
+   * is src/speech/synth.ts. Listening is not paused meanwhile (the READ lane's pause, 29.5).
+   */
+  speak?(text: string, lang: string, onEnd: () => void): void
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.1): the wake word while listenMode is wake; absent in the other modes. */
+  wakeWord?: string
+  // ---------- end of wake word and places ----------
   // ---------- reading aloud (29.5) ----------
   /** A reading aloud is in progress: a stop word (isReadStop) stops it first and does nothing else. Absent: never. */
   reading?(): boolean
@@ -98,6 +118,10 @@ export interface Engine {
    * goes to the page in front as savedEntry, never to the rules or the model.
    */
   setEntry(on: boolean): void
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.2): his places (Minu kohad, merged over the defaults). The model is told the nouns only. */
+  setPlaces(places: readonly Place[]): void
+  // ---------- end of wake word and places ----------
 }
 
 const NO_BOX: BoxState = { present: false, text: '', armed: false }
@@ -193,6 +217,8 @@ interface Live {
   typing: Promise<void> | null
   /** The utterance has ended (a final, or the microphone stopped): type no more previews. */
   over: boolean
+  /** Round 8 (29.2): it began more than DOCUMENT_PAUSE_MS after the previous final (a document closes the open sentence first). */
+  paused?: boolean
 }
 
 export function createEngine(deps: EngineDeps): Engine {
@@ -250,7 +276,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const wanted = (u: Live): string | null => {
     const base = u.base
     if (base === null || !base.present) return null
-    const preview = deps.logic.inpagePreview(session, u.partial, base)
+    const preview = deps.logic.inpagePreview(base.document === true ? { ...session, paused: u.paused === true } : session, u.partial, base)
     if (preview !== null) return preview
     // The words may be a command now: take back a preview already typed.
     return u.inBox !== null ? base.text : null
@@ -296,7 +322,9 @@ export function createEngine(deps: EngineDeps): Engine {
     // Round 6 (26.1): the names of his saved values, never a value.
     const names = savedNames(session.saved ?? [])
     // Clipped to IntentRequestSchema's limits: a page beyond them would be a 400, and the model never asked.
-    return { ...page, url: page.url.slice(0, URL_CHARS), title: page.title.slice(0, TITLE_CHARS), box: { ...page.box, text: page.box.text.slice(0, BOX_CHARS) }, ...(names.length > 0 ? { saved: names } : {}) }
+    // Round 8 (29.4.2): the nouns of his places, never an address.
+    const nouns = placeNouns(places)
+    return { ...page, url: page.url.slice(0, URL_CHARS), title: page.title.slice(0, TITLE_CHARS), box: { ...page.box, text: page.box.text.slice(0, BOX_CHARS) }, ...(names.length > 0 ? { saved: names } : {}), ...(nouns.length > 0 ? { places: nouns } : {}) }
   }
 
   /**
@@ -338,6 +366,8 @@ export function createEngine(deps: EngineDeps): Engine {
     watchdog: ReturnType<typeof setTimeout> | null
     /** Round 5: "katkesta": the job does nothing more, not even the rules' step. */
     dropped: boolean
+    /** Round 8 (29.2): it came more than DOCUMENT_PAUSE_MS after the previous final; in a document the open sentence is closed first. */
+    paused?: boolean
   }
 
   /** Every job not finished: the one in its turn of the queue, those waiting for it, the verifications. */
@@ -539,7 +569,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /** The model's answer, validated against the page it saw. */
   interface Heard {
-    intent: PageIntent
+    intent: ModelIntent
     say: string
     /** The model says the utterance asks for more after this step. */
     more: boolean
@@ -611,6 +641,8 @@ export function createEngine(deps: EngineDeps): Engine {
     const withSuffix = (line: string): string => (suffix === '' || line === '' ? line : `${line} ${suffix}`)
     session = step.session
     say(withSuffix(step.line))
+    // Round 8 (29.2): "loe viimane lause ette": the text is read aloud; nothing runs on the page.
+    if (step.speak !== undefined) speakAloud(step.speak)
     // A command, or nothing at all: the preview must not stay in the box.
     if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
     if (step.commands.length === 0) return { ok: true, line: step.line }
@@ -628,7 +660,7 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /** The step for the model, e.g. "command goTo", "command clickItem 12", "edit undo", "send". */
-  const kindSummary = (intent: PageIntent): string => {
+  const kindSummary = (intent: ModelIntent): string => {
     switch (intent.kind) {
       case 'command': {
         const c = intent.command
@@ -689,7 +721,8 @@ export function createEngine(deps: EngineDeps): Engine {
     let failures = 0
     for (;;) {
       planChain(job, heard, steps.length === 0)
-      const step = deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
+      // Round 8 (29.4.2): a place is resolved here, from his own list; applyIntent never sees it.
+      const step = heard.intent.kind === 'place' ? placeStep(heard.intent.noun) : deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
       const outcome = await perform(step, u, '', job)
       u = null
       if (job.dropped) return 'stopped'
@@ -839,9 +872,27 @@ export function createEngine(deps: EngineDeps): Engine {
         // the box since the base was read (review): it reads the box as it is now.
         box = job.send ? await readBox() : (u.base ?? NO_BOX)
       }
+      // Round 8 (29.2): in a document the rules hear whether the pause before this final was a long one.
+      if (box.document === true) session = { ...session, paused: job.paused === true }
+      // ---------- wake word and places (29.4) ----------
+      // Round 8 (29.4.3): "lisa koht uudised" saves the tab in front; "lisa koht" asks for the word first.
+      if (await placeByVoice(job, box, u)) {
+        lastDone = clipGoals([job.utterance])
+        return
+      }
+      // Round 8: "vaata uudiseid" opens his place, before the rules; never in an armed box (it may be a message).
+      const place = box.armed ? null : placeCommand(job.utterance, places)
+      if (place !== null) {
+        await perform({ session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.place.label) }, u, '', job)
+        lastDone = clipGoals([job.utterance])
+        return
+      }
+      // ---------- end of wake word and places ----------
       const before = session
       const recentBefore = recent
       const rules = deps.logic.inpageStep(session, job.utterance, box)
+      // Round 8 (29.4.1): words the rules type into an armed box open the dictation window.
+      wakeDictation(job, box, rules)
       // Waited too long in the queue: the rules alone, and the strip says so (round 3). A continued
       // utterance meant to wait for the chain before it (round 4) is never stale.
       const stale = Date.now() - job.arrived > STALE_MS && !job.continued
@@ -854,7 +905,8 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       // Round 5: a single-line field (a form's name, email, code) is verified before anything is typed.
       const single = box.single === true
-      if (box.armed && !single) {
+      // Round 8 (29.2): never in a document: there the model is asked first, and only about a command verb.
+      if (box.armed && !single && box.document !== true) {
         // Type first, verify after: the words are in the box at once, and the model only takes
         // them back when it is sure they were something else. The verification does not hold the
         // queue (round 3).
@@ -900,7 +952,7 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   const begin = (): Live => {
-    const u: Live = { base: null, ready: Promise.resolve(), partial: '', inBox: null, typing: null, over: false }
+    const u: Live = { base: null, ready: Promise.resolve(), partial: '', inBox: null, typing: null, over: false, paused: pausedNow() }
     // The base is read once, after every earlier utterance's commands have run.
     u.ready = queue.then(async () => {
       u.base = await readBox()
@@ -945,6 +997,115 @@ export function createEngine(deps: EngineDeps): Engine {
       .catch(() => undefined)
   }
 
+  // ---------- document mode (29.2): the pause window and reading aloud ----------
+  /** Date.now() of the last final handed to a job, or null before the first. */
+  let lastFinalAt: number | null = null
+  /** Whether speech starting now begins after the document pause window (DOCUMENT_PAUSE_MS). */
+  const pausedNow = (): boolean => documentPaused(lastFinalAt, Date.now())
+  /** A final arrived: the pause before it is measured from when its speech began (its first partial), else from now. */
+  const finalArrived = (job: Job, u: Live | null): void => {
+    job.paused = u?.paused ?? pausedNow()
+    lastFinalAt = Date.now()
+  }
+  const speakAloud = (text: string): void => {
+    const lang = deps.lang === 'et' ? 'et-EE' : 'en-US'
+    const read = deps.speak ?? synthSpeak
+    try {
+      read(text, lang, () => undefined)
+    } catch {
+      // Speech synthesis missing or refused: the strip line already says what was meant.
+    }
+  }
+  // ---------- end of document mode ----------
+  // ---------- wake word and places (29.4) ----------
+  const wakeText = STRINGS[deps.lang].wake
+  /** Round 8 (29.4.2): his places, merged over the defaults by the offscreen document (setPlaces); none until then. */
+  let places: Place[] = []
+  /** The model's place, resolved here; a noun no longer set opens nothing. */
+  const placeStep = (noun: string): InpageStep => {
+    const place = placeByNoun(places, noun)
+    return place === undefined ? { session, commands: [], line: wakeText.missing } : { session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.label) }
+  }
+  /** Round 8 (29.4.3): "lisa koht" asked for the word; the next final within PLACE_ASK_MS is it. */
+  let placeAsk: { action: 'save' | 'remove'; until: number } | null = null
+  /**
+   * Saving or removing a place by voice. True when the utterance was that (done, or asking for the
+   * word). An answer to the question that is not a usable word ends the question and goes on as usual.
+   */
+  const placeByVoice = async (job: Job, box: BoxState, u: Live | null): Promise<boolean> => {
+    let want = placeVoice(job.utterance, box.armed)
+    const asked = placeAsk
+    placeAsk = null
+    if (want === null && asked !== null && Date.now() < asked.until) {
+      const noun = placeNounSaid(job.utterance)
+      if (noun !== '') want = { action: asked.action, noun }
+    }
+    if (want === null) return false
+    if (u !== null) await takeBack(u)
+    if (want.noun === null) {
+      placeAsk = { action: want.action, until: Date.now() + PLACE_ASK_MS }
+      say(want.action === 'save' ? wakeText.placeAsk : wakeText.placeAskRemove)
+      return true
+    }
+    if (want.action === 'remove' && placeByNoun(places, want.noun) === undefined) {
+      say(wakeText.placeNotThere(want.noun))
+      return true
+    }
+    const result = await runSafe(want.action === 'save' ? { kind: 'savePlace', noun: want.noun } : { kind: 'removePlace', noun: want.noun })
+    if (!result.ok) say(wakeText.placeNotSaved)
+    else say(want.action === 'save' ? wakeText.placeSaved(want.noun, placeHost(result.tab?.url ?? '')) : wakeText.placeRemoved(want.noun))
+    return true
+  }
+  /** Round 8 (29.4.1): the wake gate while listenMode is wake, else null. */
+  let wake: WakeState | null = deps.wakeWord === undefined ? null : createWake(deps.wakeWord)
+  /** What the strip was last told (wakeOpen), so it is told on change only. */
+  let wakeShown = false
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null
+  /** The last final passed the gate: a continuation of it ("siis ...") passes too. */
+  let lastPassed = false
+  const windowOpen = (): boolean => wake !== null && wakeOpen(wake, Date.now())
+  /** Publishes wakeOpen on change, says when the window closed, and sets the timer for its end. */
+  const showWake = (quiet = false): void => {
+    if (wake === null) return
+    const now = Date.now()
+    const open = wakeOpen(wake, now)
+    if (wakeTimer !== null) clearTimeout(wakeTimer)
+    wakeTimer = null
+    if (open) {
+      wakeTimer = setTimeout(() => {
+        wakeTimer = null
+        showWake()
+      }, wake.openUntil - now)
+    }
+    if (open === wakeShown) return
+    wakeShown = open
+    if (!open && !quiet) deps.publish({ wakeOpen: false, line: wakeText.closed })
+    else deps.publish({ wakeOpen: open })
+  }
+  /** One final through the gate: the words to act on, or null when they go nowhere. */
+  const wakeFilter = (utterance: string): string | null => {
+    if (wake === null) return utterance
+    const r = wakeGate(wake, utterance, Date.now())
+    wake = r.state
+    lastPassed = r.utterance !== null
+    showWake()
+    return r.utterance
+  }
+  /** Dictation by the rules into an armed box opens the window (a send never does). */
+  const wakeDictation = (job: Job, box: BoxState, rules: InpageStep): void => {
+    if (wake === null || job.send || !box.present || !box.armed) return
+    if (!rules.commands.some((c) => c.kind === 'setText')) return
+    wake = wakeOpenWindow(wake, Date.now())
+    showWake()
+  }
+  /** Listening stopped: the window closes without a line. */
+  const wakeStopped = (): void => {
+    if (wake === null) return
+    wake = wakeClose(wake)
+    lastPassed = false
+    showWake(true)
+  }
+  // ---------- end of wake word and places ----------
   // ---------- reading aloud (29.5) ----------
   /**
    * While a reading is in progress the microphone stays live and hears the synthesised voice too, so
@@ -984,6 +1145,7 @@ export function createEngine(deps: EngineDeps): Engine {
       live = null
       if (u !== null) u.over = true
       const job = newJob(utterance, isPlainSend(utterance))
+      finalArrived(job, u)
       interrupt(job)
       // A step that throws must not stop every utterance after it: the queue stays a resolved promise.
       queue = queue.then(() => handle(job, u)).catch(() => undefined)
@@ -998,6 +1160,7 @@ export function createEngine(deps: EngineDeps): Engine {
       live = null
       if (u !== null) u.over = true
       const job = newJob(added, false)
+      finalArrived(job, u)
       job.continued = true
       job.chain = { original: text.slice(0, 1000), completed: [], goal: added.slice(0, GOAL_CHARS), remaining: [] }
       queue = queue.then(() => handle(job, u)).catch(() => undefined)
@@ -1044,10 +1207,60 @@ export function createEngine(deps: EngineDeps): Engine {
     },
   }
 
+  // ---------- wake word and places (29.4) ----------
+  // Round 8 (29.4.1): in wake mode every final, continuation and partial passes the gate first. The
+  // voice entry flow (26.5) and enrolment are not gated.
+  if (wake !== null) {
+    const ungated = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
+    const gated = (): boolean => !entry && !enrolling
+    handlers.onUtterance = (utterance) => {
+      // 29.5: while reading, the reading's filter comes before the gate: a stop word stops it without the wake word.
+      if (!enrolling && whileReading(utterance)) return
+      if (!gated()) return ungated.onUtterance(utterance)
+      const passed = wakeFilter(utterance)
+      if (passed === null) {
+        // Heard, shown on the strip, acted on never.
+        deps.publish({ heard: utterance })
+        dropLive()
+        return
+      }
+      const closes = windowOpen() && isPlainSend(passed)
+      ungated.onUtterance(passed)
+      // The message is gone: what the room says next must not be typed.
+      if (closes && wake !== null) {
+        wake = wakeClose(wake)
+        showWake(true)
+      }
+    }
+    handlers.onUtteranceContinued = (text, added) => {
+      if (!enrolling && whileReading(added)) return
+      if (!gated()) return ungated.onUtteranceContinued(text, added)
+      if (lastPassed && wake !== null) {
+        const rest = wakeStarts(wake, added)
+        wake = wakeHeard(wake, Date.now())
+        showWake()
+        return ungated.onUtteranceContinued(text, rest === null || rest === '' ? added : rest)
+      }
+      // What it continues was dropped: these words are a final of their own.
+      handlers.onUtterance(added)
+    }
+    handlers.onInterim = (interim) => {
+      if (deps.reading?.() === true) return
+      if (!gated() || interim === '' || wake === null) return ungated.onInterim(interim)
+      wake = wakeHeard(wake, Date.now())
+      showWake()
+      if (windowOpen()) return ungated.onInterim(interim)
+      // Closed: the words are shown, never previewed into the box.
+      deps.publish({ heard: interim })
+    }
+  }
+  // ---------- end of wake word and places ----------
+
   const recognizer = deps.recognizer(
     handlers,
     // Round 6: a spelled letter for the entry flow must not wait for the hold.
-    (utterance) => entry || deps.logic.inpageInstant(session, utterance),
+    // Round 8 (29.4.1): no quick reply from a partial while the wake window is closed (a partial cannot be gated).
+    (utterance) => entry || ((wake === null || windowOpen()) && deps.logic.inpageInstant(session, utterance)),
     () => {
       listening = false
       endEnrolment()
@@ -1066,7 +1279,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const start = (): void => {
     if (listening) return
     listening = true
-    deps.publish({ listening: true, problem: '', line: text.sayPrompt, resting: session.asleep })
+    deps.publish({ listening: true, problem: '', line: deps.wakeWord === undefined ? text.sayPrompt : wakeText.prompt(wakeWordFrom(deps.wakeWord)), resting: session.asleep })
     recognizer.start()
   }
 
@@ -1077,6 +1290,7 @@ export function createEngine(deps: EngineDeps): Engine {
     // Stopped in the middle of an utterance: no final will come, so its preview goes.
     dropLive()
     endEnrolment()
+    wakeStopped()
     // The server sends no lag of 0 once the socket is gone: the line is cleared here.
     if (lagShown) {
       lagShown = false
@@ -1112,6 +1326,9 @@ export function createEngine(deps: EngineDeps): Engine {
     setEntry(on) {
       entry = on
       if (on) dropLive()
+    },
+    setPlaces(list) {
+      places = [...list]
     },
     async idle() {
       for (;;) {

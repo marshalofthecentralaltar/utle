@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Docs stand-in</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 20px; }
+      #page { border: 1px solid #888; width: 520px; min-height: 80px; padding: 8px; white-space: pre-wrap; }
+      iframe.docs-texteventtarget-iframe { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <!-- Google Docs draws the page on a canvas and reads the keys from a contenteditable inside this
+         iframe (page.ts docsEditor). The stand-in records what Docs would receive: the characters of
+         keypress events, Backspace, and the chords (keydown with Ctrl). Served at docs.google.com by a
+         route in extension/test/run.ts. -->
+    <h1>Dokument</h1>
+    <div id="page"></div>
+    <div id="chords"></div>
+    <iframe class="docs-texteventtarget-iframe" srcdoc="<html><body><div contenteditable='true'></div></body></html>"></iframe>
+    <script>
+      window.docsReceived = ''
+      window.docsChords = []
+      const show = () => {
+        document.getElementById('page').textContent = window.docsReceived
+        document.getElementById('chords').textContent = window.docsChords.join(' ')
+      }
+      const frame = document.querySelector('iframe.docs-texteventtarget-iframe')
+      const wire = () => {
+        const el = frame.contentDocument && frame.contentDocument.querySelector('[contenteditable]')
+        if (!el || el.dataset.wired) return
+        el.dataset.wired = '1'
+        el.addEventListener('keypress', (e) => {
+          window.docsReceived += e.charCode === 13 ? '\n' : String.fromCharCode(e.charCode)
+          show()
+        })
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Backspace') {
+            window.docsReceived = window.docsReceived.slice(0, -1)
+            show()
+          } else if (e.ctrlKey) {
+            const mods = [e.ctrlKey ? 'Ctrl' : '', e.altKey ? 'Alt' : '', e.shiftKey ? 'Shift' : ''].filter((m) => m !== '')
+            const key = e.code.startsWith('Digit') ? e.code.slice(5) : e.code.startsWith('Key') ? e.code.slice(3) : e.key
+            window.docsChords.push([...mods, key].join('+'))
+            show()
+          }
+          e.preventDefault()
+        })
+      }
+      frame.addEventListener('load', wire)
+      wire()
+    </script>
+  </body>
+</html>

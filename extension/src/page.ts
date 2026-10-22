@@ -7,6 +7,15 @@ import type { BoxState, BrowserCommand, BrowserResult, CaretTarget, MediaAction,
 import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
 import { armElement, armedElement, boxState, disarm, elementAt, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
+import { boxText, isDocument } from './box.ts'
+import type { FormatStyle } from '../../src/browser/protocol.ts'
+// mail (29.3)
+import type { MailField, PageContact } from '../../src/browser/protocol.ts'
+import { collectContacts } from '../../src/core/contacts.ts'
+import type { ContactSource } from '../../src/core/contacts.ts'
+import { MAIL, MAIL_NAMES } from './sites.ts'
+import { composeWindowOf, mailPartOf, subjectIn } from './box.ts'
+import type { MailPart } from './box.ts'
 // ---------- reading aloud (29.5) ----------
 import { readingText } from '../../src/core/reading.ts'
 
@@ -880,11 +889,14 @@ function readPage(site: Site | null): BrowserResult {
   const page: PageContext = {
     url: location.href,
     title: document.title,
-    box: boxState(findMessageBox(site), site),
+    box: docsBox() ?? boxState(findMessageBox(site), site),
     items,
     media: mediaState(mediaElement()),
     hints: hintLayer !== null,
   }
+  // mail (29.3.3): the addresses and numbers on the page, when there are any.
+  const contacts = readContacts()
+  if (contacts.length > 0) page.contacts = contacts
   return ok({ page })
 }
 
@@ -1248,13 +1260,13 @@ async function setText(text: string, site: Site | null): Promise<BrowserResult> 
   // Live dictation (21.3) mostly adds words at the end: type only those, so the box never blanks.
   // Round 5: a one-line input is never previewed, so it is always selected and replaced whole,
   // with the text as the core converted it (digits, an address), never appended to.
-  const current = readText(el)
+  const current = boxText(el, site)
   const tail = text.slice(current.length)
   if (!(el instanceof HTMLInputElement) && current !== '' && text.startsWith(current) && !/[\r\n]/.test(tail)) {
-    if (caretAtEnd(el)) await sleep(30)
+    if (isDocument(el, site) ? documentCaretAtEnd(el) : caretAtEnd(el)) await sleep(30)
     if (tail !== '') await typeAtSelection(el, tail)
     await sleep(30)
-    if (readText(el) === text) return ok({ box: boxState(el, site) })
+    if (boxText(el, site) === text) return ok({ box: boxState(el, site) })
   }
   await emptyField(el)
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
@@ -1297,6 +1309,12 @@ async function send(el: HTMLElement, text: string, site: Site | null): Promise<b
   const gone = (): boolean => {
     const now = el.isConnected ? el : findMessageBox(site)
     return now === null || !readText(now).includes(text.trim())
+  }
+  // mail (29.3.1): in a compose window Send is clicked, never Enter (Enter is a new line in a mail).
+  const mailSend = mailSendFor(el)
+  if (mailSend) {
+    activate(mailSend)
+    return (await waitFor(() => (!el.isConnected || composeWindowOf(el) === null || readText(el).trim() === '' ? true : null), SEND_TIMEOUT_MS)) === true
   }
   pressEnter(el)
   if (await waitFor(() => (gone() ? true : null), ENTER_GRACE_MS)) return true
@@ -1434,7 +1452,8 @@ async function pressKey(key: PressableKey, times = 1, site: Site | null): Promis
       continue
     }
     if (key === 'Tab') {
-      target = focusNext(target) ?? target
+      // mail (29.3.5): inside a compose window Tab goes to the next field of the group, past its buttons.
+      target = mailNextField(target) ?? focusNext(target) ?? target
       continue
     }
     const through = dispatchKey(target, key)
@@ -1890,6 +1909,8 @@ function docsSelect(el: HTMLElement, what: SelectTarget): BrowserResult {
     dispatchKey(el, 'End', { shift: true })
     return ok()
   }
+  const more = docsSelectDocument(el, what)
+  if (more !== null) return more
   return fail('failed', DOCS_NO_TEXT)
 }
 
@@ -1949,9 +1970,11 @@ async function select(what: SelectTarget, site: Site | null): Promise<BrowserRes
   const { text } = model
   const span = spanOf(el, model)
   let chosen: Span | null
-  if (typeof what === 'object') {
+  if (typeof what === 'object' && 'find' in what) {
     chosen = findSpan(text, span.start, what.find)
     if (!chosen) return fail('not_found', 'That text is not in the field.')
+  } else if (typeof what === 'object') {
+    chosen = lastWordsOf(text, what.lastWords)
   } else {
     switch (what) {
       case 'all':
@@ -1972,6 +1995,9 @@ async function select(what: SelectTarget, site: Site | null): Promise<BrowserRes
       case 'lastSentence':
         chosen = lastSentenceOf(text)
         break
+      case 'paragraph':
+        chosen = paragraphAt(text, span.start)
+        break
     }
   }
   await setSpan(el, model, chosen)
@@ -1991,14 +2017,14 @@ const DOCS_TYPED_RESET_MS = 4000
 function docsBox(): BoxState | null {
   const docs = docsEditor()
   if (docs === null || docs === 'missing') return null
-  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
-  return { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' }
+  docsForget()
+  return { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs', document: true }
 }
 
 function docsSetText(text: string): BrowserResult {
   const docs = docsEditor()
   if (docs === null || docs === 'missing') return fail('not_found', DOCS_MISSING)
-  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = ''
+  docsForget()
   let common = 0
   while (common < docsTyped.length && common < text.length && docsTyped[common] === text[common]) common += 1
   const erase = docsTyped.length - common
@@ -2013,7 +2039,7 @@ function docsSetText(text: string): BrowserResult {
   if (tail !== '') docsType(docs, tail)
   docsTyped = text
   docsTypedAt = Date.now()
-  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs' } })
+  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs', document: true } })
 }
 
 /** Types at the caret, replacing a selection, through the same typing path as setText, with the join rules of joinAtCaret. */
@@ -2035,6 +2061,188 @@ async function typeText(text: string, site: Site | null): Promise<BrowserResult>
   return ok({ box: boxState(el, site) })
 }
 
+// ---------- document mode (29.2): formatting, the paragraph, the selections, the Docs memory ----------
+
+/** A chord: one key with its modifiers. */
+interface Chord {
+  key: string
+  code: string
+  keyCode: number
+  ctrl: boolean
+  alt: boolean
+  shift: boolean
+}
+
+/** Google Docs' shortcuts (Windows), which TipTap-based editors share; the fallback covers a plain contenteditable. */
+const FORMAT_CHORDS: Record<Exclude<FormatStyle, 'paragraph'>, Chord> = {
+  bold: { key: 'b', code: 'KeyB', keyCode: 66, ctrl: true, alt: false, shift: false },
+  italic: { key: 'i', code: 'KeyI', keyCode: 73, ctrl: true, alt: false, shift: false },
+  underline: { key: 'u', code: 'KeyU', keyCode: 85, ctrl: true, alt: false, shift: false },
+  heading: { key: '1', code: 'Digit1', keyCode: 49, ctrl: true, alt: true, shift: false },
+  normal: { key: '0', code: 'Digit0', keyCode: 48, ctrl: true, alt: true, shift: false },
+  list: { key: '*', code: 'Digit8', keyCode: 56, ctrl: true, alt: false, shift: true },
+}
+
+const PLAIN_NO_FORMAT = 'A plain text box has no bold, italics, headings or lists; "uus lõik" works here.'
+const LINE_NO_PARAGRAPH = 'A one-line field has no paragraphs.'
+
+/** Sends the chord to the target. True when the page let it through (nobody cancelled the keydown). */
+function sendChord(target: Element, chord: Chord): boolean {
+  const init = { key: chord.key, code: chord.code, keyCode: chord.keyCode, which: chord.keyCode, charCode: 0, ctrlKey: chord.ctrl, altKey: chord.alt, shiftKey: chord.shift, bubbles: true, cancelable: true, composed: true }
+  const through = target.dispatchEvent(new KeyboardEvent('keydown', init))
+  target.dispatchEvent(new KeyboardEvent('keyup', init))
+  return through
+}
+
+/** "paksuks", "kaldkirja", "pealkirjaks", "loendiks", "uus lõik": the editor's chord, else execCommand (29.2). */
+async function format(style: FormatStyle, site: Site | null): Promise<BrowserResult> {
+  const docs = docsEditor()
+  if (docs === 'missing') return fail('failed', DOCS_MISSING)
+  if (docs !== null) return docsFormat(docs, style)
+  const el = editTarget(site)
+  if (!el) return fail('not_found', 'No field is picked to write in.')
+  if (el instanceof HTMLInputElement) return fail('failed', style === 'paragraph' ? LINE_NO_PARAGRAPH : PLAIN_NO_FORMAT)
+  if (style === 'paragraph') {
+    await paragraphAtEnd(el)
+    return ok({ box: boxState(el, site) })
+  }
+  if (el instanceof HTMLTextAreaElement) return fail('failed', PLAIN_NO_FORMAT)
+  el.focus()
+  if (style === 'bold' || style === 'italic' || style === 'underline') await trimSelection(el)
+  const before = el.innerHTML
+  const through = sendChord(el, FORMAT_CHORDS[style])
+  await sleep(30)
+  if (through && el.innerHTML === before) formatFallback(el, style)
+  await sleep(30)
+  return ok({ box: boxState(el, site) })
+}
+
+/** What a plain contenteditable cannot do from a key: the browser's own editing commands. */
+function formatFallback(el: HTMLElement, style: Exclude<FormatStyle, 'paragraph'>): void {
+  switch (style) {
+    case 'bold':
+    case 'italic':
+    case 'underline':
+      exec(style)
+      return
+    case 'heading':
+      exec('formatBlock', 'h1')
+      return
+    case 'list':
+      exec('insertUnorderedList')
+      return
+    case 'normal': {
+      const anchor = window.getSelection()?.anchorNode ?? null
+      const item = (anchor instanceof Element ? anchor : anchor?.parentElement ?? null)?.closest('li') ?? null
+      if (item !== null && el.contains(item)) exec('insertUnorderedList')
+      else exec('formatBlock', 'div')
+    }
+  }
+}
+
+/** A selection that starts or ends in spaces (as "vali see lause" leaves it) is shrunk to its letters, so exactly the words are styled. */
+async function trimSelection(el: HTMLElement): Promise<void> {
+  const model = modelOf(el)
+  const span = spanOf(el, model)
+  let { start, end } = span
+  while (end > start && /\s/u.test(model.text.charAt(end - 1))) end--
+  while (start < end && /\s/u.test(model.text.charAt(start))) start++
+  if (start !== span.start || end !== span.end) await setSpan(el, model, { start, end })
+}
+
+/** "uus lõik" at the end, where dictation goes: a blank line in a textarea, a new block in a rich editor. */
+async function paragraphAtEnd(el: HTMLElement): Promise<void> {
+  if (el instanceof HTMLTextAreaElement) {
+    caretAtEnd(el)
+    await typeAtSelection(el, '\n\n')
+    return
+  }
+  if (documentCaretAtEnd(el)) await sleep(30)
+  const handled = !el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: 'insertParagraph' }))
+  if (!handled) exec('insertParagraph')
+  await sleep(30)
+}
+
+/**
+ * The caret at the end of a document's text: inside its last text node, or before the <br> of an
+ * empty last paragraph, so typing continues there and never starts a block of its own. True when it moved.
+ */
+function documentCaretAtEnd(el: HTMLElement): boolean {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return caretAtEnd(el)
+  el.focus()
+  const selection = window.getSelection()
+  if (!selection) return false
+  if (selection.rangeCount > 0 && selection.isCollapsed && el.contains(selection.anchorNode)) {
+    const rest = document.createRange()
+    rest.selectNodeContents(el)
+    rest.setStart(selection.getRangeAt(0).endContainer, selection.getRangeAt(0).endOffset)
+    if (rest.toString() === '' && rest.cloneContents().querySelector('div, p, li, h1, h2, h3, h4, h5, h6') === null) return false
+  }
+  let node: Node = el
+  while (node.lastChild !== null) node = node.lastChild
+  const range = document.createRange()
+  if (node instanceof Text) range.setStart(node, node.data.length)
+  else if (node instanceof HTMLBRElement) range.setStartBefore(node)
+  else range.setStart(node, node.childNodes.length)
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return true
+}
+
+/** "vali lõik": the paragraph at the caret, from one line break to the next. */
+function paragraphAt(text: string, pos: number): Span {
+  return { start: lineStartOf(text, pos), end: lineEndOf(text, pos) }
+}
+
+/** "vali viimased kolm sõna": the last n words with their marks, and the spaces before them on that line. */
+function lastWordsOf(text: string, n: number): Span {
+  let pos = text.length
+  while (pos > 0 && /\s/u.test(text.charAt(pos - 1))) pos--
+  for (let i = 0; i < Math.max(1, Math.min(n, 50)); i++) {
+    if (i > 0) while (pos > 0 && /\s/u.test(text.charAt(pos - 1))) pos--
+    while (pos > 0 && !/\s/u.test(text.charAt(pos - 1))) pos--
+  }
+  while (pos > 0 && isSpace(text.charAt(pos - 1))) pos--
+  return { start: pos, end: text.length }
+}
+
+/** On Docs (unverified): the paragraph by Ctrl+Up then Ctrl+Shift+Down, the last words by Ctrl+Shift+Left. Null for the other targets. */
+function docsSelectDocument(el: HTMLElement, what: SelectTarget): BrowserResult | null {
+  if (what === 'paragraph') {
+    dispatchKey(el, 'ArrowUp', { ctrl: true })
+    dispatchKey(el, 'ArrowDown', { ctrl: true, shift: true })
+    return ok()
+  }
+  if (typeof what === 'object' && 'lastWords' in what) {
+    for (let i = 0; i < Math.max(1, Math.min(what.lastWords, 50)); i++) dispatchKey(el, 'ArrowLeft', { ctrl: true, shift: true })
+    return ok()
+  }
+  return null
+}
+
+/** Docs: the chord on its keyboard target; "uus lõik" is Enter twice, and the memory learns the break. */
+function docsFormat(el: HTMLElement, style: FormatStyle): BrowserResult {
+  el.focus()
+  if (style !== 'paragraph') {
+    sendChord(el, FORMAT_CHORDS[style])
+    return ok()
+  }
+  docsForget()
+  docsType(el, '\n\n')
+  docsTyped = `${docsTyped}\n\n`
+  docsTypedAt = Date.now()
+  return ok({ box: { present: true, text: docsTyped, armed: true, kind: 'composer', label: 'Google Docs', document: true } })
+}
+
+/**
+ * REVIEW-R3 M5: after DOCS_TYPED_RESET_MS the memory of what Ütle typed keeps its last character
+ * instead of emptying, so the next utterance is joined onto it ("Tere. Uus lause", not "Tere.Uus lause").
+ */
+function docsForget(): void {
+  if (Date.now() - docsTypedAt > DOCS_TYPED_RESET_MS) docsTyped = docsTyped.slice(-1)
+}
+// ---------- end of document mode ----------
 // ---------- siteSearch ----------
 
 const GENERIC_SEARCH_FIELDS = [
@@ -2382,6 +2590,199 @@ async function clickRow(row: HTMLElement, site: Site): Promise<PageResult> {
   return settleInComposer(site)
 }
 
+// ---------- mail (29.3) ----------
+// Gmail's compose window (docs/ARCHITECTURE.md 29.3.1, 29.3.5). The selectors are in sites.ts MAIL,
+// all unverified on real Gmail; the controls are also found by their names (MAIL_NAMES), which is
+// what the stand-in proves.
+
+/** How long a compose window may take to appear after Compose, or after the compose page loaded. */
+const MAIL_WINDOW_MS = 4000
+/** How long Gmail may take to show contact suggestions under To. */
+const MAIL_SUGGEST_MS = 800
+/** How long the Cc field may take to appear after its button. */
+const MAIL_CC_MS = 1500
+const MAIL_CONTROLS = 'button, [role="button"], [role="link"], a'
+/** readContacts reads at most this many text nodes, so a huge page answers in time. */
+const CONTACT_NODES = 20_000
+
+/** A visible control inside within whose name (aria-label, text or title) matches. */
+function namedControl(names: RegExp, within: ParentNode = document): HTMLElement | null {
+  for (const el of within.querySelectorAll<HTMLElement>(MAIL_CONTROLS)) {
+    if (isOurs(el) || onScreenRect(el) === null) continue
+    const name = clean(el.getAttribute('aria-label') || el.innerText || el.textContent || el.getAttribute('title'))
+    if (names.test(name) || names.test(clean(el.getAttribute('title')))) return el
+  }
+  return null
+}
+
+/** The compose windows on screen, newest (last in the page) last. */
+function composeWindows(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>(MAIL.window)].filter((w) => !isOurs(w) && onScreenRect(w) !== null && subjectIn(w) !== null)
+}
+
+/** One field of a compose window, by what box.ts takes it to be. */
+function mailFieldIn(win: HTMLElement, part: MailPart): HTMLElement | null {
+  const fields = [...win.querySelectorAll<HTMLElement>('input, textarea, [contenteditable="true"], [contenteditable=""]')]
+  return fields.find((el) => isTextField(el) && onScreenRect(el) !== null && mailPartOf(el) === part) ?? null
+}
+
+/** A window nobody has written in yet: To, Subject and the body all empty. */
+function emptyWindow(win: HTMLElement): boolean {
+  return (['to', 'subject', 'body'] as const).every((part) => {
+    const field = mailFieldIn(win, part)
+    return field === null || readText(field).trim() === ''
+  })
+}
+
+/** Replaces what the field holds with text, as setText does. */
+async function typeInto(el: HTMLElement, text: string): Promise<void> {
+  pick(el)
+  await emptyField(el)
+  await typeAtSelection(el, text)
+  await sleep(60)
+}
+
+/** A name or an address in To or Cc: Enter on Gmail's first suggestion when one shows, else Tab out of the field. */
+async function confirmRecipient(field: HTMLElement): Promise<void> {
+  const suggestion = await waitFor(() => [...document.querySelectorAll<HTMLElement>(MAIL.suggestion)].find((el) => onScreenRect(el) !== null) ?? null, MAIL_SUGGEST_MS)
+  if (suggestion) dispatchKey(field, 'Enter')
+  else focusNext(field)
+  await sleep(60)
+}
+
+/** The window's Send button, by Gmail's selector or its name. */
+function mailSendIn(win: HTMLElement): HTMLElement | null {
+  const hit = [...win.querySelectorAll<HTMLElement>(MAIL.send)].find((el) => onScreenRect(el) !== null)
+  return hit ?? namedControl(MAIL_NAMES.send, win)
+}
+
+/** The Send button of the compose window el is in, or null outside one. */
+function mailSendFor(el: HTMLElement): HTMLElement | null {
+  const win = composeWindowOf(el)
+  return win === null ? null : mailSendIn(win)
+}
+
+async function compose(to: string | undefined, body: string | undefined): Promise<BrowserResult> {
+  hideHints()
+  const open = composeWindows()
+  let win = open.findLast((w) => emptyWindow(w)) ?? null
+  if (win === null) {
+    const button = [...document.querySelectorAll<HTMLElement>(MAIL.composeButton)].find((el) => !isOurs(el) && onScreenRect(el) !== null) ?? namedControl(MAIL_NAMES.compose)
+    if (button) {
+      activate(button)
+      win = await waitFor(() => composeWindows().find((w) => !open.includes(w)) ?? null, MAIL_WINDOW_MS)
+      if (win === null) return fail('failed', 'Compose was clicked, but no new message opened.')
+    } else {
+      // Gmail's compose page (background.ts opened it) draws its window a moment after the load.
+      win = await waitFor(() => composeWindows().find((w) => emptyWindow(w)) ?? null, MAIL_WINDOW_MS)
+      if (win === null) return fail('not_found', 'There is no Compose button on this page.')
+    }
+  }
+  const toField = mailFieldIn(win, 'to')
+  if (to !== undefined && to.trim() !== '') {
+    if (!toField) return fail('not_found', 'The new message has no To field.')
+    await typeInto(toField, to.trim())
+    await confirmRecipient(toField)
+  }
+  const bodyField = mailFieldIn(win, 'body')
+  if (body !== undefined && body.trim() !== '' && bodyField) await typeInto(bodyField, body.trim())
+  // The body is next once someone is in To; else To.
+  const filled = toField !== null && readText(toField).trim() !== ''
+  const target = (filled || toField === null ? bodyField : toField) ?? toField ?? bodyField
+  if (!target) return fail('not_found', 'The new message has no field to write in.')
+  pick(target)
+  return ok({ box: boxState(target, null) })
+}
+
+/** composeTo on the compose page background.ts opened: To is filled from the address; the body is armed. */
+async function composeOpened(): Promise<BrowserResult> {
+  const win = await waitFor(() => composeWindows().at(-1) ?? null, MAIL_WINDOW_MS)
+  if (win === null) return fail('not_found', 'The new message did not open.')
+  const body = mailFieldIn(win, 'body')
+  if (!body) return fail('not_found', 'The new message has no message body.')
+  pick(body)
+  return ok({ box: boxState(body, null) })
+}
+
+async function mailField(field: MailField, text: string | undefined): Promise<BrowserResult> {
+  const win = composeWindows().at(-1) ?? null
+  if (win === null) return fail('not_found', 'There is no open message on this page.')
+  hideHints()
+  if (field === 'subject') {
+    const subject = mailFieldIn(win, 'subject')
+    if (!subject) return fail('not_found', 'The message has no Subject field.')
+    if (text === undefined || text.trim() === '') {
+      pick(subject)
+      return ok({ box: boxState(subject, null) })
+    }
+    await typeInto(subject, text.trim())
+    // The subject is written: the body is next.
+    const body = mailFieldIn(win, 'body') ?? subject
+    pick(body)
+    return ok({ box: boxState(body, null) })
+  }
+  let cc = mailFieldIn(win, 'cc')
+  if (!cc) {
+    const button = namedControl(MAIL_NAMES.cc, win)
+    if (!button) return fail('not_found', 'The message has no Cc.')
+    activate(button)
+    cc = await waitFor(() => mailFieldIn(win, 'cc'), MAIL_CC_MS)
+    if (!cc) return fail('failed', 'Cc was clicked, but no Cc field opened.')
+  }
+  if (text !== undefined && text.trim() !== '') {
+    await typeInto(cc, text.trim())
+    await confirmRecipient(cc)
+    // A name in Cc is done; he goes on in the body.
+    const body = mailFieldIn(win, 'body') ?? cc
+    pick(body)
+    return ok({ box: boxState(body, null) })
+  }
+  pick(cc)
+  return ok({ box: boxState(cc, null) })
+}
+
+/** The order "valmis" walks a compose window in: To, Cc, Subject, the body. */
+const MAIL_ORDER: readonly MailPart[] = ['to', 'cc', 'subject', 'body']
+
+/** Tab from a field of a compose window: the next field of the group, focused and armed; null outside one or after the body. */
+function mailNextField(from: Element): HTMLElement | null {
+  if (!(from instanceof HTMLElement)) return null
+  const win = composeWindowOf(from)
+  const part = mailPartOf(from)
+  if (win === null || part === null) return null
+  for (const next of MAIL_ORDER.slice(MAIL_ORDER.indexOf(part) + 1)) {
+    const field = mailFieldIn(win, next)
+    if (field) {
+      pick(field)
+      return field
+    }
+  }
+  return null
+}
+
+/** The page's e-mail addresses and phone numbers (29.3.3): its text and its mailto:/tel: links. */
+function readContacts(): PageContact[] {
+  const found: Array<{ node: Node; source: ContactSource }> = []
+  for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href^="mailto:" i], a[href^="tel:" i]')) {
+    if (isOurs(a) || a.getClientRects().length === 0) continue
+    found.push({ node: a, source: { href: a.getAttribute('href') ?? '', label: clean(a.innerText || a.textContent), visible: onScreenRect(a) !== null } })
+  }
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  let seen = 0
+  for (let node = walker.nextNode(); node !== null && seen < CONTACT_NODES; node = walker.nextNode()) {
+    seen += 1
+    const text = node.textContent ?? ''
+    if (!/[@\d]/.test(text)) continue
+    const parent = node.parentElement
+    if (!parent || parent.closest('script, style, noscript, template, textarea, [contenteditable="true"], utle-strip, utle-hints') !== null) continue
+    if (parent.getClientRects().length === 0 || !parent.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue
+    found.push({ node, source: { text, visible: onScreenRect(parent) !== null } })
+  }
+  // In the page's reading order (a link before the text inside it), then the visible ones first (collectContacts).
+  found.sort((a, b) => (a.node === b.node ? 0 : a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+  return collectContacts(found.map((f) => f.source))
+}
+// ---------- end mail (29.3) ----------
 // ---------- reading aloud (29.5) ----------
 
 /** The blocks a reading is made of; a block holding another one is read through it. */
@@ -2519,6 +2920,15 @@ async function run(command: PageCommand): Promise<PageResult> {
         return await clearField(site)
       case 'arm':
         return arm(command.on === true, site)
+      case 'format':
+        return await format(command.style, site)
+      // ---------- mail (29.3) ----------
+      case 'compose':
+        return await compose(command.to, command.body)
+      case 'composeTo':
+        return await composeOpened()
+      case 'mailField':
+        return await mailField(command.field, command.text)
       // ---------- reading aloud (29.5) ----------
       case 'read':
         return readAloudText(command.what, site)

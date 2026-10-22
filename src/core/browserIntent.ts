@@ -332,6 +332,18 @@ phrases({ kind: 'pressKey', key: 'ArrowDown' }, 'üks rida alla', 'rida alla', '
 phrases({ kind: 'pressKey', key: 'Redo' }, 'tee uuesti', 'redo', 'redo that')
 phrases({ kind: 'pressKey', key: 'Tab' }, 'järgmine väli', 'mine järgmisele väljale', 'next field', 'go to the next field')
 
+// ---------- document mode (29.2) ----------
+// Formatting by voice, rules only: the page sends the editor's chord (Docs, a rich editor) or falls
+// back to execCommand. "uus lõik" is the paragraph in a document; inpage.ts makes it a new line elsewhere.
+phrases({ kind: 'format', style: 'bold' }, 'paksuks', 'tee paksuks', 'rasvaseks', 'tee rasvaseks', 'bold', 'make it bold')
+phrases({ kind: 'format', style: 'italic' }, 'kaldkirja', 'tee kaldkirja', 'kaldkirjas', 'kaldkirjaga', 'italic', 'italics', 'make it italic')
+phrases({ kind: 'format', style: 'underline' }, 'allajoonitud', 'jooni alla', 'tee allajoonituks', 'underline')
+phrases({ kind: 'format', style: 'heading' }, 'pealkirjaks', 'tee pealkirjaks', 'heading', 'make it a heading')
+phrases({ kind: 'format', style: 'normal' }, 'tavaline tekst', 'tavaliseks', 'tee tavaliseks', 'normal text')
+phrases({ kind: 'format', style: 'list' }, 'loendiks', 'tee loendiks', 'täpploendiks', 'bulleted list', 'make it a list')
+phrases({ kind: 'format', style: 'paragraph' }, 'uus lõik', 'new paragraph')
+phrases({ kind: 'select', what: 'paragraph' }, 'vali lõik', 'vali see lõik', 'select the paragraph', 'select this paragraph')
+// ---------- end of document mode ----------
 // ---------- reading aloud (29.5) ----------
 // "stopp" and "aitab" stay the scroll stop above; while reading, the engine stops the reading first (isReadStop).
 phrases({ kind: 'read', what: 'page' }, 'loe ette', 'loe lehte ette', 'loe leht ette', 'loe see leht ette', 'read the page', 'read it out', 'read this page')

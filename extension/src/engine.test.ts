@@ -5,7 +5,7 @@ import { pageIntentFrom } from '../../src/core/pageIntent.ts'
 import { applyIntent, initialInpage, inpageInstant, inpagePreview, inpageResult, inpageStep } from '../../src/core/inpage.ts'
 import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
+import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, PLACE_ASK_MS, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
@@ -76,6 +76,8 @@ interface Options {
   page?: (box: BoxState) => PageContext
   tabs?: TabSummary[]
   status?: 'live' | 'no_key' | 'bad_token' | 'unreachable'
+  /** Round 8 (29.4.1): wake mode with this word. */
+  wakeWord?: string
 }
 
 const ITEMS = [
@@ -165,6 +167,7 @@ function setup(options: Options = {}) {
     },
     tabs: () => Promise.resolve(options.tabs ?? TABS),
     status: () => Promise.resolve(options.status ?? 'live'),
+    ...(options.wakeWord === undefined ? {} : { wakeWord: options.wakeWord }),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
   /** Round 4: the recogniser continues the last utterance ("siis ..."). */
@@ -1953,6 +1956,498 @@ describe('round 6: saved values (Minu andmed: names only, insertSaved, entry mod
   })
 })
 
+// ---------- document mode (29.2) ----------
+
+/** The real core, so the engine's document mode is tested with the rules it runs in the extension. */
+const REAL: InpageLogic = { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom }
+
+interface DocOptions {
+  ask?: (request: IntentRequest) => Promise<IntentAnswer | AskFailure>
+}
+
+/** An engine on one page whose box keeps its document flag (the shared setup's page does not). */
+function docSetup(start: BoxState, options: DocOptions = {}) {
+  let handlers: EngineHandlers | null = null
+  let page: BoxState = { ...start }
+  const ran: BrowserCommand[] = []
+  const asked: IntentRequest[] = []
+  const spoken: Array<{ text: string; lang: string }> = []
+  const state: Partial<StripState> = {}
+  const engine = createEngine({
+    logic: REAL,
+    lang: 'et',
+    run: async (command) => {
+      ran.push(command)
+      if (command.kind === 'readBox') return { ok: true, box: { ...page } }
+      if (command.kind === 'readPage') return { ok: true, page: { url: 'https://kirjand.example/', title: 'Kirjand', box: { ...page }, items: [], media: null, hints: false } }
+      if (command.kind === 'setText') page = { ...page, text: command.text }
+      if (command.kind === 'format' && command.style === 'paragraph') page = { ...page, text: `${page.text}\n` }
+      return { ok: true, box: { ...page } }
+    },
+    publish: (patch) => {
+      Object.assign(state, patch)
+    },
+    recognizer: (h) => {
+      handlers = h
+      return { supported: true, start: () => undefined, stop: () => undefined, setLang: () => undefined }
+    },
+    micBlocked: () => undefined,
+    ask: (request) => {
+      asked.push(request)
+      return options.ask ? options.ask(request) : Promise.resolve({ error: 'unreachable' })
+    },
+    tabs: () => Promise.resolve([]),
+    status: () => Promise.resolve('live'),
+    speak: (text, lang, onEnd) => {
+      spoken.push({ text, lang })
+      onEnd()
+    },
+  })
+  engine.start()
+  return {
+    engine,
+    ran,
+    asked,
+    spoken,
+    state,
+    say: (text: string): void => handlers?.onUtterance(text),
+    page: () => page,
+  }
+}
+
+const DOC = (text: string): BoxState => ({ present: true, text, armed: true, document: true })
+const CHAT = (text: string): BoxState => ({ present: true, text, armed: true, kind: 'composer' })
+
+describe('document mode (29.2): the engine', () => {
+  const WORDS: ReadonlyArray<readonly [string, BrowserCommand['kind']]> = [
+    ['välja', 'pressKey'],
+    ['sulge', 'closeTab'],
+    ['edasi', 'history'],
+    ['tagasi', 'history'],
+    ['paus', 'media'],
+  ]
+  for (const [word, kind] of WORDS) {
+    it(`document mode: in it, "${word}" is typed into the document and nothing else runs`, async () => {
+      const t = docSetup(DOC('Ta läks'))
+      t.say(word)
+      await t.engine.idle()
+      expect(t.page().text).toBe(`Ta läks ${word}`)
+      expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox')).toEqual(['setText'])
+      expect(t.asked).toHaveLength(0)
+    })
+    it(`document mode: outside it, "${word}" in an empty chat box runs ${kind}`, async () => {
+      const t = docSetup(CHAT(''))
+      t.say(word)
+      await t.engine.idle()
+      expect(t.page().text).toBe('')
+      expect(t.ran.map((c) => c.kind)).toContain(kind)
+    })
+  }
+
+  it('document mode: dictation goes straight in, the model is never asked to verify it', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'), { ask: () => Promise.resolve({ intent: { kind: 'command', command: { kind: 'scroll', direction: 'down' } }, say: 'kerin' }) })
+    t.say('päike paistab hilisõhtuni ja metsad on täis marju')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(0)
+    expect(t.page().text).toBe('Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju')
+  })
+
+  it('document mode: outside it, the same dictation is verified (and a command verdict takes it back)', async () => {
+    const t = docSetup(CHAT('Tere.'), { ask: () => Promise.resolve({ intent: { kind: 'command', command: { kind: 'scroll', direction: 'down' } }, say: 'kerin' }) })
+    t.say('päike paistab hilisõhtuni')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.page().text).toBe('Tere.')
+  })
+
+  it('document mode: an utterance with a command verb is asked before anything is typed; its dictation verdict types it', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'), { ask: () => Promise.resolve({ intent: { kind: 'dictate', text: 'muuda maailma paremaks' }, say: '' }) })
+    t.say('muuda maailma paremaks')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    // Only the model's typing: nothing was typed first and taken back.
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([{ kind: 'setText', text: 'Eesti suvi on lühike. Muuda maailma paremaks' }])
+  })
+
+  it('document mode: an utterance with a command verb and no model is typed by the rules', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'))
+    t.say('vali hea pealkiri')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.page().text).toBe('Eesti suvi on lühike. Vali hea pealkiri')
+  })
+
+  it('document mode: "saada" sends nothing and the strip says so', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike.'))
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox')).toEqual([])
+    expect(t.state.line).toBe('Dokumendis ei saadeta.')
+    expect(t.page().text).toBe('Eesti suvi on lühike.')
+  })
+})
+
+describe('document mode (29.2): a pause does not end the sentence', () => {
+  it('pause: 15 s between the two halves of a sentence yields one sentence', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    t.say('minu arvates on see')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see väga hea mõte')
+  })
+
+  it('pause: 25 s between them yields two sentences', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    t.say('minu arvates on see')
+    await vi.advanceTimersByTimeAsync(25_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see. Väga hea mõte')
+  })
+
+  it('pause: the window runs from the last final, so three halves 15 s apart stay one sentence', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    t.say('minu arvates')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('on see')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see väga hea mõte')
+  })
+
+  it('pause: "punkt" and "uus lõik" are the breaks', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(DOC(''))
+    for (const u of ['eesti suvi on lühike', 'punkt', 'päike paistab', 'uus lõik', 'sügis toob vihma']) {
+      t.say(u)
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+    await t.engine.idle()
+    expect(t.page().text).toBe('Eesti suvi on lühike. Päike paistab\nSügis toob vihma')
+    expect(t.ran).toContainEqual({ kind: 'format', style: 'paragraph' })
+  })
+
+  it('pause: outside document mode a chat box closes each final as before', async () => {
+    vi.useFakeTimers()
+    const t = docSetup(CHAT(''))
+    t.say('minu arvates on see')
+    await vi.advanceTimersByTimeAsync(15_000)
+    t.say('väga hea mõte')
+    await vi.advanceTimersByTimeAsync(100)
+    await t.engine.idle()
+    expect(t.page().text).toBe('Minu arvates on see. Väga hea mõte.')
+  })
+})
+
+describe('reading back (29.2): the engine hands the text to speak', () => {
+  it('loe: "loe viimane lause ette" hands exactly the last sentence of the box to speak', async () => {
+    const t = docSetup(DOC('Eesti suvi on lühike. Päike paistab hilisõhtuni ja metsad on täis marju.'))
+    t.say('loe viimane lause ette')
+    await t.engine.idle()
+    expect(t.spoken).toEqual([{ text: 'Päike paistab hilisõhtuni ja metsad on täis marju.', lang: 'et-EE' }])
+    expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox')).toEqual([])
+    expect(t.asked).toHaveLength(0)
+  })
+
+  it('loe: "loe see ette" hands the whole box, in a chat box too', async () => {
+    const t = docSetup(CHAT('Tere. Jõuan homme.'))
+    t.say('loe see ette')
+    await t.engine.idle()
+    expect(t.spoken).toEqual([{ text: 'Tere. Jõuan homme.', lang: 'et-EE' }])
+  })
+})
+// ---------- wake word and places (29.4) ----------
+/** Round 8: a logic that records what reached the rules. */
+const recording = (seen: string[], base: InpageLogic = logic): InpageLogic => ({
+  ...base,
+  inpageStep: (session, utterance, box) => {
+    if (box !== SEND_PROBE_BOX) seen.push(utterance)
+    return base.inpageStep(session, utterance, box)
+  },
+})
+
+describe('wake mode (29.4.1)', () => {
+  const DROPPED = [
+    'keri alla', 'saada', 'tere Mari', 'ma tahtsin ütelda et tulen', 'ütlesin talle', 'ütles et tuleb', 'ütleb ta', 'mine', 'kas sa kuuled', 'kell on viis',
+    'jah', 'ei', 'aitäh', 'kaks', 'see on hea', 'ma ütlen sulle', 'okei', 'vaikus', 'kuule', 'tule siia',
+  ]
+  const WOKEN: ReadonlyArray<readonly [string, string]> = [
+    ['Ütle, keri alla', 'keri alla'],
+    ['ütle tere Mari', 'tere Mari'],
+    ['ütel jõuan kell viis', 'jõuan kell viis'],
+    ['Üтле, aitäh', 'aitäh'],
+    ['ütle mine', 'mine'],
+    ['ÜTLE homme', 'homme'],
+    ['ütle... kas sobib', 'kas sobib'],
+    ['Ütle: jah', 'jah'],
+    ['ütle vaikus', 'vaikus'],
+    ['ütle kaks', 'kaks'],
+  ]
+
+  it('wake: 20 finals without the word go nowhere and 10 with it are acted on, the word stripped', async () => {
+    const seen: string[] = []
+    // No armed box: no dictation window opens, so every final needs the word.
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
+    t.engine.start()
+    expect(t.state.line).toBe(STRINGS.et.wake.prompt('Ütle'))
+    for (const final of DROPPED) t.say(final)
+    await t.engine.idle()
+    expect(seen).toEqual([])
+    expect(t.ran.filter((c) => c.kind !== 'readBox')).toEqual([])
+    // The strip still shows what was heard.
+    expect(t.heard.at(-1)).toBe('tule siia')
+    for (const [final] of WOKEN) t.say(final)
+    await t.engine.idle()
+    expect(seen).toEqual(WOKEN.map(([, want]) => want))
+    expect(t.state.wakeOpen ?? false).toBe(false)
+  })
+
+  it('wake: a partial is shown but never previewed while the window is closed, and no quick reply skips the gate', async () => {
+    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.partial('ma jõuan')
+    await t.engine.idle()
+    expect(t.heard.at(-1)).toBe('ma jõuan')
+    expect(t.ran).toEqual([])
+    expect(t.instant('saada')).toBe(false)
+  })
+
+  it('wake: the voice entry flow of Minu andmed is not gated', async () => {
+    const t = setup({ wakeWord: 'Ütle' })
+    t.engine.start()
+    t.engine.setEntry(true)
+    t.say('r')
+    await t.engine.idle()
+    expect(t.ran).toEqual([{ kind: 'savedEntry', utterance: 'r' }])
+  })
+
+  it('wake: a continuation of a woken final passes; one of a dropped final is gated on its own', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('ütle mine')
+    t.continued('ütle mine siis kaks', 'siis kaks')
+    t.say('tere')
+    t.continued('tere siis vaikus', 'siis vaikus')
+    await t.engine.idle()
+    expect(seen).toEqual(['mine', 'siis kaks'])
+  })
+})
+
+describe('the dictation window (29.4.1)', () => {
+  const ARMED: BoxState = { present: true, text: '', armed: true }
+
+  it('window: opens on the first woken final into an armed box, stays open for finals without the word, closes after 20 s of silence', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('tere')
+    await t.engine.idle()
+    expect(seen).toEqual([])
+    t.say('Ütle, tere Mari')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(true)
+    t.say('jõuan kell viis')
+    await t.engine.idle()
+    await vi.advanceTimersByTimeAsync(19_000)
+    expect(t.state.wakeOpen).toBe(true)
+    // A partial is speech: the window stays open 20 s from it.
+    t.partial('ja')
+    await vi.advanceTimersByTimeAsync(19_000)
+    expect(t.state.wakeOpen).toBe(true)
+    t.say('ja siis koju')
+    await t.engine.idle()
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(t.state.wakeOpen).toBe(false)
+    expect(t.state.line).toBe(STRINGS.et.wake.closed)
+    t.say('see läheb kuhugi')
+    await t.engine.idle()
+    expect(seen).toEqual(['tere Mari', 'jõuan kell viis', 'ja siis koju'])
+  })
+
+  it('window: "aitab" closes it and types nothing', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('ütle tere')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(true)
+    t.say('aitab')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(false)
+    expect(t.state.line).toBe(STRINGS.et.wake.closed)
+    t.say('veel midagi')
+    await t.engine.idle()
+    expect(seen).toEqual(['tere'])
+  })
+
+  it('window: a plain send is acted on and closes it; a woken command into an armed box does not open it', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('ütle mine')
+    await t.engine.idle()
+    expect(t.state.wakeOpen ?? false).toBe(false)
+    t.say('ütle tere')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(true)
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.ran.some((c) => c.kind === 'pressSend')).toBe(true)
+    expect(t.state.wakeOpen).toBe(false)
+    t.say('tere jälle')
+    await t.engine.idle()
+    expect(seen).toEqual(['mine', 'tere', 'saada'])
+  })
+
+  it('window: stopping closes it; the next start needs the word again', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('ütle tere')
+    await t.engine.idle()
+    t.engine.stop()
+    expect(t.state.wakeOpen).toBe(false)
+    t.engine.start()
+    t.say('veel')
+    await t.engine.idle()
+    expect(seen).toEqual(['tere'])
+  })
+
+  it('window: without wake mode nothing is gated and wakeOpen is never published', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen) })
+    t.engine.start()
+    t.say('tere')
+    await t.engine.idle()
+    expect(seen).toEqual(['tere'])
+    expect(t.state.wakeOpen).toBeUndefined()
+  })
+})
+
+describe('Minu kohad in the engine (29.4.2)', () => {
+  const NO_BOX: BoxState = { present: false, text: '', armed: false }
+
+  it('places: "vaata uudiseid" opens his own address by the rules, before inpage.ts; in an armed box it is words', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: NO_BOX })
+    t.engine.setPlaces([{ noun: 'uudised', url: 'https://www.err.ee/', label: 'ERR' }])
+    t.say('vaata uudiseid')
+    await t.engine.idle()
+    expect(t.ran).toContainEqual({ kind: 'goTo', url: 'https://www.err.ee/' })
+    expect(seen).toEqual([])
+    const armed = setup({ logic: recording(seen), box: { present: true, text: '', armed: true } })
+    armed.say('vaata uudiseid')
+    await armed.engine.idle()
+    expect(seen).toEqual(['vaata uudiseid'])
+    expect(armed.ran.some((c) => c.kind === 'goTo')).toBe(false)
+  })
+
+  it('places: the model is told the nouns only, and its place answer opens the address from his list', async () => {
+    const t = setup({
+      logic: asking,
+      box: NO_BOX,
+      ask: (request) => Promise.resolve(answer(request.page.places?.includes('raadio') === true ? { kind: 'place', noun: 'raadio' } : { kind: 'unclear', say: '' }, 'avan raadio')),
+    })
+    t.engine.setPlaces([
+      { noun: 'raadio', url: 'https://r2.err.ee/', label: 'Raadio 2' },
+      { noun: 'ilm', url: 'https://www.ilmateenistus.ee/', label: 'Ilm' },
+    ])
+    t.say('lase muusikat raadiost')
+    await t.engine.idle()
+    expect(t.asked[0]?.page.places).toEqual(['raadio', 'ilm'])
+    expect(JSON.stringify(t.asked[0])).not.toContain('err.ee')
+    expect(t.ran).toContainEqual({ kind: 'goTo', url: 'https://r2.err.ee/' })
+  })
+
+  it('places: a noun the model names that is not in his list opens nothing', async () => {
+    const t = setup({ logic: asking, box: NO_BOX, ask: () => Promise.resolve(answer({ kind: 'place', noun: 'pank' })) })
+    t.say('ava mu pank palun kohe')
+    await t.engine.idle()
+    expect(t.ran.some((c) => c.kind === 'goTo')).toBe(false)
+  })
+})
+describe('saving a place by voice (29.4.3)', () => {
+  const NO_BOX: BoxState = { present: false, text: '', armed: false }
+  const onPage = (command: BrowserCommand): BrowserResult =>
+    command.kind === 'savePlace' || command.kind === 'removePlace' ? { ok: true, tab: { title: 'Postimees', url: 'https://www.postimees.ee/' } } : { ok: true }
+
+  it('voice place: "lisa koht uudised" sends savePlace for the tab in front and the strip names the address', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: NO_BOX, answers: onPage })
+    t.say('lisa koht uudised')
+    await t.engine.idle()
+    expect(t.ran).toContainEqual({ kind: 'savePlace', noun: 'uudised' })
+    expect(t.state.line).toBe('Koht „uudised“ salvestatud: postimees.ee')
+    expect(seen).toEqual([])
+  })
+
+  it('voice place: "lisa koht" alone asks for the word, and the next final is it', async () => {
+    const t = setup({ box: NO_BOX, answers: onPage })
+    t.say('lisa koht')
+    await t.engine.idle()
+    expect(t.state.line).toBe(STRINGS.et.wake.placeAsk)
+    expect(t.ran.some((c) => c.kind === 'savePlace')).toBe(false)
+    t.say('Uudised.')
+    await t.engine.idle()
+    expect(t.ran).toContainEqual({ kind: 'savePlace', noun: 'uudised' })
+    // Asked once: a later word is ordinary speech again.
+    t.say('pank')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'savePlace')).toHaveLength(1)
+  })
+
+  it('voice place: an answer that is a command ends the question and runs as usual; the question lapses after 20 s', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: NO_BOX, answers: onPage })
+    t.say('lisa koht')
+    await t.engine.idle()
+    t.say('mine')
+    await t.engine.idle()
+    expect(seen).toEqual(['mine'])
+    t.say('lisa koht')
+    await t.engine.idle()
+    await vi.advanceTimersByTimeAsync(PLACE_ASK_MS + 1)
+    t.say('uudised')
+    await t.engine.idle()
+    expect(t.ran.some((c) => c.kind === 'savePlace')).toBe(false)
+    expect(seen).toEqual(['mine', 'uudised'])
+  })
+
+  it('voice place: "eemalda koht uudised" removes his place; an unknown one is named, with no command', async () => {
+    const t = setup({ box: NO_BOX, answers: onPage })
+    t.engine.setPlaces([{ noun: 'uudised', url: 'https://www.postimees.ee/', label: 'Postimees' }])
+    t.say('eemalda koht uudised')
+    await t.engine.idle()
+    expect(t.ran).toContainEqual({ kind: 'removePlace', noun: 'uudised' })
+    expect(t.state.line).toBe(STRINGS.et.wake.placeRemoved('uudised'))
+    t.say('eemalda koht pank')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'removePlace')).toHaveLength(1)
+    expect(t.state.line).toBe(STRINGS.et.wake.placeNotThere('pank'))
+  })
+
+  it('voice place: a page that cannot be saved says so', async () => {
+    const t = setup({ box: NO_BOX, answers: (c) => (c.kind === 'savePlace' ? { ok: false, code: 'not_allowed', message: 'chrome://' } : { ok: true }) })
+    t.say('see on mu uudised')
+    await t.engine.idle()
+    expect(t.state.line).toBe(STRINGS.et.wake.placeNotSaved)
+  })
+})
+// ---------- end of wake word and places ----------
 // ---------- reading aloud (29.5) ----------
 describe('reading aloud (29.5): "stopp" while reading stops the reading first', () => {
   const real: InpageLogic = { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom }

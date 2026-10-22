@@ -382,6 +382,85 @@ describe('round 8: media seconds (29.1)', () => {
   })
 })
 
+// ---------- mail (29.3) ----------
+describe('mail (29.3.3, 29.3.7): composeTo', () => {
+  const CV: IntentRequest['page'] = {
+    url: 'https://www.cv.ee/mari-maasikas',
+    title: 'Mari Maasikas – CV',
+    box: { present: false, text: '', armed: false, kind: 'none' },
+    items: [
+      { id: 1, role: 'other', text: '[pealkiri] Mari Maasikas' },
+      { id: 2, role: 'link', text: 'Kirjuta mulle' },
+      { id: 3, role: 'text', text: 'Projektijuht, kümme aastat kogemust' },
+    ],
+    media: null,
+    hints: false,
+    contacts: [
+      { kind: 'email', value: 'mari.maasikas@example.ee', label: 'Saladus silt' },
+      { kind: 'tel', value: '+37251234567', label: 'helista mulle' },
+    ],
+  }
+  const UTTERANCE = 'võta see meiliaadress siit lehelt ja kirjuta talle, et tulen homme'
+  const COMPOSE = answer({ intent: { kind: 'command', command: { kind: 'composeTo', address: 'mari.maasikas@example.ee', subject: null, body: 'Tulen homme.' } }, say: 'kirjutan Marile', done: true, plan: [] })
+
+  it('the user turn lists the contacts as values only, never their labels', async () => {
+    const { client, calls } = fakeClient(COMPOSE)
+    await pageIntent(request({ page: CV, utterance: UTTERANCE, care: 'careful' }), { client, model: 'm' })
+    const turn = JSON.stringify(calls[0]?.messages)
+    expect(turn).toContain('contacts: e-mail mari.maasikas@example.ee, tel +37251234567')
+    expect(turn).not.toContain('Saladus silt')
+    expect(turn).not.toContain('helista mulle')
+  })
+
+  it('a page without contacts says none', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client, model: 'm' })
+    expect(JSON.stringify(calls[0]?.messages)).toContain('contacts: none')
+  })
+
+  it('an address on the page is answered; one the model made up is unclear', async () => {
+    const { client } = fakeClient(COMPOSE, answer({ intent: { kind: 'command', command: { kind: 'composeTo', address: 'keegi@muu.ee', subject: null, body: null } }, say: '', done: true, plan: [] }))
+    const good = await pageIntent(request({ page: CV, utterance: UTTERANCE }), { client, model: 'm' })
+    expect(good.intent).toEqual({ kind: 'command', command: { kind: 'composeTo', address: 'mari.maasikas@example.ee', body: 'Tulen homme.' } })
+    const invented = await pageIntent(request({ page: CV, utterance: 'kirjuta talle meil' }), { client, model: 'm' })
+    expect(invented.intent.kind).toBe('unclear')
+  })
+
+  it('logs the kind and the time for a composeTo ask, never the address, the body or the page text', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}))
+    const { client } = fakeClient(COMPOSE)
+    await pageIntent(request({ page: CV, utterance: UTTERANCE, care: 'careful' }), { client, model: 'm' })
+    const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String))
+    expect(logged.some((line) => /^\[intent\] kind=command done=true plan=0 care=careful ms=\d+$/.test(line))).toBe(true)
+    const all = logged.join('\n')
+    for (const secret of ['mari.maasikas', 'example.ee', '37251234567', 'Tulen homme', 'tulen homme', 'Projektijuht', 'Mari Maasikas', 'cv.ee', 'composeTo']) expect(all).not.toContain(secret)
+  })
+})
+// ---------- wake word and places (29.4) ----------
+describe('round 8: my places (29.4.2)', () => {
+  it('places: the user turn lists the nouns, never an address, or none', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request({ page: { ...YOUTUBE, places: ['uudised', 'raadio', 'ilm'] } }), { client, model: 'm' })
+    const turn = String(calls[0]?.messages[0]?.content)
+    expect(turn).toContain('places: "uudised" | "raadio" | "ilm"')
+    expect(turn).not.toContain('postimees.ee')
+    const { client: fresh, calls: freshCalls } = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { client: fresh, model: 'm' })
+    expect(String(freshCalls[0]?.messages[0]?.content)).toContain('places: none')
+    expect(INTENT_SYSTEM_PROMPT).toContain('# My places')
+  })
+
+  it('places: a place answer with a listed noun passes; an unlisted noun or an address is unclear', async () => {
+    const page = { ...YOUTUBE, places: ['uudised', 'raadio'] }
+    const { client } = fakeClient(answer({ intent: { kind: 'place', noun: 'uudised' }, say: 'avan uudised', done: true, plan: [] }))
+    expect((await pageIntent(request({ page, utterance: 'vaata uudiseid' }), { client, model: 'm' })).intent).toEqual({ kind: 'place', noun: 'uudised' })
+    const { client: other } = fakeClient(answer({ intent: { kind: 'place', noun: 'pank' }, say: '', done: true, plan: [] }))
+    expect((await pageIntent(request({ page }), { client: other, model: 'm' })).intent.kind).toBe('unclear')
+    const { client: address } = fakeClient(answer({ intent: { kind: 'place', noun: 'https://www.postimees.ee/' }, say: '', done: true, plan: [] }))
+    expect((await pageIntent(request({ page }), { client: address, model: 'm' })).intent.kind).toBe('unclear')
+  })
+})
+// ---------- end of wake word and places ----------
 // ---------- reading aloud (29.5) ----------
 describe('reading aloud (29.5): the model may answer read', () => {
   it('read: the tool schema has read with what page, box, selection, continue or stop', () => {

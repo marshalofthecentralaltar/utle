@@ -3,6 +3,7 @@
 import type { BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
 import type { TabSummary } from '../../src/core/pageIntent.ts'
 import type { SavedItem } from '../../src/core/saved.ts'
+import type { PlaceRow } from '../../src/core/places.ts'
 import type { PageCommand } from './page.ts'
 
 /** Everything the strip shows. Kept by the service worker in chrome.storage.session under STATE_KEY. */
@@ -32,6 +33,8 @@ export interface StripState {
   foreign: string
   /** Round 7: scripted enrolment: phrases heard so far (0 at its start), or -1 when none is running. The settings page follows it. */
   enrolPhrases: number
+  /** Round 8 (29.4.1): the wake mode's dictation window is open: the strip shows an amber disc. */
+  wakeOpen: boolean
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -47,7 +50,7 @@ export interface StripState {
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, wakeOpen: false, connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false }
 
 /** To the service worker. */
 export type ToBackground =
@@ -83,6 +86,10 @@ export type ToBackground =
   | { type: 'utle-saved' }
   /** Round 6 (26.5): from the options page: the voice entry flow started (on) or ended. */
   | { type: 'utle-entry'; on: boolean }
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.2): from the offscreen engine at start: his places. Answered with a PlacesAnswer. */
+  | { type: 'utle-places' }
+  // ---------- end of wake word and places ----------
   // ---------- reading aloud (29.5) ----------
   /** From the offscreen engine at start: whether "Loe riba ette" is on. Answered with a ReadBarAnswer. */
   | { type: 'utle-read-bar' }
@@ -102,6 +109,10 @@ export type ToOffscreen =
   | { target: 'offscreen'; type: 'saved'; items: SavedItem[] }
   /** Round 6 (26.5): the options page's entry flow started or ended. */
   | { target: 'offscreen'; type: 'entry'; on: boolean }
+  // ---------- wake word and places (29.4) ----------
+  /** Round 8 (29.4.2): his own place rows changed (the engine merges them over the defaults). */
+  | { target: 'offscreen'; type: 'places'; rows: PlaceRow[] }
+  // ---------- end of wake word and places ----------
   // ---------- reading aloud (29.5) ----------
   /** A read command from the harness's bridge; fetched is the page's answer to read page, box or selection. Answered with a RunAnswer. */
   | { target: 'offscreen'; type: 'read'; command: Extract<BrowserCommand, { kind: 'read' }>; fetched?: BrowserResult }
@@ -145,6 +156,9 @@ export type TabsAnswer = { tabs: TabSummary[] }
 
 /** Round 6: the answer to utle-saved. */
 export type SavedAnswer = { items: SavedItem[]; entry: boolean }
+
+/** Round 8 (29.4.2): the answer to utle-places: his own rows, not yet merged over the defaults. */
+export type PlacesAnswer = { rows: PlaceRow[] }
 
 /** Round 6: chrome.storage.session key: the options page's entry flow runs (kept for a new offscreen document). */
 export const ENTRY_KEY = 'savedEntryOn'

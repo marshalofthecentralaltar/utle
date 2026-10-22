@@ -22,8 +22,11 @@ export type BarHeight = (typeof BAR_HEIGHTS)[number]
 export type MicSide = 'left' | 'right'
 
 /** What the options page stores in chrome.storage.local (M7, ui lane). */
-/** toggle: a click or dwell turns listening on and off. gaze: it listens while the pointer rests on the target (round 3). */
-export type ListenMode = 'toggle' | 'gaze'
+/**
+ * toggle: a click or dwell turns listening on and off. gaze: it listens while the pointer rests on the target (round 3).
+ * wake (round 8, 29.4.1): it listens all the time and acts on what starts with the wake word; the button still turns it off.
+ */
+export type ListenMode = 'toggle' | 'gaze' | 'wake'
 /** What the gaze rests on in gaze mode: the microphone square, or the whole bar. */
 export type GazeTarget = 'mic' | 'bar'
 /** local: TalTech's model on this computer. soniox: Soniox through the dev server (needs SONIOX_API_KEY there). */
@@ -53,7 +56,7 @@ export function settingsFrom(stored: Record<string, unknown>): StripSettings {
     barHeight,
     micSide,
     barHiddenDefault: stored.barHiddenDefault === true,
-    listenMode: stored.listenMode === 'gaze' ? 'gaze' : 'toggle',
+    listenMode: stored.listenMode === 'gaze' || stored.listenMode === 'wake' ? stored.listenMode : 'toggle',
     gazeTarget: stored.gazeTarget === 'bar' ? 'bar' : 'mic',
     speechEngine: stored.speechEngine === 'soniox' ? 'soniox' : 'local',
     onlyOwner: stored.onlyOwner === true,
@@ -130,6 +133,9 @@ button { font-family: ${FONT}; }
 .mic.gaze { cursor: default; }
 .mic.gaze[data-state="off"] { font-size: 15px; }
 .mic .label { text-align: center; padding: 0 6px; }
+/* Round 8 (29.4.1): the wake mode's dictation window is open. */
+.wakedot { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%; background: var(--amber); border: 2px solid #141414; box-sizing: border-box; z-index: 2; display: none; }
+.wakedot.on { display: block; }
 .ctls { flex: none; display: flex; flex-direction: column; gap: 8px; }
 .ctls.rows { flex-direction: row; }
 .ctl { position: relative; overflow: hidden; width: var(--control-w); height: var(--control-h); box-sizing: border-box; padding: 0;
@@ -416,6 +422,19 @@ export function mountStrip(): void {
     chainEl.classList.toggle('on', state.chain !== '')
     foreign.textContent = state.foreign
     foreign.classList.toggle('on', state.foreign !== '')
+    // ---------- wake word and places (29.4) ----------
+    // Round 8: a small amber disc on the microphone while the dictation window is open; made here so the edit stays in render.
+    for (const m of [mic, pillMic]) {
+      let dot = m.querySelector<HTMLSpanElement>('.wakedot')
+      if (dot === null) {
+        dot = document.createElement('span')
+        dot.className = 'wakedot'
+        dot.setAttribute('aria-hidden', 'true')
+        m.append(dot)
+      }
+      dot.classList.toggle('on', state.wakeOpen === true)
+    }
+    // ---------- end of wake word and places ----------
     bar.hidden = state.hidden
     pill.hidden = !state.hidden
     if (state.hidden) {

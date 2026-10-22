@@ -12,14 +12,28 @@ import type { Recognizer } from '../../src/speech/recognizer.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { askTimeoutMs, createEngine } from './engine.ts'
 import type { AskFailure, InpageLogic } from './engine.ts'
-import type { RunAnswer, SavedAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
+import type { PlacesAnswer, RunAnswer, SavedAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
 import { savedFrom } from '../../src/core/saved.ts'
 import { DEFAULT_ASR_URL, authHeaders, serverStatus, serverUrl, socketAddress } from './connection.ts'
+// ---------- wake word and places (29.4) ----------
+import { placesFrom } from '../../src/core/places.ts'
+import { wakeWordFrom } from '../../src/core/wake.ts'
+
+/**
+ * Round 8 (29.4.1): the wake word when the service worker made this document for wake mode
+ * (&wake=<word> in its address), else undefined: no gate. The word is checked like the setting.
+ */
+export function wakeWordParam(params: URLSearchParams): string | undefined {
+  const word = params.get('wake')
+  return word === null ? undefined : wakeWordFrom(word)
+}
+// ---------- end of wake word and places ----------
 // ---------- reading aloud (29.5) ----------
 import type { Lang } from '../../src/core/strings.ts'
 import { browserSpeech, createReader } from './reader.ts'
 import type { SpeechPort } from './reader.ts'
 import type { ReadBarAnswer } from './messages.ts'
+import { readingText } from '../../src/core/reading.ts'
 
 // The server's address and status live in connection.ts (27.3), shared with the settings page.
 export { DEFAULT_ASR_URL, STATUS_TIMEOUT_MS, serverStatus, serverUrl } from './connection.ts'
@@ -289,6 +303,8 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
   // and ignores what he says while the server learns his voice).
   const stripText = STRINGS.et.strip
   const onlyOwner = params.get('onlyOwner') === '1'
+  // Round 8 (29.4.1): wake mode, from the address.
+  const wakeWord = wakeWordParam(params)
   let foreignTimer: ReturnType<typeof setTimeout> | null = null
   const onForeign = (streak: number): void => {
     publish(foreignNotice(streak, stripText))
@@ -315,6 +331,11 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     run,
     publish: readAloud.publish,
     reading: () => readAloud.reading,
+    // 29.5: the DOCS lane's read-back ("loe viimane lause ette", "loe see ette" in a box) goes through the same reader:
+    // the Estonian voice rule, the stop words. onEnd is called once the reading has started (the engine passes a no-op).
+    speak: (text, _lang, onEnd) => {
+      void readAloud.run({ kind: 'read', what: 'box' }, { ok: true, reading: readingText(text.split(/\n+/)) }).finally(onEnd)
+    },
     // The handlers go through whole, onLag (round 3) with them: the recogniser reports its lag to the engine, the engine to the strip.
     recognizer: (handlers, isInstant, onUnavailable) => {
       const inner = createLocalRecognizer(
@@ -370,6 +391,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
       return answer?.tabs ?? []
     },
     status: () => serverStatus(statusUrl, token),
+    ...(wakeWord === undefined ? {} : { wakeWord }),
   })
 
   // Round 6 (26.1, 26.5): his saved values and whether the entry flow runs, once at start; changes arrive as messages.
@@ -377,6 +399,11 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     const saved = answer as SavedAnswer | undefined
     engine.setSaved(savedFrom(saved?.items))
     engine.setEntry(saved?.entry === true)
+  })
+  // Round 8 (29.4.2): his places, once at start; changes arrive as messages.
+  void tell({ type: 'utle-places' }).then((answer) => {
+    const places = answer as PlacesAnswer | undefined
+    engine.setPlaces(placesFrom(places?.rows))
   })
 
   // Gaze mode (round 3): a stop with flush delivers the words said so far, then stops once the final has had time to arrive.
@@ -407,6 +434,10 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
         break
       case 'entry':
         engine.setEntry(message.on)
+        break
+      case 'places':
+        // Round 8 (29.4.2): his rows, merged over the defaults here.
+        engine.setPlaces(placesFrom(message.rows))
         break
       case 'enrol':
         // Round 4: listening starts when it was off; the line tells him to speak, the server answers through onEnrolled.

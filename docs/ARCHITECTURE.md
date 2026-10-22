@@ -1449,15 +1449,338 @@ The line the bar shows and speaks names the amount (`browserDoing` in `src/core/
 
 ### 29.2 Document mode (DOCS lane)
 
-(filled by the DOCS lane)
+Ralf's items 5 ("dokumente kirjutada ja muuta, vali see lõik ja pane kaldkirja") and 15 (thinking
+pauses while writing a document). Three parts: formatting by voice in any editor, a document mode
+that changes how dictation is joined and judged, and reading the last sentence back.
+
+**Formatting is a command of its own.** `{ kind: 'format', style }` with `style` one of `bold`,
+`italic`, `underline`, `heading`, `normal`, `list`, `paragraph` (`FormatStyle` in
+`src/browser/protocol.ts`). Not new `PressableKey` values: the right keys depend on the editor
+(Google Docs, a rich editor, a plain contenteditable, a textarea), and only the page knows which one
+is in front; the core says what he wants and the page picks the chord and the fallback. Rules only:
+the model's schema does not carry it (the server is another lane's), so "tee see lause paksuks"
+goes to the model as any other utterance and comes back unclear or as dictation. Phrases (whole
+utterance, `src/core/browserIntent.ts`, the "document mode (29.2)" block):
+
+| Style | Estonian | English |
+|---|---|---|
+| bold | paksuks, tee paksuks, rasvaseks, tee rasvaseks | bold, make it bold |
+| italic | kaldkirja, tee kaldkirja, kaldkirjas, kaldkirjaga | italic, italics, make it italic |
+| underline | allajoonitud, jooni alla, tee allajoonituks | underline |
+| heading | pealkirjaks, tee pealkirjaks | heading, make it a heading |
+| normal | tavaline tekst, tavaliseks, tee tavaliseks | normal text |
+| list | loendiks, tee loendiks, täpploendiks | bulleted list, make it a list |
+| paragraph | uus lõik | new paragraph |
+
+The key table per editor (`extension/src/page.ts`, `format`). A chord is a keydown/keyup pair with
+the modifiers set, sent to the editor's keyboard target. "Fallback" runs when the chord's keydown
+was not cancelled and the field's HTML did not change, which is what a plain contenteditable does
+with a key event a script dispatched.
+
+| Style | Google Docs (on `docsEditor()`) | Rich editor (contenteditable): chord, then fallback | Textarea |
+|---|---|---|---|
+| bold | Ctrl+B | Ctrl+B, then `execCommand('bold')` | refused: plain text has no bold |
+| italic | Ctrl+I | Ctrl+I, then `execCommand('italic')` | refused |
+| underline | Ctrl+U | Ctrl+U, then `execCommand('underline')` | refused |
+| heading | Ctrl+Alt+1 | Ctrl+Alt+1, then `formatBlock h1` | refused |
+| normal | Ctrl+Alt+0 | Ctrl+Alt+0, then out of a list (`insertUnorderedList`) or `formatBlock div` | refused |
+| list | Ctrl+Shift+8 | Ctrl+Shift+8, then `insertUnorderedList` | refused |
+| paragraph | Enter, Enter | at the end: `beforeinput insertParagraph`, else `execCommand('insertParagraph')` | `\n\n` at the end |
+
+The Docs chords are Google's documented shortcuts (Windows); Ctrl+Alt+1, Ctrl+Alt+0 and
+Ctrl+Shift+8 are also TipTap's, so one chord table serves the rich editors built on it. Bold,
+italic and underline act on the selection; a selection that ends in spaces (as "vali see lause"
+leaves it) is shrunk to its last letter or mark first, so exactly the sentence is styled.
+**Unverified: real Google Docs.** The Docs path is tested on a stand-in only
+(`extension/test/fixtures/docs.html`).
+
+Outside document mode "uus lõik" is a new line (the box edit `newLine`, Shift+Enter in a composer,
+never a send); in document mode it is the paragraph format and a dictation break.
+
+**Selection.** "vali see lause" / "vali lause" (`sentence`), "vali kõik", "vali viimane lause" and
+"vali sõna X" existed. Added: "vali lõik", "vali see lõik", "select the paragraph" (`paragraph`: the
+line the caret is on, from one line break to the next) and "vali viimased kolm sõna", "select the
+last three words" (`{ lastWords: n }`, n from `spokenNumber`, 1 to 50: the last n words with their
+marks and the spaces before them). On Docs `paragraph` is Ctrl+ArrowUp then Ctrl+Shift+ArrowDown,
+and `lastWords` is n times Ctrl+Shift+ArrowLeft (unverified: real Google Docs).
+
+**The trigger.** `BoxState.document` is true when the box in front is a document
+(`extension/src/box.ts`, `isDocument`):
+
+- Google Docs (`docsBox`), always;
+- otherwise never a site's composer (WhatsApp, Messenger, or any box with a send button beside it,
+  which is what makes `kind: 'composer'`), never a one-line input, never a search field; and one of:
+  a textarea or contenteditable whose text is over **500 characters** (`DOCUMENT_CHARS`); a
+  contenteditable holding a heading or a list (`h1` to `h6`, `ul`, `ol`); a contenteditable
+  `[role=textbox]` with `aria-multiline="true"` and block children (`div`, `p`, `h1` to `h6`, `li`).
+
+The composer exclusion is deliberate: a chat box over 500 characters is still a chat box, and Gmail's
+body (a multiline textbox) has its send button beside it. A document's text is reported with one
+trailing line break when it ends in an empty paragraph (`documentText`), so a dictation after "uus
+lõik" starts that paragraph with a capital and no space, and `setText` appends to it rather than
+retyping the document.
+
+**What document mode changes** (`src/core/inpage.ts` and `src/core/documentMode.ts`, the core;
+`extension/src/engine.ts`, the window). Outside document mode nothing changes: the tests named
+"document mode: outside it" run the same utterances against the same box without the flag and
+assert the chat-box step.
+
+1. **A silence does not close the sentence.** A dictated final is typed without a closing full stop;
+   the next final continues the same sentence with a small first letter (the joining rules of 21.1:
+   a capital only at a sentence start, or for a name or "I"). The window is
+   **`DOCUMENT_PAUSE_MS` = 20 000 ms** from the previous final the engine handled: a final that
+   arrives later first closes the open sentence with a full stop and starts a new one with a
+   capital (`documentPaused` decides from the two times; the engine passes it as `session.paused`).
+   The only spoken breaks are "punkt" (with the other marks, "küsimärk" and "hüüumärk") and
+   "uus lõik".
+2. **One-word ordinary words are dictation.** "välja", "sulge", "edasi", "tagasi", "enter", "paus",
+   "veel" and the other soft words of section 22 are typed as words, also into an empty document.
+   With the numbered labels showing they keep their meaning (he is navigating then).
+3. **No verification that takes words back.** The round 5 type-first check never runs in a
+   document: dictation goes straight in. The model is asked only about an utterance whose first
+   word is a command verb: `COMMAND_WORDS` (28.1) plus "vali", "tee", "muuda", "loe", "kustuta"
+   (`DOCUMENT_VERBS`). Such an utterance is asked before anything is typed (as a one-line field is
+   in round 5): the model's dictation, or no answer, types it; its command runs.
+4. **"saada" sends nothing.** "saada", "saada ära", "send it" type nothing, press nothing, and the
+   strip says "Dokumendis ei saadeta." ("Nothing is sent from a document.").
+
+**Reading back.** "loe viimane lause ette", "loe viimane lause", "read the last sentence" hand the
+last sentence of the box (`lastSentenceOf`: after the last `.`, `!`, `?`, `…` or line break before
+the final mark) to `speak`; "loe see ette", "loe ette", "read it back" hand the whole box. The step
+carries the text as `speak`; the engine calls `EngineDeps.speak` (optional; the default is
+`src/speech/synth.ts`'s `speak`) in the session's language (`et-EE`, `en-US`). It works in any box,
+not only a document. Listening is not paused here: the microphone may hear the synthesised voice
+until the READ lane's listening pause (29.5) lands. Unverified: Chrome's speech synthesis inside
+the offscreen document.
+
+**REVIEW-R3 M5 (Docs gluing after the 4 s reset).** Document mode does not supersede it: the 20 s
+window needs the box to know whether the sentence is open, and on Docs the box is what Ütle typed
+within `DOCS_TYPED_RESET_MS` (4 s). Fixed as the sketch says, in one rule: when the 4 s pass, the
+memory keeps the last character typed instead of emptying (`docsTyped.slice(-1)`). The core joins
+onto that character (a space after a letter or a mark, a capital after a mark, a small letter after
+a letter), and `docsSetText` types only what follows it. `readPage` on Docs reports the same box as
+`readBox` (the other half of M5). Browser test: the Docs stand-in (`fixtures/docs.html`, served as
+`https://docs.google.com/document/d/stand-in/edit` by a route in the suite) records the keys Docs
+would get; "Tere", "punkt", a 4.5 s wait, "uus lause on siin" must arrive as "Tere. Uus lause on
+siin" (before the fix: "Tere.Uus lause on siin").
 
 ### 29.3 Mail by voice and addresses off the page (MAIL lane)
 
-(filled by the MAIL lane)
+Ralf's items 10 and 12. Item 11, the real-voice read-backs, did not happen: section 2 step 3 of the
+plan was not run, so there is no list of wrong read-backs, and the spelling tests of rounds 5 and 6
+stand in for it (29.3.6). The rules live in `src/core/mail.ts`, the address finder in
+`src/core/contacts.ts`, both pure; the page side is the `mail (29.3)` blocks of
+`extension/src/page.ts`, `box.ts`, `sites.ts` and `background.ts`.
+
+**29.3.1 Three commands.** `compose { to?, body? }`: on Gmail, a new message: the compose window in
+front is used, else Compose ("Koosta") is clicked and the window waited for; `to` (a name, or an
+address) is typed into To and confirmed (Enter when Gmail shows a suggestion row, else Tab); `body`
+is typed into the message. The body is armed when To has something in it, else To is. Off Gmail,
+`compose` opens Gmail's compose page (29.3.4) in a new tab first, then does the same there.
+`composeTo { address, subject?, body? }`: opens the compose page in a new tab with the address in
+To (and the subject and body when given), waits for the window and arms the body; only the model
+answers it (29.3.3). `mailField { field: subject | cc, text? }` in the open compose window: subject
+types the text into Subject (replacing it) and arms the body; cc opens the Cc row (its button
+"Koopia" / "Cc") and arms the Cc field, typing the text when given. A page without a compose window
+answers `not_found`. "saada" is the existing `pressSend`: inside a compose window it clicks the
+window's Send ("Saada" / "Send") and never presses Enter (Enter is a new line in a mail body); sent
+means the window closed or the body emptied.
+
+**29.3.2 The rules** (`mailCommand`, tried in `inpage.ts` before the spelled values and the
+conversation rules, so "kirjuta meil Marile" is never a chat with "Meil Mari" nor the address
+"marile"; that hook, the compose-window hook for subject and Cc below, and one line keeping mail out of the
+sound-alike corrections are the whole change to `inpage.ts`):
+
+| Said | Command |
+|---|---|
+| `kirjuta meil Marile`, `kirjuta kiri Marile`, `saada meil Marile`, `koosta e-kiri Marile` | `compose { to: "Mari" }` (the allative ending taken off as for chats) |
+| `kirjuta meil Marile, et tulen homme` | `compose { to: "Mari", body: "Tulen homme." }` |
+| `uus meil`, `uus kiri`, `kirjuta meil`, `new email`, `compose an email` | `compose {}` |
+| `write an email to Mari`, `send an email to Mari saying …` | `compose { to: "Mari" (, body) }` |
+| `teema Koosolek`, `teemaks koosolek`, `subject: Meeting` (in a compose window only) | `mailField { subject, "Koosolek" }` (first letter capitalised) |
+| `lisa koopia`, `lisa koopia Jaanile`, `add cc`, `add a cc to Jaan` (in a compose window only) | `mailField { cc (, "Jaani") }` |
+| `saada`, `saada ära`, `send` | `pressSend` (unchanged) |
+| `valmis`, `järgmine väli`, `next field` in To or Subject | `pressKey Tab` (round 5's form keys: both are one-line fields) |
+
+A name must carry the allative ending (`…le`) in Estonian, so "kirjuta kirja lõppu" stays dictation.
+"teema …" and "lisa koopia" are mail commands only while the box in front is a field of a compose
+window (To, Cc, Subject or the body: the box reports `mail: true`, 29.3.5); `mailFieldCommand` is
+tried in `inpageStep` right after the form keys, for that box only. Everywhere else, in a chat box, a
+document or a form field, "Teema on huvitav, aga pikk" is dictation like any sentence. On Gmail with
+no compose field armed the words go to the model, which may answer `mailField`. "kirjuta meil …" and
+"uus meil" (`mailCommand`) work on any page.
+
+**29.3.3 Addresses on the page.** `readPage` adds `contacts: { kind: email | tel; value; label }[]`
+(absent when there are none): at most 20, the ones on screen first, each value once. Sources: the
+text of the page (text nodes outside Ütle's strip, scripts and hidden elements) and the hrefs of
+`a[href^="mailto:"]` and `a[href^="tel:"]` (label: the link's text, at most 40 characters; '' for
+plain text). Values: an e-mail lower-cased; a phone compacted (spaces, dashes and brackets dropped).
+The regexes (`src/core/contacts.ts`):
+
+- e-mail: `(?<![\w.+%-])[a-z0-9](?:[\w.%+-]{0,62}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w-]|\.[a-z0-9])`, case-insensitive, no ".." in it.
+- phone, international: `(?<![\w+])\+\d{1,3}(?:[ -]?\d){6,11}(?!\d)`; with +372 the rest is 7 or 8 digits.
+- phone, Estonian without the prefix: `(?<![\w+.,/-])(?<!\d )[3-8]\d{2,3} ?\d{3,4}(?!\d|[ .,/-]\d)`, 7 or 8 digits in all; the international ones are blanked out first, so "+372 5123 4567" is not found again as "5123 4567".
+- a `tel:` href is a phone only when its compacted value is one of those shapes; a `mailto:` href
+  gives each address before the `?` that is an e-mail as a whole.
+
+So a version (v2.10.3), an ID code (39001010000: eleven digits, never a 7-digit piece of it), a
+price (19.99 €), a postal code or street number, and a date (10.03.2024) are not contacts.
+
+The model gets them as one line of values only, `contacts: e-mail a@b.ee, tel +37251234567` (or
+`none`), never the labels or the text around them. Its schema gains `compose`, `composeTo` and
+`mailField`; `pageIntentFrom` takes `composeTo` only when `address` is an e-mail as a whole AND one
+of the page's contacts' e-mail values (ignoring case), and `compose` with an `@` in `to` only on the
+same terms: **the model can never invent a recipient.** The prompt's rules line says so, and says
+that "võta see meiliaadress siit lehelt ja kirjuta talle, et …" is one goal: `composeTo` with the
+address and the dictated words as the body (`plan` []). That utterance is ten words, so the ask is
+careful (round 5's eight words); a tel contact is never an address ("helista talle" is a click on
+the tel link, or unclear).
+
+**29.3.4 The Gmail address.** `https://mail.google.com/mail/?view=cm&fs=1&to=<address>&su=<subject>`,
+and `&body=<body>` only when he dictated the body in the same utterance; each value
+`encodeURIComponent`. The base is the setting `mailHome` (chrome.storage.local, default
+`https://mail.google.com/mail/`); a page is Gmail when its host is `mail.google.com` or its address
+starts with `mailHome`. The browser suite sets `mailHome` to the stand-in `fixtures/gmail.html`,
+which reads `to`, `su` and `body` from its query as Gmail does.
+
+**29.3.5 The compose window as one field group.** In a compose window the box reports, for the
+field under focus: To and Cc `single`, `fieldKind: email`; Subject `single`, `fieldKind: text`; the
+body `kind: composer`; every one of them `mail: true`. So dictation into To is converted as an address ("ät", "punkt"), "valmis"
+moves To, Cc, Subject, body in turn (Tab inside the window walks the fields of the group, past the
+window's buttons), and "saada" from the body sends. The
+selectors are in `sites.ts` `MAIL`, each marked; **all unverified on real Gmail**: Compose
+`[gh="cm"]` or a button named Koosta / Compose; the window `[role="dialog"]` holding a subject
+field; To `input[aria-label*="recipient" i]`, `input[name="to"]`, or a field labelled Saaja / To /
+Kellele; Subject `input[name="subjectbox"]` or a field labelled Teema / Subject; body
+`[aria-label="Message Body"]`, `[aria-label="Sõnumi sisu"]`, or the window's contenteditable
+textbox; Send `[role="button"][aria-label^="Send"]`, `[role="button"][aria-label^="Saada"]`, or a
+button named Saada / Send; Cc a button or link named Koopia / Cc / Add Cc. Only the stand-in proves
+them.
+
+**29.3.6 Spelled addresses.** Unchanged from rounds 5 and 6 (25.1, 26): "kirjuta meil ralf ät gmail
+punkt com" is still the spelled address (a name must be one or two words in the allative), and a
+sound-alike correction never reaches a mail command ("kirjuta meile" stays dictation). The three
+read-backs the plan names are tests of `typedFromSpoken` in `src/core/spelling.test.ts`: an ID code
+digit by digit, a phone number, an e-mail with "punkt" and "ät". A name is typed into To as the chat
+rules take it off the allative ("Jaanile" is "Jaani", as for chats); Gmail's suggestions then match
+on that prefix or not: unverified.
+
+**29.3.7 Privacy.** The server logs for a mail ask what it logs for any ask (`[intent] kind=… done=…
+plan=… care=… ms=…`): no address, no body, no page text (`server/intent.test.ts`). The contacts'
+values are the model's input, sent once in the user turn, never logged.
 
 ### 29.4 Wake word and "Minu kohad" (WAKE lane)
 
-(filled by the WAKE lane)
+Two things for a no-hands day: the bar listens all day and acts only on what starts with a word he
+chose, and plain nouns ("uudised", "raadio", "ilm") open the places he set once.
+
+**29.4.1 The listening mode "Äratussõnaga".** A third `listenMode`, `wake`, beside `toggle` and
+`gaze` (settings page group "Kuulamine"; `settingsFrom` in `strip.ts` reads it). The service worker
+puts `&wake=<word>` into the offscreen document's address while the mode is on (the offscreen
+document cannot read storage, as with the token), so a changed word or mode makes a new document,
+and it starts listening when the browser starts (`onStartup`) and when the mode or the word is
+changed to it. The microphone button still turns listening off; nothing turns it back on by itself
+until the next browser start or settings change.
+
+The word is the setting `wakeWord` in `chrome.storage.local`, default "Ütle". `wakeWordFrom` takes
+one or two words of letters (Estonian letters included), at most 20 letters each; anything else is
+the default. The settings page edits it with a small text field and a save button under the mode's
+choices (shown only in wake mode): a helper types it once, so the voice entry flow of 26.5 was not
+worth its weight here.
+
+**The gate** (`src/core/wake.ts`, pure, `wakeGate(state, final, now) → { state, utterance | null }`)
+sits in the engine, in front of everything a final does; the recogniser and the server are unchanged.
+The state is the word's phonetic keys and `openUntil` (0 when the window is closed). The state machine:
+
+1. Closed. A final whose first word (first two, for a two-word setting) is the wake word is acted on
+   with the word and the punctuation after it stripped ("Ütle, keri alla" → "keri alla"). Any other
+   final is dropped: not typed, not previewed, never sent to the rules or the model. The strip's
+   upper line still shows the words heard, so he sees it listens.
+2. A woken final that the rules type into an armed box (their step has a `setText`) opens the
+   dictation window: `openUntil = now + WAKE_WINDOW_MS` (20 000 ms). A woken command into an armed
+   box ("Ütle, keri alla" in WhatsApp) does not: the room's talk after a command must not be typed.
+   The bare word alone ("Ütle.") opens it too, whatever the box.
+3. Open. Every final is acted on without the word (the word is still stripped when he says it), and
+   each final and each partial moves `openUntil` to now + 20 s, so "20 s of silence" means 20 s with
+   no speech heard.
+4. Open → closed: 20 s with nothing heard (a timer in the engine publishes it); "aitab", "see on
+   kõik", "that's all" (with or without the word: nothing is typed, the strip says the window
+   closed); a plain send ("saada") is acted on and closes it (the message is gone; the room's talk
+   after it must not be typed); stopping listening.
+5. While open the strip shows a small amber disc on the microphone (`wakeOpen: true` in the strip
+   state; false when closed).
+
+The match: each word's `phoneticKey` (after Cyrillic look-alike letters are read as Latin: the model
+has written "Üтле") equals the wake word's key, or both keys have the same length of at least four
+and differ by one letter or one swapped pair. So "ütle", "Ütle,", "Üтле" and "ütel" wake; "ütlesin",
+"ütles", "ütleb" (a letter added) and "ma tahtsin ütelda" (not first) do not. `soundsLike` is not
+used: it lets one added letter through, and "ütles, et tuleb" is ordinary speech.
+
+Details: the options page's voice entry (26.5) bypasses the gate (spelling letter by letter with a
+word before each would be unusable); a continued utterance (round 4's "siis …") passes when the final
+it continues passed; the instant release of a one-word reply from a partial (21.3) is off while the
+window is closed (a partial cannot be gated before its final), so a woken "saada" waits for its final,
+about half a second.
+
+**What the server sees.** Nothing new. The word is stripped on the client, not on the server as the
+round 8 plan said: the server never sees settings, and a dropped final must cost nothing beyond the
+socket. The cost of wake mode is the always-on socket: the client streams 16 kHz float32 mono, 64 000
+bytes a second, 230.4 MB an hour (16-bit would be half: 32 000 B/s, 115.2 MB/h). The speech detector
+(24.2) runs the decoder only on speech, so room noise yields no finals: a minute of pink noise at
+-30 dBFS through `scripts/asr-file.ts` gives 0 finals (log in the WAKE lane report).
+
+**29.4.2 Minu kohad.** `src/core/places.ts`: `Place { noun, url, label }`, stored in
+`chrome.storage.local` under `places` as the user's rows; `placesFrom(stored)` merges them over the
+defaults (a user row with the same noun wins; a row with an empty url removes a default).
+
+| noun | address | label |
+|---|---|---|
+| uudised | https://www.postimees.ee/ | Postimees |
+| raadio | https://otse.err.ee/k/vikerraadio | Vikerraadio otse |
+| ilm | https://www.ilmateenistus.ee/ | Ilmateenistus |
+| mail (also meil, post) | https://mail.google.com/ | Gmail |
+| kalender | https://calendar.google.com/ | Google Kalender |
+| kaart | https://www.google.com/maps | Google Maps |
+| video | https://www.youtube.com/ | YouTube |
+| pank | none by default | |
+
+The radio address is ERR's live stream page for Vikerraadio (found by search, not opened). Changing
+the station is the existing click intent on that page ("vali Raadio 2"): no code.
+
+**By the rules** (`placeCommand(utterance, places)`), only when the box is not armed (in an armed box
+"mis ilm on" may be a message): "vaata uudiseid", "näita uudiseid", "ava uudised", "pane raadio
+mängima", "pane raadio käima", "ava raadio", "mis ilm on", "näita ilma", "ava mu mail", "ava meil",
+"vaata videoid", in the general shapes `(ava|vaata|näita|mine) [mu|minu] <noun>`, `pane <noun>
+(mängima|käima|tööle)`, `mis <noun> on`. The noun is matched after a case ending comes off
+(uudiseid → uudis, raadiot → raadio, ilma → ilm, videoid → video) and by `soundsLike`. The engine
+checks it before the rules of `inpage.ts` and runs `goTo` with the stored address. The engine holds
+no places until the offscreen document hands it the merged list (`utle-places` at start, a `places`
+message on every change; the service worker sends his raw rows, merged on the engine's side).
+
+**By the model.** The page context carries `places: ["uudised", "raadio", …]`, the nouns only, never
+an address. The model may answer `place { noun }`; `pageIntentFrom` accepts it only when the noun is
+one of `page.places`, and the engine resolves the address from storage on his machine. A new intent
+kind outside `PageIntent` (`ModelIntent = PageIntent | PlaceIntent`), so `applyIntent` in `inpage.ts`
+is unchanged; the engine turns it into a `goTo` step.
+
+**29.4.3 Adding a place by voice, and the settings page.** By voice, with no spelling: on the page
+he wants, "lisa koht uudised", "salvesta see koht uudised", "save this place as news" (anywhere), or
+"see on mu uudised" (only when no box is armed: there it may be a message) saves the address of the tab
+in front under that noun; "eemalda koht uudised" / "remove place news" removes it (his row with an
+empty address, so a default is hidden too). `placeVoice` in `places.ts` holds the rules; the noun is
+one or two words through `placeNoun` and none of them a command word (`COMMAND_WORDS`: the command
+heads of `ENROL_COMMAND_WORDS` and the place shapes' own words), else the utterance is not this. The
+engine checks it before the place rules and sends a new command, `{ kind: 'savePlace' | 'removePlace';
+noun }`, which the service worker resolves with the active tab's address and writes into `places`;
+the strip says "Koht „uudised“ salvestatud: postimees.ee". "lisa koht" alone asks "Ütle, mis sõnaga
+seda kohta kutsuda." and the next final within 20 s (`PLACE_ASK_MS`) is the noun, as the entry flow
+of 26.5 does; an answer that is not a usable noun ends the question and is handled as usual. The
+model never answers these (they are not in its command schema).
+
+The settings page has a "Minu kohad" section after "Minu andmed": every place as noun → label and
+address, a remove button on each (click or dwell), and a small form (noun, address) that adds one or
+replaces the row with that noun, the helper's path. The page's `<main>` keeps 240 px free at its end
+(the strip at its tallest is 192 px), so the last of the page scrolls clear of the bar.
 
 ### 29.5 Reading aloud: the measurement (READ lane)
 
@@ -1578,6 +1901,12 @@ Rules (`src/core/browserIntent.ts`, the fixed table, whole utterances after `cle
 | "loe edasi", "jätka lugemist", "continue reading" | continue |
 | "lõpeta lugemine", "stop reading", "lugemine seis"; while reading also "stopp", "stop", "aitab", "seis", "lõpeta" | stop |
 
+With the DOCS lane merged (29.2): "loe ette", "loe see ette", "loe tekst ette" and "read it back" first
+meet DOCS's read-back rule in `src/core/inpage.ts`. With an armed box holding words they read that
+box (DOCS's `speak` step); the offscreen document passes that text to this reader, so the Estonian
+voice rule and the stop words hold for it too. With no armed box holding words they are read page.
+"loe lehte ette", "read the page", "loe kasti ette" and the rest of the table are never DOCS's.
+
 "stopp" and "aitab" keep their meanings (stop a slow scroll; typed as a one-word reply while the box
 has words) everywhere except while reading: the engine (`extension/src/engine.ts`, `deps.reading`)
 takes every final before the rules see it while a reading is in progress; a stop word (`isReadStop`
@@ -1641,7 +1970,9 @@ the command fails `not_allowed`; the bar says "Selles brauseris pole eesti hää
 voice). While an article, a box or a selection is read, the microphone stays live and the recogniser
 hears the room, the synthesised voice included. The engine is the filter: while `reading` is true it
 drops every partial and every final unless the final is a stop word, and dropped words are neither
-published to the strip's heard line nor typed nor run, so the echo of the voice never shows. A spoken
+published to the strip's heard line nor typed nor run, so the echo of the voice never shows. The
+filter sits first in the handlers: in wake mode (29.4) it runs before the wake gate, so a stop word
+stops a reading without the wake word and the echo never reaches the gate. A spoken
 "stopp" (or "paus", "aitab", "lõpeta lugemine") is heard over the voice and cancels it at once
 (measured below 300 ms in the suite). Strict mode and the speaker gate (24.2) still work underneath:
 a final the server judges `other` (as a synthesised voice may be) is dropped before the engine sees
@@ -1679,4 +2010,119 @@ voice (sentences are capped at 300 characters against it, not measured).
 
 ### 29.6 Dictation cleaning: the measurement (FLOW lane)
 
-(filled by the FLOW lane)
+**Stand-in, not the measurement the plan asked for.** The plan wanted 20 of Ralf's own captured
+finals. They do not exist: `UTLE_CAPTURE` was never run, there is no `log.tsv`. Everything below is
+measured on a set this lane wrote, spoken by a synthetic voice. The verdict is provisional until the
+same script runs on his 20 finals.
+
+**Prior art** (web, 2026-10-22; vendor pages unless marked)
+
+| Product | What it does to raw speech | Mechanism (as far as public) | Latency claimed | Estonian | Price |
+|---|---|---|---|---|---|
+| Wispr Flow | Drops "um"/"uh" and pauses; backtrack ("2… actually 3" becomes 3); punctuation from pauses plus spoken marks; spoken numbering becomes a list; tone per app ("styles", English and desktop only); learns a dictionary; snippets. Command Mode on Pro (third-party source) | Cloud only. ASR, then a fine-tuned Llama cleanup pass on dedicated Baseten inference | Under 700 ms end to end, measured at p99 (Baseten case study) | Unknown: "100+ languages", no list found | Free; Pro $15/mo ($12 annual); Growth $23/mo |
+| Superwhisper | "Voice to Text" mode: no AI. Message, Mail and Note modes: an LLM cleans the transcript, with a tone slider. Super mode adds context (app, copied text, selected text). Custom modes take your own prompt. A mode can switch on by app | Two stages: speech model (local or cloud, picked per mode), then LLM processing. App context is read between the two. Its docs warn that custom prompts make the LLM answer the dictation or add content | None found | Likely through Whisper-class models ("100+ languages"); not verified | $8.49/mo, $84.99/yr, $249.99 lifetime |
+| Aqua Voice | "Cleaned up and formatted for wherever you're typing"; custom instructions; Deep Context reads the screen for names and terms; dictionary. Filler handling not spelled out | Own ASR model (Avalon), cloud. Instant mode and Realtime (streaming) mode | Inserts text in about 1 s, "as fast as ~450 ms" | **Yes** (49 languages) | Free 1,000 words; Pro $8/mo annual, $10 monthly; Max $24/mo annual |
+| macOS Dictation | Auto-punctuation (commas, periods, question marks) in some languages; spoken punctuation and editing commands. No filler removal | On-device on Apple silicon for supported languages, otherwise Apple's servers | None | **No** (not in the Dictation list) | Built in |
+| Windows 11 voice typing (Win+H) | Optional auto-punctuation; Estonian spoken commands "koma", "punkt", "küsimärk", "hüüumärk", "uus rida", "kustuta see". Fluid dictation (fillers out, grammar fixed) is English only, on-device, Copilot+ PCs | Online (Azure Speech) | None | **Yes** for voice typing and its commands; no for Fluid dictation | Built in |
+
+Sources: wisprflow.ai/features, wisprflow.ai/pricing, docs.wisprflow.ai/articles/3191899797-use-flow-with-multiple-languages,
+baseten.co/customers/wispr-flow, eesel.ai/blog/wispr-flow-pricing (Command Mode; third party);
+superwhisper.com/docs/modes, ai.superwhisper.com/docs/modes/custom, superwhisper.com/docs/common-issues/context,
+ai.superwhisper.com/docs/common-issues/hallucinations.md, superwhisper.com/docs/billing/plans.md;
+aquavoice.com/llms.txt, aquavoice.com/faq, aquavoice.com/guide/languages;
+apple.com/macos/feature-availability, support.apple.com/guide/mac-help/use-dictation-mh40584/mac;
+support.microsoft.com/en-us/windows/use-voice-typing-to-talk-instead-of-type-on-your-pc-fec94565-c4bd-329d-e59a-af033fa5689f.
+
+Three things carry over from all of them. The cleaning step is a separate LLM pass after the
+recogniser. It is tuned per app. Speed is sold at well under a second. The only Estonian-capable
+products with any cleaning are Aqua (unverified for Estonian fillers) and Windows (spoken marks only).
+
+**What Ütle already does to dictation, and what it does not**
+
+| Behaviour | Ütle today |
+|---|---|
+| Punctuation and capitals | The TalTech decoder writes them itself ("Tere, Mari. Ma jõuan homme kell kolm."), but not every time: one voice got none at all, and another got a stray opening quote (lines 5 and 6 of the set). `joinDictation` (`src/core/inpage.ts`) capitalises a sentence start and adds a full stop after three or more words. |
+| Spoken numbers | `typedFromSpoken` text mode turns three or more number words in a row into digits. A decoder comma ends the run, so "viis, viis, viis üks kaks kolm neli" is typed as "viis, viis, 51234" (checked). |
+| Spoken punctuation ("koma", "punkt") | Only in e-mail and code fields. In a message the words "koma" and "punkt" are typed as words (checked). |
+| Fillers, restarts, self-corrections | Nothing. The words are typed as heard. |
+| Repair by voice | "võta tagasi" (the undo stack of earlier box texts), "kustuta viimane sõna/lause", "asenda X sõnaga Y", "mitte X vaid Y". In document mode the model proposes ops and the preview shows the diff (`diffSegments`). |
+| The model and dictation | Type first, verify after (22.2). The intent model's `dictate.text` ("tidied into a sentence") is never typed: when it says `dictate`, the rules' words stay. |
+
+New finding from the decoder: **the TalTech model hears the filler "ee" as "ei" ("no", "not")**.
+It did so in both lines where the voice said it: "Ei noh, ma arvan…" and "Ei, Eesti kirjandus ei
+kujunes…". So a filler turns into a negation. That is the most dangerous kind of change to
+remove automatically, because a real "ei" must stay (line 19).
+
+**The set** (`scripts/fixtures/flow-set.tsv`, 20 lines, `raw<TAB>meant`). Every `raw` is real
+decoder output (`scripts/asr-file.ts`, TalTech model with the Silero detector) from a synthetic
+voice (TartuNLP). Lines 1 to 6 are the repository's fixtures: `et-dictate-send`, `live-vad-saada`,
+`et-jah`, `et-sentence`, `speaker-set/other-kalev-3` and `speaker-set/other-albert-3`. Lines 1 to 3
+are the controls. Lines 7 to 20 this lane wrote, spoke with the voice "mari" and decoded. They
+cover fillers (7, 8, 14, 17, 18), restarts (11, 15), self-corrections (9, 10, 16), a phone number
+(12), spoken punctuation (13), and traps where "ei" and "tegelikult" are meant (19, 20). The
+decoder added its own errors, and they stay in `raw`: "võitu" for "võid", "Egaarel … tööl" for
+"ee Kaarel", "trend" for "trenn", "igav igav", a trailing "siis".
+
+**The measurement** (`scripts/flow-eval.ts`). WER is Levenshtein distance over lowercase words with
+punctuation stripped, against `meant`. Effort is `low`, as the server's quick asks use, and
+temperature is the API default. Runs a to c went in parallel with the haiku and sonnet runs. "Ütle
+today" means `raw` plus the rules above; it differs from `raw` only on line 12.
+
+| Model | Output | Runs | WER raw / Ütle today | WER cleaned | p50 / p90 latency | Tokens in / out per line | USD per 1000 | Meaning changes |
+|---|---|---|---|---|---|---|---|---|
+| claude-opus-5-5 | plain text | 3 (+1 earlier) | 28.0 % / 25.2 % | **3.5, 3.5, 3.5 %** (earlier run 4.2 %) | 1350, 1720, 1281 ms (earlier 1282) / 3136, 3415, 3173 ms | 709 / 61–63 | 4.05–4.10 | **0 of 20** in every run |
+| claude-opus-5-5 (orchestrator re-run) | plain text | 1 | 28.0 % | 4.2 % (6/143) | 1370 ms / not reported | not reported | not reported | 0 of 20 (flagged #10 võitu, #14 ei, #17 egaarel tööl, #19 trend; none a meaning change) |
+| claude-sonnet-5-5 | plain text | 1 | 28.0 % | 13.3 % | 1100 / 2799 ms | 709 / 55 | 1.97 | 1 of 20 |
+| claude-haiku-5-5 | plain text | 1 | 28.0 % | 72.7 % | 854 / 1324 ms | 709 / 40 | 0.09 | 3 of 20 |
+| claude-opus-5-5 | structured `{text}` | 1 | 28.0 % | 2.1 % | 3481 / 4966 ms | 893 / 31 | 4.19 | 0 of 20 |
+| claude-sonnet-5-5 | structured `{text}` | 1 | 28.0 % | 3.5 % | 1441 / 3724 ms | 893 / 46 | 2.25 | 0 of 20 |
+| claude-haiku-5-5 | structured `{text}` | 1 | 28.0 % | 5.6 % | 1537 / 2417 ms | 893 / 32 | 0.11 | 2 of 20 |
+
+**Meaning changes, read line by line.** A meaning change is something the cleaning added, dropped,
+or got the wrong way round compared with `raw`. A decoder word the cleaning left in is not one.
+
+- Sonnet, plain text, #10: "Too poest piima ja leiba ei, ma mõtlen piima ja võitu" became "Too poest piima ja võid.", then a blank line, "Hmm, "võitu" — ära paranda sõnu. Jätan öeldud kujul.", then "Too poest piima ja võitu.". Its own deliberation went into the answer and would have been typed.
+- Haiku, plain text, the same failure on three lines: #16 "Uuringus osales kakskümmend vabandust kolmkümmend õpilast" became a first try, then "Hmm, wait: the rules say…", then a second try; #17 "…Tartus tööl." became "…Tartus. Tööl." plus "Hmm, "tööl" on siin eraldi lausena…"; #19 "…mul on trend." became "…mul on tren." plus "Hmm, "trend" ei sobi siin…".
+- Haiku, structured: #16 "kakskümmend vabandust kolmkümmend" became "kakskümmend, õigemini kolmkümmend": the retracted number stays. #17 "…ma elan Tartus tööl." became "…ma elan Tartus. Töötan.": a sentence he did not say.
+- Opus (all four plain runs and the structured run) and Sonnet structured: none.
+
+Left in by every model, and not counted: #17 "Egaarel" and "tööl" (decoder). #19 "trend" (decoder; Opus structured changed it to "trenn"). #14 and #7 the leading "Ei," that was a misheard "ee": Opus plain kept it on #14, Opus structured removed it, Sonnet structured kept it on both. #9 a trailing "siis". In the earlier Opus run, #10 kept "võitu".
+
+**The ee/ei hazard.** The 0 of 20 above holds only because this set's `meant` says which "ei" was a
+negation and which was a misheard "ee". The cleaner has no such knowledge: it guesses, from the
+sentence alone, whether he said "not" or hesitated, on a decoder that turns his "ee" into "ei".
+Line 14 shows one side of it. Raw "Ei, Eesti kirjandus ei kujunes välja…" was cleaned to "…kirjandus
+kujunes välja…" in every Opus run. The cleaner removed a mid-sentence "ei". Here that was right, by
+this set's word. In a sentence where he meant "ei", the same rule removes his negation and types the
+opposite of what he said. Line 19 shows the other side. "Ei, ma ei saa täna tulla" kept both of its
+"ei", correctly. These two lines differ only in whether the sentence still parses with "ei" in it.
+That is the model's guess, not a fact the server can check. A dropped "not" reads fluently, and a
+person who cannot use his hands may not see it before "saada". It is the most dangerous change this
+lane found.
+
+**Verdict per the kill rule (kill if cleaning changes meaning in more than 1 of 20):** as applied, 0
+of 20 on this stand-in for Opus, in each of four runs plus the orchestrator's re-run. Word error
+fell from 28.0 % (25.2 % after Ütle's own rules) to 3.5–4.2 %. So cleaning is not killed for Opus.
+Haiku is killed (2 to 3 of 20). Sonnet passes only with structured output (0 of 20); in plain text
+it typed its own monologue once. This 0 of 20 is not the test. These are the lane's sentences in a
+synthetic voice, and a prompt rule ("ee" heard as "ei") came from the same decoder run. The real test
+is Ralf's 20 captured finals, with his own fillers, run through `npx tsx scripts/flow-eval.ts` (replace
+the TSV). The thing to count there is the ee/ei hazard: every line where cleaning removed or added a
+negation word, judged against what he meant.
+
+**Proposed next step** (only after the real 20 pass). Add a `clean` option to the preview path, on
+the server, under the same rule as editing: the model proposes ops, and the server and the reducer
+validate them. The box text becomes a one-block `Doc`. The model answers `replace_text` ops (exact
+`find`, `replace`), never a rewritten string. `applyOps` refuses a `find` that is not in the text,
+and an op that adds a content word the utterance lacks is refused too (a new check, the same test
+as this script's INVENTED flag). **Negation rule:** the cleaner may never remove or add a negation
+word ("ei", "mitte", "pole", "ära") unless it is the first word of the utterance. The ops validator
+refuses any op whose `find` and `replace` differ in the count of those words outside the first
+word, and the model is told the same. Under this rule, line 14 keeps its mid-sentence "ei" ("Eesti
+kirjandus ei kujunes"): wrong grammar he can see and repair, instead of a silently flipped meaning.
+Order: type first (as today), clean after, show the change with
+`diffSegments`, and let "võta tagasi" undo it. Measured cost, plain text: Opus about $4.1 per 1000
+utterances at 709 in and 62 out tokens, p50 about 1.3 s after the final. Sonnet structured: about
+$2.3 per 1000 at about 1.4 s. Answering as ops roughly doubles the output tokens (estimated, not
+measured): Opus about $5.3 per 1000 (709 in, about 124 out). Two fixes need no model and are cheaper than any of this: type
+spoken "koma"/"punkt" as marks in a message, and stop a decoder comma from splitting a digit run.

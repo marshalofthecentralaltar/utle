@@ -2,6 +2,11 @@ import * as z from 'zod'
 import type { BrowserCommand, PageContext } from '../browser/protocol.ts'
 import type { Lang } from './strings.ts'
 import { MAX_SAVED_NAMES, SAVED_NAME_CHARS, namedIn } from './saved.ts'
+import { CONTACT_LABEL_CHARS, MAX_CONTACTS, isEmailAddress } from './contacts.ts'
+// ---------- wake word and places (29.4) ----------
+import { MAX_PLACES, PLACE_NOUN_CHARS, placeNamed } from './places.ts'
+import type { PlaceIntent } from './places.ts'
+// ---------- end of wake word and places ----------
 
 /**
  * M7 (docs/plans/2026-10-05-m7-understanding.md): what the model may answer when the rules of
@@ -91,8 +96,17 @@ export type PageIntent =
   | { kind: 'insertSaved'; name: string }
 
 /** The answer of POST /api/intent: the intent, and one short line the strip shows while it runs. */
+// ---------- wake word and places (29.4) ----------
+/**
+ * Round 8 (29.4.2): what the model may answer: a PageIntent, or a place by its noun. Kept outside
+ * PageIntent so applyIntent in inpage.ts is unchanged; the engine turns a place into a goTo.
+ */
+export type ModelIntent = PageIntent | PlaceIntent
+export type { PlaceIntent } from './places.ts'
+// ---------- end of wake word and places ----------
+
 export interface IntentAnswer {
-  intent: PageIntent
+  intent: ModelIntent
   /** What the model took the words to be, in the request's language, at most 60 characters. '' when obvious. */
   say: string
   /**
@@ -156,6 +170,11 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('arm'), on: z.boolean() }),
   z.object({ kind: z.literal('bar'), show: z.boolean() }),
   z.object({ kind: z.literal('zoom'), direction: z.enum(['in', 'out', 'reset']) }),
+  // ---------- mail (29.3) ----------
+  z.object({ kind: z.literal('compose'), to: Short.min(1).optional(), body: Text.optional() }),
+  z.object({ kind: z.literal('composeTo'), address: z.string().min(3).max(254), subject: Short.min(1).optional(), body: Text.optional() }),
+  z.object({ kind: z.literal('mailField'), field: z.enum(['subject', 'cc']), text: Short.min(1).optional() }),
+  // ---------- end mail (29.3) ----------
   // ---------- reading aloud (29.5) ----------
   z.object({ kind: z.literal('read'), what: z.enum(READ_WHATS) }),
 ])
@@ -179,7 +198,12 @@ export const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kin
   z.object({ kind: z.literal('insertSaved'), name: z.string().min(1).max(SAVED_NAME_CHARS + 20) }),
 ])
 
-export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: PageIntentSchema, say: Short, done: z.boolean().optional(), plan: z.array(z.string().max(200)).max(12).optional() })
+// ---------- wake word and places (29.4) ----------
+const PlaceIntentSchema: z.ZodType<PlaceIntent> = z.object({ kind: z.literal('place'), noun: z.string().min(1).max(PLACE_NOUN_CHARS + 20) })
+export const ModelIntentSchema: z.ZodType<ModelIntent> = z.union([PageIntentSchema, PlaceIntentSchema])
+// ---------- end of wake word and places ----------
+
+export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: ModelIntentSchema, say: Short, done: z.boolean().optional(), plan: z.array(z.string().max(200)).max(12).optional() })
 
 /** Round 4: a chain of goals may take this many steps in all, and this long. */
 export const MAX_CHAIN_STEPS = 16
@@ -199,6 +223,8 @@ const BoxSchema = z.object({
   fieldKind: z.enum(['email', 'tel', 'code', 'number', 'password', 'text']).optional(),
   single: z.boolean().optional(),
   label: z.string().max(80).optional(),
+  // mail (29.3.5)
+  mail: z.boolean().optional(),
 })
 const MediaSchema = z.object({ playing: z.boolean(), muted: z.boolean(), volume: z.number().min(0).max(1), fullscreen: z.boolean() })
 
@@ -213,6 +239,10 @@ export const IntentRequestSchema: z.ZodType<IntentRequest> = z.object({
     media: MediaSchema.nullable(),
     hints: z.boolean(),
     saved: z.array(z.string().max(SAVED_NAME_CHARS)).max(MAX_SAVED_NAMES).optional(),
+    // mail (29.3.3): the page's addresses and phone numbers.
+    contacts: z.array(z.object({ kind: z.enum(['email', 'tel']), value: z.string().min(1).max(254), label: z.string().max(CONTACT_LABEL_CHARS) })).max(MAX_CONTACTS).optional(),
+    // Round 8 (29.4.2): the nouns of his places, never an address.
+    places: z.array(z.string().max(PLACE_NOUN_CHARS)).max(MAX_PLACES).optional(),
   }),
   tabs: z.array(z.object({ index: z.number().int().min(1), title: z.string().max(300), active: z.boolean() })).max(60),
   recent: z.array(z.string().max(200)).max(3),
@@ -222,6 +252,12 @@ export const IntentRequestSchema: z.ZodType<IntentRequest> = z.object({
     .object({ original: z.string().max(1000), completed: z.array(z.string().max(200)).max(12), goal: z.string().max(200), remaining: z.array(z.string().max(200)).max(12) })
     .optional(),
 })
+
+/** mail (29.3.3): the address is one of the page's e-mail contacts, ignoring case. */
+function onPage(page: PageContext, address: string): boolean {
+  const wanted = address.toLowerCase()
+  return (page.contacts ?? []).some((c) => c.kind === 'email' && c.value.toLowerCase() === wanted)
+}
 
 function webAddress(url: string): boolean {
   return /^https?:\/\//i.test(url)
@@ -233,7 +269,14 @@ function webAddress(url: string): boolean {
  * else is null, and the caller says it did not understand. The model never gets a second try here:
  * a voice command must answer at once.
  */
-export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'page' | 'tabs'>): PageIntent | null {
+export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'page' | 'tabs'>): ModelIntent | null {
+  // ---------- wake word and places (29.4) ----------
+  // Round 8: a place by its noun, only one the request listed; the engine finds the address.
+  if (typeof input === 'object' && input !== null && 'kind' in input && input.kind === 'place') {
+    const place = PlaceIntentSchema.safeParse(input)
+    return place.success && placeNamed(request.page.places ?? [], place.data.noun) ? place.data : null
+  }
+  // ---------- end of wake word and places ----------
   const parsed = PageIntentSchema.safeParse(input)
   if (!parsed.success) return null
   const intent = parsed.data
@@ -241,6 +284,9 @@ export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'pag
   if (intent.kind === 'insertSaved') return namedIn(request.page.saved ?? [], intent.name) ? intent : null
   if (intent.kind !== 'command') return intent
   const c = intent.command
+  // ---------- mail (29.3.3): a recipient's address is one the page shows, never one the model made up ----------
+  if (c.kind === 'composeTo') return isEmailAddress(c.address) && onPage(request.page, c.address) ? intent : null
+  if (c.kind === 'compose' && c.to !== undefined && c.to.includes('@')) return isEmailAddress(c.to.trim()) && onPage(request.page, c.to.trim()) ? intent : null
   const ids = new Set(request.page.items.map((item) => item.id))
   switch (c.kind) {
     case 'clickItem':

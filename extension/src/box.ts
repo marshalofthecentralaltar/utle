@@ -4,6 +4,7 @@
 
 import type { BoxState, FieldKind } from '../../src/browser/protocol.ts'
 import type { Site } from './sites.ts'
+import { MAIL, MAIL_NAMES } from './sites.ts'
 
 /** The element's box when it is on screen and not hidden by style, else null. No hit test. */
 export function onScreenRect(el: Element): DOMRect | null {
@@ -207,6 +208,8 @@ export function sendButtonBeside(el: HTMLElement): HTMLElement | null {
  */
 export function boxKind(el: HTMLElement, site: Site | null): 'composer' | 'search' | 'field' {
   if (site && el.matches(site.composer)) return 'composer'
+  // mail (29.3.5): the body of a compose window.
+  if (!(el instanceof HTMLInputElement) && mailPartOf(el) === 'body') return 'composer'
   if (isSearchField(el)) return 'search'
   if (!(el instanceof HTMLInputElement) && sendButtonBeside(el)) return 'composer'
   return 'field'
@@ -286,10 +289,52 @@ export function fieldKindOf(el: HTMLInputElement): FieldKind {
 export function boxState(el: HTMLElement | null, site: Site | null): BoxState {
   if (el === null) return { present: false, text: '', armed: false, kind: 'none' }
   const kind = boxKind(el, site)
-  const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el) }
-  if (!(el instanceof HTMLInputElement)) return base
+  // mail (29.3.5): a field of a compose window says so; To and Cc take addresses, Subject plain text.
+  const part = mailPartOf(el)
+  const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el), ...(part !== null ? { mail: true } : {}) }
+  if (!(el instanceof HTMLInputElement)) return documentBox(el, site, base)
+  if (part === 'to' || part === 'cc') return { ...base, single: true, fieldKind: 'email' }
+  if (part === 'subject') return { ...base, single: true, fieldKind: 'text' }
   return { ...base, single: true, fieldKind: kind === 'search' ? 'text' : fieldKindOf(el) }
 }
+
+// ---------- mail (29.3.5): the compose window as one group of fields ----------
+
+export type MailPart = 'to' | 'cc' | 'subject' | 'body'
+
+const nameOf = (el: HTMLElement): string => boxLabel(el).trim()
+
+/** The window's Subject field, by Gmail's selector or by its label. */
+export function subjectIn(win: Element): HTMLInputElement | null {
+  const hit = win.querySelector<HTMLInputElement>(MAIL.subject)
+  if (hit) return hit
+  return [...win.querySelectorAll<HTMLInputElement>('input')].find((el) => MAIL_NAMES.subject.test(nameOf(el))) ?? null
+}
+
+/** The compose window around an element: the innermost MAIL.window that holds a subject field. */
+export function composeWindowOf(el: Element): HTMLElement | null {
+  let win = el.closest<HTMLElement>(MAIL.window)
+  while (win) {
+    if (subjectIn(win)) return win
+    win = win.parentElement?.closest<HTMLElement>(MAIL.window) ?? null
+  }
+  return null
+}
+
+/** Which field of a compose window an element is, or null outside one. Cc is tried before To (Gmail names both "recipients"). */
+export function mailPartOf(el: HTMLElement): MailPart | null {
+  if (composeWindowOf(el) === null) return null
+  const name = nameOf(el)
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    if (el.matches(MAIL.subject) || MAIL_NAMES.subject.test(name)) return 'subject'
+    if (el.matches(MAIL.cc) || MAIL_NAMES.ccField.test(name)) return 'cc'
+    if (el.matches(MAIL.to) || MAIL_NAMES.to.test(name)) return 'to'
+    return null
+  }
+  if (el.isContentEditable && (el.matches(MAIL.body) || MAIL_NAMES.body.test(name))) return 'body'
+  return null
+}
+// ---------- end mail (29.3.5) ----------
 
 function lowestVisible(selector: string): HTMLElement | null {
   let best: HTMLElement | null = null
@@ -353,3 +398,46 @@ export function bottomBox(site: Site | null): HTMLElement | null {
     lowestPresent('textarea')
   )
 }
+
+// ---------- document mode (29.2) ----------
+//
+// A document is a box he writes in at length: a textarea or contenteditable over DOCUMENT_CHARS, a
+// contenteditable with headings or lists, or a multiline textbox of blocks. Never a site's composer
+// (nor a box with a send button beside it), a one-line input or a search field. Google Docs is a
+// document too; page.ts reports it from docsBox.
+
+/** A text this long is a document, whatever its editor. */
+export const DOCUMENT_CHARS = 500
+
+const DOCUMENT_BLOCKS = ':scope > :is(div, p, h1, h2, h3, h4, h5, h6, li, ul, ol)'
+
+/** True when the box is a document (29.2). */
+export function isDocument(el: HTMLElement, site: Site | null): boolean {
+  if (el instanceof HTMLInputElement) return false
+  if (boxKind(el, site) !== 'field') return false
+  if (readText(el).length > DOCUMENT_CHARS) return true
+  if (el instanceof HTMLTextAreaElement || !el.isContentEditable) return false
+  if (el.querySelector('h1, h2, h3, h4, h5, h6, ul, ol') !== null) return true
+  return el.getAttribute('role') === 'textbox' && (el.getAttribute('aria-multiline') === 'true' || el.querySelector(DOCUMENT_BLOCKS) !== null)
+}
+
+/**
+ * A document's text as the core joins onto it: readText, plus one line break when the text ends in
+ * an empty paragraph ("uus lõik" just made it), so the next dictation starts there with a capital.
+ */
+export function documentText(el: HTMLElement): string {
+  const text = readText(el)
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return text
+  return text !== '' && /\n\n$/u.test(el.innerText || '') ? `${text}\n` : text
+}
+
+/** The box text as boxState reports it: documentText in a document, readText elsewhere. */
+export function boxText(el: HTMLElement, site: Site | null): string {
+  return isDocument(el, site) ? documentText(el) : readText(el)
+}
+
+/** The box state with the document flag and text when it is one; the state unchanged when it is not. */
+function documentBox(el: HTMLElement, site: Site | null, base: BoxState): BoxState {
+  return isDocument(el, site) ? { ...base, text: documentText(el), document: true } : base
+}
+// ---------- end of document mode ----------
