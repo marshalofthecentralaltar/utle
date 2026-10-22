@@ -1433,22 +1433,24 @@ lane; a lane writes only its own. Sections 29.5 and 29.6 are scoping lanes and e
 Playwright's Chromium and installed Google Chrome list none, so the reading feature was not built
 this round (the plan's gate: an `et` voice in the suite's Chromium or in Chrome). Measured on this
 machine (Windows 11 Pro 10.0.26200, English UI, Russian and English speech voices installed) on
-2026-10-22 with `npx tsx scripts/tts-voices.ts` (every browser headed, voices polled for up to 3 s,
-then five runs of `speak()` to `onstart` on a 214-word Estonian paragraph, each cancelled at
-`onstart`):
+2026-10-22 with `npx tsx scripts/tts-voices.ts` (every browser headed; the voice list is read once
+its length has not changed for 1 s, at most 6 s; then five runs of `speak()` to `onstart` on a
+214-word Estonian paragraph, each cancelled at `onstart`):
 
 | Browser | Voices | `et` voice | `speak()` to `onstart`, median of 5 |
 |---|---|---|---|
-| Playwright's Chromium 153.0.8010.12 | 8 (SAPI: en-GB George, Hazel, Susan; en-US David, Mark, Zira; ru-RU Irina, Pavel; all `localService`) | none | 169 ms (George; runs 545, 140, 169, 322, 149) |
-| Google Chrome 155.0.8059.41 | the same 8 | none | 153 ms (George; 213, 152, 161, 153, 149) |
-| Google Chrome, network voices on | the same 8 | none | 160 ms (George; 220, 163, 148, 160, 139) |
-| Microsoft Edge 153.0.4234.32 | the same 8 | none | 151 ms (George; 232, 153, 151, 151, 137) |
-| Microsoft Edge, network voices on | 329 | **et-EE "Microsoft Anu Online (Natural) - Estonian (Estonia)", et-EE "Microsoft Kert Online (Natural) - Estonian (Estonia)"**, both `localService: false` | 662 ms (Anu; 700, 1141, 651, 662, 545) |
+| Playwright's Chromium 153.0.8010.12 | 8 (SAPI: en-GB George, Hazel, Susan; en-US David, Mark, Zira; ru-RU Irina, Pavel; all `localService`) | none | 151 ms (George; runs 624, 154, 147, 147, 151) |
+| Google Chrome 155.0.8059.41 | the same 8 | none | 161 ms (George; 267, 161, 151, 167, 151) |
+| Google Chrome, network voices on | 27: the 8, plus Google's 19 network voices (`localService: false`): de-DE, en-US, en-GB female and male, es-ES, es-US, fr-FR, hi-IN, id-ID, it-IT, ja-JP, ko-KR, nl-NL, pl-PL, pt-BR, ru-RU, zh-CN, zh-HK, zh-TW | none | 168 ms (George; 228, 168, 137, 143, 172) |
+| Microsoft Edge 153.0.4234.32 | the same 8 | none | 160 ms (George; 344, 146, 178, 160, 151) |
+| Microsoft Edge, network voices on | 329 | **et-EE "Microsoft Anu Online (Natural) - Estonian (Estonia)", et-EE "Microsoft Kert Online (Natural) - Estonian (Estonia)"**, both `localService: false` | 707 ms (Anu; 753, 486, 496, 744, 707) |
 
 "Network voices on" drops Playwright's `--disable-component-extensions-with-background-pages`, which
-hides the browser's own online voices; a person's everyday Edge has them, so that row is what he
-would get. In Chrome dropping the flag surfaced no Google voices in a fresh profile; Google's own
-Chrome voices are not known to include Estonian either (not measured here). The local voices are
+hides the browser's own online voices; a person's everyday Chrome and Edge have them, so those rows
+are what he would get. Network voices arrive after the local ones: the first run of this script read
+the list after a fixed 3 s and once saw Chrome's 8 local voices only, which 29.5 first reported as
+"no Google voices"; that was wrong. Chrome's 27 voices are Google's network voices, none Estonian. The
+first run's medians were within 20 ms of these for the local voices and 662 ms for Anu. The local voices are
 the Windows SAPI voices of the installed language packs: Windows 11 offers no Estonian speech voice
 (Microsoft's "Supported languages and voices" list for Narrator and Settings > Time & language >
 Speech has Finnish "Heidi" and no Estonian), so no setting on the person's machine adds one to
@@ -1459,12 +1461,27 @@ Russian voice reads Estonian text with its own spelling rules (õ, ä, ö, ü, l
 consonants), which we take to be unusable for a person who depends on hearing it (the owner's ear
 decides; not judged here). `src/speech/synth.ts` today asks for `et-EE`, finds no voice of that
 family and leaves the voice unset, so the dev page's reading is in the browser's default voice
-(George, English). Edge's Anu starts in about 0.66 s and is a natural Estonian neural voice, but it
-is a network voice: the text goes to Microsoft's service, it needs the internet, and whether an
-extension's offscreen document may use it (`speechSynthesis` there, or `chrome.tts`) is not
-measured. Ütle is a Chrome extension; Edge loads Chrome extensions, so "Ütle in Edge" is one route
-to Estonian reading without our own service. It is a product choice (which browser the person
-uses), not a lane's.
+(George, English). Edge's Anu starts in about 0.7 s and is a natural Estonian neural voice, but it
+is a network voice: the text goes to Microsoft's service and it needs the internet.
+
+**Edge and the extension.** Measured with `npm run ext` then `npx tsx scripts/tts-voices.ts
+--edge-extension`: the built extension is copied to a temporary folder, the copy's manifest gains
+the `tts` permission and a probe page (the repository's manifest is unchanged), and Edge 153 loads
+the copy unpacked with its network voices on. One Estonian sentence ("Tere, see on Ütle ja ma loen
+teile seda lehte ette.") with Anu, three runs, cancelled at the start event; two runs of the script:
+
+| Context | `getVoices()` | Both `et-EE` voices | Start event, run 1 (ms) | Run 2 (ms) |
+|---|---|---|---|---|
+| (a) a web page (the content script's world shares the page's `speechSynthesis`) | 329 | yes | 1241, 330, 460 (median 460) | 600, `synthesis-failed`, 275 |
+| (b) the extension's offscreen document (`AUDIO_PLAYBACK`) | 329 | yes | 712, 470, 893 (median 712) | 1020, 348, 1250 (median 1020) |
+| (c) `chrome.tts` in the service worker (`tts` permission) | 329 | yes (`remote: true`) | 475, 1125, 389 (median 475) | 402, 474, 741 (median 474) |
+
+Every context lists and speaks Anu; one start in 18 failed with `synthesis-failed` (a network voice
+can fail, so a reader needs a retry or a spoken error). The route this implies: Ütle can read
+Estonian aloud in Edge with `speechSynthesis` in the offscreen document it already has (no new
+permission and no server of ours), while in Chrome it would need TartuNLP through our server, so the
+choice is which browser the person uses, which is the owner's. The `tts` permission is not added to the
+product: `chrome.tts` works but gives nothing the offscreen document's `speechSynthesis` does not.
 
 **The proposal if he stays in Chrome: TartuNLP's speech synthesis through our server.** Found on
 2026-10-22:
@@ -1505,8 +1522,9 @@ uses), not a lane's.
 
 Not built and not verified: the commands ("loe ette", "loe see ette", "loe edasi", "stopp"), the
 "Loe riba ette" setting, `fixtures/news.html` and its suite case, because no voice passed the gate.
-Not measured: how either Estonian voice sounds to a person (the owner's ear), Edge's network voices
-inside an extension's offscreen document, and a recording of Edge's Anu (the browser's speech output
+Not measured: how either Estonian voice sounds to a person (the owner's ear), the real content
+script's world in Edge (a page's `evaluate` stood in for it), Edge's voices in a profile signed in
+to a work account or with policies, and a recording of Edge's Anu (the browser's speech output
 cannot be captured from a test without a loopback device).
 
 ### 29.6 Dictation cleaning: the measurement (FLOW lane)
