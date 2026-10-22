@@ -7,6 +7,8 @@
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { readFile, mkdtemp, rm, mkdir } from 'node:fs/promises'
+// ---------- reading aloud (29.5) ----------
+import { copyFile } from 'node:fs/promises'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, extname, dirname } from 'node:path'
@@ -1037,6 +1039,127 @@ async function main(): Promise<void> {
       await utle.waitForTimeout(300)
       r = await send({ kind: 'savedEntry', utterance: 'r' })
       line('savedEntry', 'with the options page closed -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    }
+
+    // ---------- reading aloud (29.5) ----------
+    // The suite's Chromium has no Estonian voice, so a fake speechSynthesis (one et-EE voice, onstart
+    // and onend 50 ms apart) is put into the offscreen document over the DevTools protocol: Playwright
+    // lists no offscreen page. The commands go through the same bridge `send` as every case above; the
+    // suite has no spoken-utterance path.
+    {
+      type StripNow = { reading?: boolean; micMuted?: boolean; line?: string }
+      const stripNow = async (): Promise<StripNow> => sw.evaluate(async () => ((await chrome.storage.session.get('stripState')).stripState ?? {}) as StripNow)
+      // A stop with no reading makes sure the offscreen document exists (and is the one the next read uses).
+      await send({ kind: 'read', what: 'stop' })
+      const cdp = await ctx.newCDPSession(utle)
+      const { targetInfos } = await cdp.send('Target.getTargets')
+      const offscreenTarget = targetInfos.find((t) => t.url.includes('/offscreen.html'))
+      check('read: the offscreen document is reachable over the DevTools protocol', offscreenTarget !== undefined, JSON.stringify(targetInfos.map((t) => `${t.type} ${t.url}`)))
+      const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: offscreenTarget?.targetId ?? '', flatten: false })
+      let nextId = 0
+      const inOffscreen = (expression: string): Promise<unknown> =>
+        new Promise((resolve) => {
+          nextId += 1
+          const id = nextId
+          const onMessage = (event: { message: string }): void => {
+            const reply = JSON.parse(event.message) as { id?: number; result?: { result?: { value?: unknown } } }
+            if (reply.id !== id) return
+            cdp.off('Target.receivedMessageFromTarget', onMessage)
+            resolve(reply.result?.result?.value)
+          }
+          cdp.on('Target.receivedMessageFromTarget', onMessage)
+          void cdp.send('Target.sendMessageToTarget', { sessionId, message: JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }) })
+        })
+      const installed = await inOffscreen(`(() => {
+        const log = { spoken: [], cancels: 0, endMs: 50 }
+        let current = null
+        const fake = {
+          speaking: false, pending: false, paused: false,
+          getVoices: () => [{ name: 'Fake Anu', lang: 'et-EE', localService: false, default: false, voiceURI: 'fake-anu' }],
+          speak(u) {
+            current = u
+            log.spoken.push(u.text)
+            setTimeout(() => {
+              if (current !== u) return
+              if (u.onstart) u.onstart(new Event('start'))
+              setTimeout(() => {
+                if (current !== u) return
+                current = null
+                if (u.onend) u.onend(new Event('end'))
+              }, log.endMs)
+            }, 50)
+          },
+          cancel() { log.cancels += 1; current = null },
+        }
+        Object.defineProperty(globalThis, 'speechSynthesis', { value: fake, configurable: true })
+        globalThis.__fakeSpeech = log
+        return speechSynthesis.getVoices()[0].lang
+      })()`)
+      check('read: a fake speechSynthesis with one et-EE voice is in the offscreen document', installed === 'et-EE', JSON.stringify(installed))
+
+      await send({ kind: 'goTo', url: `${T}/news.html` })
+      const news = pageAt(`${T}/news.html`)
+      if (!news) throw new Error('news page not found')
+      const norm = (s: string): string => s.replace(/\s+/g, ' ').trim()
+      const expected = norm(await news.evaluate(() => ['h1', '#p1', '#p2', '#p3'].map((s) => (document.querySelector(s) as HTMLElement | null)?.innerText ?? '').join(' ')))
+
+      // 1. The whole article, read to the end.
+      const seen = { reading: false, muted: false, line: '' }
+      r = await send({ kind: 'read', what: 'page' })
+      const readResult = r
+      const ended = await waitUntil(async () => {
+        const s = await stripNow()
+        if (s.reading === true) seen.reading = true
+        if (s.micMuted === true) seen.muted = true
+        if (s.reading === true && s.line !== undefined) seen.line = s.line
+        return seen.reading && s.reading === false && s.micMuted === false
+      }, 15_000)
+      const spoken = ((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]
+      const said = norm(spoken.join(' '))
+      const markers = ['Nõustun', 'Loetuimad', 'Kontakt', 'Menüü', 'Tsitaat', 'Maasikas']
+      const leaked = markers.filter((m) => said.includes(m))
+      line(
+        'read',
+        'loe ette on news.html: headline + 3 paragraphs only',
+        readResult !== 'timeout' && readResult.ok && ended && said === expected && leaked.length === 0,
+        `${describe(readResult)} sentences=${spoken.length} first 60: ${JSON.stringify(said.slice(0, 60))} equals headline+paragraphs=${said === expected} markers ${markers.join('/')} absent=${leaked.length === 0}${leaked.length > 0 ? ` (found ${leaked.join(',')})` : ''}`,
+      )
+      check('read: the strip state showed reading: true and the amber line "Loen ette…" while reading', seen.reading && seen.line === 'Loen ette…', JSON.stringify(seen))
+      check('read: listening was paused while reading (micMuted true) and resumed after the last sentence', seen.muted && ended, JSON.stringify(seen))
+
+      // 2. A slow voice: read again, screenshot while reading, then "stopp" as the command.
+      await inOffscreen('globalThis.__fakeSpeech.endMs = 4000')
+      const before = ((await inOffscreen('globalThis.__fakeSpeech.cancels')) ?? 0) as number
+      const spokenBefore = spoken.length
+      await send({ kind: 'read', what: 'page' })
+      const reading = await waitUntil(async () => (await stripNow()).reading === true, 5000)
+      await news.waitForTimeout(400)
+      await mkdir(join(here, 'out'), { recursive: true })
+      await news.screenshot({ path: join(here, 'out/read.png') })
+      await copyFile(join(here, 'out/read.png'), join(repoRoot, 'docs/proof/r8-read.png'))
+      const t0 = performance.now()
+      r = await send({ kind: 'read', what: 'stop' })
+      const answered = performance.now() - t0
+      const cancels = ((await inOffscreen('globalThis.__fakeSpeech.cancels')) ?? 0) as number
+      await news.waitForTimeout(300)
+      const afterStop = await stripNow()
+      const stoppedSpoken = (((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]).length
+      line(
+        'read',
+        '"stopp" (read stop) cancels within 300 ms',
+        reading && r !== 'timeout' && r.ok && cancels > before && answered <= 300 && afterStop.reading === false && afterStop.micMuted === false,
+        `cancel() called, the stop answered in ${Math.round(answered)} ms (performance.now() difference, an upper bound); 300 ms later reading=${afterStop.reading} micMuted=${afterStop.micMuted} line=${JSON.stringify(afterStop.line)}`,
+      )
+
+      // 3. "loe edasi" goes on from the next sentence.
+      await inOffscreen('globalThis.__fakeSpeech.endMs = 50')
+      r = await send({ kind: 'read', what: 'continue' })
+      await waitUntil(async () => (await stripNow()).reading === false, 15_000)
+      const continued = ((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]
+      check('read: continue after the stop starts at the next sentence and reads to the end', r !== 'timeout' && r.ok && continued[stoppedSpoken] === spoken[stoppedSpoken - spokenBefore] && continued.length === spokenBefore + spoken.length, `next=${JSON.stringify(continued[stoppedSpoken]?.slice(0, 40))} total=${continued.length}`)
+      r = await send({ kind: 'read', what: 'continue' })
+      check('read: continue after the end fails not_found ("Lugemine on lõppenud.")', r !== 'timeout' && !r.ok && r.code === 'not_found' && (await stripNow()).line === 'Lugemine on lõppenud.', describe(r))
+      await cdp.detach().catch(() => undefined)
     }
 
     // ---------- 6. failure paths ----------
