@@ -1405,3 +1405,32 @@ toward a command phrase at 1.0 over hours of use.
 engine waits `SETTLE_MS` (300 ms) between steps, and 16 steps made 15 real waits, about 4.8 s of wall
 time against vitest's 5 s limit. It now runs on fake timers and takes milliseconds.
 
+
+## 29. Round 8 (2026-10-22 night)
+
+Ralf's list of 2026-10-22, triaged in `docs/plans/2026-10-22-round-8-plan.md`. One subsection per
+lane; a lane writes only its own. Sections 29.5 and 29.6 are scoping lanes and end in a measurement.
+
+### 29.1 Seek by amount (MEDIA lane)
+
+(filled by the MEDIA lane)
+
+### 29.2 Document mode (DOCS lane)
+
+(filled by the DOCS lane)
+
+### 29.3 Mail by voice and addresses off the page (MAIL lane)
+
+(filled by the MAIL lane)
+
+### 29.4 Wake word and "Minu kohad" (WAKE lane)
+
+(filled by the WAKE lane)
+
+### 29.5 Reading aloud: the measurement (READ lane)
+
+(filled by the READ lane)
+
+### 29.6 Dictation cleaning: the measurement (FLOW lane)
+
+(filled by the FLOW lane)
