@@ -370,6 +370,106 @@ files to a temporary folder through the same `hotwordsConfig`). After merging, r
 once (or just start the server) so the files exist. Google Docs gluing (M5) is still open: the fix is
 in `extension/src/page.ts` and needs a browser test, more than the 20 lines the lane was allowed.
 
+## 1j. Round 8 (2026-10-22 night, overnight, unattended): seek by amount, document mode, mail, wake word and places, reading aloud, the dictation-cleaning measurement
+
+Plan: `docs/plans/2026-10-22-round-8-plan.md`. Spec: `docs/ARCHITECTURE.md` section 29 (29.1 to 29.6, one
+per lane). Six lanes on Opus 5.5 in their own worktrees, reviewed by the orchestrator with the full diff and
+every proof re-run, merged into `main` in the order MEDIA, FLOW, DOCS, MAIL, WAKE, READ. Push to origin is
+disabled in this checkout, so `main` is local only. The two gates only Ralf can pass were both unmet when the
+round started and are still unmet: no Railway project (`railway whoami`: Unauthorized) and no calibration line
+from his voice (1g). Nothing below has met a real voice, a real Gmail, a real Google Docs or Edge in daily use.
+
+**What works now, and by what it is proven** (every proof was run by the orchestrator on the merged tree, not
+taken from a lane's report):
+
+- **Seek by an amount** (29.1): "keri edasi üks minut", "keri kaks minutit tagasi", "keri tagasi pool minutit",
+  "keri edasi 30 sekundit", "skip back thirty seconds"; bare "keri edasi" stays 10 s. `seconds` 1 to 3600 on
+  `media forward/back`, in the rules, the schema and the model's tool. Proof: `npx vitest run
+  src/core/browserIntent.test.ts src/core/pageIntent.test.ts server/intent.test.ts` ("round 8: media forward and
+  back by an amount"); the suite's four `seek` lines (5 s and 60 s both ways on the 20.008 s stand-in video); the
+  eval cases "keri minut edasi" and "keri kaks minutit tagasi" (PASS, 2.7 to 3.1 s). Not verified: the YouTube
+  `#movie_player` path (the stand-in has none) and `<audio>`.
+- **Document mode** (29.2): when the armed box is Google Docs, a textarea or editor over 500 characters, or a
+  rich editor with headings or blocks, a pause of up to 20 s continues the sentence, "punkt" and "uus lõik" are the
+  only breaks, "välja", "sulge", "edasi", "tagasi", "paus", "veel" are typed as words, only an utterance starting
+  with a command verb is asked of the model, and "saada" says "Dokumendis ei saadeta." Formatting by voice:
+  "paksuks", "kaldkirja", "allajoonitud", "pealkirjaks", "tavaline tekst", "loendiks", "uus lõik" (chords per
+  editor, `execCommand` fallback on a plain contenteditable; Docs chords on the Docs key target); "vali lõik",
+  "vali viimased kolm sõna"; "loe viimane lause ette" through speech synthesis. REVIEW-R3 M5 (Docs gluing after
+  the 4 s reset) is fixed on a Docs stand-in. Proof: `npx vitest run src/core/inpage.test.ts
+  extension/src/engine.test.ts -t "document mode|pause|format|saada|loe"`; the suite's essay case
+  (`docs/proof/r8-essay.png`: sentence 2 in italics after "mine sõna paistab ette", "vali see lause",
+  "kaldkirja") and the Docs stand-in lines. Not verified: real Google Docs (the chords are the documented ones).
+- **Mail by voice** (29.3): "kirjuta meil Marile", "uus meil", "teema: Koosolek", "lisa koopia", "valmis" between
+  To, Cc, Subject and body (Tab inside the compose window), "saada" clicks Send (never Enter). `readPage` lists
+  the page's e-mail addresses and phone numbers as `contacts` (text, `mailto:`, `tel:`; decoys like a version, an
+  ID code, a price, a street number or a date are not contacts); the model may answer `composeTo` only with an
+  address the page holds (validated on the server and in the engine), which opens Gmail's compose URL in a new
+  tab with To and Subject filled and the body armed. "teema …" and "lisa koopia" act only inside a compose window;
+  elsewhere they are dictation (found in review). Proof: `npx vitest run src/core/mail.test.ts
+  src/core/contacts.test.ts src/core/pageIntent.test.ts -t "composeTo|mail"`; `server/intent.test.ts` ("logs the
+  kind and the time for a composeTo ask, never the address, the body or the page text"); the suite's cv.html and
+  Gmail stand-in lines (`docs/proof/r8-mail.png`); three eval cases on the CV fake (PASS). Not verified: every
+  Gmail selector (`extension/src/sites.ts` MAIL) on real Gmail; the read-backs of a real voice.
+- **Wake word and Minu kohad** (29.4): listening mode "Äratussõnaga": always listening, a final is acted on only
+  when it starts with the wake word (default "Ütle", a setting, phonetic match: "ütel" passes, "ütlesin" does not,
+  "ma tahtsin ütelda" does not); dictation into an armed box opens a 20 s window (amber disc on the microphone)
+  closed by silence, "aitab" or a send. Places: "vaata uudiseid", "pane raadio käima", "mis ilm on", "ava mu mail"
+  open his places (defaults: Postimees, Vikerraadio otse, Ilmateenistus, Gmail, Google Kalender, Google Maps,
+  YouTube); "lisa koht uudised" on any page saves that page under the noun, "eemalda koht uudised" removes it; the
+  settings page lists and edits them; the model sees the nouns only and may answer `place { noun }`. Proof:
+  `npx vitest run src/core/wake.test.ts src/core/places.test.ts extension/src/engine.test.ts
+  extension/src/offscreenMain.test.ts src/speech/local.test.ts -t "wake|window|place|phonetic"`; the suite's
+  places and wake lines (`docs/proof/r8-places.png`, `docs/proof/r8-wake-settings.png`); four eval cases (PASS);
+  60 s of pink noise through the detector: 0 finals. The always-on socket costs 230 MB an hour of audio
+  (float32). Not verified: a real microphone in wake mode for a day (false wakes, how often "Ütle" is misheard).
+- **Reading aloud** (29.5): "loe ette" reads the page's article (headline and paragraphs; nav, sidebar, footer,
+  banner left out), "loe see ette" the armed box, "loe valitud ette" the selection, "loe edasi" continues,
+  "stopp" / "aitab" / "paus" stops within 300 ms. The reader lives in the offscreen document on `speechSynthesis`,
+  sentence by sentence, first `et` voice; without one the bar says "Selles brauseris pole eesti häält. Edge'is
+  on." While an article is read the microphone stays live and the engine drops every word but a stop word (found
+  in review: with the microphone muted a person with no hands could not stop a reading). "Loe riba ette" (setting,
+  off) speaks each new amber line. **The measurement that decides the product route:** Chrome and Playwright's
+  Chromium have no Estonian voice (Chrome's 27 voices with network voices on: Google's 19, none `et`); Windows 11
+  has none; Microsoft Edge with network voices on has "Microsoft Anu Online (Natural)" and "Kert", usable from the
+  extension's offscreen document (0.7 s to the first word, 1 start in 18 failed). TartuNLP's public API is the
+  Chrome route (0.5 s for the first sentence, free, MIT code, model licence unstated), not built. Proof: `npx tsx
+  scripts/tts-voices.ts` (and `--edge-extension`, `--tartunlp`); `npx vitest run src/core/reading.test.ts
+  extension/src/engine.test.ts extension/src/offscreenMain.test.ts -t "read|voice|fail|riba"`; the suite's
+  news.html lines with a fake `speechSynthesis` (`docs/proof/r8-read.png`). Not verified: a human ear on Anu;
+  whether TalTech's model hears "stopp" over a loudspeaker; the 10 s TartuNLP sample is
+  `docs/proof/r8-read-tartunlp-mari.wav`.
+- **Dictation cleaning, scoping only** (29.6, FLOW): on a 20-line stand-in set (six lines are real decoder output
+  of the fixtures, fourteen written and spoken by TartuNLP's voice, then decoded), a cleaning prompt on Opus cuts
+  word error from 28 % to 3.5 to 4.2 % with 0 of 20 meaning changes in five runs (one the orchestrator's), p50
+  1.3 s, about $4 per 1000 utterances; Haiku is killed (2 to 3 of 20 meaning changes), Sonnet passes only with
+  structured output. The hazard found: the decoder hears the filler "ee" as "ei", and the cleaner then guesses
+  whether a mid-sentence "ei" is a negation; the proposed next step (ops on the box, a negation word never removed
+  or added except as the first word) is in 29.6. No code in the dictation path. Harness: `npx tsx
+  scripts/flow-eval.ts` on `scripts/fixtures/flow-set.tsv`. The real measurement needs Ralf's own 20 captured
+  finals (`UTLE_CAPTURE`, 1g).
+
+**The merged tree:** the final numbers (gate, suite, two voice runs) are in the round log in
+`docs/NEXT-SESSION.md`. The voice test ran on a dev server at port 5194: port 5193 was held by a process this
+session was not allowed to stop.
+
+**Not verified by anyone** (in addition to 1g and 1h): a real voice through any round 8 feature; real YouTube's
+player for the seek; real Google Docs; real Gmail's selectors; Edge with the extension in daily use; the wake
+word all day in a room; "stopp" over a loudspeaker; Ralf's own dictation through the cleaning prompt.
+
+**Known faults added this round:** in document mode a dictated sentence that starts with a command verb ("Ava
+uks oli lahti") is asked of the model, which usually answers dictate; a textarea over 500 characters anywhere (a
+long forum comment) is a document, so "saada" there says "Dokumendis ei saadeta." (click Send, or say "vajuta
+saada"); the wake word is matched on the first one or two words only, so "Ütle" said before a breath that the
+recogniser split off becomes its own final (the bare word opens the dictation window, which is the intended way
+to say it); in wake mode a woken command never opens the dictation window, only dictation does.
+
+**Ralf's thirty minutes stay as in the plan, section 2:** the Railway deploy (`docs/DEPLOY.md`), the ten-minute
+calibration with a friend (1g), and the read-backs on `fixtures/login.html`. Three new things to try first, in
+this order: on any news page say "loe ette" in Edge (network voices on in Edge's settings) and in Chrome (the
+bar must say there is no Estonian voice); on YouTube "keri edasi üks minut"; in Gmail "kirjuta meil <nimi>",
+"teema: proov", dictate, "saada".
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
