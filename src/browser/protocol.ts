@@ -227,6 +227,8 @@ export interface BoxState {
    * site's composer. Absent or false: a message box, as before.
    */
   document?: boolean
+  /** Round 8 (29.3.5): true for a field of a compose window (To, Cc, Subject, the body); "teema …" and "lisa koopia" act only there. */
+  mail?: boolean
 }
 
 export type BrowserFailure = 'no_extension' | 'no_target' | 'not_found' | 'not_allowed' | 'failed'

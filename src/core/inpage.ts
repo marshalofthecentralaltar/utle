@@ -4,7 +4,7 @@ import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './b
 import { endsWithConnective } from './chain.ts'
 import { closeSentence, lastSentenceOf } from './documentMode.ts'
 import { messageCommand, nameFromSpoken } from './message.ts'
-import { mailCommand } from './mail.ts'
+import { mailCommand, mailFieldCommand } from './mail.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
 import { savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
@@ -100,6 +100,9 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
   // "kinnita" / "logi sisse" submit, whatever the box holds; elsewhere the words keep their meaning.
   const formKey = box.present && box.armed && box.single === true && !session.asleep ? FORM_KEYS[normalise(utterance)] : undefined
   if (formKey !== undefined) return act(session, { kind: 'browser', command: { kind: 'pressKey', key: formKey } }, box)
+  // mail (29.3.2): "teema …" and "lisa koopia" only in a field of a compose window; elsewhere they are words.
+  const mailField = box.present && box.mail === true && !session.asleep ? mailFieldCommand(utterance) : null
+  if (mailField !== null) return act(session, { kind: 'browser', command: mailField }, box)
   const classified = documentClassified(classify(session, utterance), box)
   const spoken: Action = { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
   // One ordinary word while he is writing is a word of the message, not a command (section 22, "Soft words").

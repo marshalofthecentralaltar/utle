@@ -289,10 +289,10 @@ export function fieldKindOf(el: HTMLInputElement): FieldKind {
 export function boxState(el: HTMLElement | null, site: Site | null): BoxState {
   if (el === null) return { present: false, text: '', armed: false, kind: 'none' }
   const kind = boxKind(el, site)
-  const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el) }
-  if (!(el instanceof HTMLInputElement)) return documentBox(el, site, base)
-  // mail (29.3.5): To and Cc take addresses, Subject plain text, whatever their own clues say.
+  // mail (29.3.5): a field of a compose window says so; To and Cc take addresses, Subject plain text.
   const part = mailPartOf(el)
+  const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el), ...(part !== null ? { mail: true } : {}) }
+  if (!(el instanceof HTMLInputElement)) return documentBox(el, site, base)
   if (part === 'to' || part === 'cc') return { ...base, single: true, fieldKind: 'email' }
   if (part === 'subject') return { ...base, single: true, fieldKind: 'text' }
   return { ...base, single: true, fieldKind: kind === 'search' ? 'text' : fieldKindOf(el) }

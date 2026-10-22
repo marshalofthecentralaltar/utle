@@ -298,7 +298,8 @@ What the listing needs that the repository cannot hold:
   ready for your words; `kirjuta meil Marile, et tulen homme` writes the body too; `uus meil` opens an empty one
   with To ready. Off Gmail it opens Gmail's compose page in a new tab first. In the message, `teema Koosolek`
   writes the subject, `lisa koopia` (`lisa koopia Jaanile`) opens Cc, `valmis` or `järgmine väli` moves To,
-  Cc, Subject, body in turn, and `saada` clicks Send (never Enter, which is a new line in a mail). What you
+  Cc, Subject, body in turn, and `saada` clicks Send (never Enter, which is a new line in a mail). Only
+  in the message: anywhere else a sentence that begins with "teema" is typed like any other. What you
   say into To or Cc is written as an address ("ät", "punkt"). On any page the e-mail addresses and phone
   numbers it shows are read off it (text and links, at most 20), so `võta see meiliaadress siit lehelt ja
   kirjuta talle, et tulen homme` or `kirjuta talle meil` opens a new mail to that address; the model may only

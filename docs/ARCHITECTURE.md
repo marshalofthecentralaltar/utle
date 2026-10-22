@@ -1588,8 +1588,8 @@ means the window closed or the body emptied.
 
 **29.3.2 The rules** (`mailCommand`, tried in `inpage.ts` before the spelled values and the
 conversation rules, so "kirjuta meil Marile" is never a chat with "Meil Mari" nor the address
-"marile"; that hook and one line keeping mail out of the sound-alike corrections are the whole change
-to `inpage.ts`):
+"marile"; that hook, the compose-window hook for subject and Cc below, and one line keeping mail out of the
+sound-alike corrections are the whole change to `inpage.ts`):
 
 | Said | Command |
 |---|---|
@@ -1597,14 +1597,18 @@ to `inpage.ts`):
 | `kirjuta meil Marile, et tulen homme` | `compose { to: "Mari", body: "Tulen homme." }` |
 | `uus meil`, `uus kiri`, `kirjuta meil`, `new email`, `compose an email` | `compose {}` |
 | `write an email to Mari`, `send an email to Mari saying …` | `compose { to: "Mari" (, body) }` |
-| `teema Koosolek`, `teemaks koosolek`, `subject: Meeting` | `mailField { subject, "Koosolek" }` (first letter capitalised) |
-| `lisa koopia`, `lisa koopia Jaanile`, `add cc`, `add a cc to Jaan` | `mailField { cc (, "Jaan") }` |
+| `teema Koosolek`, `teemaks koosolek`, `subject: Meeting` (in a compose window only) | `mailField { subject, "Koosolek" }` (first letter capitalised) |
+| `lisa koopia`, `lisa koopia Jaanile`, `add cc`, `add a cc to Jaan` (in a compose window only) | `mailField { cc (, "Jaani") }` |
 | `saada`, `saada ära`, `send` | `pressSend` (unchanged) |
 | `valmis`, `järgmine väli`, `next field` in To or Subject | `pressKey Tab` (round 5's form keys: both are one-line fields) |
 
 A name must carry the allative ending (`…le`) in Estonian, so "kirjuta kirja lõppu" stays dictation.
-"teema …" at the start of an utterance is always the subject: a chat message that begins with the
-word "teema" is taken for it (off a compose window the page answers `not_found` and the strip says so).
+"teema …" and "lisa koopia" are mail commands only while the box in front is a field of a compose
+window (To, Cc, Subject or the body: the box reports `mail: true`, 29.3.5); `mailFieldCommand` is
+tried in `inpageStep` right after the form keys, for that box only. Everywhere else, in a chat box, a
+document or a form field, "Teema on huvitav, aga pikk" is dictation like any sentence. On Gmail with
+no compose field armed the words go to the model, which may answer `mailField`. "kirjuta meil …" and
+"uus meil" (`mailCommand`) work on any page.
 
 **29.3.3 Addresses on the page.** `readPage` adds `contacts: { kind: email | tel; value; label }[]`
 (absent when there are none): at most 20, the ones on screen first, each value once. Sources: the
@@ -1641,7 +1645,7 @@ which reads `to`, `su` and `body` from its query as Gmail does.
 
 **29.3.5 The compose window as one field group.** In a compose window the box reports, for the
 field under focus: To and Cc `single`, `fieldKind: email`; Subject `single`, `fieldKind: text`; the
-body `kind: composer`. So dictation into To is converted as an address ("ät", "punkt"), "valmis"
+body `kind: composer`; every one of them `mail: true`. So dictation into To is converted as an address ("ät", "punkt"), "valmis"
 moves To, Cc, Subject, body in turn (Tab inside the window walks the fields of the group, past the
 window's buttons), and "saada" from the body sends. The
 selectors are in `sites.ts` `MAIL`, each marked; **all unverified on real Gmail**: Compose

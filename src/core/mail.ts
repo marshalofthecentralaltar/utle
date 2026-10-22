@@ -41,7 +41,7 @@ function compose(name: string | undefined, body: string | undefined, lang: 'et' 
   return { kind: 'compose', ...(to !== undefined ? { to } : {}), ...(text !== '' ? { body: text } : {}) }
 }
 
-/** The mail command an utterance is, or null. */
+/** "kirjuta meil Marile", "uus meil": a new mail, on any page. Subject and Cc are mailFieldCommand. */
 export function mailCommand(utterance: string): BrowserCommand | null {
   const s = tidy(utterance)
   if (s === '') return null
@@ -50,6 +50,16 @@ export function mailCommand(utterance: string): BrowserCommand | null {
   if (et) return compose(et[1], et[2], 'et')
   const en = COMPOSE_EN.exec(s)
   if (en) return compose(en[1], en[2], 'en')
+  return null
+}
+
+/**
+ * "teema …" and "lisa koopia" (29.3.2), or null. Only for a box inside a compose window
+ * (box.mail): everywhere else a sentence that begins with "teema" is dictation.
+ */
+export function mailFieldCommand(utterance: string): BrowserCommand | null {
+  const s = tidy(utterance)
+  if (s === '') return null
   const subject = SUBJECT.exec(s)?.[1]?.trim()
   if (subject) return { kind: 'mailField', field: 'subject', text: capitalFirst(subject) }
   const cc = CC_ET.exec(s) ?? CC_EN.exec(s)

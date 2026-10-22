@@ -200,6 +200,8 @@ const BoxSchema = z.object({
   fieldKind: z.enum(['email', 'tel', 'code', 'number', 'password', 'text']).optional(),
   single: z.boolean().optional(),
   label: z.string().max(80).optional(),
+  // mail (29.3.5)
+  mail: z.boolean().optional(),
 })
 const MediaSchema = z.object({ playing: z.boolean(), muted: z.boolean(), volume: z.number().min(0).max(1), fullscreen: z.boolean() })
 
