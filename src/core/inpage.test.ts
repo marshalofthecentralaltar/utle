@@ -9,6 +9,8 @@ import { browserIntent } from './browserIntent.ts'
 import { STRINGS } from './strings.ts'
 import { deepFreeze } from './testUtil.ts'
 import type { SavedItem } from './saved.ts'
+import { COMMAND_WORDS, DOCUMENT_VERBS } from './inpage.ts'
+import { DOCUMENT_PAUSE_MS, documentPaused, lastSentenceOf } from './documentMode.ts'
 
 const ET = STRINGS.et
 const EN = STRINGS.en
