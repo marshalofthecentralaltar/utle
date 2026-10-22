@@ -1429,7 +1429,85 @@ lane; a lane writes only its own. Sections 29.5 and 29.6 are scoping lanes and e
 
 ### 29.5 Reading aloud: the measurement (READ lane)
 
-(filled by the READ lane)
+**Verdict: an Estonian voice exists in Microsoft Edge only** (two network voices, Anu and Kert).
+Playwright's Chromium and installed Google Chrome list none, so the reading feature was not built
+this round (the plan's gate: an `et` voice in the suite's Chromium or in Chrome). Measured on this
+machine (Windows 11 Pro 10.0.26200, English UI, Russian and English speech voices installed) on
+2026-10-22 with `npx tsx scripts/tts-voices.ts` (every browser headed, voices polled for up to 3 s,
+then five runs of `speak()` to `onstart` on a 214-word Estonian paragraph, each cancelled at
+`onstart`):
+
+| Browser | Voices | `et` voice | `speak()` to `onstart`, median of 5 |
+|---|---|---|---|
+| Playwright's Chromium 153.0.8010.12 | 8 (SAPI: en-GB George, Hazel, Susan; en-US David, Mark, Zira; ru-RU Irina, Pavel; all `localService`) | none | 169 ms (George; runs 545, 140, 169, 322, 149) |
+| Google Chrome 155.0.8059.41 | the same 8 | none | 153 ms (George; 213, 152, 161, 153, 149) |
+| Google Chrome, network voices on | the same 8 | none | 160 ms (George; 220, 163, 148, 160, 139) |
+| Microsoft Edge 153.0.4234.32 | the same 8 | none | 151 ms (George; 232, 153, 151, 151, 137) |
+| Microsoft Edge, network voices on | 329 | **et-EE "Microsoft Anu Online (Natural) - Estonian (Estonia)", et-EE "Microsoft Kert Online (Natural) - Estonian (Estonia)"**, both `localService: false` | 662 ms (Anu; 700, 1141, 651, 662, 545) |
+
+"Network voices on" drops Playwright's `--disable-component-extensions-with-background-pages`, which
+hides the browser's own online voices; a person's everyday Edge has them, so that row is what he
+would get. In Chrome dropping the flag surfaced no Google voices in a fresh profile; Google's own
+Chrome voices are not known to include Estonian either (not measured here). The local voices are
+the Windows SAPI voices of the installed language packs: Windows 11 offers no Estonian speech voice
+(Microsoft's "Supported languages and voices" list for Narrator and Settings > Time & language >
+Speech has Finnish "Heidi" and no Estonian), so no setting on the person's machine adds one to
+Chrome.
+
+What the numbers mean. The local voices start in about 150 ms, but none is Estonian: an English or
+Russian voice reads Estonian text with its own spelling rules (õ, ä, ö, ü, long vowels and double
+consonants), which we take to be unusable for a person who depends on hearing it (the owner's ear
+decides; not judged here). `src/speech/synth.ts` today asks for `et-EE`, finds no voice of that
+family and leaves the voice unset, so the dev page's reading is in the browser's default voice
+(George, English). Edge's Anu starts in about 0.66 s and is a natural Estonian neural voice, but it
+is a network voice: the text goes to Microsoft's service, it needs the internet, and whether an
+extension's offscreen document may use it (`speechSynthesis` there, or `chrome.tts`) is not
+measured. Ütle is a Chrome extension; Edge loads Chrome extensions, so "Ütle in Edge" is one route
+to Estonian reading without our own service. It is a product choice (which browser the person
+uses), not a lane's.
+
+**The proposal if he stays in Chrome: TartuNLP's speech synthesis through our server.** Found on
+2026-10-22:
+
+- Endpoint: `POST https://api.tartunlp.ai/text-to-speech/v2` with `{"text": "...", "speaker":
+  "mari", "speed": 1}` (text up to 10 000 characters, speed 0.5 to 2); the answer is one `audio/wav`
+  (32-bit float, mono, 22 050 Hz). `GET /v2` lists the speakers: albert, indrek, kalev, kylli, lee,
+  liivika, luukas, mari, meelis, peeter, tambet, vesta (Estonian) and sulev, hella (Võro). `POST
+  /v2/verbose` also returns the normalised text and durations. `scripts/fixture.ts` already uses
+  this endpoint to make test speech.
+- Latency, measured with `npx tsx scripts/tts-voices.ts --tartunlp` (speaker mari, five runs):
+  the first sentence (9 words, 3.6 s of audio) 504 ms median (648, 790, 479, 479, 504); the whole
+  214-word paragraph (89.4 s of audio) 6 377 ms median (8 725, 6 174, 5 891, 6 377, 8 825). It does
+  not stream, so reading must go sentence by sentence: about half a second to the first word, then
+  each next sentence fetched while the one before plays.
+- A 10 s sample of mari reading the paragraph's first two sentences, for the owner's ear:
+  `docs/proof/r8-read-tartunlp-mari.wav` (16-bit, 22 050 Hz).
+- Licence and use: the API and worker code are MIT (`TartuNLP/text-to-speech-api`,
+  `TartuNLP/text-to-speech-worker`); the API names terms of service at
+  `https://www.tartunlp.ai/andmekaitsetingimused` (a script-rendered page we could not read) and
+  states no key, quota or price. The model files' own licence is not stated in the releases. Before
+  a release: ask TartuNLP (ping@tartunlp.ai) whether a product's server may call the public API and
+  what it logs; a page's text is the person's data.
+- Cost: the public API is free and keyless today. Self-hosting is the API image
+  (`ghcr.io/tartunlp/text-to-speech-api`), a RabbitMQ broker and the worker image with the
+  multispeaker model (`multispeaker.zip`, 194 MB, release v3.1.0, plus a HiFi-GAN vocoder from
+  Hugging Face); TensorFlow and PyTorch on CPU, so it would not fit beside the speech model in the
+  current 1.22 GB image without a second service.
+- Design (not built): the extension sends the text to be read to a new server route
+  (`/api/speak`, the session's token), which splits it into sentences, asks TartuNLP for each in
+  turn and streams the wav chunks back on the socket; the offscreen document, which already owns the
+  audio devices, plays them with an `AudioContext` and reports start and end. While it plays, the
+  engine pauses listening (the microphone track is muted, or the recogniser is sent nothing), so
+  the speech detector (24.2) never sees the synthesised voice and nothing read aloud becomes a
+  final; "stopp" is then heard only between sentences unless listening continues with the speaker
+  gate on, which is the owner's choice of trade-off. The server never logs the text, like every
+  other route.
+
+Not built and not verified: the commands ("loe ette", "loe see ette", "loe edasi", "stopp"), the
+"Loe riba ette" setting, `fixtures/news.html` and its suite case, because no voice passed the gate.
+Not measured: how either Estonian voice sounds to a person (the owner's ear), Edge's network voices
+inside an extension's offscreen document, and a recording of Edge's Anu (the browser's speech output
+cannot be captured from a test without a loopback device).
 
 ### 29.6 Dictation cleaning: the measurement (FLOW lane)
 
