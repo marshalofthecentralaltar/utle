@@ -397,7 +397,8 @@ describe('reading aloud (29.5): the model may answer read', () => {
     walk(ANSWER_TOOL.input_schema)
     expect(found).toHaveLength(1)
     expect(found[0]?.required).toEqual(['kind', 'what'])
-    expect((found[0]?.properties as Record<string, unknown>).what).toEqual({ type: 'string', enum: ['page', 'box', 'selection', 'continue', 'stop'] })
+    const props = found[0]?.properties as Record<string, unknown> | undefined
+    expect(props?.what).toEqual({ type: 'string', enum: ['page', 'box', 'selection', 'continue', 'stop'] })
   })
 
   it('read: an answer of read page passes; an unknown what is unclear', async () => {
