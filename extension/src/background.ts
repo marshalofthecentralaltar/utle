@@ -11,6 +11,10 @@ import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.t
 import type { PageCommand } from './page.ts'
 import { SITES, siteOf } from './sites.ts'
 import type { SiteName, SiteSettings } from './sites.ts'
+// ---------- wake word and places (29.4) ----------
+import { PLACES_KEY, placeRowsFrom } from '../../src/core/places.ts'
+import { WAKE_WORD_KEY, wakeWordFrom } from '../../src/core/wake.ts'
+// ---------- end of wake word and places ----------
 
 /** Where the section 20 development page runs unless the options page says otherwise. */
 const DEFAULT_UTLE_URL = 'http://localhost:5173'
@@ -515,13 +519,44 @@ async function onlyOwner(): Promise<boolean> {
   return (await stored('onlyOwner')) === true
 }
 
+// ---------- wake word and places (29.4) ----------
+/** Round 8 (29.4.1): `&wake=<word>` while listenMode is wake, else ''. A changed word makes a new document. */
+async function wakeParam(): Promise<string> {
+  const { listenMode, [WAKE_WORD_KEY]: word } = await chrome.storage.local.get(['listenMode', WAKE_WORD_KEY])
+  return listenMode === 'wake' ? `&wake=${encodeURIComponent(wakeWordFrom(word))}` : ''
+}
+
+/** Round 8 (29.4.1): in wake mode listening starts by itself: at browser start, and when the mode or the word is set. */
+async function startIfWake(): Promise<void> {
+  if ((await stored('listenMode')) === 'wake') {
+    await toOffscreen('start')
+    return
+  }
+  // Out of wake mode: a document made for it is replaced (listening off), so no gate stays behind.
+  const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
+  if (contexts.some((c) => (c.documentUrl ?? '').includes('&wake='))) await ensureOffscreen()
+}
+chrome.runtime.onStartup.addListener(() => {
+  void startIfWake()
+})
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return
+  if (changes.listenMode !== undefined || changes[WAKE_WORD_KEY] !== undefined) void startIfWake()
+  // Round 8 (29.4.2): a change to his places reaches the engine at once, when it runs.
+  const places = changes[PLACES_KEY]
+  if (places === undefined) return
+  const message: ToOffscreen = { target: 'offscreen', type: 'places', rows: placeRowsFrom(places.newValue) }
+  chrome.runtime.sendMessage(message).catch(() => undefined)
+})
+// ---------- end of wake word and places ----------
+
 async function ensureOffscreen(): Promise<void> {
   const base = chrome.runtime.getURL('offscreen.html')
   // The engine, the only-owner mode and the server (27.3) are in the address, so a changed setting makes a new document on the next start.
   // The token rides here because an offscreen document can only use chrome.runtime, not the storage.
   const server = await connection()
   const token = server.token === '' ? '' : `&token=${encodeURIComponent(server.token)}`
-  const wanted = `${base}?asr=${encodeURIComponent(server.asrUrl)}${token}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}`
+  const wanted = `${base}?asr=${encodeURIComponent(server.asrUrl)}${token}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}${await wakeParam()}`
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
   const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
   if (existing && existing.documentUrl === wanted) return
@@ -631,6 +666,14 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       void Promise.all([chrome.storage.local.get(SAVED_KEY), chrome.storage.session.get(ENTRY_KEY)]).then(
         ([local, session]) => sendResponse({ items: savedFrom(local[SAVED_KEY]), entry: session[ENTRY_KEY] === true }),
         () => sendResponse({ items: [], entry: false }),
+      )
+      return true
+    }
+    case 'utle-places': {
+      // Round 8 (29.4.2): the offscreen engine cannot read storage; it asks once at start.
+      void chrome.storage.local.get(PLACES_KEY).then(
+        (local) => sendResponse({ rows: placeRowsFrom(local[PLACES_KEY]) }),
+        () => sendResponse({ rows: [] }),
       )
       return true
     }
