@@ -40,7 +40,7 @@ const SERVE_TOKEN = 't1'
 // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
 const headed = true
 
-type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string; fieldKind?: string; single?: boolean }
+type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string; fieldKind?: string; single?: boolean; mail?: boolean }
 type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean; contacts?: { kind: string; value: string; label: string }[] }
 type Result = { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxInfo; page?: PageInfo } | { ok: false; code: string; message: string }
 
@@ -836,11 +836,11 @@ async function main(): Promise<void> {
     // compose on Gmail: no window open now, so Compose ("Koosta") is clicked; To is armed and reports kind email.
     r = await send({ kind: 'compose' })
     record = await mailRecord()
-    line('compose', 'on Gmail with no window: Koosta clicked, To armed, single, fieldKind email', r !== 'timeout' && r.ok && record.clicks.includes('koosta') && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'email' && r.box.label === 'Saaja', `${describe(r)} clicks=${JSON.stringify(record.clicks)}`)
+    line('compose', 'on Gmail with no window: Koosta clicked, To armed, single, fieldKind email, mail', r !== 'timeout' && r.ok && record.clicks.includes('koosta') && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'email' && r.box.label === 'Saaja' && r.box.mail === true, `${describe(r)} clicks=${JSON.stringify(record.clicks)}`)
     await send({ kind: 'setText', text: 'Mari' })
     // "valmis" in To is pressKey Tab (src/core/mail.test.ts): the next field of the group, Subject.
     r = await send({ kind: 'pressKey', key: 'Tab' })
-    check('pressKey Tab ("valmis") in To: Subject armed, single, fieldKind text', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'text' && r.box.label === 'Teema', describe(r))
+    check('pressKey Tab ("valmis") in To: Subject armed, single, fieldKind text, mail', r !== 'timeout' && r.ok && r.box?.armed === true && r.box.single === true && r.box.fieldKind === 'text' && r.box.label === 'Teema' && r.box.mail === true, describe(r))
     r = await send({ kind: 'mailField', field: 'subject', text: 'Koosolek' })
     line('mailField', '"teema: Koosolek": Subject typed, the body armed next', r !== 'timeout' && r.ok && (await mailValue('subject')) === 'Koosolek' && r.box?.armed === true && r.box.kind === 'composer', `${describe(r)} subject=${JSON.stringify(await mailValue('subject'))}`)
     r = await send({ kind: 'mailField', field: 'cc' })
