@@ -193,49 +193,6 @@ const ROWS: Array<[string, BrowserCommand]> = [
   ['next field', { kind: 'pressKey', key: 'Tab' }],
 ]
 
-describe('browserIntent: the phrase table', () => {
-  it.each(ROWS)('%s', (text, command) => {
-    expect(browserIntent(text)).toEqual(command)
-  })
-})
-
-describe('browserIntent: what is not a browser command', () => {
-  it.each([
-    // Unknown site names go on to the interpreter.
-    'ava eelarve',
-    'mine kokkuvõtte juurde',
-    'ava kass',
-    'mine koju',
-    'ava aken',
-    'ava mari',
-    'open the budget section',
-    // The document's own words.
-    'järgmine',
-    'eelmine',
-    'go back',
-    'next',
-    'top',
-    // Sentences that only start like a command.
-    'ava messenger ja kirjuta Marile',
-    'vajuta',
-    'otsi',
-    'google',
-    'search',
-    'vaheleht',
-    'scroll',
-    '',
-    // Round 3: the word-bound editing forms live in inpage.ts, where the box text is known.
-    'mine sõna homme ette',
-    'vali homme',
-    'kustuta kolm tähte',
-    // Review R3 M6: "kustuta see" depends on what came before (a select, or the last utterance): inpage.ts.
-    'kustuta see',
-    'delete this',
-  ])('%s', (text) => {
-    expect(browserIntent(text)).toBeNull()
-  })
-})
-
 // ---------- document mode (29.2) ----------
 
 describe('format (29.2): the formatting phrases of the browser table', () => {
@@ -277,5 +234,48 @@ describe('format (29.2): the formatting phrases of the browser table', () => {
     expect(browserIntent('vali lõik')).toEqual({ kind: 'select', what: 'paragraph' })
     expect(browserIntent('vali see lõik')).toEqual({ kind: 'select', what: 'paragraph' })
     expect(browserIntent('select the paragraph')).toEqual({ kind: 'select', what: 'paragraph' })
+  })
+})
+
+describe('browserIntent: the phrase table', () => {
+  it.each(ROWS)('%s', (text, command) => {
+    expect(browserIntent(text)).toEqual(command)
+  })
+})
+
+describe('browserIntent: what is not a browser command', () => {
+  it.each([
+    // Unknown site names go on to the interpreter.
+    'ava eelarve',
+    'mine kokkuvõtte juurde',
+    'ava kass',
+    'mine koju',
+    'ava aken',
+    'ava mari',
+    'open the budget section',
+    // The document's own words.
+    'järgmine',
+    'eelmine',
+    'go back',
+    'next',
+    'top',
+    // Sentences that only start like a command.
+    'ava messenger ja kirjuta Marile',
+    'vajuta',
+    'otsi',
+    'google',
+    'search',
+    'vaheleht',
+    'scroll',
+    '',
+    // Round 3: the word-bound editing forms live in inpage.ts, where the box text is known.
+    'mine sõna homme ette',
+    'vali homme',
+    'kustuta kolm tähte',
+    // Review R3 M6: "kustuta see" depends on what came before (a select, or the last utterance): inpage.ts.
+    'kustuta see',
+    'delete this',
+  ])('%s', (text) => {
+    expect(browserIntent(text)).toBeNull()
   })
 })
