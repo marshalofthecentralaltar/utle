@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<title>Ütle logo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&display=swap">
+<style>
+/* Two square logos, 1024x1024 (LinkedIn wants at least 300, square): #mark is the "ü" alone for
+   small places, #word the full wordmark. Same wordmark as the site: lowercase Bricolage Grotesque
+   ExtraBold, the umlaut drawn as two green listening lights. Rendered by render-logo.mjs. */
+:root { --ground: #0c0e11; --ink: #f3f1ea; --mint: #3ddc84; --display: 'Bricolage Grotesque', sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #2a2c30; padding: 40px; display: flex; gap: 40px; }
+.logo { width: 1024px; height: 1024px; background: var(--ground); display: grid; place-items: center; color: var(--ink);
+  font-family: var(--display); font-weight: 800; letter-spacing: -0.04em; line-height: 1; font-variation-settings: 'opsz' 96; }
+.u { position: relative; display: inline-block; }
+.u i { position: absolute; top: .11em; width: .14em; height: .14em; border-radius: 50%; background: var(--mint); }
+.u i:first-child { left: .02em; } .u i:last-child { left: .24em; }
+#mark { font-size: 720px; } #mark .u { top: .02em; }
+#word { font-size: 330px; } #word span { position: relative; top: .02em; } #word .u i { top: .04em; }
+</style>
+</head>
+<body>
+<div class="logo" id="mark"><span class="u">u<i></i><i></i></span></div>
+<div class="logo" id="word"><span><span class="u">u<i></i><i></i></span>tle</span></div>
+</body>
+</html>

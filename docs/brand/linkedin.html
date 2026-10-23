@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ütle LinkedIn</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,800&family=Manrope:wght@500;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Two canvases for LinkedIn: #square is the 4:5 feed image (1080x1350), #wide the 1.91:1 link card (1200x627).
+   Rendered at 2x by render.mjs. Brand: the poster's wordmark, the approved bar, green = listening, amber = done. */
+:root {
+  --ground: #0c0e11; --panel: #15181d; --ink: #f3f1ea; --ink-2: #a9aba3; --ink-3: #62655f;
+  --line: rgba(255,255,255,.09); --line-2: rgba(255,255,255,.16);
+  --mint: #3ddc84; --mint-ink: #08200f; --amber: #f0b429;
+  --display: 'Bricolage Grotesque', 'Segoe UI', sans-serif;
+  --text: 'Manrope', 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #2a2c30; font-family: var(--text); color: var(--ink); display: grid; gap: 40px; padding: 40px; justify-content: start; }
+.canvas { position: relative; overflow: hidden; background: var(--ground); }
+
+/* the wordmark: lowercase, the umlaut drawn as two listening lights */
+.mark { font-family: var(--display); font-weight: 800; letter-spacing: -0.03em; line-height: .8; display: inline-flex; align-items: flex-end; font-variation-settings: 'opsz' 96; }
+.mark .u { position: relative; display: inline-block; }
+.mark .u i { position: absolute; top: -0.13em; width: .13em; height: .13em; border-radius: 50%; background: var(--mint); }
+.mark .u i:first-child { left: .015em; } .mark .u i:last-child { left: .235em; }
+
+.said { font-family: var(--mono); color: var(--ink); letter-spacing: -0.01em; }
+.said::before { content: '„'; color: var(--ink-3); } .said::after { content: '“'; color: var(--ink-3); }
+.done { color: var(--amber); font-weight: 700; display: flex; align-items: center; gap: .6em; }
+.done::before { content: ''; width: .42em; height: .42em; border-radius: 50%; background: var(--amber); flex: none; }
+
+/* the bar, as in the approved UI mock */
+.bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; background: #14171b; border-top: 1px solid var(--line-2); }
+.tile { position: relative; flex: none; display: grid; place-items: center; background: var(--mint); color: var(--mint-ink); }
+.tile .ring { position: absolute; border: 2px solid var(--mint); opacity: .45; }
+.tile .waves { display: flex; align-items: center; }
+.tile .waves i { display: block; border-radius: 3px; background: currentColor; }
+.tile .lbl { position: absolute; font-weight: 800; letter-spacing: .06em; }
+.heard { font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+.chips { display: flex; }
+.chip { font-weight: 700; color: var(--ink-2); border: 1px solid var(--line-2); border-radius: 999px; display: inline-flex; align-items: center; }
+.chip::before { content: ''; border-radius: 50%; background: var(--mint); }
+.chip.plain::before { display: none; }
+
+/* ---------- 4:5 ---------- */
+#square { width: 1080px; height: 1350px; padding: 84px 84px 0; }
+#square .top { display: flex; justify-content: space-between; align-items: flex-start; }
+#square .mark { font-size: 212px; margin-top: 36px; }
+#square .win { text-align: right; font-size: 17px; line-height: 1.6; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2); padding-top: 14px; }
+#square .win b { color: var(--ink); font-weight: 700; display: block; }
+#square h1 { font-family: var(--display); font-weight: 500; font-size: 66px; line-height: 1.02; letter-spacing: -0.03em; margin-top: 76px; font-variation-settings: 'opsz' 72; }
+#square h1 em { font-style: normal; color: var(--ink-2); }
+#square .log { margin-top: 72px; display: grid; gap: 40px; }
+#square .log .said { font-size: 36px; }
+#square .log .done { font-size: 24px; margin-top: 12px; }
+#square .wave { position: absolute; left: 84px; right: 84px; bottom: 236px; height: 54px; display: flex; align-items: center; justify-content: space-between; }
+#square .wave i { width: 6px; border-radius: 3px; background: var(--line-2); }
+#square .wave i.on { background: var(--mint); }
+#square .bar { height: 196px; padding: 0 56px 0 56px; gap: 34px; }
+#square .tile { width: 124px; height: 124px; border-radius: 34px; }
+#square .tile .ring { inset: -9px; border-radius: 42px; }
+#square .tile .waves { gap: 6px; height: 40px; margin-bottom: 18px; }
+#square .tile .waves i { width: 6px; }
+#square .tile .lbl { bottom: 14px; font-size: 15px; }
+#square .heard { font-size: 42px; }
+#square .bar .line { font-size: 23px; color: var(--amber); font-weight: 700; margin-top: 10px; }
+#square .chips { gap: 10px; margin-top: 16px; }
+#square .chip { font-size: 15px; padding: 6px 14px; gap: 8px; }
+#square .chip::before { width: 8px; height: 8px; }
+
+/* ---------- 1.91:1 teaser banner ---------- */
+#wide { width: 1200px; height: 627px; padding: 70px 76px 0; display: grid; grid-template-columns: auto 1fr; column-gap: 72px; align-items: end; align-content: start; }
+#wide .mark { font-size: 220px; margin-top: 30px; }
+#wide .right { padding-bottom: 10px; }
+#wide h1 { font-family: var(--display); font-weight: 500; font-size: 44px; line-height: 1.04; letter-spacing: -0.03em; font-variation-settings: 'opsz' 72; }
+#wide h1 em { font-style: normal; color: var(--ink-2); }
+#wide .right p { margin-top: 20px; font-size: 19px; color: var(--ink-2); }
+#wide .wave { position: absolute; left: 76px; right: 76px; bottom: 156px; height: 40px; display: flex; align-items: center; justify-content: space-between; }
+#wide .wave i { width: 5px; border-radius: 3px; background: var(--line-2); }
+#wide .wave i.on { background: var(--mint); }
+#wide .bar { height: 124px; padding: 0 44px; gap: 26px; }
+#wide .tile { width: 84px; height: 84px; border-radius: 25px; }
+#wide .tile .ring { inset: -6px; border-radius: 30px; }
+#wide .tile .waves { gap: 4px; height: 26px; margin-bottom: 12px; }
+#wide .tile .waves i { width: 4px; }
+#wide .tile .lbl { bottom: 9px; font-size: 11px; }
+#wide .heard { font-size: 30px; }
+#wide .bar .line { font-size: 18px; color: var(--amber); font-weight: 700; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<section class="canvas" id="square">
+  <div class="top">
+    <div class="mark" aria-label="ütle"><span class="u"><i></i><i></i>u</span>tle</div>
+    <div class="win"><b>Ütle</b>Estonian for „say“</div>
+  </div>
+
+  <h1>Write messages and use the web <em>by speaking Estonian</em></h1>
+
+  <div class="log">
+    <div><div class="said">kirjuta Marile, et jõuan kell viis</div><div class="done">Opened the chat with Mari. Written.</div></div>
+    <div><div class="said">mitte viis, vaid kuus</div><div class="done">Fixed: five becomes six.</div></div>
+    <div><div class="said">saada</div><div class="done">Sent.</div></div>
+  </div>
+
+  <div class="wave" id="wave1"></div>
+
+  <div class="bar">
+    <div class="tile"><span class="ring"></span><span class="waves"><i style="height:14px"></i><i style="height:32px"></i><i style="height:22px"></i><i style="height:38px"></i><i style="height:16px"></i></span><span class="lbl">KUULAN</span></div>
+    <div>
+      <div class="heard">saada</div>
+      <div class="line">Saadetud Marile.</div>
+      <div class="chips"><span class="chip">Sinu hääl</span><span class="chip">Eesti keel, TalTechi mudel</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="canvas" id="wide">
+  <div class="mark" aria-label="ütle"><span class="u"><i></i><i></i>u</span>tle</div>
+  <div class="right">
+    <h1>Write messages and use the web <em>by speaking Estonian</em></h1>
+    <p>A Chrome extension for people who cannot use their hands.</p>
+  </div>
+  <div class="wave" id="wave2"></div>
+  <div class="bar">
+    <div class="tile"><span class="ring"></span><span class="waves"><i style="height:10px"></i><i style="height:22px"></i><i style="height:15px"></i><i style="height:26px"></i><i style="height:11px"></i></span><span class="lbl">KUULAN</span></div>
+    <div>
+      <div class="heard">kirjuta Marile, et jõuan kell viis</div>
+      <div class="line">Avasin vestluse Mariga. Kirjutatud.</div>
+    </div>
+  </div>
+</section>
+
+<script>
+  // The poster's waveform: quiet bars, a lit stretch where speech was heard. Seeded so every render is identical.
+  let s = 7; const rnd = () => (s = (s * 9301 + 49297) % 233280) / 233280;
+  for (const [id, n, top] of [['wave1', 78, 54], ['wave2', 92, 40]]) {
+    const w = document.getElementById(id);
+    for (let i = 0; i < n; i++) {
+      const on = i > n * .36 && i < n * .66; const edge = Math.min(i, n - 1 - i) / 12;
+      const h = on ? top * .4 + rnd() * top * .6 : Math.max(5, Math.min(1, edge) * (5 + rnd() * top * .48));
+      const b = document.createElement('i'); b.style.height = h.toFixed(0) + 'px'; if (on) b.className = 'on'; w.appendChild(b);
+    }
+  }
+</script>
+</body>
+</html>

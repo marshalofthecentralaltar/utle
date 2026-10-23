@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LinkedIn profile banner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&display=swap">
+<style>
+/* Ralf's LinkedIn profile banner, 1584x396. The profile photo covers the bottom-left quarter
+   (on the phone it sits lower and further left), so the content sits in the right half,
+   vertically centred. Three names, nothing else; the headline under the photo says what they are.
+   Rendered at 2x by render-profile.mjs. */
+:root { --ground: #0c0e11; --ink: #f3f1ea; --ink-2: #a9aba3; --mint: #3ddc84; --display: 'Bricolage Grotesque', 'Segoe UI', sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #2a2c30; padding: 40px; }
+#banner { position: relative; width: 1584px; height: 396px; background: var(--ground); overflow: hidden; }
+.names { position: absolute; right: 96px; top: 50%; transform: translateY(-50%); display: flex; align-items: baseline; gap: 72px;
+  font-family: var(--display); font-weight: 800; font-size: 64px; letter-spacing: -0.03em; line-height: 1; color: var(--ink); font-variation-settings: 'opsz' 96; }
+.names .dim { color: var(--ink-2); }
+.u { position: relative; display: inline-block; }
+.u i { position: absolute; top: -0.14em; width: .14em; height: .14em; border-radius: 50%; background: var(--mint); }
+.u i:first-child { left: .02em; } .u i:last-child { left: .24em; }
+.dot { color: var(--mint); }
+</style>
+</head>
+<body>
+<div id="banner">
+  <div class="names">
+    <span><span class="u">u<i></i><i></i></span>tle</span>
+    <span>unicorns<span class="dot">.</span>ee</span>
+    <span class="dim">Emerge</span>
+  </div>
+</div>
+</body>
+</html>
