@@ -331,7 +331,8 @@ Built on branch `r7-host` (`docs/ARCHITECTURE.md` 27.6 and 27.7; `docs/DEPLOY.md
 - `scripts/asr-client.ts <ws(s)://…/api/asr?token=…> <wav> [--enrol 2]` streams a recording to any
   server the way the extension does.
 
-Not verified: no Railway deploy (the CLI is not logged in), no real voice over the internet, the
+Deployed to Railway on 2026-10-23 (`docs/DEPLOY.md` has the address and the three checks' numbers; the
+internet adds about 740 ms to the recorded dictation). Not verified: no real voice over the internet, the
 latency over a real network. The recorded fixtures are quiet: only `et-sentence-16k.wav` has the two
 seconds of speech an enrolment needs within its patience window.
 
@@ -376,7 +377,7 @@ Plan: `docs/plans/2026-10-22-round-8-plan.md`. Spec: `docs/ARCHITECTURE.md` sect
 per lane). Six lanes on Opus 5.5 in their own worktrees, reviewed by the orchestrator with the full diff and
 every proof re-run, merged into `main` in the order MEDIA, FLOW, DOCS, MAIL, WAKE, READ. Push to origin is
 disabled in this checkout, so `main` is local only. The two gates only Ralf can pass were both unmet when the
-round started and are still unmet: no Railway project (`railway whoami`: Unauthorized) and no calibration line
+round started: the Railway deploy was done on 2026-10-23 (`docs/DEPLOY.md`), still unmet is the calibration line
 from his voice (1g). Nothing below has met a real voice, a real Gmail, a real Google Docs or Edge in daily use.
 
 **What works now, and by what it is proven** (every proof was run by the orchestrator on the merged tree, not

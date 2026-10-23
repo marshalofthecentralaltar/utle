@@ -2,8 +2,16 @@
 
 This takes about fifteen minutes the first time, most of it Railway building the image. Run every
 command from the repository root (`C:\Users\ralfs\utle-cloud`) on `main`, in PowerShell. Design:
-`docs/ARCHITECTURE.md` 27. Nothing below has been run against Railway yet. The image was built
-and run locally first (section 27.7 has the numbers).
+`docs/ARCHITECTURE.md` 27. Run for the first time on 2026-10-23: project `utle`, service `utle-server`, address
+`https://utle-server-production.up.railway.app`, deployment `96d66e2a` SUCCESS, volume `utle-server-volume`
+at `/data`, tokens for `ralf` and `kasutaja`. The three checks below passed that day: `/healthz` 200,
+`/api/status` 401 bare and `"auth":"on"`, `"profile":{"name":"ralf","enrolled":false}` with the token,
+and the recorded dictation came back as `"Tere, Mari. Ma jõuan homme kell kolm. Saada"` (same words as
+the local server, different punctuation) in 2432 ms from the last speech to the last final, 689 ms
+connect to ready. Against 1691 ms in the local container, the internet adds about 740 ms. The deploy
+log showed `[asr] model loaded on a worker thread in 4411 ms`, `[asr] speaker model loaded; 2 profiles,
+0 enrolled`, `[asr] vad model loaded`. The image was built and run locally first (section 27.7 has
+the numbers).
 
 ## What it costs and what it needs
 
