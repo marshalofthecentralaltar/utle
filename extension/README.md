@@ -27,9 +27,22 @@ From the repository root:
    server's log lines" below).
 2. Open `chrome://extensions`, turn on **Developer mode** (top right).
 3. **Load unpacked**, choose the `extension/` folder (not `dist/`).
-4. Pin the Ütle icon (puzzle piece, then the pin).
-5. If the server runs at another address, set it on the settings page under **Server** (see "Hosted
-   server" below); it takes effect the next time listening is turned on.
+4. Right after loading, the welcome page **Alustamine** opens by itself (ARCHITECTURE 30.1). A
+   helper walks its five cards, each a large button that takes a click or a 1 s dwell, Estonian
+   first with English under it:
+   1. **Mikrofon**: Chrome asks to use the microphone; press **Allow**. The card ticks.
+   2. **Kõneserver**: **Samas arvutis** when `npm run dev` runs on this computer, or **Teises
+      arvutis** with the server's address (`wss://…/api/asr`) and võti. **Proovi ühendust** says
+      "Ühendus töötab" and the profile, "Vale võti." or "Ei saa ühendust." with what to do.
+   3. **Proovi**: press the microphone on the bar and say "tere"; the word lands in the box and the
+      card says "Töötab."
+   4. **Hääl** (optional): **Õpeta mu hääl lausetega** opens the settings page at Minu hääl.
+   5. **Valmis**: three phrases to start with, **Abi** and **Seaded**.
+5. Pin the Ütle icon (puzzle piece, then the pin). Right-click it for **Alustamine**, **Seaded** and
+   **Abi**. By voice, "ava juhend" or "alustamine" ("setup", "open the guide") opens the welcome page
+   again.
+6. If the server runs at another address, the welcome page's step 2 or the settings page's **Server**
+   (see "Hosted server" below) sets it; it takes effect the next time listening is turned on.
 
 ## Soniox instead of the local model (optional)
 
@@ -160,10 +173,21 @@ What the listing needs that the repository cannot hold:
 
 ## Grant the microphone (once, done by a helper)
 
-1. Right after loading, a tab "Ütle vajab mikrofoni" opens by itself.
-2. Chrome asks to use the microphone: press **Allow**.
-3. The tab closes itself. That is all; it does not come back unless the permission is removed.
-4. If it was refused, turning the microphone on opens the same tab again; press **Allow** there.
+1. Step 1 of the welcome page asks as soon as it opens: press **Allow** in Chrome's question.
+2. Refused: the card says how to allow it (the lock icon in the address bar) and shows **Proovi
+   uuesti**.
+3. If the permission is removed later, turning the microphone on opens the small "Ütle vajab
+   mikrofoni" tab, which asks again and closes itself.
+
+## The connection dot and the server-down lines (round 9, ARCHITECTURE 30.1)
+
+A dot in the top-left corner of the microphone square: green **Ühendatud**, amber **Ühendan**, red
+**Server ei vasta** (the word shows on hover). While listening, a lost or refused connection is
+tried again after 1, 2, 4 and then every 5 s, and the bar says once "Kõneserver ei vasta. Palu
+abilisel see käivitada (npm run dev)." (a local address) or "Kõneserver ei vasta. Kontrolli
+internetiühendust või palu abilisel vaadata serverit." (a hosted one); a wrong token keeps "Serveri
+võti on vale.". When the server answers again the microphone reopens by itself and the bar says
+"Server vastab jälle." once.
 
 ## Use
 

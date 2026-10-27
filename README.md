@@ -117,8 +117,10 @@ Every step is run from a terminal. Steps 1 to 5 are done once.
    1. Open `chrome://extensions`.
    2. Turn on **Developer mode** (top right).
    3. Press **Load unpacked** and choose the `extension` folder inside `utle` (not `extension/dist`).
-   4. A tab "Ütle vajab mikrofoni" opens by itself. When Chrome asks to use the microphone, press
-      **Allow**. The tab closes itself.
+   4. The welcome page **Alustamine** opens by itself. Walk its five cards: allow the microphone,
+      choose where the server runs (**Samas arvutis**, or **Teises arvutis** with its address and
+      võti) and press **Proovi ühendust**, then say "tere" into the test box. Right-click the Ütle
+      icon, or say "ava juhend", to open it again.
    5. Pin the Ütle icon: the puzzle piece in the toolbar, then the pin.
    6. Open a new tab. If Chrome asks whether to keep the changed new-tab page, choose **Keep it**.
 

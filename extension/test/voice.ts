@@ -27,6 +27,7 @@ const ASR = `ws://localhost:${PORT}/api/asr`
 const proof = (name: string): string => join(repoRoot, 'docs/proof', name)
 
 interface Measure {
+  connection?: string
   strip: { left: number; top: number; width: number; height: number }
   mic: { left: number; top: number; width: number; height: number }
   micState: string
@@ -119,13 +120,19 @@ async function launch(extensionDir: string, wav: string | null): Promise<Session
   // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
   const ctx = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: false, viewport: { width: 1280, height: 800 }, args })
   const permission: Session['permission'] = { opened: 0, closedAfterMs: null }
+  // Round 9 (30.1): the install opens the welcome page; its step 1 asks for the microphone. Once
+  // that card ticks the test closes it, as the old permission page closed itself.
   const watch = (p: Page): void => {
-    if (!p.url().includes('/permission.html')) return
+    if (!p.url().includes('/welcome.html')) return
     permission.opened += 1
     const t0 = Date.now()
     p.on('close', () => {
       permission.closedAfterMs = Date.now() - t0
     })
+    void p
+      .waitForSelector('#stepMic[data-done="true"]', { timeout: 8000 })
+      .then(() => p.close())
+      .catch(() => undefined)
   }
   ctx.on('page', (p) => {
     // The url is known once it commits.
@@ -210,7 +217,7 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
     await page.bringToFront()
     await page.waitForFunction(() => (window as unknown as { lexicalReady?: boolean }).lexicalReady === true)
     const permissionClosed = await waitUntil(async () => s.permission.closedAfterMs !== null, 8000)
-    check('7. permission page opened on install and closed itself', s.permission.opened === 1 && permissionClosed, `opened=${s.permission.opened} closed after ${s.permission.closedAfterMs} ms`)
+    check('7. welcome page opened on install, its microphone step ticked', s.permission.opened === 1 && permissionClosed, `opened=${s.permission.opened} closed after ${s.permission.closedAfterMs} ms`)
 
     await sleep(1200)
     const m = await stripChecks(s.sw, page, CHAT, '#composer', '4. chat fixture (composer at the bottom, % heights)')
@@ -446,22 +453,26 @@ async function serverDown(extensionDir: string): Promise<void> {
     await sleep(10_000)
     const st = await state(s.sw)
     const shown = await measure(s.sw, url)
-    console.log(`      after 10 s: listening=${st?.listening} connects=${st?.connects} strip line=${JSON.stringify(shown?.line)}`)
-    check('6. strip says plainly that the speech model is not reachable', shown?.line === STRINGS.et.strip.modelUnreachable && st?.listening === false)
-    check('6. no retry storm: at most 3 connection attempts in 10 s', (st?.connects ?? 99) <= 3, `connects=${st?.connects}`)
+    console.log(`      after 10 s: listening=${st?.listening} connects=${st?.connects} strip line=${JSON.stringify(shown?.line)} dot=${shown?.connection}`)
+    // Round 9 (30.1): a local address says the local line, listening stays on, the dot is red.
+    check('6. strip says the local server-down line, listening stays on', shown?.line === STRINGS.et.strip.serverDownLocal && st?.listening === true && shown?.connection === 'down', JSON.stringify(shown?.line))
+    // Tries after 1, 2, 4 then every 5 s: four in the first 10 s.
+    check('6. no retry storm: at most 5 connection attempts in 10 s', (st?.connects ?? 99) <= 5, `connects=${st?.connects}`)
     await page.screenshot({ path: proof('inpage-unreachable.png') })
 
     console.log(`      START THE DEV SERVER NOW (npx vite --port ${PORT} --strictPort); waiting up to 90 s`)
     const up = await waitUntil(serverUp, 90_000)
     if (!up) throw new Error('the dev server did not come up')
-    await sleep(6000)
-    await page.mouse.click(m.mic.left + m.mic.width / 2, m.mic.top + m.mic.height / 2)
-    await page.mouse.move(640, 200)
-    await sleep(4000)
-    const back = await state(s.sw)
+    // No toggle: the next try (at most 5 s later) finds it, once the model has loaded.
+    const back = await waitUntil(async () => (await state(s.sw))?.line === STRINGS.et.strip.serverBack, 120_000)
+    await sleep(3000)
+    const now = await state(s.sw)
     const line = await measure(s.sw, url)
-    console.log(`      after toggling again: listening=${back?.listening} problem=${JSON.stringify(back?.problem)} micOpens=${back?.micOpens} strip line=${JSON.stringify(line?.line)}`)
-    check('6. with the server back, toggling again recovers', back?.listening === true && back.problem === '' && back.micOpens === 1)
+    const downs = s.trail.filter((e) => e.includes(JSON.stringify(STRINGS.et.strip.serverDownLocal))).length
+    const backs = s.trail.filter((e) => e.includes(`line=${JSON.stringify(STRINGS.et.strip.serverBack)}`)).length
+    console.log(`      back by itself: listening=${now?.listening} problem=${JSON.stringify(now?.problem)} micOpens=${now?.micOpens} strip line=${JSON.stringify(line?.line)} dot=${line?.connection}; down-line states seen ${downs}, back-line states seen ${backs}`)
+    check('6. with the server back, "Server vastab jälle." once, microphone open, no toggle', back && backs === 1 && now?.listening === true && now.problem === '' && now.micOpens === 1 && line?.connection === 'connected')
+    check('6. the down line was shown for one outage only (one run of trail states)', downs >= 1 && s.trail.findIndex((e) => e.includes(JSON.stringify(STRINGS.et.strip.serverDownLocal))) + downs - 1 === s.trail.map((e, i) => (e.includes(JSON.stringify(STRINGS.et.strip.serverDownLocal)) ? i : -1)).filter((i) => i >= 0).pop())
   } finally {
     await close(s)
   }

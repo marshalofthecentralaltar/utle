@@ -1519,7 +1519,10 @@ async function main(): Promise<void> {
         const okClass = await page.evaluate(() => document.getElementById('stepServerResult')?.classList.contains('ok') === true)
         check('welcome-server: the right token reads "Ühendus töötab" and the profile line, green; the card ticks', right.startsWith('Ühendus töötab') && right.endsWith('Profiil: ralf, hääl õpetamata.') && okClass && (await page.getAttribute('#stepServer', 'data-done')) === 'true', JSON.stringify(right))
         check('connection dot: data-connection connecting / down / connected, with the Estonian word', amber?.connection === 'connecting' && amber.connectionWord === 'Ühendan' && red?.connection === 'down' && red.connectionWord === 'Server ei vasta' && green?.connection === 'connected' && green.connectionWord === 'Ühendatud', JSON.stringify([amber, red, green]))
-        await page.locator('#stepServer').evaluate((el) => el.scrollIntoView({ block: 'center' }))
+        // Tall enough that the card sits whole above the strip along the bottom.
+        await page.setViewportSize({ width: 1280, height: 1500 })
+        await page.locator('#stepServer').evaluate((el) => el.scrollIntoView({ block: 'start' }))
+        await page.waitForTimeout(200)
         await page.locator('#stepServer').screenshot({ path: join(repoRoot, 'docs/proof/r9-welcome-server.png') })
         // The dot, with its word shown while the pointer is on the microphone (moved off before the 1 s dwell).
         const m = (await sw.evaluate(async (id) => chrome.tabs.sendMessage(id, { type: 'utle-strip-measure' }), tabId)) as { mic: { left: number; top: number; width: number; height: number } }
@@ -1552,8 +1555,13 @@ async function main(): Promise<void> {
       const ticked = await waitUntil(async () => (await page.getAttribute('#stepTry', 'data-done')) === 'true', 4000)
       const works = (await page.locator('#stepTryResult').textContent()) ?? ''
       line('setText', 'welcome: "tere" into the armed demo box, card ticks', box.armed && typed && demoText.trim().toLowerCase().replace(/[^\p{L}]/gu, '') === 'tere' && ticked && works === 'Töötab.', `box=${JSON.stringify(box)} commands=${JSON.stringify(step.commands)} demo=${JSON.stringify(demoText)} result=${JSON.stringify(works)}`)
+      // The whole page in one viewport, so the strip is at the bottom where it belongs (fullPage would draw it mid-page).
+      const tall = await page.evaluate(() => document.documentElement.scrollHeight)
+      await page.setViewportSize({ width: 1280, height: Math.min(tall, 4000) })
       await page.evaluate(() => window.scrollTo(0, 0))
-      await page.screenshot({ path: join(repoRoot, 'docs/proof/r9-welcome.png'), fullPage: true })
+      await page.waitForTimeout(300)
+      await page.screenshot({ path: join(repoRoot, 'docs/proof/r9-welcome.png') })
+      await page.setViewportSize({ width: 1280, height: 800 })
 
       // The toolbar menu's handler: Alustamine, Seaded, Abi.
       const callMenu = async (id: string): Promise<void> => sw.evaluate(async (item) => (globalThis as unknown as { __utleMenu: (i: string) => Promise<void> }).__utleMenu(item), id)
