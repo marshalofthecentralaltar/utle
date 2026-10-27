@@ -55,7 +55,14 @@ export function splitSentences(text: string): string[] {
   return out.flatMap(cutLong)
 }
 
-/** What a reading speaks: the blocks joined (capped at READ_MAX_CHARS) and their sentences in order. */
+/** A sentence as compared with its neighbour: small letters, without its closing marks. */
+const sameKey = (sentence: string): string => sentence.toLowerCase().replace(/[.!?…"'”»)\]\s]+$/u, '')
+
+/**
+ * What a reading speaks: the blocks joined (capped at READ_MAX_CHARS) and their sentences in order.
+ * A sentence that repeats the one right before it is not spoken again (a lead that opens with the
+ * headline, as on err.ee, 30.4); the text keeps it.
+ */
 export function readingText(blocks: readonly string[]): { text: string; sentences: string[] } {
   const parts: string[] = []
   const sentences: string[] = []
@@ -86,7 +93,8 @@ export function readingText(blocks: readonly string[]): { text: string; sentence
     }
     break
   }
-  return { text: parts.join('\n\n'), sentences }
+  const spoken = sentences.filter((sentence, k) => k === 0 || sameKey(sentence) !== sameKey(sentences[k - 1] ?? ''))
+  return { text: parts.join('\n\n'), sentences: spoken }
 }
 
 /**
