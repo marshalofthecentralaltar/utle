@@ -15,7 +15,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const extensionDir = join(repoRoot, 'extension')
 
 /** What the store gets: the manifest, the pages, the bundles, the relay and the icons. */
-export const PACKED_FILES = ['manifest.json', 'options.html', 'offscreen.html', 'permission.html', 'newtab.html', 'help.html', 'relay.js'] as const
+export const PACKED_FILES = ['manifest.json', 'options.html', 'offscreen.html', 'permission.html', 'newtab.html', 'welcome.html', 'help.html', 'relay.js'] as const
 export const PACKED_DIRS = ['dist', 'icons'] as const
 
 interface Entry {
