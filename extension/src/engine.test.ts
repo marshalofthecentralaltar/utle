@@ -10,6 +10,8 @@ import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COM
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
+import { SPEAKER_REASONS, verdictFor } from '../../src/speech/asrProtocol.ts'
+import type { SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
 
 const logic: InpageLogic = {
   initialInpage: (lang) => ({ lang, asleep: false, hints: false, undo: [] }),
@@ -81,6 +83,8 @@ interface Options {
   wakeWord?: string
   /** Round 9 (30.1): the server's address is hosted (wss://, or another host). */
   hosted?: boolean
+  /** Issue #3 (B): Kuula ainult mind is on: nothing speech-driven runs without a verified owner decision. */
+  onlyOwner?: boolean
 }
 
 const ITEMS = [
@@ -180,6 +184,7 @@ function setup(options: Options = {}) {
     status: () => Promise.resolve(options.status ?? 'live'),
     ...(options.wakeWord === undefined ? {} : { wakeWord: options.wakeWord }),
     ...(options.hosted === undefined ? {} : { hosted: options.hosted }),
+    ...(options.onlyOwner === undefined ? {} : { onlyOwner: options.onlyOwner }),
     spend: (record) => spends.push(record),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
@@ -227,6 +232,8 @@ function setup(options: Options = {}) {
     connections,
     connection: (s: 'connecting' | 'connected' | 'down'): void => handlers?.onConnection?.(s),
     spends,
+    /** Round 10: the handlers the engine gave the recogniser, to call with a decision. */
+    handlers: () => handlers,
   }
 }
 
@@ -2767,5 +2774,104 @@ describe('round 9 (30.5.4): spend per task', () => {
     const text = JSON.stringify(t.spends)
     for (const secret of ['kassivideo', 'youtube', 'avan', 'palun']) expect(text).not.toContain(secret)
     expect(Object.keys(t.spends[0] ?? {}).sort()).toEqual(['asks', 'cacheRead', 'goals', 'input', 'model', 'ms', 'outcome', 'output', 'provider', 'steps'])
+  })
+})
+
+// Issue #3 work package A: the baseline that fails on main. With Kuula ainult mind on, nothing
+// speech-driven may reach the page or the model before the server verified the owner's voice for
+// that very segment.
+describe('issue #3: only the owner, fail closed in the engine', () => {
+  it('a partial with only-owner on types nothing into the box and is not shown', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    t.partial('saada')
+    t.partial('saada see')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    expect(t.heard).toEqual([])
+  })
+
+  it('an utterance without a speaker decision runs nothing, asks no model and is not shown', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    t.say('saada')
+    t.say(SENTENCE)
+    t.continued(`${SENTENCE} siis saada`, 'siis saada')
+    await t.engine.idle()
+    expect(t.ran).toEqual([])
+    expect(t.asked).toEqual([])
+    expect(t.heard).toEqual([])
+  })
+})
+
+describe('only the owner, the engine wall (round 10, ARCHITECTURE 31.4): zero side effects per deny case', () => {
+  const decided = (reason: SpeakerReason, over: Partial<SpeakerDecision> = {}): SpeakerDecision => ({ segmentId: 1, sessionId: 's', profileVersion: 'v1-x', verdict: verdictFor(reason), reason, timings: { judgeMs: 10 }, ...over })
+  const say = (t: ReturnType<typeof setup>, text: string, decision?: SpeakerDecision): void => {
+    const h = t.handlers()
+    if (decision === undefined) h?.onUtterance(text)
+    else h?.onUtterance(text, decision)
+  }
+  /** Nothing ran on the page, nothing was asked of the model, nothing was shown or queued. */
+  const nothing = async (t: ReturnType<typeof setup>): Promise<void> => {
+    await t.engine.idle()
+    expect(t.ran).toEqual([])
+    expect(t.asked).toEqual([])
+    expect(t.heard).toEqual([])
+    expect(t.spends).toEqual([])
+  }
+  const denials: Array<[string, SpeakerDecision | undefined]> = [
+    ['no decision', undefined],
+    ...SPEAKER_REASONS.filter((r) => r !== 'verified_owner').map((r): [string, SpeakerDecision] => [r, decided(r)]),
+    ['owner verdict without verified_owner', decided('insufficient_audio', { verdict: 'owner' })],
+    ['verified_owner reason without the owner verdict', decided('verified_owner', { verdict: 'unknown' })],
+  ]
+  for (const [name, decision] of denials) {
+    it(`denies ${name}: no setText, no command, no /api/intent, no queue, no strip words`, async () => {
+      const t = setup({ onlyOwner: true, ask: () => Promise.resolve(answer({ kind: 'command', command: { kind: 'clickItem', id: 3 } }, 'x')) })
+      t.engine.start()
+      t.partial('saada')
+      say(t, 'saada', decision)
+      say(t, SENTENCE, decision)
+      say(t, 'katkesta', decision)
+      say(t, "ava youtube'i", decision)
+      t.handlers()?.onUtteranceContinued(`${SENTENCE} siis saada`, 'siis saada', decision)
+      await nothing(t)
+    })
+  }
+
+  it('a verified owner utterance runs as before, and its partials are still never typed', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    t.partial('tere')
+    say(t, 'tere', decided('verified_owner'))
+    await t.engine.idle()
+    expect(t.ran).toEqual([{ kind: 'readBox' }, { kind: 'setText', text: 'xtere' }])
+    expect(t.heard).toEqual(['tere'])
+  })
+
+  it('the wake word does not authorize: an unverified "ütle ..." opens nothing and runs nothing', async () => {
+    const t = setup({ onlyOwner: true, wakeWord: 'ütle' })
+    t.engine.start()
+    t.partial('ütle tere')
+    say(t, 'ütle tere')
+    say(t, 'tere')
+    await nothing(t)
+  })
+
+  it('the voice entry flow takes nothing unverified', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    t.engine.setEntry(true)
+    say(t, 'minu nimi on Mari', decided('rejected_other'))
+    await nothing(t)
+  })
+
+  it('with the mode off the handlers are the very same as before', async () => {
+    const t = setup()
+    t.engine.start()
+    t.partial('te')
+    say(t, 'tere')
+    await t.engine.idle()
+    expect(t.ran.map((c) => c.kind)).toContain('setText')
   })
 })

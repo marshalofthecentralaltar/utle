@@ -1095,13 +1095,13 @@ Why a hiss and 0.05 s (SPEECH lane defect round, 2026-10-21): with digital zeros
 
 What one threshold costs: the stand-in owner's one-word utterances ("jah", "saada", "üks": 0.4 to 0.5 s of speech) scored 0.14 to 0.27, below every threshold that drops the other voices. Half a second of voice is too little for this model; there is no threshold that keeps them and drops a friend's.
 
-**Continuity** (round 7, SPEECH lane defect round; `continued` in `server/speaker.ts`, applied in `server/asrSession.ts`). So the one-word commands are judged by who spoke last instead: an utterance with under `SHORT_UTTERANCE_SECONDS` (1.0 s) of speech is `owner` when this session delivered an owner final judged on its score at most `CONTINUITY_MS` (10 000 ms) before it, whatever it scored; otherwise it is judged as above (and `unknown` under `MIN_JUDGE_SECONDS`). The numbers that justify it: the stand-in owner's one-word clips have 0.4 to 0.5 s of speech and score 0.14 to 0.27, below every other voice's best (0.499); his utterances of 0.6 s of speech or more score 0.62 to 0.76, so the sentence before a "saada" or the "keri alla" before a "veel" is judged on its own and opens the window. Only a final the score judged owner opens or extends the window, whatever its length (a short one the score already calls `owner` keeps the score as its reason and is never relabelled); a word continuity let through does not extend it, and an `other` final closes it, so a friend's short words pass only within ten seconds of the owner speaking and never after the friend says something long. An utterance of 1.0 s of speech or more is never covered. `judge` now returns `seconds` (speech seconds, `speechOnly`) with every verdict, which the rule needs; a verdict without it is never changed. The server log line names the reason and never the text: `[asr] final judged owner 0.168 continuity (only owner on)` (`judgedLine` in `server/asr.ts`). The wire format is unchanged: the final carries `speaker: 'owner'`.
+**Continuity** (removed in round 10, section 31: a previous owner verdict never authorizes later audio; what follows is history) (round 7, SPEECH lane defect round; `continued` in `server/speaker.ts`, applied in `server/asrSession.ts`). So the one-word commands are judged by who spoke last instead: an utterance with under `SHORT_UTTERANCE_SECONDS` (1.0 s) of speech is `owner` when this session delivered an owner final judged on its score at most `CONTINUITY_MS` (10 000 ms) before it, whatever it scored; otherwise it is judged as above (and `unknown` under `MIN_JUDGE_SECONDS`). The numbers that justify it: the stand-in owner's one-word clips have 0.4 to 0.5 s of speech and score 0.14 to 0.27, below every other voice's best (0.499); his utterances of 0.6 s of speech or more score 0.62 to 0.76, so the sentence before a "saada" or the "keri alla" before a "veel" is judged on its own and opens the window. Only a final the score judged owner opens or extends the window, whatever its length (a short one the score already calls `owner` keeps the score as its reason and is never relabelled); a word continuity let through does not extend it, and an `other` final closes it, so a friend's short words pass only within ten seconds of the owner speaking and never after the friend says something long. An utterance of 1.0 s of speech or more is never covered. `judge` now returns `seconds` (speech seconds, `speechOnly`) with every verdict, which the rule needs; a verdict without it is never changed. The server log line names the reason and never the text: `[asr] final judged owner 0.168 continuity (only owner on)` (`judgedLine` in `server/asr.ts`). The wire format is unchanged: the final carries `speaker: 'owner'`.
 
 **The calibration set and harness.** `scripts/speaker-set.ts` builds `scripts/fixtures/speaker-set/`: `owner-*.wav` are the five recogniser fixtures cut into nine utterances by the speech detector (0.25 s before, 0.5 s after, as the live path keeps them); they are TartuNLP's synthetic voice "mari", the stand-in owner, because there is no recording of the owner on disk. `other-*.wav` are three utterances from each of six other TartuNLP Estonian voices (albert, kalev, meelis, kylli, vesta, liivika) and the two longest owner utterances played 1.2 times as fast (pitch and tempo up 20 %), the hard negative. Every clip has a noise floor of about -66 dBFS: a microphone never gives digital silence. `npx tsx scripts/speaker-calibrate.ts <dir>` (or `--owner <dir> --other <dir>` for capture folders) enrols the owner clips through the real gate into a temporary profile (one phrase per clip, the mean), scores each owner clip against the mean of the others (leave one out) and each other clip against all of them, prints every score with the gate's verdict, the owner minimum, the other maximum and the threshold with the fewest errors (ties toward dropping others, then the middle of the gap), and writes `<dir>/scores.json`. `--model <file>` measures another model in `models/speaker/`; `--profile <owner.json>` also scores every clip against a stored profile with the model that made it (the real round 4 profile, on CAM++'s scale: every synthetic clip at most 0.346).
 
 **Scripted enrolment.** `src/core/enrolPhrases.ts` holds twelve Estonian sentences that together contain õ, ä, ö, ü, the three vowel lengths (sada, kooli, saada) and the command words of `browserIntent.ts`'s tables and the engine's own (ava, keri, saada, kustuta, tagasi, valmis, katkesta, uus leht and the rest; the test lists them). The settings page's **Õpeta mu hääl lausetega** shows them one at a time with "1 / 12" and sends `utle-enrol-script {phrases: 12}`; the offscreen document starts the engine's enrolment (listening on, what he reads neither typed nor run) and the recogniser sends `{"type":"enrolScript","phrases":12}` (1 to `MAX_ENROL_PHRASES`, 30). From then each utterance that ends with words (an endpoint, or a flush) is one phrase: the decoder embeds its speech at once (`gate.phrase`, at least `MIN_PHRASE_SECONDS`, 0.8 s, of speech; the audio is not kept) and answers `{"type":"enrolPhrase","count":n}`; the offscreen document publishes `enrolPhrases: n` in the strip's state and the settings page shows phrase n + 1. At the twelfth, or at `{"type":"enrolFinish"}` (the page's **Valmis**), the profile is the mean of the phrase embeddings at unit length (`gate.enrolPhrases`, at least `MIN_ENROL_SECONDS` of speech in all) and the server answers `{"type":"enrolled","ok":true,"seconds":s,"phrases":n}`. The bar says "Hääl on õpitud n lausest.", or, under `ENOUGH_PHRASES` (6), that the profile is thin; it is kept either way. **Õpeta vabalt rääkides** is round 4's eight seconds of free speech, kept as a fallback.
 
-**Strict mode, in the client** (`src/speech/local.ts`). With `onlyOwner` on, a final whose speaker is `other` or `unknown` is dropped (`dropsFinal`); `owner` and a final without a speaker are delivered. Each drop calls `handlers.onForeign(streak)`, streak being the drops in a row (an obeyed final resets it). The offscreen document shows "Keegi teine rääkis, jätsin vahele." for every drop and, at the third in a row only (`retrainDue`, `RETRAIN_AFTER_DROPS` 3), also "Kui see olid sina, õpeta hääl uuesti seadetes." on the bar's line (`foreignNotice`). The engine takes back the dropped utterance's preview as in round 4. The server's close line counts `other` and `unknown` finals as dropped while the mode is on.
+**Strict mode, in the client** (`src/speech/local.ts`; replaced in round 10 by section 31's fail-closed barrier, this paragraph is history). With `onlyOwner` on, a final whose speaker is `other` or `unknown` is dropped (`dropsFinal`); `owner` and a final without a speaker are delivered. Each drop calls `handlers.onForeign(streak)`, streak being the drops in a row (an obeyed final resets it). The offscreen document shows "Keegi teine rääkis, jätsin vahele." for every drop and, at the third in a row only (`retrainDue`, `RETRAIN_AFTER_DROPS` 3), also "Kui see olid sina, õpeta hääl uuesti seadetes." on the bar's line (`foreignNotice`). The engine takes back the dropped utterance's preview as in round 4. The server's close line counts `other` and `unknown` finals as dropped while the mode is on.
 
 **In the session** (`server/asrSession.ts`, `server/asrWorker.ts`). As round 4: the decoder keeps the frames of the utterance in progress (now speech only, the newest `MAX_KEPT_MS`, 8 s), judges before it sends a final, at an endpoint and at a flush, and the final carries `speaker` in the same frame. A judge that throws loses the verdict, not the words. `{"type":"enrol","seconds":N}` is the free-speech enrolment, as before. The worker carries `enrolScript`, `enrolFinish` and `capture` messages and answers `enrolPhrase` and `scripted`.
 
@@ -2604,3 +2604,127 @@ and checks that `help.html` opens, and saves `docs/proof/r9-pack-welcome.png`. A
 Load unpacked, on any Chrome or Edge. (B) Once Ralf uploads: the unlisted store link, no developer
 mode. `extension/README.md` "Install on a locked computer" and the landing page's "Paigaldamine"
 section say both.
+
+## 31. Round 10: only the owner, fail closed (GATE lane, issue #3 work packages A and B)
+
+Issue #3's invariant: with **Kuula ainult mind** on, no speech-driven side effect happens until the
+audio segment it came from has an explicit, current, positive owner verification. Before this
+section the mode failed open in five places, each now a regression test that was red on `af06d83`
+(commit A of the lane): a stranger's short word within 10 s of the owner was promoted to the owner
+(`continued`, 24.2); a final without a verdict was obeyed (`dropsFinal`, `sendFinal`); a settled
+quick reply was released from a partial 650 ms after it settled, before any verdict
+(`releaseInstant`); the engine typed partials into the box (`onInterim`); and a Soniox final carried
+no verdict and was obeyed. This section replaces 24.2's "Continuity" and "Strict mode, in the
+client" paragraphs; the rest of 24.2 (model, profile, threshold, enrolment, capture) stands.
+With the mode off nothing on the wire or in the client changed.
+
+### 31.1 The decision (`src/speech/asrProtocol.ts`)
+
+`SpeakerDecision { segmentId, sessionId, profileVersion, verdict, reason, score?, timings }`.
+`reason` is one of eight string literals (`SPEAKER_REASONS`): `verified_owner`, `rejected_other`,
+`insufficient_audio`, `profile_missing`, `model_unavailable`, `model_mismatch`,
+`verification_error`, `mixed_speakers`. `verdict` follows from the reason (`verdictFor`): `owner`
+for `verified_owner` only, `other` for `rejected_other` and `mixed_speakers`, `unknown` for the
+rest. `timings` is `{ judgeMs, speechMs? }`. `segmentId` counts the session's finals from 1, so it is
+monotonic and unique per session; `sessionId` is a random UUID made with the server's session;
+`profileVersion` is `v1-<FNV-1a of the stored profile's JSON>` (`profileVersionOf` in
+`server/speaker.ts`), empty without a profile. `parseAsrMessage` reads a decision only when every
+field has its type and the reason is one of the eight; anything else is no decision.
+
+`authorizes(decision, expected, lastSegment)` is the one rule, used by the client: true only for
+`verdict: 'owner'` with `reason: 'verified_owner'`, the session and profile version the server
+announced for this socket (`expected`), and a segment after the last one authorized. Missing,
+unknown, error, a different session (a message of a socket before a reconnect), another profile
+version (a decision made before re-enrolment) and an earlier or repeated segment all deny.
+
+### 31.2 The server (`server/asrSession.ts`, `server/speaker.ts`, `server/asrWorker.ts`)
+
+`continued` and its constants (`SHORT_UTTERANCE_SECONDS`, `CONTINUITY_MS`) are gone: a previous
+owner verdict never authorizes later audio. A short command with less than `MIN_JUDGE_SECONDS`
+(0.5 s) of speech is `insufficient_audio` and denied; making true one-word owner commands work by
+acoustic evidence is work package C.
+
+`gate.verify(frames)` answers a `SpeakerVerification { judgement, reason, profileVersion }`:
+`profile_missing` without a profile, `model_unavailable` without the embedding model (the energy
+gate's loudness is never identity), `model_mismatch` for a profile made with another model or
+without an embedding, `insufficient_audio` under `MIN_JUDGE_SECONDS`, `verification_error` when the
+extractor throws or the score is not a number, and `verified_owner` or `rejected_other` by
+`OWNER_THRESHOLD` (unchanged, 0.54). `judge` is unchanged and still serves the mode off. The decode
+worker carries `verify`/`verified` and `version`/`versioned` messages beside `judge`/`judged`.
+
+With onlyOwner on, the session (1) answers the client's `onlyOwner` message with
+`{ type: 'speakerSession', sessionId, profileVersion }`, and again after an enrolment that
+succeeded; (2) at each final verifies the utterance's own frames (never an earlier verdict) and
+sends `{ type: 'final', text, speaker: 'owner', segment, decision }` only for `verified_owner`;
+(3) otherwise sends `{ type: 'rejected', decision }` and the words are not sent; (4) a decoder
+without `verify`, or a verify that throws or rejects, is `verification_error`, denied. No partial
+goes either (review round 1): where the mode off sends `{ type: 'partial', text }`, the session sends
+the wordless `{ type: 'activity' }`, so no unverified word leaves the server, on the local or the
+hosted wire. The log line names the reason, never the words.
+
+**Every signalled utterance is closed** (review round 2). Measured on 2026-10-27 with the real
+models: when the one-word owner clip `owner-jah-1` followed `other-mari-pitch20-1` in one session,
+with 1.2 s of digital silence after each clip, the recogniser gave a partial "Jah" and then empty
+text at the endpoint, so no final went. This happened on origin/main (47a7837) with the mode off
+too: a partial, then nothing. It is a recogniser behaviour that predates round 10, and the mode-off
+wire is left as it is. With the mode on, the session now remembers that it sent an `activity`
+(`signalled`). An endpoint or a flush whose text came to nothing then closes the utterance with a
+`rejected` decision, reason `insufficient_audio`, `judgeMs` 0, the announced profile version. The
+client never waits for an utterance the server forgot either. With the mode on, a flush that waits
+for a final waits at most `STRICT_FLUSH_WAIT_MS` (3000 ms), then releases what is held and forgets
+the utterance in progress. Unverified words are never delivered. The next verified final goes on
+its own.
+`foreignFinals` counts every rejection.
+
+**Soniox** (`server/soniox.ts`). There is no speaker gate on the Soniox path in B (attaching
+TitaNet verdicts to Soniox's tokens is work package E). With onlyOwner on, the Soniox session sends
+no partials and turns every final into `{ type: 'rejected', decision }` with reason
+`model_unavailable`; the client shows that this engine cannot check the voice. Choosing Soniox with
+the mode on therefore obeys nothing, by design, until E. Audio still streams to Soniox before any
+check (E decides the privacy side).
+
+### 31.3 The client barrier (`src/speech/local.ts`)
+
+With `onlyOwner` on: an `activity` message (or a partial, from an older server) only marks an
+utterance in progress (for a flush, and to keep the assembler's hold alive); none reaches `onInterim`, none is a quick reply (`isInstant` is never asked of a partial,
+so `releaseInstant` never runs), and a stop never delivers the words in progress. A final reaches
+the assembler only when `authorizes` holds for its own decision and segment; every other final and
+every `rejected` message is a drop (`onForeign(streak, reason)`). The assembler's utterances then
+go to `onUtterance(text, decision)` and `onUtteranceContinued(text, added, decision)` with the
+decision of the newest final in them. A closed socket forgets the announced session and anything
+the assembler holds, so nothing verified on an old connection runs after a reconnect. `dropsFinal`
+now drops a final without a speaker too while the mode is on. With the mode off every path is as
+before, and the handlers are called with exactly the arguments they were.
+
+### 31.4 The engine barrier (`extension/src/engine.ts`)
+
+`EngineDeps.onlyOwner` (from the offscreen document's `onlyOwner=1`). With it on, the handlers the
+engine gives the recogniser are wrapped (`ownerOnly`) outside every other wrapper (wake word,
+reading aloud): `onInterim` does nothing (no preview typed, nothing shown on the strip),
+`onUtterance` and `onUtteranceContinued` pass only with a decision whose verdict is `owner` and
+reason `verified_owner`, and otherwise take back any preview and do nothing else. Everything
+speech-driven sits behind those two handlers: the rules, `setText` and every browser command,
+`/api/intent`, the queue, chains, barge-in, "katkesta", sends, the entry flow, wake-word actions
+and the reading-aloud stop word. The engine cannot see the session, so the segment and session
+checks are the recogniser's (31.3); the engine's check is the second, independent wall.
+
+### 31.5 What the user sees (`src/core/strings.ts`, `extension/src/offscreenMain.ts`)
+
+A `rejected_other` drop shows "Keegi teine rääkis, jätsin vahele." as before; every other reason
+shows "Häält ei õnnestunud kinnitada." (`voiceUnverified`); `insufficient_audio` adds "Proovi
+pikemat käsku." on the bar's line, and `model_unavailable` says that the voice cannot be checked
+right now (`voiceUnsupported`). The third drop in a row still adds the retrain line.
+
+### 31.6 Tests and limits
+
+`src/speech/asrProtocol.test.ts` (each of the eight reasons through the parser and `authorizes`;
+missing, stale, other-session and other-profile decisions), `src/speech/local.test.ts` (zero
+`onUtterance`, `onUtteranceContinued` and non-empty `onInterim` calls for each deny case; flush and
+stop; reconnect), `server/asrSession.test.ts` (one rejection per deny reason, no words on the wire;
+no recency promotion; the announcement), `server/speaker.test.ts` (`verify`'s reasons on the real
+gate with a fake extractor), `server/soniox.test.ts` (rejection, no partials), and
+`extension/src/engine.test.ts` (zero `setText`, browser commands, `/api/intent` asks and strip
+words per deny case, the wake word and reading aloud). Not done here: short-command acoustic
+evidence and mixed-speaker detection (C: the server never produces `mixed_speakers` yet, the
+client denies it), onboarding and the versioned profile file (D), Soniox verdicts and upload
+privacy (E), real-voice evaluation (F). Nothing here is verified with a real voice.

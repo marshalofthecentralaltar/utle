@@ -1,3 +1,5 @@
+import type { SpeakerDecision, SpeakerReason } from './asrProtocol.ts'
+
 /** A source of spoken utterances. Chrome's built-in recognition today; a paid recogniser can replace it. */
 export interface Recognizer {
   start(): void
@@ -17,14 +19,17 @@ export interface Recognizer {
 }
 
 export interface RecognizerHandlers {
-  /** One complete utterance, already joined across pauses. */
-  onUtterance(text: string): void
+  /**
+   * One complete utterance, already joined across pauses. Round 10 (31.3): with only the owner
+   * obeyed, decision is the verified owner decision of its newest final; absent otherwise.
+   */
+  onUtterance(text: string, decision?: SpeakerDecision): void
   /**
    * Round 4: a final that began with a connective ("siis ava Karin") soon after the last utterance
    * continues it: text is the whole joined utterance, added the new words. Optional; without it
    * the words come through onUtterance as an utterance of their own.
    */
-  onUtteranceContinued?(text: string, added: string): void
+  onUtteranceContinued?(text: string, added: string, decision?: SpeakerDecision): void
   /** What is being heard right now, for display only. Empty when nothing is in progress. */
   onInterim(text: string): void
   /** A problem the user should see. The microphone has stopped. */
@@ -36,8 +41,9 @@ export interface RecognizerHandlers {
   /**
    * Round 4: an utterance was someone else's voice and was dropped (only-owner mode). Round 7:
    * streak is how many finals in a row have been dropped (1 for the first; an obeyed final resets it).
+   * Round 10 (31.5): reason is why it was not verified, when the server said.
    */
-  onForeign?(streak: number): void
+  onForeign?(streak: number, reason?: SpeakerReason): void
   /** Round 4: the server has learnt the owner's voice, or could not. Round 7: phrases, after scripted enrolment. */
   onEnrolled?(ok: boolean, seconds: number, phrases?: number): void
   /** Round 7: scripted enrolment has heard this many phrases. */

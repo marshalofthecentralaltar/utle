@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
-import { CONTINUITY_MS, ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, MIN_PHRASE_SECONDS, OWNER_THRESHOLD, SHORT_UTTERANCE_SECONDS, continued, cosine, createSpeakerGate, meanEmbedding, normalised, pickThreshold, profilePath, profileSummary, speakerGates, verdict } from './speaker.ts'
+import { ENERGY_OTHER_RATIO, MIN_JUDGE_SECONDS, MIN_PHRASE_SECONDS, OWNER_THRESHOLD, cosine, createSpeakerGate, meanEmbedding, normalised, pickThreshold, profilePath, profileSummary, profileVersionOf, speakerGates, verdict } from './speaker.ts'
+import * as speakerModule from './speaker.ts'
 import type { EmbeddingExtractor, EnrolPhrase } from './speaker.ts'
 
 /**
@@ -203,7 +204,7 @@ describe('the speaker gate', () => {
   })
 })
 
-describe('continuity (round 7): a short word right after the owner spoke is his', () => {
+describe('no continuity (round 10, issue #3 B3): every utterance is judged on its own audio', () => {
   let dir: string
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'utle-continuity-'))
@@ -212,7 +213,7 @@ describe('continuity (round 7): a short word right after the owner spoke is his'
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('continuity: the judgement says how many seconds of speech it was made from', () => {
+  it('the judgement says how many seconds of speech it was made from', () => {
     const gate = createSpeakerGate(fakeExtractor, { profilePath: join(dir, 'owner.json') })
     gate.enrol(speech(0, 8))
     expect(gate.judge([...silence(1), ...speech(0, 3)])).toEqual({ speaker: 'owner', score: 1, seconds: 3 })
@@ -220,27 +221,95 @@ describe('continuity (round 7): a short word right after the owner spoke is his'
     expect(gate.judge(speech(0.8, 0.7))).toEqual({ speaker: 'other', score: 0.309, seconds: 0.7 })
   })
 
-  it('continuity: under SHORT_UTTERANCE_SECONDS and within CONTINUITY_MS of an owner final is owner, whatever it scored', () => {
-    expect(SHORT_UTTERANCE_SECONDS).toBe(1)
-    expect(CONTINUITY_MS).toBe(10_000)
-    expect(continued({ speaker: 'unknown', score: 0, seconds: 0.4 }, 1000, 1000 + CONTINUITY_MS)).toEqual({ speaker: 'owner', score: 0, seconds: 0.4, reason: 'continuity' })
-    expect(continued({ speaker: 'other', score: 0.168, seconds: 0.9 }, 1000, 4000)).toEqual({ speaker: 'owner', score: 0.168, seconds: 0.9, reason: 'continuity' })
+  it('the recency rule and its constants are gone: nothing can promote a short word by who spoke last', () => {
+    const names = Object.keys(speakerModule)
+    expect(names).not.toContain('continued')
+    expect(names).not.toContain('CONTINUITY_MS')
+    expect(names).not.toContain('SHORT_UTTERANCE_SECONDS')
   })
 
-  it('continuity: a short utterance the score already judged owner keeps the score as its reason', () => {
-    const scored = { speaker: 'owner' as const, score: 0.7, seconds: 0.9 }
-    expect(continued(scored, 1000, 4000)).toBe(scored)
-    expect(continued(scored, 1000, 4000).reason).toBeUndefined()
+  it("a stranger's short word right after the owner's long one is verified on its own audio and denied", () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath: join(dir, 'owner.json') })
+    gate.enrol(speech(0, 8))
+    expect(gate.verify(speech(0, 2)).reason).toBe('verified_owner')
+    expect(gate.verify(speech(0.8, 0.7)).reason).toBe('rejected_other')
+    expect(gate.verify(speech(0.8, 0.4)).reason).toBe('insufficient_audio')
+    // The owner's own short word without enough audio is denied too (work package C improves it).
+    expect(gate.verify(speech(0, 0.4)).reason).toBe('insufficient_audio')
+  })
+})
+
+describe('verify (round 10, 31.2): one reason per case, fail closed', () => {
+  let dir: string
+  let path: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'utle-verify-'))
+    path = join(dir, 'owner.json')
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
   })
 
-  it('continuity: judged as now when too late, with no owner final, when long, or when its length is not known', () => {
-    const short = { speaker: 'unknown' as const, score: 0, seconds: 0.4 }
-    expect(continued(short, 1000, 1000 + CONTINUITY_MS + 1)).toBe(short)
-    expect(continued(short, null, 1000)).toBe(short)
-    const long = { speaker: 'other' as const, score: 0.3, seconds: SHORT_UTTERANCE_SECONDS }
-    expect(continued(long, 1000, 2000)).toBe(long)
-    const unmeasured = { speaker: 'other' as const, score: 0.3 }
-    expect(continued(unmeasured, 1000, 2000)).toBe(unmeasured)
+  it('profile_missing without a profile', () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath: path })
+    expect(gate.verify(speech(0, 3))).toEqual({ judgement: null, reason: 'profile_missing', profileVersion: '' })
+    expect(gate.profileVersion()).toBe('')
+  })
+
+  it('verified_owner at or above the threshold, rejected_other below it, with the profile version', () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath: path })
+    gate.enrol(speech(0, 8))
+    const version = gate.profileVersion()
+    expect(version).toMatch(/^v1-[0-9a-f]{8}$/)
+    expect(gate.verify(speech(0, 3))).toEqual({ judgement: { speaker: 'owner', score: 1, seconds: 3 }, reason: 'verified_owner', profileVersion: version })
+    expect(gate.verify(speech(0.8, 1))).toEqual({ judgement: { speaker: 'other', score: 0.309, seconds: 1 }, reason: 'rejected_other', profileVersion: version })
+  })
+
+  it('insufficient_audio under MIN_JUDGE_SECONDS of speech', () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath: path })
+    gate.enrol(speech(0, 8))
+    expect(gate.verify([...silence(2), ...speech(0, MIN_JUDGE_SECONDS - 0.1)]).reason).toBe('insufficient_audio')
+  })
+
+  it('model_unavailable without the model, even for speech as loud as the owner (loudness is never identity)', () => {
+    createSpeakerGate(fakeExtractor, { profilePath: path }).enrol(speech(0, 8))
+    const gate = createSpeakerGate(null, { profilePath: path })
+    expect(gate.judge(speech(0, 3))).toBeNull()
+    expect(gate.verify(speech(0, 3)).reason).toBe('model_unavailable')
+  })
+
+  it('model_mismatch for a profile made with another model, or without an embedding', () => {
+    createSpeakerGate(fakeExtractor, { profilePath: path, modelName: 'campplus.onnx' }).enrol(speech(0, 8))
+    expect(createSpeakerGate(fakeExtractor, { profilePath: path, modelName: 'titanet.onnx' }).verify(speech(0, 3)).reason).toBe('model_mismatch')
+    const loud = join(dir, 'loudness.json')
+    createSpeakerGate(null, { profilePath: loud }).enrol(speech(0, 8))
+    expect(createSpeakerGate(fakeExtractor, { profilePath: loud }).verify(speech(0, 3)).reason).toBe('model_mismatch')
+  })
+
+  it('verification_error when the extractor throws or the score is not a number', () => {
+    let mode: 'ok' | 'throw' | 'short' = 'ok'
+    const flaky: EmbeddingExtractor = {
+      embed(samples) {
+        if (mode === 'throw') throw new Error('onnx')
+        if (mode === 'short') return new Float32Array([1])
+        return fakeExtractor.embed(samples)
+      },
+    }
+    const gate = createSpeakerGate(flaky, { profilePath: path })
+    gate.enrol(speech(0, 8))
+    mode = 'throw'
+    expect(gate.verify(speech(0, 3)).reason).toBe('verification_error')
+    mode = 'short'
+    expect(gate.verify(speech(0, 3)).reason).toBe('verification_error')
+  })
+
+  it('a new enrolment is a new profile version', () => {
+    const gate = createSpeakerGate(fakeExtractor, { profilePath: path })
+    gate.enrol(speech(0, 8))
+    const first = gate.profileVersion()
+    gate.enrol(speech(0.1, 8))
+    expect(gate.profileVersion()).not.toBe(first)
+    expect(profileVersionOf(null)).toBe('')
   })
 })
 

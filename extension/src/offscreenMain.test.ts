@@ -114,6 +114,15 @@ describe('strict mode lines on the strip (round 7)', () => {
     ])
   })
 
+  it('round 10 (31.5): any reason but another voice says the voice could not be confirmed, with what to do', () => {
+    const lines = { ...text, voiceUnverified: 'Häält ei õnnestunud kinnitada.', voiceTooShort: 'Proovi pikemat käsku.', voiceUnsupported: 'Häält ei saa praegu kontrollida.' }
+    expect(foreignNotice(1, lines, 'rejected_other')).toEqual({ foreign: lines.foreign })
+    expect(foreignNotice(1, lines, 'insufficient_audio')).toEqual({ foreign: lines.voiceUnverified, line: lines.voiceTooShort })
+    expect(foreignNotice(1, lines, 'model_unavailable')).toEqual({ foreign: lines.voiceUnverified, line: lines.voiceUnsupported })
+    for (const reason of ['profile_missing', 'model_mismatch', 'verification_error', 'mixed_speakers'] as const) expect(foreignNotice(1, lines, reason)).toEqual({ foreign: lines.voiceUnverified })
+    expect(foreignNotice(3, lines, 'verification_error')).toEqual({ foreign: lines.voiceUnverified, line: lines.foreignRetrain })
+  })
+
   it('says how many phrases taught the voice, and when they were too few', () => {
     const lines = { enrolDone: 'done', enrolFailed: 'failed', enrolPhrasesDone: (n: number) => `done ${n}`, enrolFew: (n: number, enough: number) => `few ${n}/${enough}` }
     expect(enrolledLine(false, 12, lines)).toBe('failed')

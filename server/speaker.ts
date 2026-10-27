@@ -29,7 +29,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { Speaker } from '../src/speech/asrProtocol.ts'
+import type { Speaker, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import { ASR_SAMPLE_RATE } from '../src/speech/asrProtocol.ts'
 import { SILENCE_RMS, rms } from './asrSession.ts'
 
@@ -49,8 +49,8 @@ export const PROFILE_FILE = 'owner.json'
  * the stand-in owner's) scored 0.499 at most, the stand-in owner's utterances of 0.6 s of speech or
  * more 0.622 to 0.760, so 0.54 drops every other clip and keeps those. What it does not keep: the
  * one-word utterances ("jah", "saada", "üks", 0.4 to 0.5 s of speech) scored 0.14 to 0.27; half a
- * second of voice is too little for this model, and those are `unknown` or `other` on their score; continuity
- * (below) lets them through right after an owner final. The stand-in owner is a synthetic voice (TartuNLP's "mari"; there is no recording of
+ * second of voice is too little for this model, and those are `unknown` or `other` on their score
+ * (round 10: denied with only the owner on; continuity is gone, ARCHITECTURE 31). The stand-in owner is a synthetic voice (TartuNLP's "mari"; there is no recording of
  * the owner on disk), and a real voice through a real microphone scores itself lower than a
  * synthetic one does. Re-pick it on his own recordings (UTLE_CAPTURE, HANDOFF 1g) and change this.
  */
@@ -60,22 +60,6 @@ export const OWNER_THRESHOLD = 0.54
  * voice for an embedding to mean anything. A "jah" or a "saada" is 0.4 to 0.5 s of speech.
  */
 export const MIN_JUDGE_SECONDS = 0.5
-/**
- * Continuity (round 7): an utterance with less speech than this is too short for the embedding to
- * tell voices apart. Measured on scripts/fixtures/speaker-set: the stand-in owner's one-word clips
- * ("jah", "saada", "üks", 0.4 to 0.5 s of speech) scored 0.14 to 0.27 against his own profile, below
- * every other voice's best (0.499), so no threshold keeps them and still drops a friend; his
- * utterances of 0.6 s of speech or more scored 0.62 to 0.76. Such a word is judged by who spoke last
- * (continued, below), not by its score.
- */
-export const SHORT_UTTERANCE_SECONDS = 1.0
-/**
- * Continuity: a short utterance within this long of an owner final (judged on its score) is the
- * owner's. Ten seconds covers "keri alla" then "veel" or a sentence then "saada"; a friend's short
- * word in that window passes too, which is the cost, and it ends at his next long utterance judged
- * other or ten seconds after he last spoke.
- */
-export const CONTINUITY_MS = 10_000
 /** The energy gate: an utterance whose speech RMS is below this share of the owner's enrolled RMS is `other`. */
 export const ENERGY_OTHER_RATIO = 0.4
 /** Enrolment needs at least this much speech. */
@@ -118,22 +102,33 @@ export interface Judgement {
   score: number
   /** Round 7: seconds of speech the verdict was made from (speechOnly); absent when not measured. */
   seconds?: number
-  /** Round 7: why the verdict is not the score's: 'continuity' (continued, below). */
-  reason?: 'continuity'
+  /**
+   * Round 10 (31.2): the authorization reason, set with only the owner on (for the log line).
+   * Round 7's 'continuity' is gone: a previous owner verdict never authorizes later audio.
+   */
+  reason?: SpeakerReason
 }
 
 /**
- * Continuity (round 7, ARCHITECTURE 24.2): an utterance with under SHORT_UTTERANCE_SECONDS of
- * speech is the owner's when the session's last owner final judged on its score was at most
- * CONTINUITY_MS before `at`, whatever it scored. Otherwise, or when its length was not measured, the
- * judgement stands. A verdict the score already made `owner` stands too, whatever its length: the
- * score is its reason, and it opens or extends the window. ownerAt: when that owner final was
- * delivered, or null when none counts.
+ * Round 10 (31.2): what verify says of one utterance with only the owner on. judgement: the
+ * score's verdict when one was computed, else null. profileVersion: the profile it was compared with.
  */
-export function continued(judgement: Judgement, ownerAt: number | null, at: number): Judgement {
-  if (judgement.speaker === 'owner' || ownerAt === null || judgement.seconds === undefined) return judgement
-  if (judgement.seconds >= SHORT_UTTERANCE_SECONDS || at - ownerAt > CONTINUITY_MS) return judgement
-  return { ...judgement, speaker: 'owner', reason: 'continuity' }
+export interface SpeakerVerification {
+  judgement: Judgement | null
+  reason: SpeakerReason
+  profileVersion: string
+}
+
+/** Round 10 (31.1): the version of a stored profile: FNV-1a over its JSON. Empty without one. */
+export function profileVersionOf(profile: SpeakerProfile | null): string {
+  if (profile === null) return ''
+  const json = JSON.stringify(profile)
+  let hash = 0x811c9dc5
+  for (let i = 0; i < json.length; i += 1) {
+    hash ^= json.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `v1-${hash.toString(16).padStart(8, '0')}`
 }
 
 export interface SpeakerGate {
@@ -153,6 +148,14 @@ export interface SpeakerGate {
   phrase(frames: Float32Array[]): EnrolPhrase | null
   /** Round 7: the profile from read phrases: the mean of their embeddings at unit length, and their count. False with too little speech. */
   enrolPhrases(phrases: EnrolPhrase[]): boolean
+  /**
+   * Round 10 (31.2): the fail-closed check with only the owner on. Only verified_owner authorizes;
+   * no profile, no model, another model's profile, too little speech and a failing extractor each
+   * have their own reason, and loudness never stands in for a voice.
+   */
+  verify(frames: Float32Array[]): SpeakerVerification
+  /** Round 10 (31.1): the stored profile's version; empty without one. */
+  profileVersion(): string
 }
 
 export interface SpeakerGateOptions {
@@ -310,6 +313,26 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
   return {
     hasProfile: () => profile !== null,
     hasModel: () => extractor !== null,
+    profileVersion: () => profileVersionOf(profile),
+    verify(frames) {
+      const version = profileVersionOf(profile)
+      const deny = (reason: SpeakerReason, judgement: Judgement | null = null): SpeakerVerification => ({ judgement, reason, profileVersion: version })
+      if (profile === null) return deny('profile_missing')
+      if (extractor === null) return deny('model_unavailable')
+      if (!comparable(profile)) return deny('model_mismatch')
+      const speech = speechOnly(frames)
+      const length = Math.round(seconds(speech) * 100) / 100
+      if (length < MIN_JUDGE_SECONDS) return deny('insufficient_audio', { speaker: 'unknown', score: 0, seconds: length })
+      let score: number
+      try {
+        score = cosine(normalised(extractor.embed(concat(speech))), profile.embedding)
+      } catch {
+        return deny('verification_error', { speaker: 'unknown', score: 0, seconds: length })
+      }
+      if (!Number.isFinite(score)) return deny('verification_error', { speaker: 'unknown', score: 0, seconds: length })
+      const judgement: Judgement = { speaker: verdict(score), score: Math.round(score * 1000) / 1000, seconds: length }
+      return { judgement, reason: judgement.speaker === 'owner' ? 'verified_owner' : 'rejected_other', profileVersion: version }
+    },
     enrol(frames) {
       const speech = speechOnly(frames)
       const length = seconds(speech)
@@ -350,7 +373,7 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
     judge(frames) {
       if (profile === null) return null
       const speech = speechOnly(frames)
-      // Round 7: the seconds of speech go with every verdict, for continuity.
+      // Round 7: the seconds of speech go with every verdict.
       const length = Math.round(seconds(speech) * 100) / 100
       if (extractor === null || !comparable(profile)) {
         // Round 7: loud enough is null, not unknown: strict mode drops unknown, and without a voice to

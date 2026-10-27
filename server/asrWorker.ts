@@ -13,7 +13,7 @@ import type { DecodeResult, Decoder, DecoderExtras, OnlineRecognizerLike, Online
 import { decoderInThread } from './asrSession.ts'
 import { loadVad } from './vad.ts'
 import { PROFILE_FILE, SPEAKER_DIR, speakerGates } from './speaker.ts'
-import type { Judgement, SpeakerGate } from './speaker.ts'
+import type { Judgement, SpeakerGate, SpeakerVerification } from './speaker.ts'
 import { loadSpeakerModel } from './speakerModel.ts'
 
 /** Main thread to worker. The frame's buffer is transferred, not copied. judge and enrol are round 4 (the speaker gate). */
@@ -23,6 +23,9 @@ export type ToWorker =
   | { type: 'reset'; id: number }
   | { type: 'close'; id: number }
   | { type: 'judge'; id: number; seq: number }
+  /** Round 10 (31.2): the fail-closed check with only the owner on, and the profile's version. */
+  | { type: 'verify'; id: number; seq: number }
+  | { type: 'version'; id: number; seq: number }
   | { type: 'enrol'; id: number; seq: number; seconds: number }
   /** Round 7: scripted enrolment, its early end, and UTLE_CAPTURE's clip of the final just judged. */
   | { type: 'enrolScript'; id: number; seq: number; phrases: number }
@@ -42,6 +45,8 @@ export type FromWorker =
   | { type: 'result'; id: number; seq: number; result: DecodeResult }
   | { type: 'failed'; id: number; seq: number; message: string }
   | { type: 'judged'; id: number; seq: number; judgement: Judgement | null }
+  | { type: 'verified'; id: number; seq: number; verification: SpeakerVerification }
+  | { type: 'versioned'; id: number; seq: number; version: string }
   | { type: 'enrolled'; id: number; seq: number; ok: boolean }
   | { type: 'enrolPhrase'; id: number; seq: number; count: number }
   | { type: 'scripted'; id: number; seq: number; result: ScriptResult }
@@ -137,6 +142,35 @@ function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognize
         }
         return
       }
+      case 'verify': {
+        const decoder = streams.get(message.id)
+        const reply = (body: FromWorker): void => port.postMessage(body)
+        if (!decoder?.verify) {
+          reply({ type: 'verified', id: message.id, seq: message.seq, verification: { judgement: null, reason: 'verification_error', profileVersion: '' } })
+          return
+        }
+        try {
+          Promise.resolve(decoder.verify()).then(
+            (verification) => reply({ type: 'verified', id: message.id, seq: message.seq, verification }),
+            (error: unknown) => reply({ type: 'failed', id: message.id, seq: message.seq, message: String(error) }),
+          )
+        } catch (error) {
+          reply({ type: 'failed', id: message.id, seq: message.seq, message: String(error) })
+        }
+        return
+      }
+      case 'version': {
+        const decoder = streams.get(message.id)
+        let version = ''
+        try {
+          const v = decoder?.profileVersion?.()
+          version = typeof v === 'string' ? v : ''
+        } catch {
+          version = ''
+        }
+        port.postMessage({ type: 'versioned', id: message.id, seq: message.seq, version } satisfies FromWorker)
+        return
+      }
       case 'enrol': {
         const decoder = streams.get(message.id)
         const reply = (ok: boolean): void => port.postMessage({ type: 'enrolled', id: message.id, seq: message.seq, ok } satisfies FromWorker)
@@ -210,6 +244,8 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
     }
     const pending = new Map<string, { resolve(result: DecodeResult): void; reject(error: Error): void }>()
     const judging = new Map<string, { resolve(judgement: Judgement | null): void; reject(error: Error): void }>()
+    const verifying = new Map<string, { resolve(verification: SpeakerVerification): void; reject(error: Error): void }>()
+    const versioning = new Map<string, (version: string) => void>()
     const enrolling = new Map<string, (ok: boolean) => void>()
     const scripting = new Map<string, { resolve(result: ScriptResult): void; onPhrase(count: number): void }>()
     const exitListeners: Array<(code: number) => void> = []
@@ -257,6 +293,22 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
             return new Promise<Judgement | null>((resolveJudgement, reject) => {
               judging.set(key(id, mine), { resolve: resolveJudgement, reject })
               worker.postMessage({ type: 'judge', id, seq: mine } satisfies ToWorker)
+            })
+          },
+          verify() {
+            seq += 1
+            const mine = seq
+            return new Promise<SpeakerVerification>((resolveVerification, reject) => {
+              verifying.set(key(id, mine), { resolve: resolveVerification, reject })
+              worker.postMessage({ type: 'verify', id, seq: mine } satisfies ToWorker)
+            })
+          },
+          profileVersion() {
+            seq += 1
+            const mine = seq
+            return new Promise<string>((resolveVersion) => {
+              versioning.set(key(id, mine), resolveVersion)
+              worker.postMessage({ type: 'version', id, seq: mine } satisfies ToWorker)
             })
           },
           enrol(seconds) {
@@ -315,6 +367,16 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           pending.delete(key(message.id, message.seq))
           judging.get(key(message.id, message.seq))?.reject(new Error(message.message))
           judging.delete(key(message.id, message.seq))
+          verifying.get(key(message.id, message.seq))?.reject(new Error(message.message))
+          verifying.delete(key(message.id, message.seq))
+          return
+        case 'verified':
+          verifying.get(key(message.id, message.seq))?.resolve(message.verification)
+          verifying.delete(key(message.id, message.seq))
+          return
+        case 'versioned':
+          versioning.get(key(message.id, message.seq))?.(message.version)
+          versioning.delete(key(message.id, message.seq))
           return
         case 'judged':
           judging.get(key(message.id, message.seq))?.resolve(message.judgement)
@@ -347,6 +409,10 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
       pending.clear()
       for (const entry of judging.values()) entry.reject(new Error(`decode worker exited with ${code}`))
       judging.clear()
+      for (const entry of verifying.values()) entry.reject(new Error(`decode worker exited with ${code}`))
+      verifying.clear()
+      for (const entry of versioning.values()) entry('')
+      versioning.clear()
       for (const entry of enrolling.values()) entry(false)
       enrolling.clear()
       for (const entry of scripting.values()) entry.resolve({ ok: false, phrases: 0, seconds: 0 })

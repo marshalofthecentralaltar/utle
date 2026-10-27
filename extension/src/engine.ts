@@ -13,6 +13,8 @@ import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
+import { verifiedOwner } from '../../src/speech/asrProtocol.ts'
+import type { SpeakerDecision } from '../../src/speech/asrProtocol.ts'
 import { documentPaused, inDocument } from '../../src/core/documentMode.ts'
 import { speak as synthSpeak } from '../../src/speech/synth.ts'
 // ---------- reading aloud (29.5) ----------
@@ -52,7 +54,7 @@ export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' | 'aborted'
  */
 export type EngineHandlers = RecognizerHandlers & {
   onLag(ms: number): void
-  onUtteranceContinued(text: string, added: string): void
+  onUtteranceContinued(text: string, added: string, decision?: SpeakerDecision): void
   /** Round 4 (review): a foreign final takes back the preview its partials typed. */
   onForeign(): void
   /** Round 4 (review): enrolment is over; utterances are handled again. */
@@ -97,6 +99,12 @@ export interface EngineDeps {
   hosted?: boolean
   /** Round 9 (30.5.4): one record per task as it ends, never with words. Absent: nothing is kept. */
   spend?(record: SpendRecord): void
+  /**
+   * Round 10 (ARCHITECTURE 31.4): Kuula ainult mind is on. Nothing speech-driven runs without a
+   * decision that verified the owner: partials are never typed or shown, and an utterance or a
+   * continuation without one is dropped before the rules, the page, the model or the queue.
+   */
+  onlyOwner?: boolean
 }
 
 export interface Engine {
@@ -1346,8 +1354,29 @@ export function createEngine(deps: EngineDeps): Engine {
   }
   // ---------- end of wake word and places ----------
 
+  // ---------- only the owner (round 10, ARCHITECTURE 31.4) ----------
+  // Outside every other wrapper: the wake word, reading aloud, the entry flow and the queue all sit
+  // behind these two doors. The recogniser checks the segment and the session (31.3); this is the
+  // second, independent wall.
+  const ownerOnly = (inner: EngineHandlers): EngineHandlers => ({
+    ...inner,
+    onInterim() {
+      // Unverified words: never typed into the box, never shown on the strip.
+    },
+    onUtterance(utterance, decision) {
+      if (verifiedOwner(decision)) inner.onUtterance(utterance)
+      else dropLive()
+    },
+    onUtteranceContinued(text, added, decision) {
+      if (verifiedOwner(decision)) inner.onUtteranceContinued(text, added)
+      else dropLive()
+    },
+  })
+  const heardBy: EngineHandlers = deps.onlyOwner === true ? ownerOnly(handlers) : handlers
+  // ---------- end of only the owner ----------
+
   const recognizer = deps.recognizer(
-    handlers,
+    heardBy,
     // Round 6: a spelled letter for the entry flow must not wait for the hold.
     // Round 8 (29.4.1): no quick reply from a partial while the wake window is closed (a partial cannot be gated).
     (utterance) => entry || ((wake === null || windowOpen()) && deps.logic.inpageInstant(session, utterance)),

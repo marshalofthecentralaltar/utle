@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
-import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
+import { SPEAKER_REASONS } from '../src/speech/asrProtocol.ts'
+import type { AsrServerMessage, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
-import type { EnrolPhrase, Judgement, SpeakerGate } from './speaker.ts'
+import type { EnrolPhrase, Judgement, SpeakerGate, SpeakerVerification } from './speaker.ts'
 import { CAPTURE_LOG, captureFromEnv, createCapture } from './capture.ts'
 import type { Capture } from './capture.ts'
 import type { VadLike } from './vad.ts'
@@ -339,6 +340,20 @@ class FakeGate implements SpeakerGate {
     this.judged.push(frames)
     return this.answer
   }
+  /** Round 10: what verify answers; by default derived from answer (null: no profile; unknown: too little audio). */
+  verification: SpeakerVerification | null = null
+  version = 'v1-fake0001'
+  verify(frames: Float32Array[]): SpeakerVerification {
+    this.judged.push(frames)
+    if (this.verification !== null) return this.verification
+    const a = this.answer
+    if (a === null) return { judgement: null, reason: 'profile_missing', profileVersion: '' }
+    const reason: SpeakerReason = a.speaker === 'owner' ? 'verified_owner' : a.speaker === 'other' ? 'rejected_other' : 'insufficient_audio'
+    return { judgement: a, reason, profileVersion: this.version }
+  }
+  profileVersion(): string {
+    return this.answer === null ? '' : this.version
+  }
   phrased: Float32Array[][] = []
   learnt: EnrolPhrase[][] = []
   phrase(frames: Float32Array[]): EnrolPhrase | null {
@@ -393,7 +408,7 @@ describe('the speaker on a final (round 4)', () => {
     expect(sent.at(-1)).toEqual({ type: 'final', text: 'ava' })
   })
 
-  it("judges a flush on the frames since the last reset, and sends the other voice's final too", () => {
+  it("judges a flush on the frames since the last reset, and with only the owner on sends the other voice's rejection without its words (round 10)", () => {
     const { gate, sent, loop, session } = setupWithGate()
     gate.answer = { speaker: 'other', score: 0.1 }
     session.onlyOwner(true)
@@ -402,9 +417,10 @@ describe('the speaker on a final (round 4)', () => {
     session.flush()
     session.audio(frame(3))
     loop.settle()
-    expect(sent.filter((message) => message.type === 'final')).toEqual([{ type: 'final', text: 'ava uus', speaker: 'other' }])
+    expect(sent.filter((message) => message.type === 'final')).toEqual([])
+    expect(sent.filter((message) => message.type === 'rejected').map((m) => (m.type === 'rejected' ? m.decision.reason : ''))).toEqual(['rejected_other'])
     expect(gate.judged.map((frames) => frames.length)).toEqual([2])
-    expect(sent.at(-1)).toEqual({ type: 'partial', text: 'vaheleht' })
+    expect(sent.at(-1)).toEqual({ type: 'activity' })
     expect(session.stats().foreignFinals).toBe(1)
   })
 
@@ -662,7 +678,7 @@ describe('strict mode (round 7) on the server', () => {
   })
 })
 
-describe('continuity (round 7): one-word owner commands in strict mode', () => {
+describe('no continuity (round 10, issue #3 B3): each final is verified on its own frames', () => {
   const setupJudged = (): ReturnType<typeof setupWithGate> & { judged: Judgement[] } => {
     const recognizer = new FakeRecognizer()
     const gate = new FakeGate()
@@ -670,94 +686,186 @@ describe('continuity (round 7): one-word owner commands in strict mode', () => {
     const judged: Judgement[] = []
     const loop = new Loop()
     const clock = { now: 1000 }
-    const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now, onJudged: (judgement) => judged.push(judgement) })
+    const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now, onJudged: (judgement) => judged.push(judgement), sessionId: 's-1' })
     session.onlyOwner(true)
     return { recognizer, gate, sent, loop, clock, session, judged }
   }
-  const speakers = (sent: AsrServerMessage[]): (string | undefined)[] => sent.flatMap((m) => (m.type === 'final' ? [m.speaker] : []))
+  const outcomes = (sent: AsrServerMessage[]): string[] => sent.flatMap((m) => (m.type === 'final' ? [`final ${m.decision?.reason ?? 'none'}`] : m.type === 'rejected' ? [`rejected ${m.decision.reason}`] : []))
   const OWNER: Judgement = { speaker: 'owner', score: 0.7, seconds: 1.6 }
   const SHORT: Judgement = { speaker: 'unknown', score: 0, seconds: 0.4 }
 
-  it('continuity: a short owner word after an owner final passes, and the log has the reason', () => {
+  it("a short word scored other right after the owner's final is rejected, and the log has the reason", () => {
     const { gate, sent, loop, clock, session, judged } = setupJudged()
     gate.answer = OWNER
     feed(session, loop, [1, 2, 0])
     clock.now += 4000
     gate.answer = { speaker: 'other', score: 0.168, seconds: 0.45 }
     feed(session, loop, [1, 0])
-    expect(sent.filter((m) => m.type === 'final')).toEqual([
-      { type: 'final', text: 'ava uus', speaker: 'owner' },
-      { type: 'final', text: 'ava', speaker: 'owner' },
-    ])
-    expect(judged.at(-1)).toEqual({ speaker: 'owner', score: 0.168, seconds: 0.45, reason: 'continuity' })
-    expect(session.stats().foreignFinals).toBe(0)
-  })
-
-  it('continuity: a short word more than CONTINUITY_MS after the owner final is judged as now', () => {
-    const { gate, sent, loop, clock, session } = setupJudged()
-    gate.answer = OWNER
-    feed(session, loop, [1, 0])
-    clock.now += 10_001
-    gate.answer = SHORT
-    feed(session, loop, [1, 0])
-    expect(speakers(sent)).toEqual(['owner', 'unknown'])
+    expect(outcomes(sent)).toEqual(['final verified_owner', 'rejected rejected_other'])
+    expect(judged.at(-1)).toEqual({ speaker: 'other', score: 0.168, seconds: 0.45, reason: 'rejected_other' })
     expect(session.stats().foreignFinals).toBe(1)
   })
 
-  it('continuity: a short word after an other final is judged as now, and a word continuity passed never extends the window', () => {
-    const { gate, sent, loop, clock, session } = setupJudged()
-    gate.answer = OWNER
-    feed(session, loop, [1, 0])
-    clock.now += 2000
-    gate.answer = { speaker: 'other', score: 0.2, seconds: 2.1 }
-    feed(session, loop, [1, 0])
-    clock.now += 1000
-    gate.answer = SHORT
-    feed(session, loop, [1, 0])
-    expect(speakers(sent)).toEqual(['owner', 'other', 'unknown'])
-
-    // The window runs from the last owner final judged on its score, not from a word continuity let through.
-    const next = setupJudged()
-    next.gate.answer = OWNER
-    feed(next.session, next.loop, [1, 0])
-    next.clock.now += 8000
-    next.gate.answer = SHORT
-    feed(next.session, next.loop, [1, 0])
-    next.clock.now += 8000
-    feed(next.session, next.loop, [1, 0])
-    expect(speakers(next.sent)).toEqual(['owner', 'owner', 'unknown'])
+  it('a short word with too little audio is insufficient_audio however recently the owner spoke', () => {
+    for (const gap of [500, 4000, 9999, 10_001]) {
+      const { gate, sent, loop, clock, session } = setupJudged()
+      gate.answer = OWNER
+      feed(session, loop, [1, 0])
+      clock.now += gap
+      gate.answer = SHORT
+      feed(session, loop, [1, 0])
+      expect(outcomes(sent)).toEqual(['final verified_owner', 'rejected insufficient_audio'])
+    }
   })
 
-  it('continuity: a short final the score judged owner opens and extends the window', () => {
-    const { gate, sent, loop, clock, session, judged } = setupJudged()
+  it('a short final the score itself verified passes on its own, and opens no window for the next', () => {
+    const { gate, sent, loop, clock, session } = setupJudged()
     gate.answer = { speaker: 'owner', score: 0.7, seconds: 0.9 }
     feed(session, loop, [1, 0])
-    expect(judged.at(-1)).toEqual({ speaker: 'owner', score: 0.7, seconds: 0.9 })
-    clock.now += 9000
-    gate.answer = SHORT
-    feed(session, loop, [1, 0])
-    expect(judged.at(-1)).toEqual({ ...SHORT, speaker: 'owner', reason: 'continuity' })
-    // A second short owner-scored final at 9.5 s extends the window: a short word at 19 s still passes.
     clock.now += 500
-    gate.answer = { speaker: 'owner', score: 0.66, seconds: 0.8 }
-    feed(session, loop, [1, 0])
-    clock.now += 9500
     gate.answer = SHORT
     feed(session, loop, [1, 0])
-    expect(speakers(sent)).toEqual(['owner', 'owner', 'owner', 'owner'])
-    expect(judged.at(-1)?.reason).toBe('continuity')
+    expect(outcomes(sent)).toEqual(['final verified_owner', 'rejected insufficient_audio'])
+  })
+})
+
+describe('the fail-closed decision on the server (round 10, 31.2)', () => {
+  const strict = (): ReturnType<typeof setupWithGate> => {
+    const recognizer = new FakeRecognizer()
+    const gate = new FakeGate()
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    const clock = { now: 1000 }
+    const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now, sessionId: 'session-A' })
+    session.onlyOwner(true)
+    return { recognizer, gate, sent, loop, clock, session }
+  }
+
+  it('announces the session and the profile version when only the owner is turned on, and again after an enrolment', async () => {
+    const { gate, sent, loop, session } = strict()
+    expect(sent).toEqual([{ type: 'speakerSession', sessionId: 'session-A', profileVersion: 'v1-fake0001' }])
+    gate.version = 'v1-fake0002'
+    session.enrol(0.2)
+    feed(session, loop, [1, 1, 1])
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'speakerSession').at(-1)).toEqual({ type: 'speakerSession', sessionId: 'session-A', profileVersion: 'v1-fake0002' })
+    // Off: no announcement.
+    const off = setupWithGate()
+    off.session.onlyOwner(false)
+    expect(off.sent).toEqual([])
   })
 
-  it('continuity: a long utterance is never passed by continuity', () => {
-    const { gate, sent, loop, clock, session, judged } = setupJudged()
-    gate.answer = OWNER
-    feed(session, loop, [1, 0])
-    clock.now += 1000
-    gate.answer = { speaker: 'other', score: 0.3, seconds: 1.0 }
+  it('a verified owner final carries its segment and the whole decision', () => {
+    const { gate, sent, loop, clock, session } = strict()
+    gate.answer = { speaker: 'owner', score: 0.71, seconds: 1.2 }
+    session.audio(frame(1))
+    loop.settle()
+    clock.now += 7
+    session.audio(frame(0))
+    loop.settle()
+    expect(sent.at(-1)).toEqual({
+      type: 'final',
+      text: 'ava',
+      speaker: 'owner',
+      segment: 1,
+      decision: { segmentId: 1, sessionId: 'session-A', profileVersion: 'v1-fake0001', verdict: 'owner', reason: 'verified_owner', score: 0.71, timings: { judgeMs: 0, speechMs: 1200 } },
+    })
+  })
+
+  for (const reason of SPEAKER_REASONS.filter((r) => r !== 'verified_owner')) {
+    it(`${reason}: a rejection without the words, counted as dropped`, () => {
+      const { gate, sent, loop, session } = strict()
+      gate.verification = { judgement: null, reason, profileVersion: 'v1-fake0001' }
+      feed(session, loop, [1, 2, 0])
+      const finals = sent.filter((m) => m.type === 'final')
+      const rejections = sent.flatMap((m) => (m.type === 'rejected' ? [m.decision] : []))
+      expect(finals).toEqual([])
+      expect(rejections).toHaveLength(1)
+      expect(rejections[0]).toMatchObject({ segmentId: 1, sessionId: 'session-A', reason, verdict: reason === 'mixed_speakers' || reason === 'rejected_other' ? 'other' : 'unknown' })
+      // Partials included (round 10, review 1): no words at all leave the server.
+      expect(sent.filter((m) => 'text' in m)).toEqual([])
+      expect(session.stats().foreignFinals).toBe(1)
+    })
+  }
+
+  it('review 1: no words but a verified final leave the server while only the owner is on, partials included; a wordless activity instead', () => {
+    const { gate, sent, loop, session } = strict()
+    gate.answer = { speaker: 'other', score: 0.2, seconds: 1.5 }
     feed(session, loop, [1, 2, 3, 0])
-    expect(sent.filter((m) => m.type === 'final').at(-1)).toEqual({ type: 'final', text: 'ava uus vaheleht', speaker: 'other' })
-    expect(judged.at(-1)).toEqual({ speaker: 'other', score: 0.3, seconds: 1.0 })
-    expect(session.stats().foreignFinals).toBe(1)
+    gate.answer = { speaker: 'unknown', score: 0, seconds: 0.4 }
+    session.audio(frame(1))
+    session.audio(frame(2))
+    session.flush()
+    loop.settle()
+    gate.answer = { speaker: 'owner', score: 0.8, seconds: 1.5 }
+    feed(session, loop, [3, 1, 0])
+    const worded = sent.filter((m) => 'text' in m && m.text !== '')
+    expect(worded).toEqual([expect.objectContaining({ type: 'final', text: 'vaheleht ava', decision: expect.objectContaining({ reason: 'verified_owner' }) })])
+    expect(sent.filter((m) => m.type === 'partial')).toEqual([])
+    expect(sent.filter((m) => m.type === 'activity').length).toBeGreaterThan(0)
+    // Off again: partials with words, as before.
+    session.onlyOwner(false)
+    feed(session, loop, [1, 0])
+    expect(sent.filter((m) => m.type === 'partial').at(-1)).toEqual({ type: 'partial', text: 'ava' })
+  })
+
+  it('review 2: an utterance signalled with activity whose words came to nothing is closed with insufficient_audio (endpoint or flush); off mode is unchanged', () => {
+    const run = (on: boolean, script: DecodeResult[], flush: boolean): AsrServerMessage[] => {
+      const sent: AsrServerMessage[] = []
+      const loop = new Loop()
+      let i = 0
+      const decoder: Decoder = { accept: () => script[i++] ?? { text: '', endpoint: false }, reset() {}, close() {}, profileVersion: () => 'v1-p' }
+      const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule, sessionId: 's' })
+      session.onlyOwner(on)
+      for (let k = 0; k < script.length; k += 1) {
+        session.audio(frame(1))
+        loop.settle()
+      }
+      if (flush) {
+        session.flush()
+        loop.settle()
+      }
+      return sent.filter((m) => m.type !== 'speakerSession')
+    }
+    const atEndpoint: DecodeResult[] = [{ text: 'Jah', endpoint: false }, { text: '', endpoint: true }]
+    const beforeFlush: DecodeResult[] = [{ text: 'Jah', endpoint: false }, { text: '', endpoint: false }]
+    for (const [script, flush] of [[atEndpoint, false], [beforeFlush, true]] as const) {
+      expect(run(true, script, flush)).toEqual([
+        { type: 'activity' },
+        { type: 'rejected', decision: { segmentId: 1, sessionId: 's', profileVersion: 'v1-p', verdict: 'unknown', reason: 'insufficient_audio', timings: { judgeMs: 0 } } },
+      ])
+      expect(run(false, script, flush)).toEqual([{ type: 'partial', text: 'Jah' }])
+    }
+  })
+
+  it('segments count up through the session, rejected or not', () => {
+    const { gate, sent, loop, session } = strict()
+    gate.answer = { speaker: 'owner', score: 0.7, seconds: 1 }
+    feed(session, loop, [1, 0])
+    gate.answer = { speaker: 'other', score: 0.2, seconds: 1 }
+    feed(session, loop, [1, 0])
+    gate.answer = { speaker: 'owner', score: 0.7, seconds: 1 }
+    feed(session, loop, [1, 0])
+    expect(sent.flatMap((m) => (m.type === 'final' || m.type === 'rejected' ? [m.decision?.segmentId] : []))).toEqual([1, 2, 3])
+  })
+
+  it('a decoder without verify (no gate) is denied as a verification error', () => {
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    const decoder: Decoder = { accept: () => ({ text: 'saada', endpoint: true }), reset() {}, close() {}, judge: () => ({ speaker: 'owner', score: 0.9 }) }
+    const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule, sessionId: 'x' })
+    session.onlyOwner(true)
+    session.audio(frame(1))
+    loop.settle()
+    expect(sent.filter((m) => m.type === 'final')).toEqual([])
+    expect(sent.flatMap((m) => (m.type === 'rejected' ? [m.decision.reason] : []))).toEqual(['verification_error'])
+  })
+
+  it('with the mode off the wire is as before: no announcement, no segment, no decision', () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    gate.answer = { speaker: 'owner', score: 0.9 }
+    feed(session, loop, [1, 0])
+    expect(sent.filter((m) => m.type !== 'partial')).toEqual([{ type: 'final', text: 'ava', speaker: 'owner' }])
   })
 })
 
@@ -849,5 +957,61 @@ describe('capture (round 7, UTLE_CAPTURE)', () => {
     expect(readdirSync(dir).sort()).toEqual(['20261021T080000123-none-0.000.wav', '20261021T080000123-owner-0.700.wav', CAPTURE_LOG].sort())
     expect(readFileSync(join(dir, '20261021T080000123-owner-0.700.wav')).length).toBe(44 + 2 * 2 * ASR_FRAME_SAMPLES)
     expect(readFileSync(join(dir, CAPTURE_LOG), 'utf8')).toBe('20261021T080000123-owner-0.700.wav\t0.700\towner\tava uus\n20261021T080000123-none-0.000.wav\t0.000\tnone\tsaada\n')
+  })
+})
+
+// Issue #3 work package A: the baseline that fails on main. With onlyOwner on, the server never
+// sends words the speaker gate did not verify as the owner's, for that utterance itself.
+describe('issue #3: only the owner, fail closed on the server', () => {
+  const owned = (sent: AsrServerMessage[]): string[] => sent.flatMap((m) => (m.type === 'final' && m.speaker === 'owner' ? [m.text] : []))
+  const texts = (sent: AsrServerMessage[]): string[] => sent.flatMap((m) => (m.type === 'final' ? [m.text] : []))
+
+  it("a stranger's short word right after the owner spoke is never promoted to the owner", () => {
+    const { gate, sent, loop, clock, session } = setupWithGate()
+    session.onlyOwner(true)
+    gate.answer = { speaker: 'owner', score: 0.7, seconds: 1.6 }
+    feed(session, loop, [1, 2, 0])
+    clock.now += 4000
+    gate.answer = { speaker: 'other', score: 0.168, seconds: 0.45 }
+    feed(session, loop, [1, 0])
+    clock.now += 1000
+    gate.answer = { speaker: 'unknown', score: 0, seconds: 0.4 }
+    feed(session, loop, [3, 0])
+    expect(owned(sent)).toEqual(['ava uus'])
+    expect(texts(sent)).toEqual(['ava uus'])
+  })
+
+  it('a final with no verdict (no profile) is not sent with its words', () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.onlyOwner(true)
+    gate.answer = null
+    feed(session, loop, [1, 0])
+    expect(texts(sent)).toEqual([])
+  })
+
+  it('a judge that fails sends no words', async () => {
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    let calls = 0
+    const decoder: Decoder = {
+      accept: () => ({ text: 'saada', endpoint: true }),
+      reset() {},
+      close() {},
+      judge() {
+        calls += 1
+        if (calls === 1) throw new Error('no embedding')
+        return Promise.reject(new Error('worker gone'))
+      },
+    }
+    const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule })
+    session.onlyOwner(true)
+    session.audio(frame(1))
+    loop.settle()
+    session.audio(frame(1))
+    loop.settle()
+    await Promise.resolve()
+    await Promise.resolve()
+    loop.settle()
+    expect(texts(sent)).toEqual([])
   })
 })
