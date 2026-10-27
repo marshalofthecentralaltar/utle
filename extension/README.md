@@ -352,7 +352,9 @@ the reading pause of the READ lane lands).
 
 Say `loe ette` (also `loe lehte ette`, `read the page`) and Ütle reads the article of the page in
 front aloud: its headline and paragraphs, without the menus, the sidebar, the footer, the cookie
-banner or the bar itself, sentence by sentence. `loe see ette` reads the armed message box (the
+banner or the bar itself, sentence by sentence. A subscriber teaser (a short list of selling points
+next to a Telli button, as on postimees.ee) is not read, and a sentence that repeats the one before
+it (err.ee's lead opens with the headline) is said once (30.4). `loe see ette` reads the armed message box (the
 page when no box is armed), `loe valitud ette` the selected text, `loe edasi` goes on from the next
 sentence after a stop, and `lõpeta lugemine` stops; while it reads, `stopp` and `aitab` stop the
 reading too, before anything else, and so do `paus` and `peata`. The microphone keeps listening
@@ -461,6 +463,8 @@ accessibility tree would, on any site, without site-specific paths:
   banner (a fixed or absolute layer over a fifth of the screen whose text says cookie, küpsis,
   nõustu, accept or consent), items come first and their text begins with `[dialog] `. Elements the
   layer covers are not listed, so the model sees the banner and little else until it is dismissed.
+  When nothing outside the banner is reachable (delfi.ee's popup on a full-screen overlay, err.ee's
+  modal), the items below the fold and the main video are left out too (30.4).
 - **Below the fold.** Up to 30 items within one screen below the fold follow the visible ones, their
   text beginning with `[allpool] `. `clickItem` and `focusItem` scroll such an item to the middle
   of the screen first. The numbers (`showHints`) label only the visible items, and the ids agree:
@@ -565,15 +569,25 @@ keys reach it, the whole-box repairs and "find a word" do not (see "What to say"
   a synthetic Enter sends. Each selector in `extension/src/sites.ts` says VERIFIED or UNVERIFIED;
   to fix one, change it there, `npm run ext`, reload the extension.
 - Messenger: every selector is a best guess; nobody has tried it logged in.
-- YouTube and Google (M7): the search-field selectors in `SEARCH_FIELDS` (`extension/src/sites.ts`)
-  and the player shortcuts `media` sends to `#movie_player` (k, m, f, arrows, j, l) are read from
-  the public pages, not tried by voice; the element API is the fallback either way. `fullscreen`
-  needs a user gesture Chrome may not grant to an injected script; it then answers failed.
+- YouTube and Google (M7): the search-field selectors in `SEARCH_FIELDS` and `#movie_player` holding
+  the `<video>` were seen on the real public pages on 2026-10-27 (`scripts/real-pages.ts`,
+  `docs/proof/r9-real-pages.md`); a search was not typed there (read only). Still unverified: the
+  player shortcuts `media` sends to `#movie_player` (k, m, f, arrows, j, l), not tried by voice; the
+  element API is the fallback either way. `fullscreen` needs a user gesture Chrome may not grant to
+  an injected script; it then answers failed. The mobile site (`m.youtube.com`) was not opened.
 - The unknown-site composer rule (a textarea or contenteditable with a send, post, comment or reply
   button in its form or within 200 px) is tested on stand-ins only.
-- What `readPage` makes of the real YouTube, Gmail and WhatsApp pages (names, one item per card,
-  the cookie banner, the items below the fold, the click fallbacks) is tested on the stand-ins
-  above, built from knowledge of those pages' markup, not on the sites themselves.
+- What `readPage` makes of the real Gmail and WhatsApp pages (names, one item per card, the items
+  below the fold, the click fallbacks) is tested on the stand-ins above, not on the sites. Seen on
+  the real public pages on 2026-10-27 (ARCHITECTURE 30.4): the cookie banner listed first on
+  youtube.com, google.ee, postimees.ee, delfi.ee, err.ee, ilmateenistus.ee and otse.err.ee, the item
+  counts there, and `loe ette` on one article each of postimees.ee, delfi.ee and err.ee. Not seen:
+  the click fallbacks on those sites (only a consent button was clicked, by Playwright), YouTube
+  logged in, any page at another window size than 1280 x 900.
+- The strip covers the bottom 128 px of the screen, and a page's own fixed layer there stays under
+  it: on youtube.com and ilmateenistus.ee the consent button sits under the strip (2026-10-27), so a
+  pointer or dwell cannot click it. `readPage` still lists it as `[dialog] …`; a click on it by voice
+  was not tried on the real page.
 - Whether the strip makes room on the real WhatsApp layout (tested on stand-ins built on `100%`
   and on `100vh` heights).
 - Branded Google Chrome (tested in Playwright's bundled Chromium only), including how it asks about
