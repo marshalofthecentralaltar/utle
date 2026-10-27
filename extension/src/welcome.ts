@@ -17,7 +17,6 @@ const en = STRINGS.en.strip
 
 /** Step 3: the words in the demo box must stand still this long to count as a final that landed. */
 export const DEMO_SETTLE_MS = 1000
-const README_URL = 'https://github.com/marshalofthecentralaltar/utle/blob/main/extension/README.md'
 
 const send = (message: ToBackground): void => {
   chrome.runtime.sendMessage(message).catch(() => undefined)
@@ -353,14 +352,9 @@ readyRow.append(
 ready.section.append(list, readyRow, ready.result)
 readyCard = ready
 
-/** Abi: lane HELP's help.html when this build has it, else the README. */
+/** Abi: the help page (30.2). */
 async function openHelp(): Promise<void> {
-  // TODO(lane HELP): once extension/help.html is merged this always finds it; the README fallback can go then.
-  const there = await fetch(chrome.runtime.getURL('help.html')).then(
-    (r) => r.ok,
-    () => false,
-  )
-  await chrome.tabs.create({ url: there ? chrome.runtime.getURL('help.html') : README_URL, active: true })
+  await chrome.tabs.create({ url: chrome.runtime.getURL('help.html'), active: true })
 }
 
 function readyCheck(): void {

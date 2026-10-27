@@ -741,8 +741,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
 })
 
 // ---------- the first run (30.1, ONBOARD lane): the welcome page, the toolbar menu, the connection dot ----------
-const README_URL = 'https://github.com/marshalofthecentralaltar/utle/blob/main/extension/README.md'
-
 /** One of the extension's own pages: an open tab of it comes to the front, else a new tab. */
 async function openOwnPage(file: string): Promise<void> {
   const base = chrome.runtime.getURL(file)
@@ -755,22 +753,16 @@ async function openOwnPage(file: string): Promise<void> {
   await chrome.tabs.create({ url: base, active: true })
 }
 
-/** Abi: lane HELP's help.html when this build has it, else the README. */
-async function openHelp(): Promise<void> {
-  // TODO(lane HELP): once extension/help.html is merged this always finds it; the README fallback can go then.
-  const there = await fetch(chrome.runtime.getURL('help.html')).then(
-    (r) => r.ok,
-    () => false,
-  )
-  if (there) await openOwnPage('help.html')
-  else await chrome.tabs.create({ url: README_URL, active: true })
+/** Abi: the help page (30.2), now in every build. */
+async function openHelpPage(): Promise<void> {
+  await openOwnPage('help.html')
 }
 
 /** The toolbar icon's context menu. */
 async function menuClicked(id: string): Promise<void> {
   if (id === 'utle-welcome') await openOwnPage('welcome.html')
   else if (id === 'utle-options') await chrome.runtime.openOptionsPage()
-  else if (id === 'utle-help') await openHelp()
+  else if (id === 'utle-help') await openHelpPage()
 }
 // For the tests: the suite calls the menu's handler (Playwright cannot open a toolbar menu).
 ;(globalThis as { __utleMenu?: (id: string) => Promise<void> }).__utleMenu = menuClicked
