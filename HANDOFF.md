@@ -365,10 +365,9 @@ Built on branch `r7-robust` (`docs/ARCHITECTURE.md` 23.2, 21.1, 23.6, 28), green
   2.0, 4 at 3.0; 1.5 already changes dictated punctuation, so `HOTWORDS_SCORE` is 1.0.
 
 Not verified: a real voice with hotwords on (the fixtures are synthetic speech, 29 words), whether
-hotwords pull ordinary dictation toward command words over a day of use, and the server actually
-writing `models/hotwords.txt` at start (the lane's `models/` was read only; the eval writes the
-files to a temporary folder through the same `hotwordsConfig`). After merging, run `npm run model`
-once (or just start the server) so the files exist. Google Docs gluing (M5) is still open: the fix is
+and whether hotwords pull ordinary dictation toward command words over a day of use. Seen
+2026-10-27 (round 9, 30.3): with both hotword files moved aside, a server start wrote them again
+(10:03:49, 321 phrases) and logged `[asr] hotwords on: models\hotwords.txt, 321 phrases, score 1`. Google Docs gluing (M5) is still open: the fix is
 in `extension/src/page.ts` and needs a browser test, more than the 20 lines the lane was allowed.
 
 ## 1j. Round 8 (2026-10-22 night, overnight, unattended): seek by amount, document mode, mail, wake word and places, reading aloud, the dictation-cleaning measurement
@@ -459,9 +458,8 @@ player for the seek; real Google Docs; real Gmail's selectors; Edge with the ext
 word all day in a room; "stopp" over a loudspeaker; Ralf's own dictation through the cleaning prompt.
 
 **Known faults added this round:** in document mode a dictated sentence that starts with a command verb ("Ava
-uks oli lahti") is asked of the model, which usually answers dictate; a textarea over 500 characters anywhere (a
-long forum comment) is a document, so "saada" there says "Dokumendis ei saadeta." (click Send, or say "vajuta
-saada"); the wake word is matched on the first one or two words only, so "Ütle" said before a breath that the
+uks oli lahti") is asked of the model, which usually answers dictate; (fixed 2026-10-27, 30.3: a long textarea
+with a send, post or reply button beside it is no longer a document, and "saada" there presses the button); the wake word is matched on the first one or two words only, so "Ütle" said before a breath that the
 recogniser split off becomes its own final (the bare word opens the dictation window, which is the intended way
 to say it); in wake mode a woken command never opens the dictation window, only dictation does.
 
@@ -537,10 +535,9 @@ on which to keep, per file.**
   the rules without the model's check even in a one-line field, by design. A one-line field is
   always replaced whole, so a value said in two breaths is joined by the core, not by the page.
 - Round 5 review: see `docs/REVIEW-R5.md` when it lands; its open items belong here.
-- "Kirjuta siis mulle" is taken as opening a conversation with "Siis Mul" (the two-word name rule
-  in `src/core/message.ts` excludes only single-word pronouns). Not fixed.
-- A page that navigates on the search's Enter within 600 ms can lose the page's answer, so the bar
-  says the command did not answer although the search ran.
+- Fixed 2026-10-27 (round 9, FAULTS lane, ARCHITECTURE 30.3): "Kirjuta siis mulle" is dictation
+  (a filler word before a pronoun or verb is never a name), and a search whose Enter navigates
+  within 600 ms answers ok.
 - The earlier faults stand: the command word can flash in the box when he keeps talking after a
   quick command; the "Sain aru" line is replaced by the result line a moment later; live words come
   in bursts of about 0.6 s; Chrome's own pages (settings, Web Store) cannot show the bar, and no

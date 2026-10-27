@@ -32,6 +32,18 @@ export function writeHotwords(root: string, modelDir: string): { file: string; v
   return { file, vocab }
 }
 
+/**
+ * F5 (30.3): the start-up line after the model has loaded: the hotwords file the recogniser uses and
+ * how many phrases it holds, or why there is none. Counts and a path only.
+ */
+export function hotwordsLine(root: string, score: number = HOTWORDS_SCORE): string {
+  if (!(score > 0)) return '[asr] hotwords off (score 0)'
+  const file = join(root, HOTWORDS_FILE)
+  if (!existsSync(file)) return `[asr] hotwords off (${HOTWORDS_FILE} missing)`
+  const phrases = readFileSync(file, 'utf8').split(/\r?\n/).filter((line) => line.trim() !== '').length
+  return `[asr] hotwords on: ${HOTWORDS_FILE}, ${phrases} phrases, score ${score}`
+}
+
 export interface HotwordsConfig {
   /** Spread into modelConfig. */
   model: { modelingUnit?: string; bpeVocab?: string }

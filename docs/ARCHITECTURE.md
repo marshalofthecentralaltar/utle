@@ -2163,7 +2163,8 @@ within 200 px to its right or below (`sendButtonBeside` in `extension/src/box.ts
 already makes such a box a composer). The core reads document mode through one function,
 `inDocument(box)` in `src/core/documentMode.ts`: `box.document === true && box.send !== true`. So a
 600-character forum comment with a Post button beside it is a message box whatever its length, and
-"saada" presses the button; a long textarea with no such button is still a document and "saada"
+"saada" presses the button (`send` in `extension/src/page.ts`: on a page with no site entry, when
+Enter did not send, the button `sendButtonBeside` found is clicked); a long textarea with no such button is still a document and "saada"
 there still says "Dokumendis ei saadeta." Tests: `npx vitest run src/core/inpage.test.ts -t "send
 button"`; the browser suite's case on `essay.html` (the textarea given a Send button and 600
 characters: readBox is not a document, "saada" presses Send).

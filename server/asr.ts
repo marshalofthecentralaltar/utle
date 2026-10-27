@@ -8,6 +8,7 @@ import { ASR_PATH } from '../src/speech/asrProtocol.ts'
 import type { AsrClientMessage, AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
 import type { Judgement } from './speaker.ts'
 import { loadModel } from './asrModel.ts'
+import { hotwordsLine } from './hotwords.ts'
 import type { ModelLoad } from './asrModel.ts'
 import { createAsrSession, samplesFromFrame } from './asrSession.ts'
 import { hostInThread, openDecoderExtras, openSpeakerGate, startWorkerHost } from './asrWorker.ts'
@@ -122,6 +123,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
       console.info(`[asr] model loaded on a worker thread in ${worker.host.ms} ms`)
       console.info(speakerLine(worker.host.speaker, options.profiles?.()))
       console.info(vadLine(worker.host.vad))
+      console.info(hotwordsLine(root))
       worker.host.onExit((code) => {
         console.warn(`[asr] decode worker exited with ${code}; the next connection loads the model again`)
         host = null
@@ -144,6 +146,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
     const inThread = hostInThread(loaded.recognizer, loaded.ms, speaker, extras)
     console.info(speakerLine(inThread.speaker, options.profiles?.()))
     console.info(vadLine(inThread.vad))
+    console.info(hotwordsLine(root))
     return { ok: true, host: inThread }
   }
 
