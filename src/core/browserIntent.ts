@@ -1,5 +1,6 @@
 import type { BrowserCommand } from '../browser/protocol.ts'
 import { soundsLike } from './phonetic.ts'
+import { PHRASE_GROUPS } from './phrases.ts'
 import { spokenNumber } from './quickReply.ts'
 
 /**
@@ -290,6 +291,12 @@ phrases(
   { kind: 'openSettings', section: 'andmed', add: 'code' },
   'lisa uus isikukood', 'salvesta mu isikukood', 'salvesta minu isikukood', 'save my id code',
 )
+
+// Round 9 (30.2.2): the help page; "abi kerimine" opens it at that group. Written as cleanForBrowser leaves them.
+phrases({ kind: 'openHelp' }, 'abi', 'mida ma öelda saan', 'mida ma saan öelda', 'mida saab öelda', 'näita käske', 'käsud', 'help', 'what can i say', 'show commands')
+for (const group of PHRASE_GROUPS) {
+  for (const word of group.say) phrases({ kind: 'openHelp', group: group.id }, cleanForBrowser(`abi ${word}`), cleanForBrowser(`help ${word}`))
+}
 
 // Round 3, the edit lane (docs/ARCHITECTURE.md 21.1 "Editing"): the caret, a selection and the editing
 // keys inside the armed box, as whole phrases. The box-dependent forms ("mine sõna X ette", "vali X",

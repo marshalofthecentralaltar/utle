@@ -2160,24 +2160,29 @@ An entry has `et` (one or more Estonian forms; the first is the one shown large,
 tested), `en` (the English form, shown dim under), `does` (one Estonian line: what happens),
 `doesEn` (the same line in English, for the README),
 and the claim the test checks: `rule` (which rule answers it: `inpage`, `browserIntent`,
-`localIntent`, `places`, `placeVoice`, `savedEntry`, `readStop`, `wake`, or `model` for what only
-the model understands), `expect` (the command kind the rule must produce, or one of the outcomes
-`sleep`, `wake`, `cancel`, `speak`, `type` (the words are typed), `none` (nothing happens on the page),
-`ask` (left to the model)), and `box`, what is in front when it is said (`none`, `empty`, `text`,
-`field` with a `fieldKind`, `mail`, `document`). `example: true` marks the phrases the new-tab page
+`places`, `placeVoice`, `savedEntry`, `readStop`, `wake`, or `model` for what only the model
+understands; no README phrase belongs to the section 20 page's `localIntent`), `expect` (the kind of
+the first command the rule produces, or an outcome: for inpage `sleep`, `wake`, `cancel`, `speak`,
+`spell` (how dictation is written changed), `ask` (left to the model), `none`; for places `goTo`; for
+placeVoice `save` / `remove`; for savedEntry `add`, `delete`, `read`, `save`, `cancel`; for readStop
+`stop`; for wake `pass`, `open`, `close`), and `context`, what is in front when it is said (`none`,
+`focused`, `empty`, `text`, `code`, `email`, `tel`, `mail`, `document`, `hints` (the numbers showing),
+`saved` (an e-mail field with saved values), `asleep`, `spelled` (after "numbritena"), `entry` (the
+Minu andmed voice entry), `wakeShut`, `wakeOpen`). `example: true` marks the phrases the new-tab page
 rotates (`HELP_EXAMPLES`, each in „…“).
 
-`src/core/phrases.test.ts` walks every form of every entry through the rule it names with that box
+`src/core/phrases.test.ts` walks every form of every entry through the rule it names with that context
 and asserts the outcome, so a phrase that drifts from the rules fails `npm run check`. It also asserts
 the shape: 14 groups in the order above, unique ids, at least one phrase per group, every `does`
-one line ending in a full stop.
+and `doesEn` one line ending in a full stop. It printed 240 Estonian forms in 113 entries
+when written. "appi" is not a command: it is a cry that belongs in a message.
 
 **30.2.2 The commands that open it.** Rules only, never the model (the model's schema does not
-get the command). In `browserIntent`'s fixed table: `abi`, `appi`, `mida ma öelda saan`, `mida ma
+get the command). In `browserIntent`'s fixed table: `abi`, `mida ma öelda saan`, `mida ma
 saan öelda`, `mida saab öelda`, `näita käske`, `käsud`, `help`, `what can i say`, `show commands`
 give `{ kind: 'openHelp' }`; `abi <say>` and `help <say>` for each group's words give `{ kind:
-'openHelp', group: <id> }` ("abi kerimine", "abi vormid", "help scrolling"). One-word `abi` and `appi`
-are soft words (section 22): with words in the armed box they are typed ("Abi!" is a message). The
+'openHelp', group: <id> }` ("abi kerimine", "abi vormid", "help scrolling"). One-word `abi` is a soft
+word (section 22): with words in the armed box they are typed ("Abi!" is a message). The
 worker opens `help.html#<id>` in the target window, or brings an open help tab to the front at that
 address, as it does for the settings page (26.4). The strip says "Avan abi." / "Avan abi: Kerimine.".
 `notUnderstood` ends with the way in: "Ei saanud aru. Ütle teisiti, näiteks „ava youtube“ või „keri

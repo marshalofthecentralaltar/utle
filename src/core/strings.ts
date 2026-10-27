@@ -1,6 +1,7 @@
 import type { BrowserCommand, BrowserFailure, MediaAction, PressableKey } from '../browser/protocol.ts'
 import type { SavedKind } from './saved.ts'
 import type { FormatStyle } from '../browser/protocol.ts'
+import { HELP_EXAMPLES, HELP_EXAMPLES_EN, PHRASE_GROUPS } from './phrases.ts'
 
 /**
  * Every line a person can read in Ütle, in one table keyed by language, so a native speaker
@@ -340,6 +341,9 @@ export interface Strings {
     serverProfile(profile: { name: string; enrolled: boolean }): string
     /** The strip's standing line when the server answers 401. */
     badToken: string
+    /** Round 9 (30.2.3): the help page. */
+    helpTitle: string
+    helpHint: string
   }
 
   // Round 6 (Minu andmed, 26.5 and 26.6): the settings section and the voice entry flow.
@@ -671,6 +675,10 @@ const ET: Strings = {
         return command.direction === 'in' ? 'Suurendan.' : command.direction === 'out' ? 'Vähendan.' : 'Tavaline suurus.'
       case 'openSettings':
         return command.section === 'andmed' ? 'Avan minu andmed.' : 'Avan seaded.'
+      case 'openHelp': {
+        const group = PHRASE_GROUPS.find((g) => g.id === command.group)
+        return group ? `Avan abi: ${group.name}.` : 'Avan abi.'
+      }
       case 'savedEntry':
         return ''
       case 'format':
@@ -794,7 +802,7 @@ const ET: Strings = {
     sent: 'Saadetud.',
     notSent: (reason) => `Ei saatnud. ${reason}`,
     understood: (text) => `Sain aru: „${text}“.`,
-    notUnderstood: 'Ei saanud aru. Ütle teisiti, näiteks „ava youtube“ või „keri alla“.',
+    notUnderstood: 'Ei saanud aru. Ütle teisiti, näiteks „ava youtube“ või „keri alla“, või ütle „abi“.',
     thinking: 'Mõtlen…',
     modelOff: 'Vaba kõne mõistmine on väljas: serveril pole Anthropicu võtit. Käsud töötavad.',
     noPlaceToWrite: 'Siin pole kuhu kirjutada. Ütle „kirjuta siia“ kasti peal, „näita numbreid“ ja number, või ava vestlus.',
@@ -907,7 +915,8 @@ const ET: Strings = {
     show: 'Näita',
     settings: 'Seaded',
     thinking: 'Mõtlen',
-    examples: ['„ava youtube“', '„kirjuta Marile, et jõuan kell viis“', '„näita numbreid“ ja number', '„otsi kassivideod“', '„uus leht“', '„peida riba“'],
+    // Round 9 (30.2): drawn from src/core/phrases.ts, the phrases marked example.
+    examples: HELP_EXAMPLES,
     examplesLead: 'Ütle:',
     optionsTitle: 'Ütle seaded',
     optionsHelp: 'Vaata nupule üks sekund või ütle „näita numbreid“ ja siis numbri. Valik salvestub kohe.',
@@ -995,6 +1004,8 @@ const ET: Strings = {
     serverWrongToken: 'Vale võti.',
     serverProfile: (profile) => `Profiil: ${profile.name}, hääl ${profile.enrolled ? 'õpetatud' : 'õpetamata'}.`,
     badToken: 'Serveri võti on vale.',
+    helpTitle: 'Mida saab öelda',
+    helpHint: 'Vaata rühmale üks sekund, et see avada. Või ütle „näita numbreid“ ja number. „loe ette“ loeb avatud rühma ette.',
   },
 
   andmed: {
@@ -1198,6 +1209,10 @@ const EN: Strings = {
         return command.direction === 'in' ? 'Zooming in.' : command.direction === 'out' ? 'Zooming out.' : 'Normal size.'
       case 'openSettings':
         return command.section === 'andmed' ? 'Opening my details.' : 'Opening the settings.'
+      case 'openHelp': {
+        const group = PHRASE_GROUPS.find((g) => g.id === command.group)
+        return group ? `Opening help: ${group.nameEn}.` : 'Opening help.'
+      }
       case 'savedEntry':
         return ''
       case 'format':
@@ -1321,7 +1336,7 @@ const EN: Strings = {
     sent: 'Sent.',
     notSent: (reason) => `Not sent. ${reason}`,
     understood: (text) => `Understood: "${text}".`,
-    notUnderstood: 'I did not understand. Say it another way, for example "open youtube" or "scroll down".',
+    notUnderstood: 'I did not understand. Say it another way, for example "open youtube" or "scroll down", or say "help".',
     thinking: 'Thinking…',
     modelOff: 'Free-form understanding is off: the server has no Anthropic key. Commands still work.',
     noPlaceToWrite: 'There is nowhere to write here. Say "write here" on a field, "show numbers" and a number, or open a conversation.',
@@ -1434,7 +1449,7 @@ const EN: Strings = {
     show: 'Show',
     settings: 'Settings',
     thinking: 'Thinking',
-    examples: ['“open youtube”', '“write to Mari that I arrive at five”', '“show numbers” and a number', '“search cat videos”', '“new page”', '“hide the bar”'],
+    examples: HELP_EXAMPLES_EN,
     examplesLead: 'Say:',
     optionsTitle: 'Ütle settings',
     optionsHelp: 'Rest your eyes on a button for one second, or say “show numbers” and then the number. A choice is saved at once.',
@@ -1522,6 +1537,8 @@ const EN: Strings = {
     serverWrongToken: 'Wrong token.',
     serverProfile: (profile) => `Profile: ${profile.name}, voice ${profile.enrolled ? 'learnt' : 'not learnt yet'}.`,
     badToken: 'The server token is wrong.',
+    helpTitle: 'What you can say',
+    helpHint: 'Rest your eyes on a group for one second to open it. Or say “show numbers” and a number. “read aloud” reads the open group.',
   },
 
   andmed: {

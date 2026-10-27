@@ -221,11 +221,14 @@ type PageAnswer = BrowserResult | { ok: true; href: string; settled?: boolean }
 /** How long the new-tab page may take to answer a page command (setText waits up to 3 s for a box). */
 const NEWTAB_TIMEOUT_MS = 6000
 
+/** The extension's pages that load dist/page.js themselves and answer utle-page-run for their own tab (30.2.5). */
+const OWN_PAGES = ['newtab.html', 'options.html', 'help.html']
+
 /** The extension's own new-tab page (21.3). Chrome reports it as chrome://newtab/. */
 function ourNewTab(url: string | undefined): boolean {
   const u = url ?? ''
-  // The options page (M7) runs page commands the same way, so its buttons can be numbered by voice.
-  return url === 'chrome://newtab/' || u.startsWith(chrome.runtime.getURL('newtab.html')) || u.startsWith(chrome.runtime.getURL('options.html'))
+  // The options page (M7) and the help page (30.2.5) run page commands the same way, so their buttons can be numbered by voice.
+  return url === 'chrome://newtab/' || OWN_PAGES.some((page) => u.startsWith(chrome.runtime.getURL(page)))
 }
 
 /** The worker cannot inject into an extension page: the new-tab page runs the command with its own page.js. */
@@ -252,6 +255,20 @@ function optionsUrl(command: Extract<BrowserCommand, { kind: 'openSettings' }>):
 async function openSettings(tab: Tab, command: Extract<BrowserCommand, { kind: 'openSettings' }>): Promise<BrowserResult> {
   const url = optionsUrl(command)
   const base = chrome.runtime.getURL('options.html')
+  const open = (await chrome.tabs.query({})).find((t) => (t.url ?? t.pendingUrl ?? '').startsWith(base))
+  if (open?.id !== undefined) {
+    const updated = await chrome.tabs.update(open.id, { url, active: true })
+    if (open.windowId !== undefined) await chrome.windows.update(open.windowId, { focused: true }).catch(() => undefined)
+    return ok({ tab: tabInfo(updated ?? open) })
+  }
+  const created = await chrome.tabs.create({ windowId: tab.windowId, active: true, url })
+  return ok({ tab: tabInfo(created) })
+}
+
+/** Round 9 (30.2.2): the help page at a group, or an open help tab brought to the front at that address. */
+async function openHelp(tab: Tab, command: Extract<BrowserCommand, { kind: 'openHelp' }>): Promise<BrowserResult> {
+  const base = chrome.runtime.getURL('help.html')
+  const url = command.group ? `${base}#${encodeURIComponent(command.group)}` : base
   const open = (await chrome.tabs.query({})).find((t) => (t.url ?? t.pendingUrl ?? '').startsWith(base))
   if (open?.id !== undefined) {
     const updated = await chrome.tabs.update(open.id, { url, active: true })
@@ -416,6 +433,8 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
       return openConversation(tab, command)
     case 'openSettings':
       return openSettings(tab, command)
+    case 'openHelp':
+      return openHelp(tab, command)
     // ---------- wake word and places (29.4) ----------
     case 'savePlace':
     case 'removePlace':
