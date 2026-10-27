@@ -2197,6 +2197,29 @@ the stored address or token changes, so the dot means something before the first
 page's and the settings page's **Proovi ühendust** write their result too. While listening is off
 the dot shows the last check: it is not polled.
 
+**The strip and a page's bottom layer.** The REALPAGES measurement (30.4) found the strip lying
+over a page's own consent layer: youtube.com's "Nõustu kõigiga" (y 757 to 797 at 1280x900) and
+ilmateenistus.ee's whole cookie bar (y 806 to 850) sat under the strip (y 772 to 900), so a pointer
+or a dwell could not press them. The strip now steps aside for a page that is asking something:
+
+- *What counts* (`askingLayer` in `strip.ts`, the readPage rule of page.ts without its size test,
+  since a 48 px cookie bar is far under a fifth of the screen): walking up from what lies under the
+  strip, a fixed layer, or an absolute one with a z-index, whose text is under 3000 characters and
+  says cookie, küpsis, nõustu, accept or consent; or a `role=dialog`, `role=alertdialog`,
+  `aria-modal=true` or open `<dialog>`, unless it holds a text field (a compose window or a chat box
+  is a place to write, not a question: Gmail's compose is `role=dialog` and must keep the strip).
+- *Where it looks*: `elementsFromPoint` at fifteen points of the strip's rectangle (the bottom
+  `barHeight` px of the viewport, whether the bar is shown or not), at mount, at
+  `DOMContentLoaded` and `load`, then every second with the strip's other upkeep, and every 500 ms
+  while it is folded for this reason (`ASKING_POLL_MS`).
+- *What happens*: this tab's strip folds to the pill (the look of the hidden state, but local to the
+  tab: the stored `hidden` that every tab follows is not touched, and the page's room at the bottom
+  is given back). The pill's title says "Riba on peidus, kuni leht küsib." When the layer also
+  covers the pill's corner (bottom right), the pill moves to the top-right corner while folded for
+  this reason. When the layer is gone the bar comes back by itself, within a second.
+- A fold he asked for ("peida riba", the Peida control) is the stored `hidden` and wins: it never
+  unfolds by itself, whatever the page shows or stops showing.
+
 **Not verified.** A real helper doing the first run; Chrome's install flow from the Web Store (the
 unpacked load and Playwright's fresh profile are what was run).
 
