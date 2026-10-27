@@ -2146,7 +2146,44 @@ its own. Written before the code, as the rule in `CLAUDE.md` asks.
 
 ### 30.4 Real public pages: the measurement and what changed (REALPAGES lane)
 
-(lane REALPAGES writes this)
+Every page command was built against stand-ins written from memory of the real markup. This lane
+looks at the real public pages once, with the built extension loaded, and writes down what Ütle
+sees there. Read only: no login, no account, nothing typed into a real site's field, nothing
+submitted; the only clicks are a cookie-consent button (to measure the page behind it) and none
+other. A site that blocks automation is recorded as "blocked".
+
+**Method.** `scripts/real-pages.ts` launches Playwright's Chromium headed (headless cannot run the
+service worker) with `extension/` loaded the way `extension/test/run.ts` does, at 1280 x 900. For
+each page it goes to the address, waits for the load and 3 s more, and runs the product's own page
+code through the service worker exactly as `runInPage` does (`dist/page.js`, then
+`__utle.run({ kind, site })`), so what is measured is what the model and the reader get. The
+search-field check uses the selector strings imported from `extension/src/sites.ts` and only
+queries the DOM. The strip's box comes from the strip's own `utle-strip-measure` answer. The pages,
+one row each: `youtube.com`, a public watch page, `google.ee`, `postimees.ee`, `delfi.ee`, `err.ee`,
+`ilmateenistus.ee`, `otse.err.ee`. On the three news sites the article is the first article link of
+the front page, opened by its address (not clicked).
+
+**Columns** of `docs/proof/r9-real-pages.md`:
+
+| Column | How it is measured |
+|---|---|
+| banner first | `readPage` before any click: `yes` when the page shows a consent layer and its items come first with `[dialog] `; `no` when a consent layer is on screen (any frame) and its items are not first or not listed; `none` when there is no consent layer. A layer in a cross-origin frame counts as on screen. |
+| items | the number of items `readPage` returns (after the banner is accepted, when there was one) |
+| search field | YouTube and Google: the `SEARCH_FIELDS` selector, `yes` with the part that matched a visible text field, else `no` |
+| player | the watch page: `#movie_player` present and holding the `<video>` |
+| article | news sites: `read page` on the article: sentence count and the first three sentences; `article ok` when the first sentence is the start of the page's `h1` and none of the site's nav words (a list per site: Logi sisse, Tellimus, Telli, Menüü, Otsi, …) is in the first three |
+| strip covered | `elementsFromPoint` at five points along the strip's middle line: `no` when the strip is the top element at all five; `yes` with the page element otherwise. A page's own fixed bar under the strip (hidden by it) is listed separately as "under the strip" |
+| screenshot | `docs/proof/r9-real-<site>.png`, the viewport after the measurement |
+
+**Fixes.** A fault the table shows is reproduced on `extension/test/fixtures/real-<site>.html` (the
+relevant real markup, trimmed, no images or scripts), gets a failing case in
+`extension/test/run.ts`, then the fix in `extension/src/page.ts` (readPage's banner, article or search
+paths only) or the selector in `sites.ts`. The script is run again and the table gains a
+before/after line per fix.
+
+**Results.** (filled in after the run)
+
+**What changed.** (filled in after the fixes)
 
 ### 30.5 One door to any model, cost per completed task (MODEL lane)
 
