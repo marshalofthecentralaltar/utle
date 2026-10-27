@@ -2138,7 +2138,74 @@ its own. Written before the code, as the rule in `CLAUDE.md` asks.
 
 ### 30.2 Help inside the product (HELP lane)
 
-(lane HELP writes this)
+The gaps (plan 1.1, G5 to G7): the phrase list lived only in an English README for developers, a
+command that was not understood gave one hint and no way on, and the settings page could not be
+numbered by voice. Help is now a page of the extension, in Estonian, opened by voice, read aloud by
+voice and driven by numbers, generated from one source that the tests hold to the rules.
+
+**30.2.1 The source.** `src/core/phrases.ts` is pure data (named exports, no DOM, no imports from
+the extension). `PHRASE_GROUPS` is a list of groups, in this order: Sõnumid, Parandamine, Tekstis
+liikumine, Vormid, Kerimine, Vahelehed ja saidid, Video, Meil, Dokument, Lugemine, Minu andmed, Minu
+kohad, Hääl, Abi. A group has:
+
+- `id`: the ASCII slug that is the page's hash (`kerimine`, `vahelehed`, `minu-andmed`);
+- `name` (Estonian, sentence case) and `nameEn`;
+- `say`: the words that follow "abi" (or "help") to open the page at this group;
+- `intro`: one Estonian line under the name;
+- `noteEn`: the English paragraph the README carries under the group's table (how the phrases
+  behave), so the README loses nothing when it is regenerated;
+- `phrases`: the entries.
+
+An entry has `et` (one or more Estonian forms; the first is the one shown large, every one is
+tested), `en` (the English form, shown dim under), `does` (one Estonian line: what happens),
+`doesEn` (the same line in English, for the README),
+and the claim the test checks: `rule` (which rule answers it: `inpage`, `browserIntent`,
+`localIntent`, `places`, `placeVoice`, `savedEntry`, `readStop`, `wake`, or `model` for what only
+the model understands), `expect` (the command kind the rule must produce, or one of the outcomes
+`sleep`, `wake`, `cancel`, `speak`, `type` (the words are typed), `none` (nothing happens on the page),
+`ask` (left to the model)), and `box`, what is in front when it is said (`none`, `empty`, `text`,
+`field` with a `fieldKind`, `mail`, `document`). `example: true` marks the phrases the new-tab page
+rotates (`HELP_EXAMPLES`, each in „…“).
+
+`src/core/phrases.test.ts` walks every form of every entry through the rule it names with that box
+and asserts the outcome, so a phrase that drifts from the rules fails `npm run check`. It also asserts
+the shape: 14 groups in the order above, unique ids, at least one phrase per group, every `does`
+one line ending in a full stop.
+
+**30.2.2 The commands that open it.** Rules only, never the model (the model's schema does not
+get the command). In `browserIntent`'s fixed table: `abi`, `appi`, `mida ma öelda saan`, `mida ma
+saan öelda`, `mida saab öelda`, `näita käske`, `käsud`, `help`, `what can i say`, `show commands`
+give `{ kind: 'openHelp' }`; `abi <say>` and `help <say>` for each group's words give `{ kind:
+'openHelp', group: <id> }` ("abi kerimine", "abi vormid", "help scrolling"). One-word `abi` and `appi`
+are soft words (section 22): with words in the armed box they are typed ("Abi!" is a message). The
+worker opens `help.html#<id>` in the target window, or brings an open help tab to the front at that
+address, as it does for the settings page (26.4). The strip says "Avan abi." / "Avan abi: Kerimine.".
+`notUnderstood` ends with the way in: "Ei saanud aru. Ütle teisiti, näiteks „ava youtube“ või „keri
+alla“, või ütle „abi“." (English: "… or say "help".").
+
+**30.2.3 The page.** `extension/help.html` + `extension/src/help.ts`. The groups are large dwellable
+cards (the settings page's `.choice` pattern: click or one-second dwell, 112 px high at least), one
+open at a time, the open one outlined green. Under the cards, the open group: its name as a heading,
+its intro, then each phrase: the Estonian form(s) large, the English form dim under, and the meaning.
+The hash names the open group (`#kerimine`); with no hash or an unknown one, the first group,
+Sõnumid, is open; choosing a card sets the hash; a hash change from the worker (a second "abi
+vormid") opens that group. The strip is mounted and `dist/page.js` is loaded before `help.js`, as on
+the new-tab page.
+
+**30.2.4 Reading it aloud.** `loe ette` on the help page goes through the reader like any page
+(29.5): the cards are buttons and the English lines are not paragraphs, so the reader takes the open
+group's heading, its intro, and one paragraph per phrase, written as one sentence: „keri alla“ või
+„keri üles“: kerib lehte peaaegu ekraani võrra.
+
+**30.2.5 Numbers on the extension's own pages.** The worker cannot inject `page.js` into an
+extension page, so such a page loads it itself and answers `utle-page-run` for its own tab id. The
+worker's predicate for "an Ütle page that runs page commands itself" covers `chrome://newtab/`,
+`newtab.html`, `options.html` and `help.html`; `welcome.html` (ONBOARD) joins it by the same rule.
+`näita numbreid` then numbers the page's buttons and links like any page's, and a number presses one.
+
+**30.2.6 The README.** `scripts/phrases-doc.ts` writes `extension/README.md` "What to say" between
+`<!-- phrases:start -->` and `<!-- phrases:end -->`: per group a heading, a table (Estonian, English,
+what happens, from `doesEn`) and the group's `noteEn`. The section names the source. README.md's short table is left as it is.
 
 ### 30.3 Known faults fixed (FAULTS lane)
 
