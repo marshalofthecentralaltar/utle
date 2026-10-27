@@ -105,6 +105,39 @@ function answerFrom(reply: ModelReplyNeutral): { intent: unknown; say: string; d
 const ANSWER = modelTool(ANSWER_TOOL)
 
 /**
+ * Round 9 (ARCHITECTURE 30.5.6): the shapes Sonnet 5.5 gets wrong in form but right in substance.
+ * It wraps a place or a saved value as a command ({ kind: 'command', command: { kind: 'place', noun } });
+ * the schema has them at the top. Exactly these two kinds are lifted out, with nothing but their own
+ * fields; every other shape goes to pageIntentFrom as it came, and the strict validation stands.
+ */
+export function liftWrapped(intent: unknown): unknown {
+  if (typeof intent !== 'object' || intent === null) return intent
+  const outer = intent as Record<string, unknown>
+  if (outer.kind !== 'command' || typeof outer.command !== 'object' || outer.command === null) return intent
+  const inner = outer.command as Record<string, unknown>
+  if (inner.kind === 'place') return { kind: 'place', noun: inner.noun }
+  if (inner.kind === 'insertSaved') return { kind: 'insertSaved', name: inner.name }
+  return intent
+}
+
+/** Commands whose step line names their target by id (the engine's kindSummary: "command clickItem 9"). */
+const BY_ID = new Set(['clickItem', 'focusItem', 'hover', 'contextMenu', 'scrollTo'])
+
+/**
+ * Round 9 (30.5.6): the prompt says never to repeat the identical failed action, and on a quick ask
+ * Sonnet 5.5 sometimes does. The same click on the same id after it failed would fail again, so it
+ * is answered unclear instead.
+ */
+export function repeatsFailedStep(intent: unknown, steps: IntentRequest['steps']): boolean {
+  if (!steps || steps.length === 0 || typeof intent !== 'object' || intent === null) return false
+  const outer = intent as Record<string, unknown>
+  const command = outer.command as Record<string, unknown> | undefined
+  if (outer.kind !== 'command' || typeof command?.kind !== 'string' || !BY_ID.has(command.kind) || typeof command.id !== 'number') return false
+  const action = `command ${command.kind} ${command.id}`
+  return steps.some((step) => !step.ok && step.action === action)
+}
+
+/**
  * The ask for one request, provider-neutral (ARCHITECTURE 30.5.1). The fixed prompt is the
  * cacheable prefix; round 5: a careful ask adds its paragraph after it, so that prefix stays the same.
  */
@@ -142,7 +175,8 @@ export async function pageIntent(input: unknown, deps: { model: Model }): Promis
   }
 
   const raw = answerFrom(reply)
-  const intent = raw ? pageIntentFrom(raw.intent, request) : null
+  const lifted = raw ? liftWrapped(raw.intent) : null
+  const intent = raw && !repeatsFailedStep(lifted, request.steps) ? pageIntentFrom(lifted, request) : null
   const answer: IntentAnswer = intent && raw ? { intent, say: raw.say, done: raw.done, ...(raw.plan.length > 0 ? { plan: raw.plan } : {}) } : unclear(request)
   // Round 9 (30.5.3): what the ask cost, for the engine's tally. Counts and names only.
   const { usage } = reply

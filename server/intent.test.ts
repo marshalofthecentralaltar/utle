@@ -522,3 +522,48 @@ describe('round 9 (30.5.3): usage and the provider', () => {
     expect(logged.join('\n')).not.toContain('vaata hiljem')
   })
 })
+
+describe('round 9 (30.5.6): the shapes of the default model', () => {
+  const PLACES = { ...YOUTUBE, places: ['uudised', 'raadio'] }
+  const SAVED = { ...YOUTUBE, box: { present: true, text: '', armed: true, kind: 'field' as const }, saved: ['minu e-post'] }
+
+  it('a place wrapped as a command is lifted out and validated', async () => {
+    const { client } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'place', noun: 'uudised' } }, say: 'avan uudised', done: true, plan: [] }))
+    expect((await pageIntent(request({ page: PLACES, utterance: 'vaata uudiseid' }), { model: client })).intent).toEqual({ kind: 'place', noun: 'uudised' })
+  })
+
+  it('an insertSaved wrapped as a command is lifted out and validated', async () => {
+    const { client } = fakeClient(answer({ intent: { kind: 'command', command: { kind: 'insertSaved', name: 'minu e-post' } }, say: '', done: true, plan: [] }))
+    expect((await pageIntent(request({ page: SAVED, utterance: 'pane mu email sinna' }), { model: client })).intent).toEqual({ kind: 'insertSaved', name: 'minu e-post' })
+  })
+
+  it('a lifted shape is still held to the page: an unlisted noun or name is unclear, and extra fields are dropped', async () => {
+    const { client } = fakeClient(
+      answer({ intent: { kind: 'command', command: { kind: 'place', noun: 'pank' } }, say: '', done: true, plan: [] }),
+      answer({ intent: { kind: 'command', command: { kind: 'insertSaved', name: 'ema telefon' } }, say: '', done: true, plan: [] }),
+      answer({ intent: { kind: 'command', command: { kind: 'place', noun: 'raadio', url: 'https://evil.example/' } }, say: '', done: true, plan: [] }),
+    )
+    expect((await pageIntent(request({ page: PLACES }), { model: client })).intent.kind).toBe('unclear')
+    expect((await pageIntent(request({ page: SAVED }), { model: client })).intent.kind).toBe('unclear')
+    expect((await pageIntent(request({ page: PLACES }), { model: client })).intent).toEqual({ kind: 'place', noun: 'raadio' })
+  })
+
+  it('no other kind is lifted: a wrapped dictate or unclear stays invalid', async () => {
+    const armed = { ...YOUTUBE, box: { present: true, text: '', armed: true, kind: 'composer' as const } }
+    const { client } = fakeClient(
+      answer({ intent: { kind: 'command', command: { kind: 'dictate', text: 'tulen' } }, say: '', done: true, plan: [] }),
+      answer({ intent: { kind: 'command', command: { kind: 'send' } }, say: '', done: true, plan: [] }),
+    )
+    expect((await pageIntent(request({ page: armed, utterance: 'tulen' }), { model: client })).intent.kind).toBe('unclear')
+    expect((await pageIntent(request({ page: armed, utterance: 'saada' }), { model: client })).intent.kind).toBe('unclear')
+  })
+
+  it('the identical click after it failed is answered unclear; another id, or after a success, passes', async () => {
+    const failed = [{ action: 'command clickItem 2', say: 'ava Vaata hiljem', ok: false, message: 'not_found' }]
+    const passed = [{ action: 'command clickItem 2', say: 'ava Vaata hiljem', ok: true, message: '' }]
+    const { client } = fakeClient(CLICK_LATER, answer({ intent: { kind: 'command', command: { kind: 'clickItem', id: 4 } }, say: '', done: true, plan: [] }), CLICK_LATER)
+    expect((await pageIntent(request({ steps: failed }), { model: client })).intent.kind).toBe('unclear')
+    expect((await pageIntent(request({ steps: failed }), { model: client })).intent).toEqual({ kind: 'command', command: { kind: 'clickItem', id: 4 } })
+    expect((await pageIntent(request({ steps: passed }), { model: client })).intent).toEqual({ kind: 'command', command: { kind: 'clickItem', id: 2 } })
+  })
+})

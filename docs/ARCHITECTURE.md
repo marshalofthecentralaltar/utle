@@ -2261,6 +2261,35 @@ denominator; "wasted" is the spend on the failed cases. Prices per model id are 
 `scripts/prices.ts` (moved out of `flow-eval.ts`), with DeepSeek's peak and off-peak rates by the
 hour of the ask; `UTLE_EVAL_JSON` gets per-task records and the hour of the run.
 
+**30.5.6 The eval on the default model.** Round 8's eval ran on Opus 5.5 while the server's default
+is Sonnet 5.5; on Sonnet it passed 63 of 78 (2026-10-27 08:06 UTC). The fifteen failures, by cause:
+
+- Right in substance, wrong in shape (seven cases: three places, four saved values). Sonnet wraps a
+  place or a saved value as a command, `{ kind: 'command', command: { kind: 'place', noun } }`.
+  `liftWrapped` in `server/intent.ts` lifts exactly these two kinds to the top, with only their own
+  field (`noun`, `name`), before `pageIntentFrom`; every other shape is validated as it came.
+- The prompt was unclear to Sonnet (three changes to `INTENT_SYSTEM_PROMPT`, one static text, so
+  the cached prefix stays one prefix): "tagasi" in an armed box with text is the edit undo, never
+  pressKey Undo (Google Docs only); a search that serves opening or playing something is done:false;
+  in the WhatsApp delete, the choice "Kustuta kõigi jaoks" is done:false because a confirming
+  dialog follows. ("tagasi" in a chat box reaches the model only in the eval, which calls
+  `pageIntent` directly; in the extension the rules answer it before any ask.)
+- The identical failed action repeated (one case): `repeatsFailedStep` answers unclear when the
+  answer is the same id-addressed command (clickItem, focusItem, hover, contextMenu, scrollTo on the
+  same id) as a step that failed, as the prompt already asked.
+- The case expected one of two acceptable answers (widened, not loosened): "mina youtube" and
+  "open youtube" on the new-tab page accept clicking the YouTube tile as well as going to the
+  address; "kirjuta uus kiri" in Gmail accepts the compose command as well as clicking Koosta; the
+  four multi-step cases written as one goal (done:false between steps) accept the round 4 answer,
+  done:true with the rest in `plan`, and the eval then asks the rest as the chain the engine would
+  derive. One case had wrong data: "homme asemel täna" ran on a box without "homme"; the box now
+  holds "Tulen homme".
+
+After the fixes (08:41 UTC): Sonnet 5.5 77 / 78 ($0.0057 per completed task, p50 1.6 s), Opus 5.5
+77 / 78 the same hour ($0.0084, p50 2.5 s). Sonnet's one miss, the WhatsApp delete chain stopping a
+step before the confirming button, passed in the run before; Opus's, scrolling again where the
+steps show it already scrolled, is Opus's own.
+
 ### 30.6 The store (SHIP lane)
 
 (lane SHIP writes this)

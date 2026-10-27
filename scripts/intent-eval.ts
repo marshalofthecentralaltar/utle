@@ -14,9 +14,10 @@
  *     UTLE_FALLBACK=<provider:model> optional, as the server reads it
  *     UTLE_EVAL_ONLY=<text>          only cases whose name, utterance or site contains the text
  *     UTLE_EVAL_JSON=<path>          also write every ask's result and every task's record to this JSON file
+ *     UTLE_EVAL_RAW=1                also print the model's raw tool input on every ask
  */
 import { writeFileSync } from 'node:fs'
-import { hasConnective } from '../src/core/chain.ts'
+import { firstGoal, hasConnective } from '../src/core/chain.ts'
 import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, TabSummary } from '../src/core/pageIntent.ts'
 // ---------- wake word and places (29.4) ----------
 import { DEFAULT_PLACES, placeNouns } from '../src/core/places.ts'
@@ -44,6 +45,17 @@ function configuredModel(): ReturnType<typeof modelFromEnv> {
 }
 const CONFIGURED = configuredModel()
 const MODEL = CONFIGURED.primary
+/** UTLE_EVAL_RAW=1: print the model's raw tool input on every ask, for triage (synthetic pages only). */
+const RAW = process.env.UTLE_EVAL_RAW === '1'
+const EVAL_MODEL: Model = RAW
+  ? {
+      ask: async (ask) => {
+        const reply = await CONFIGURED.model.ask(ask)
+        console.log(`  raw stop=${reply.stop} ${JSON.stringify(reply.call?.input ?? null)}`)
+        return reply
+      },
+    }
+  : CONFIGURED.model
 const ONLY = (process.env.UTLE_EVAL_ONLY ?? '').toLowerCase()
 const JSON_PATH = process.env.UTLE_EVAL_JSON
 
@@ -573,7 +585,8 @@ const CASES: Case[] = [
   // the message; openConversation is wrong when he is already in Mari's chat. unclear (tell him to
   // say "saada") is the safe answer; send is accepted because he plainly asked for it in Mari's chat.
   one('saada see marile', WHATSAPP_CHAT, [UNCLEAR, { kind: 'send' }]),
-  one('homme asemel täna', WHATSAPP_CHAT, { kind: 'edit', edit: 'replace' }),
+  // Round 9: the box must hold the word to swap; with 'Tere Mari' an unclear (Opus 5.5's answer) was the right one.
+  one('homme asemel täna', { ...WHATSAPP_CHAT, box: { ...WHATSAPP_CHAT.box, text: 'Tulen homme' } }, { kind: 'edit', edit: 'replace' }),
 
   // --- Google, tabs, history -------------------------------------------------------------------
   one('mine vatsapi', GOOGLE, goTo('whatsapp')),
@@ -591,7 +604,8 @@ const CASES: Case[] = [
   one('ava sport', NEWS, click(4)),
 
   // --- Gmail: inbox rows and a compose form ----------------------------------------------------
-  one('kirjuta uus kiri', GMAIL_INBOX, click(2)),
+  // Round 9: the compose command (29.3) is as good as clicking Koosta.
+  one('kirjuta uus kiri', GMAIL_INBOX, [click(2), { kind: 'command', command: 'compose' }]),
   one('ava kiri jaanilt', GMAIL_INBOX, click(5)),
   one('kirjuta teema', GMAIL_COMPOSE, focus(2)),
   one('lisa saaja', GMAIL_COMPOSE, focus(1)),
@@ -623,8 +637,9 @@ const CASES: Case[] = [
 
   // --- New tab: sites, sleep, chit-chat --------------------------------------------------------
   one('whatsapp', NEW_TAB, goTo('whatsapp')),
-  one('mina youtube', NEW_TAB, goTo('youtube')),
-  one('open youtube', NEW_TAB, goTo('youtube'), { lang: 'en' }),
+  // Round 9 (30.5.6): clicking the YouTube tile on the new-tab page is as good as going to the address.
+  one('mina youtube', NEW_TAB, [goTo('youtube'), click(2)]),
+  one('open youtube', NEW_TAB, [goTo('youtube'), click(2)], { lang: 'en' }),
   one('puhka', NEW_TAB, { kind: 'sleep' }),
   one('kirjuta midagi', NEW_TAB, UNCLEAR),
   one('mis kell on', NEW_TAB, UNCLEAR),
@@ -773,13 +788,19 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
   const asks: AskResult[] = []
   const steps: IntentStep[] = []
   let passed = true
+  // Round 9 (30.5.6): a multi-step case written as one goal (done:false between its steps) may be
+  // answered the round 4 way: done:true for the first goal with the rest in plan. The engine then
+  // runs the rest as a chain, so the eval does too: the chain it derives is asked for the next steps.
+  let derived = null as IntentChain | null
+  let previousGoal: string | undefined
   for (const [i, step] of c.steps.entries()) {
+    const chain = step.chain ?? derived ?? undefined
     // Round 4: a new chain goal starts with no steps, as the engine asks it.
-    const previous = c.steps[i - 1]
-    if (step.chain !== undefined && step.chain.goal !== previous?.chain?.goal) steps.length = 0
-    const utterance = step.utterance ?? c.utterance
+    if (chain !== undefined && chain.goal !== previousGoal) steps.length = 0
+    previousGoal = chain?.goal
+    const utterance = step.utterance ?? (step.chain === undefined && derived !== null ? derived.goal : c.utterance)
     // Round 5: care as the engine chooses it: a chain, eight words or more, or a connective is careful.
-    const care: IntentRequest['care'] = step.chain !== undefined || c.steps.some((s) => s.chain !== undefined) || utterance.trim().split(/\s+/).length >= CAREFUL_WORDS || hasConnective(utterance) ? 'careful' : 'quick'
+    const care: IntentRequest['care'] = chain !== undefined || c.steps.some((s) => s.chain !== undefined) || c.utterance.trim().split(/\s+/).length >= CAREFUL_WORDS || hasConnective(c.utterance) ? 'careful' : 'quick'
     const request: IntentRequest = {
       lang: c.lang ?? 'et',
       utterance,
@@ -788,7 +809,7 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
       recent: c.recent ?? [],
       care,
       ...(steps.length > 0 ? { steps: [...steps] } : {}),
-      ...(step.chain !== undefined ? { chain: step.chain } : {}),
+      ...(chain !== undefined ? { chain } : {}),
     }
     const site = siteOf(step.page)
     const started = Date.now()
@@ -804,8 +825,10 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
     if (answer && problem === null) {
       problem = matches(answer.intent, step.expect)
       const done = answer.done !== false
-      if (problem === null && step.done !== undefined && done !== step.done) problem = `done ${done}`
       const planned = answer.plan?.length ?? 0
+      // done:true with goals left (in its plan, or in the derived chain) carries on as a chain: the same as done:false here.
+      const carriesOn = done && step.done === false && step.chain === undefined && (planned > 0 || (derived?.remaining.length ?? 0) > 0)
+      if (problem === null && step.done !== undefined && done !== step.done && !carriesOn) problem = `done ${done}`
       if (problem === null && step.plan !== undefined && planned !== step.plan) problem = `plan ${JSON.stringify(answer.plan ?? [])}`
     }
     const ok = problem === null
@@ -841,8 +864,22 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
     // What the engine would report back: the step as taken, with the simulated outcome.
     const outcome = step.outcome ?? { ok: true, message: '' }
     steps.push({ action: actionOf(answer.intent), say: answer.say, ok: outcome.ok, message: outcome.message })
-    const nextGoal = c.steps[i + 1]?.chain?.goal !== step.chain?.goal
-    if (answer.done !== false && outcome.ok && i < c.steps.length - 1 && !nextGoal) {
+    let nextGoal = c.steps[i + 1]?.chain?.goal !== step.chain?.goal
+    const more = i < c.steps.length - 1
+    if (answer.done !== false && outcome.ok && more && !nextGoal && step.chain === undefined) {
+      // Round 9: the derived chain (see above): the first goal's plan starts it, each goal done shifts it.
+      const plan = answer.plan ?? []
+      if (derived === null && plan.length > 0) {
+        const [goal = '', ...remaining] = plan
+        derived = { original: c.utterance.slice(0, 1000), completed: [firstGoal(c.utterance, plan, answer.say)], goal, remaining }
+        nextGoal = true
+      } else if (derived !== null && derived.remaining.length > 0) {
+        const [goal = '', ...remaining] = derived.remaining
+        derived = { ...derived, completed: [...derived.completed, derived.goal], goal, remaining }
+        nextGoal = true
+      }
+    }
+    if (answer.done !== false && outcome.ok && more && !nextGoal) {
       // The model said it was done but the case expected more: the engine's loop would stop here.
       // (After a failed step the engine asks once more whatever done said, so that case goes on.)
       console.log(`FAIL             ${''.padEnd(18)} ${c.name}: done=true after step ${i + 1}, the loop stops`)
@@ -870,7 +907,7 @@ async function main(): Promise<void> {
   const all: AskResult[] = []
   const tasks: TaskRecord[] = []
   for (const c of selected) {
-    const result = await runCase(c, CONFIGURED.model)
+    const result = await runCase(c, EVAL_MODEL)
     if (result.passed) passed += 1
     all.push(...result.asks)
     const usage = sumUsage(result.asks)

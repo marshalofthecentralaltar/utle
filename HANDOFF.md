@@ -483,8 +483,10 @@ Proven by: 47 tests in `server/model/` (fakes only), `intent.test.ts` on a fake 
 tests in `engine.test.ts` and `spend.test.ts`, three dev-server starts on 5175 (the anthropic form,
 the bare form, and `deepseek:` without its key refusing to start with the variable named), one live
 ask showing `last: primary`, and the eval on `anthropic:claude-sonnet-5-5` at 2026-10-27 08:06 UTC:
-63 / 78 passed, $0.0062 per completed task, $0.105 wasted on failed tasks, p50 1.6 s, p95 3.3 s
-(the plan's checklist, row 1). Not verified: anything on DeepSeek or a second host (lane C, needs
+63 / 78 passed before the default-model fixes; after them (ARCHITECTURE 30.5.6: two wrapped shapes
+lifted, three prompt lines, a guard against repeating a failed click, five cases widened or
+corrected) Sonnet passes 77 / 78 at $0.0057 per completed task, p50 1.6 s, and Opus 77 / 78 the same
+hour (the plan's checklist, row 1). Not verified: anything on DeepSeek or a second host (lane C, needs
 Ralf's key); the `thinking: { type: 'disabled' }` field is from third-party docs, not a live call;
 the DeepSeek peak hours in `scripts/prices.ts`; the `utle-spend` ring in a real Chrome (the ring
 logic is tested, the service-worker write is not).
