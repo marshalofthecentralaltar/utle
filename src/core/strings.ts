@@ -355,6 +355,8 @@ export interface Strings {
     /** Round 9 (30.2.3): the help page. */
     helpTitle: string
     helpHint: string
+    /** 30.1: the pill's title while the strip is folded because the page asks something. */
+    askingFold: string
   }
 
   // Round 6 (Minu andmed, 26.5 and 26.6): the settings section and the voice entry flow.
@@ -1061,6 +1063,7 @@ const ET: Strings = {
     connDown: 'Server ei vasta',
     helpTitle: 'Mida saab öelda',
     helpHint: 'Vaata rühmale üks sekund, et see avada. Või ütle „näita numbreid“ ja number. „loe ette“ loeb avatud rühma ette.',
+    askingFold: 'Riba on peidus, kuni leht küsib.',
   },
 
   andmed: {
@@ -1636,6 +1639,7 @@ const EN: Strings = {
     connDown: 'The server is not answering',
     helpTitle: 'What you can say',
     helpHint: 'Rest your eyes on a group for one second to open it. Or say “show numbers” and a number. “read aloud” reads the open group.',
+    askingFold: 'The bar is hidden while the page is asking.',
   },
 
   andmed: {

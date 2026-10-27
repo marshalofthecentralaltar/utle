@@ -1769,6 +1769,64 @@ async function main(): Promise<void> {
       await utle.waitForTimeout(300)
     }
 
+    // ---------- 30.1: the strip and a page's bottom layer (strip-consent) ----------
+    {
+      type Fold = { asking: boolean; barShown: boolean; hidden: boolean; pillTitle: string; pillTop: boolean; mic: { left: number; top: number; width: number; height: number }; pill: { left: number; top: number; width: number; height: number } }
+      const foldOn = async (url: string): Promise<Fold | null> =>
+        sw.evaluate(async (u) => {
+          const t = (await chrome.tabs.query({})).find((x) => x.url === u)
+          if (t?.id === undefined) return null
+          return (await chrome.tabs.sendMessage(t.id, { type: 'utle-strip-measure' }).catch(() => null)) as Fold | null
+        }, url)
+      // A page with no such layer: the strip is shown.
+      const PLAIN = `${T}/page-one.html`
+      await send({ kind: 'goTo', url: PLAIN })
+      await new Promise((ok) => setTimeout(ok, 1200))
+      const plain = await foldOn(PLAIN)
+      line('(strip)', 'strip-consent: a page without a layer keeps the bar', plain !== null && plain.barShown && !plain.asking, JSON.stringify(plain && { barShown: plain.barShown, asking: plain.asking }))
+
+      const CONSENT = `${T}/real-consent.html`
+      r = await send({ kind: 'goTo', url: CONSENT })
+      const page = pageAt(CONSENT)
+      if (!page) throw new Error('the consent fixture did not open')
+      await waitUntil(async () => (await foldOn(CONSENT))?.asking === true, 3000)
+      const at = await foldOn(CONSENT)
+      line('(strip)', 'strip-consent: on load the strip folds to the pill, says why', at !== null && at.asking && !at.barShown && !at.hidden && at.pillTitle === 'Riba on peidus, kuni leht küsib.' && at.pillTop, JSON.stringify(at && { asking: at.asking, barShown: at.barShown, hidden: at.hidden, pillTitle: at.pillTitle, pillTop: at.pillTop, pill: at.pill }))
+      await page.screenshot({ path: join(repoRoot, 'docs/proof/r9-strip-consent.png') })
+      // The pointer reaches "Nõustun": Playwright's click fails on "<utle-strip> intercepts pointer events" when the strip lies over it.
+      let clicked = ''
+      try {
+        await page.click('#accept', { timeout: 3000 })
+        clicked = 'clicked by the pointer'
+      } catch (error) {
+        clicked = error instanceof Error ? error.message.split('\n')[0] ?? 'failed' : String(error)
+      }
+      const accepted = await page.evaluate(() => (window as unknown as { accepted: number }).accepted)
+      const t0 = Date.now()
+      const back = await waitUntil(async () => (await foldOn(CONSENT))?.barShown === true, 1500)
+      const backMs = Date.now() - t0
+      const after = await foldOn(CONSENT)
+      line('(strip)', 'strip-consent: the pointer clicks "Nõustun"; the bar is back within 1 s', clicked === 'clicked by the pointer' && accepted === 1 && back && backMs <= 1000 && after?.asking === false, `${clicked}; accepted=${accepted}; back after ${backMs} ms`)
+
+      // His own fold wins: "peida riba", a layer comes and goes, the strip stays folded.
+      await send({ kind: 'bar', show: false })
+      await page.evaluate(() => (window as unknown as { showBar: () => void }).showBar())
+      await page.waitForTimeout(1500)
+      const during = await foldOn(CONSENT)
+      await page.evaluate(() => (window as unknown as { hideBar: () => void }).hideBar())
+      await page.waitForTimeout(1500)
+      const gone = await foldOn(CONSENT)
+      check('strip-consent: after "peida riba" a layer coming and going leaves the strip folded', during?.hidden === true && !during.barShown && gone?.hidden === true && !gone.barShown && gone.asking === false, JSON.stringify({ during: during && { hidden: during.hidden, barShown: during.barShown }, gone: gone && { hidden: gone.hidden, barShown: gone.barShown } }))
+      await send({ kind: 'bar', show: true })
+      await page.waitForTimeout(500)
+      // And a layer that appears later folds it, then unfolds it, by itself.
+      await page.evaluate(() => (window as unknown as { showBar: () => void }).showBar())
+      const late = await waitUntil(async () => (await foldOn(CONSENT))?.asking === true, 2500)
+      await page.evaluate(() => (window as unknown as { hideBar: () => void }).hideBar())
+      const lateBack = await waitUntil(async () => (await foldOn(CONSENT))?.barShown === true, 1500)
+      check('strip-consent: a layer that appears later folds the strip, and it comes back when the layer goes', late && lateBack)
+    }
+
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })
     const attacker = pageAt(`${T}/attacker.html`)

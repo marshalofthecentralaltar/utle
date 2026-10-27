@@ -157,6 +157,13 @@ export interface StripMeasure {
   /** Round 9 (30.1): the visible microphone's data-connection, and the dot's word (its title). */
   connection: string
   connectionWord: string
+  /** 30.1: this tab's strip is folded because the page asks (a consent layer or a dialog under it). */
+  asking: boolean
+  barShown: boolean
+  pillTitle: string
+  /** The pill waits in the top-right corner (the layer covers its own). */
+  pillTop: boolean
+  pill: { left: number; top: number; width: number; height: number }
 }
 
 export type RunAnswer = { result: BrowserResult }

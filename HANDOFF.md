@@ -497,6 +497,12 @@ vasta. Palu abilisel see käivitada (npm run dev)." (local address) or the hoste
 "Server vastab jälle." when it is back; the microphone reopens by itself. A dot on the microphone
 square shows the connection (green Ühendatud, amber Ühendan, red Server ei vasta).
 
+Checkpoint 2: a cookie bar or dialog of the page's own under the strip folds that tab's strip to the
+pill ("Riba on peidus, kuni leht küsib.", top-right when the layer covers the corner) and it comes
+back by itself; his own "peida riba" wins. Proof: suite case `strip-consent` (fixture
+`real-consent.html`, the pointer clicks "Nõustun", bar back in 432 ms), `docs/proof/r9-strip-consent.png`,
+and `scripts/real-pages.ts youtube ilmateenistus`: both accept buttons "the pointer clicked it".
+
 Proof: suite cases `welcome`, `welcome-server`, the connection dot and the menu in
 `extension/test/run.ts` (ALL PASS); `docs/proof/r9-welcome.png`, `r9-welcome-server.png`,
 `r9-strip-connection.png`; vitest "server down|server back|hosted" and "juhend|alustamine";
