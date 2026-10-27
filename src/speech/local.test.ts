@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
-import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS } from './asrProtocol.ts'
+import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS, SPEAKER_REASONS, verdictFor } from './asrProtocol.ts'
+import type { SpeakerDecision, SpeakerReason } from './asrProtocol.ts'
 import { MAX_BUFFERED_BYTES, RECONNECT_MS, RETRAIN_AFTER_DROPS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
 
@@ -558,12 +559,27 @@ describe('local recogniser (browser side)', () => {
         holdMs: 150,
       })
     const texts = (): unknown[] => socket().sent.filter((item) => typeof item === 'string').map((item) => JSON.parse(item as string))
+    // Round 10 (31.3): the server announces the session, and each final carries its own decision.
+    const SESSION = { sessionId: 'session-1', profileVersion: 'v1-0badcafe' }
+    let segment = 0
+    const announce = (): void => socket().says({ type: 'speakerSession', ...SESSION })
+    const decision = (reason: SpeakerReason, over: Partial<SpeakerDecision> = {}): SpeakerDecision => {
+      segment += 1
+      return { segmentId: segment, ...SESSION, verdict: verdictFor(reason), reason, score: reason === 'verified_owner' ? 0.7 : 0.2, timings: { judgeMs: 20, speechMs: 1200 }, ...over }
+    }
+    const ownerFinal = (text: string): SpeakerDecision => {
+      const d = decision('verified_owner')
+      socket().says({ type: 'final', text, speaker: 'owner', segment: d.segmentId, decision: d })
+      return d
+    }
+    const rejected = (reason: SpeakerReason): void => socket().says({ type: 'rejected', decision: decision(reason) })
 
     beforeEach(() => {
       foreign = 0
       streaks = []
       enrolled = []
       phrases = []
+      segment = 0
     })
 
     it('tells the server right after ready, and only when the mode is on', () => {
@@ -578,36 +594,37 @@ describe('local recogniser (browser side)', () => {
       expect(texts()).toEqual([])
     })
 
-    it("drops a final of someone else's voice, clears the interim and says who spoke", () => {
+    it("drops someone else's utterance (rejected, no words), never shows its partial, says who spoke; the owner's verified final goes", () => {
       const r = makeOwner(true)
       r.start()
       socket().says({ type: 'ready' })
+      announce()
       socket().says({ type: 'partial', text: 'pane telekas kinni' })
-      expect(interims.at(-1)).toBe('pane telekas kinni')
-      socket().says({ type: 'final', text: 'pane telekas kinni', speaker: 'other' })
-      expect(interims.at(-1)).toBe('')
+      expect(interims.filter((t) => t !== '')).toEqual([])
+      rejected('rejected_other')
       expect(foreign).toBe(1)
       vi.advanceTimersByTime(1000)
       expect(utterances).toEqual([])
-      // The owner's own words after it go as always.
-      socket().says({ type: 'final', text: 'ava uus vaheleht', speaker: 'owner' })
+      // The owner's own words after it go, verified.
+      ownerFinal('ava uus vaheleht')
       vi.advanceTimersByTime(150)
       expect(utterances).toEqual(['ava uus vaheleht'])
       expect(foreign).toBe(1)
     })
 
-    it('strict mode: drops an unknown final too when on, and delivers the owner and a final without a speaker', () => {
+    it('strict mode: drops an unknown final and a final without a speaker, and delivers the verified owner', () => {
       const r = makeOwner(true)
       r.start()
       socket().says({ type: 'ready' })
-      socket().says({ type: 'final', text: 'üks', speaker: 'owner' })
+      announce()
+      ownerFinal('üks')
       vi.advanceTimersByTime(150)
       socket().says({ type: 'final', text: 'kaks', speaker: 'unknown' })
       vi.advanceTimersByTime(150)
       socket().says({ type: 'final', text: 'kolm' })
       vi.advanceTimersByTime(150)
-      expect(utterances).toEqual(['üks', 'kolm'])
-      expect(foreign).toBe(1)
+      expect(utterances).toEqual(['üks'])
+      expect(foreign).toBe(2)
     })
 
     it('strict mode: obeys an unknown final when off', () => {
@@ -629,11 +646,12 @@ describe('local recogniser (browser side)', () => {
       const r = makeOwner(true)
       r.start()
       socket().says({ type: 'ready' })
+      announce()
       for (const speaker of ['other', 'unknown', 'other', 'other'] as const) socket().says({ type: 'final', text: 'jah', speaker })
       expect(streaks).toEqual([1, 2, 3, 4])
       expect(streaks.filter(retrainDue)).toEqual([RETRAIN_AFTER_DROPS])
-      socket().says({ type: 'final', text: 'saada', speaker: 'owner' })
-      socket().says({ type: 'final', text: 'jah', speaker: 'unknown' })
+      ownerFinal('saada')
+      rejected('insufficient_audio')
       expect(streaks).toEqual([1, 2, 3, 4, 1])
       expect(RETRAIN_AFTER_DROPS).toBe(3)
     })
@@ -680,11 +698,12 @@ describe('local recogniser (browser side)', () => {
       const r = makeOwner(true)
       r.start()
       socket().says({ type: 'ready' })
-      socket().says({ type: 'final', text: 'ma jõuan', speaker: 'owner' })
+      announce()
+      ownerFinal('ma jõuan')
       socket().says({ type: 'partial', text: 'homme' })
       r.flush?.()
       expect(utterances).toEqual([])
-      socket().says({ type: 'final', text: 'homme', speaker: 'other' })
+      rejected('rejected_other')
       expect(utterances).toEqual(['ma jõuan'])
       expect(foreign).toBe(1)
     })
@@ -737,6 +756,152 @@ describe('local recogniser (browser side)', () => {
       // A flush does not release it either.
       r.flush?.()
       expect(utterances).toEqual([])
+    })
+
+    describe('the fail-closed barrier (round 10, 31.3): zero side effects per deny case', () => {
+      const spies = () => ({
+        onUtterance: vi.fn<(text: string, d?: SpeakerDecision) => void>(),
+        onUtteranceContinued: vi.fn<(text: string, added: string, d?: SpeakerDecision) => void>(),
+        onInterim: vi.fn<(text: string) => void>(),
+        onError: vi.fn<(message: string) => void>(),
+        onForeign: vi.fn<(streak: number, reason?: SpeakerReason) => void>(),
+      })
+      const strictWith = (h: ReturnType<typeof spies>) =>
+        createLocalRecognizer(h, () => true, { onUnavailable: () => undefined, connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), onlyOwner: true, holdMs: 150 })
+      /** No utterance, no continuation, no words shown. */
+      const nothingRan = (h: ReturnType<typeof spies>): void => {
+        expect(h.onUtterance).not.toHaveBeenCalled()
+        expect(h.onUtteranceContinued).not.toHaveBeenCalled()
+        expect(h.onInterim.mock.calls.filter(([t]) => t !== '')).toEqual([])
+      }
+      type Act = (say: (m: object) => void) => void
+      const deny: Array<[string, Act]> = [
+        ['no decision at all', (say) => say({ type: 'final', text: 'saada', speaker: 'owner' })],
+        ['a decision without its segment', (say) => say({ type: 'final', text: 'saada', speaker: 'owner', decision: decision('verified_owner') })],
+        [
+          'a segment that is not the one decided',
+          (say) => {
+            const d = decision('verified_owner')
+            say({ type: 'final', text: 'saada', speaker: 'owner', segment: d.segmentId + 1, decision: d })
+          },
+        ],
+        [
+          'another session (a socket before a reconnect)',
+          (say) => {
+            const d = decision('verified_owner', { sessionId: 'session-0' })
+            say({ type: 'final', text: 'saada', speaker: 'owner', segment: d.segmentId, decision: d })
+          },
+        ],
+        [
+          'another profile version (before re-enrolment)',
+          (say) => {
+            const d = decision('verified_owner', { profileVersion: 'v1-old' })
+            say({ type: 'final', text: 'saada', speaker: 'owner', segment: d.segmentId, decision: d })
+          },
+        ],
+        [
+          'an owner verdict with a reason that is not verified_owner',
+          (say) => {
+            const d = decision('insufficient_audio', { verdict: 'owner' })
+            say({ type: 'final', text: 'saada', speaker: 'owner', segment: d.segmentId, decision: d })
+          },
+        ],
+        ['a decision of the wrong shape', (say) => say({ type: 'final', text: 'saada', speaker: 'owner', segment: 1, decision: { segmentId: 1, verdict: 'owner', reason: 'verified_owner' } })],
+        ...SPEAKER_REASONS.filter((reason) => reason !== 'verified_owner').flatMap((reason): Array<[string, Act]> => [
+          [
+            `a final decided ${reason}`,
+            (say) => {
+              const d = decision(reason)
+              say({ type: 'final', text: 'saada', speaker: d.verdict, segment: d.segmentId, decision: d })
+            },
+          ],
+          [`a rejection for ${reason}`, (say) => say({ type: 'rejected', decision: decision(reason) })],
+        ]),
+      ]
+      for (const [name, act] of deny) {
+        it(`denies ${name}`, () => {
+          const h = spies()
+          const r = strictWith(h)
+          r.start()
+          socket().says({ type: 'ready' })
+          announce()
+          socket().says({ type: 'partial', text: 'saada' })
+          act((m) => socket().says(m))
+          vi.advanceTimersByTime(5000)
+          r.flush?.()
+          vi.advanceTimersByTime(5000)
+          nothingRan(h)
+          expect(h.onForeign).toHaveBeenCalledTimes(1)
+        })
+      }
+
+      it('denies a verified decision before any session was announced, and a replayed (stale) segment', () => {
+        const h = spies()
+        const r = strictWith(h)
+        r.start()
+        socket().says({ type: 'ready' })
+        const early = decision('verified_owner')
+        socket().says({ type: 'final', text: 'saada', speaker: 'owner', segment: early.segmentId, decision: early })
+        announce()
+        const d = decision('verified_owner')
+        socket().says({ type: 'final', text: 'kirjuta', speaker: 'owner', segment: d.segmentId, decision: d })
+        vi.advanceTimersByTime(150)
+        expect(h.onUtterance.mock.calls).toEqual([['kirjuta', d]])
+        // The same segment again, and an earlier one: stale.
+        socket().says({ type: 'final', text: 'saada', speaker: 'owner', segment: d.segmentId, decision: d })
+        socket().says({ type: 'final', text: 'saada', speaker: 'owner', segment: early.segmentId, decision: { ...early } })
+        vi.advanceTimersByTime(5000)
+        expect(h.onUtterance).toHaveBeenCalledTimes(1)
+        expect(h.onForeign).toHaveBeenCalledTimes(3)
+      })
+
+      it('after a reconnect, nothing verified on the old socket runs, and the old session is stale', () => {
+        const h = spies()
+        const r = createLocalRecognizer(h, () => false, { onUnavailable: () => undefined, connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), onlyOwner: true, holdMs: 150, keepTrying: true })
+        r.start()
+        socket().says({ type: 'ready' })
+        announce()
+        // Verified and held by the assembler when the connection drops: it never runs.
+        ownerFinal('kirjuta Marile')
+        socket().drops()
+        vi.advanceTimersByTime(1000)
+        expect(FakeSocket.made).toHaveLength(2)
+        socket().says({ type: 'ready' })
+        // No announcement on the new socket yet: the old session's decision is denied.
+        ownerFinal('saada')
+        socket().says({ type: 'speakerSession', sessionId: 'session-2', profileVersion: SESSION.profileVersion })
+        ownerFinal('saada')
+        vi.advanceTimersByTime(5000)
+        nothingRan(h)
+        expect(h.onForeign).toHaveBeenCalledTimes(2)
+      })
+
+      it('a stop with a flush pending delivers no unverified words', () => {
+        const h = spies()
+        const r = strictWith(h)
+        r.start()
+        socket().says({ type: 'ready' })
+        announce()
+        socket().says({ type: 'partial', text: 'saada' })
+        r.flush?.()
+        r.stop()
+        vi.advanceTimersByTime(5000)
+        nothingRan(h)
+      })
+
+      it('a verified final goes with its decision, through a continuation too', () => {
+        const h = spies()
+        const r = strictWith(h)
+        r.start()
+        socket().says({ type: 'ready' })
+        announce()
+        const first = ownerFinal('mine whatsappi')
+        vi.advanceTimersByTime(150)
+        const second = ownerFinal('siis ava Karin')
+        vi.advanceTimersByTime(2000)
+        expect(h.onUtterance.mock.calls).toEqual([['mine whatsappi', first]])
+        expect(h.onUtteranceContinued.mock.calls).toEqual([['mine whatsappi siis ava Karin', 'siis ava Karin', second]])
+      })
     })
 
     it('does nothing for an enrolment while stopped', () => {

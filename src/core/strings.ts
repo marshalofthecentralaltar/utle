@@ -314,6 +314,12 @@ export interface Strings {
     // Round 7 (SPEECH lane): strict mode and scripted enrolment.
     /** Said once after three dropped finals in a row. */
     foreignRetrain: string
+    // Round 10 (ARCHITECTURE 31.5): an utterance denied for any reason but another voice.
+    voiceUnverified: string
+    /** insufficient_audio: too little speech to check the voice. */
+    voiceTooShort: string
+    /** model_unavailable: the voice cannot be checked right now (no speaker model, or a speech engine without one). */
+    voiceUnsupported: string
     /** Scripted enrolment: the button, its sub-line, the line while reading, the step counter, the early end, and a thin profile. */
     teachScript: string
     teachScriptEn: string
@@ -1029,6 +1035,9 @@ const ET: Strings = {
     enrolFailed: 'Hääle õppimine ei õnnestunud.',
     foreign: 'Keegi teine rääkis, jätsin vahele.',
     foreignRetrain: 'Kui see olid sina, õpeta hääl uuesti seadetes.',
+    voiceUnverified: 'Häält ei õnnestunud kinnitada.',
+    voiceTooShort: 'Proovi pikemat käsku.',
+    voiceUnsupported: 'Häält ei saa praegu kontrollida. Vali seadetes kohalik kõnetuvastus või luba kõik hääled.',
     teachScript: 'Õpeta mu hääl lausetega',
     teachScriptEn: 'Teach it my voice: read 12 short sentences aloud',
     teachFree: 'Õpeta vabalt rääkides',
@@ -1605,6 +1614,9 @@ const EN: Strings = {
     enrolFailed: 'Learning your voice did not work.',
     foreign: 'Someone else spoke; skipped it.',
     foreignRetrain: 'If that was you, teach it your voice again in the settings.',
+    voiceUnverified: 'Could not confirm the voice.',
+    voiceTooShort: 'Try a longer command.',
+    voiceUnsupported: 'The voice cannot be checked right now. Choose the local speech engine in the settings, or allow all voices.',
     teachScript: 'Teach it my voice with sentences',
     teachScriptEn: 'Read 12 short sentences aloud',
     teachFree: 'Teach it by speaking freely',

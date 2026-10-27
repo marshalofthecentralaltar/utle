@@ -1,8 +1,8 @@
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { createAssembler } from './assembler.ts'
 import type { AssemblerOptions } from './assembler.ts'
-import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, parseAsrMessage } from './asrProtocol.ts'
-import type { AsrClientMessage } from './asrProtocol.ts'
+import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, authorizes, parseAsrMessage } from './asrProtocol.ts'
+import type { AsrClientMessage, AsrServerMessage, SpeakerDecision, SpeakerReason, SpeakerSessionInfo } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
 
 /** The parts of the browser's WebSocket this recogniser uses. */
@@ -36,9 +36,9 @@ export interface LocalOptions {
   /** How long a final is held to be joined with the next one. Default LOCAL_HOLD_MS. */
   holdMs?: number
   /**
-   * Round 4: only the owner's voice is obeyed. Round 7 (strict mode): a final the server marks as
-   * someone else's or as `unknown` is dropped; only `owner`, and a final without a speaker (the
-   * server cannot judge voices), are delivered.
+   * Round 4: only the owner's voice is obeyed. Round 10 (31.3, fail closed): a final is delivered
+   * only with a decision that authorizes it (verified owner, this socket's session and profile
+   * version, a new segment); partials are inert (never shown, never a quick reply).
    */
   onlyOwner?: boolean
   /**
@@ -65,9 +65,13 @@ export function retrainDue(streak: number): boolean {
   return streak === RETRAIN_AFTER_DROPS
 }
 
-/** Round 7 (strict mode): a final with this speaker is dropped while only the owner is obeyed. */
+/**
+ * Round 7 (strict mode): a final with this speaker is dropped while only the owner is obeyed.
+ * Round 10 (31.3): a final without a speaker is dropped too; `owner` is necessary, not sufficient
+ * (the decision must also authorize it, `authorizes`).
+ */
 export function dropsFinal(onlyOwner: boolean, speaker: 'owner' | 'other' | 'unknown' | undefined): boolean {
-  return onlyOwner && (speaker === 'other' || speaker === 'unknown')
+  return onlyOwner && speaker !== 'owner'
 }
 
 const OPEN = 1
@@ -129,11 +133,28 @@ export function createLocalRecognizer(
 ): Recognizer {
   // Round 4 (the chain lane): a final ending with a connective is held CONNECTIVE_HOLD_MS, and one
   // starting with a connective soon after a delivery continues it. Only this block is the chain's.
+  // Round 10 (31.3): with only the owner obeyed, only authorized finals enter the assembler, and
+  // what it delivers carries the decision of the newest of them.
+  const strict = options.onlyOwner === true
+  /** The decision of the newest authorized final; null when none (or after a lost connection). */
+  let authorized: SpeakerDecision | null = null
+  const continuedWith = (text: string, added: string): void => {
+    if (!strict) {
+      handlers.onUtteranceContinued?.(text, added)
+      return
+    }
+    if (authorized !== null) handlers.onUtteranceContinued?.(text, added, authorized)
+  }
   const chained: Pick<AssemblerOptions, 'connectiveHoldMs' | 'onUtteranceContinued'> = {
     connectiveHoldMs: CONNECTIVE_HOLD_MS,
-    ...(handlers.onUtteranceContinued ? { onUtteranceContinued: (text: string, added: string) => handlers.onUtteranceContinued?.(text, added) } : {}),
+    ...(handlers.onUtteranceContinued ? { onUtteranceContinued: continuedWith } : {}),
   }
-  const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: handlers.onUtterance, isInstant, ...chained })
+  const delivered = strict
+    ? (text: string): void => {
+        if (authorized !== null) handlers.onUtterance(text, authorized)
+      }
+    : handlers.onUtterance
+  const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: delivered, isInstant, ...chained })
   const connect = options.connect ?? ((events: SocketEvents) => browserSocket(events, options.address))
   let running = false
   let served = false
@@ -177,6 +198,11 @@ export function createLocalRecognizer(
     // A partial after a flush is the flushed utterance still being decoded (the frames queued before
     // the flush); its final is still the one owed at once.
     current = text
+    // Round 10 (31.3): unverified words are inert: never shown, typed or released as a quick reply.
+    if (strict) {
+      if (text !== '') assembler.activity()
+      return
+    }
     if (released !== null) {
       // Still the reply already released: nothing new to show.
       const heard = words(text)
@@ -236,7 +262,16 @@ export function createLocalRecognizer(
    */
   /** Round 7: finals dropped in a row; an obeyed final resets it. */
   let dropStreak = 0
-  const onForeignFinal = (): void => {
+  /** Round 10 (31.3): the session and profile version the server announced on this socket; null until then. */
+  let expected: SpeakerSessionInfo | null = null
+  /** Round 10: the newest segment authorized on this socket. */
+  let lastSegment = 0
+  const forgetAuthorization = (): void => {
+    expected = null
+    lastSegment = 0
+    authorized = null
+  }
+  const onForeignFinal = (reason?: SpeakerReason): void => {
     cancelSettle()
     handlers.onInterim('')
     current = ''
@@ -245,7 +280,20 @@ export function createLocalRecognizer(
     flushed = false
     if (atOnce) assembler.releaseNow()
     dropStreak += 1
-    handlers.onForeign?.(dropStreak)
+    if (reason === undefined) handlers.onForeign?.(dropStreak)
+    else handlers.onForeign?.(dropStreak, reason)
+  }
+  /** Round 10 (31.3): a final while only the owner is obeyed: delivered only when its own decision authorizes it. */
+  const strictFinal = (message: Extract<AsrServerMessage, { type: 'final' }>): void => {
+    const decision = message.decision
+    if (decision !== undefined && message.segment === decision.segmentId && authorizes(decision, expected, lastSegment)) {
+      lastSegment = decision.segmentId
+      authorized = decision
+      dropStreak = 0
+      onFinal(message.text)
+      return
+    }
+    onForeignFinal(decision?.reason ?? 'verification_error')
   }
   const send = (message: AsrClientMessage): boolean => {
     if (socket?.readyState !== OPEN) return false
@@ -273,6 +321,7 @@ export function createLocalRecognizer(
   // ---- end of the owner's voice ----
 
   const teardown = (): void => {
+    forgetAuthorization()
     if (retry !== null) clearTimeout(retry)
     retry = null
     cancelSettle()
@@ -343,11 +392,19 @@ export function createLocalRecognizer(
           onPartial(message.text)
           return
         case 'final':
-          if (dropsFinal(options.onlyOwner === true, message.speaker)) onForeignFinal()
+          if (strict) strictFinal(message)
           else {
             dropStreak = 0
             onFinal(message.text)
           }
+          return
+        case 'rejected':
+          if (strict) onForeignFinal(message.decision.reason)
+          return
+        case 'speakerSession':
+          // A new session starts the segments over; a new profile version (after enrolment) in the same session does not.
+          if (expected?.sessionId !== message.sessionId) lastSegment = 0
+          expected = { sessionId: message.sessionId, profileVersion: message.profileVersion }
           return
         case 'lag':
           handlers.onLag?.(message.ms)
@@ -364,6 +421,13 @@ export function createLocalRecognizer(
     const onClose = (): void => {
       if (socket !== ws) return
       socket = null
+      // Round 10 (31.3): nothing verified on this connection runs after it; what is held goes.
+      if (strict) {
+        forgetAuthorization()
+        assembler.dispose()
+        current = ''
+        flushed = false
+      }
       audio?.stop()
       audio = null
       handlers.onInterim('')
@@ -400,7 +464,8 @@ export function createLocalRecognizer(
    */
   const deliverPending = (): void => {
     if (!flushed) return
-    if (current !== '' && released === null) assembler.final(current)
+    // Round 10 (31.3): words never verified are never delivered.
+    if (current !== '' && released === null && !strict) assembler.final(current)
     assembler.releaseNow()
   }
 

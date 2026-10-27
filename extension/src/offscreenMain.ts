@@ -9,6 +9,7 @@ import { STRINGS } from '../../src/core/strings.ts'
 import { browserSocket, createLocalRecognizer, retrainDue } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
 import type { Recognizer } from '../../src/speech/recognizer.ts'
+import type { SpeakerReason } from '../../src/speech/asrProtocol.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { askTimeoutMs, createEngine } from './engine.ts'
 import { spendLine } from '../../src/core/spend.ts'
@@ -113,12 +114,28 @@ export const ENOUGH_PHRASES = 6
  */
 export const SCRIPT_ENROL_SECONDS = 60
 
+/** The strip's lines for a dropped utterance. Round 10 (31.5): the lines for reasons other than another voice. */
+export interface ForeignText {
+  foreign: string
+  foreignRetrain: string
+  voiceUnverified?: string
+  voiceTooShort?: string
+  voiceUnsupported?: string
+}
+
 /**
  * Round 7: what the strip shows for a dropped final: the foreign line every time, and, at the third
- * in a row, once, the line that tells him to teach his voice again.
+ * in a row, once, the line that tells him to teach his voice again. Round 10 (31.5): a drop for
+ * another voice (or without a reason) says so as before; any other reason says the voice could not
+ * be confirmed, too little audio adds "try a longer command", and a voice that cannot be checked
+ * says what to do instead of the retrain line.
  */
-export function foreignNotice(streak: number, text: { foreign: string; foreignRetrain: string }): { foreign: string; line?: string } {
-  return retrainDue(streak) ? { foreign: text.foreign, line: text.foreignRetrain } : { foreign: text.foreign }
+export function foreignNotice(streak: number, text: ForeignText, reason?: SpeakerReason): { foreign: string; line?: string } {
+  const other = reason === undefined || reason === 'rejected_other'
+  const foreign = other ? text.foreign : (text.voiceUnverified ?? text.foreign)
+  const line = reason === 'insufficient_audio' ? text.voiceTooShort : reason === 'model_unavailable' ? text.voiceUnsupported : undefined
+  if (line !== undefined) return { foreign, line }
+  return retrainDue(streak) ? { foreign, line: text.foreignRetrain } : { foreign }
 }
 
 /** Round 7: the strip's line when enrolment ends: phrases is set after scripted enrolment. */
@@ -308,8 +325,8 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
   // Round 8 (29.4.1): wake mode, from the address.
   const wakeWord = wakeWordParam(params)
   let foreignTimer: ReturnType<typeof setTimeout> | null = null
-  const onForeign = (streak: number): void => {
-    publish(foreignNotice(streak, stripText))
+  const onForeign = (streak: number, reason?: SpeakerReason): void => {
+    publish(foreignNotice(streak, stripText, reason))
     if (foreignTimer !== null) clearTimeout(foreignTimer)
     foreignTimer = setTimeout(() => {
       foreignTimer = null
@@ -348,9 +365,9 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
       const inner = createLocalRecognizer(
         {
           ...handlers,
-          onForeign: (streak) => {
+          onForeign: (streak, reason) => {
             handlers.onForeign()
-            onForeign(streak)
+            onForeign(streak, reason)
           },
           onEnrolled: (ok, seconds, phrases) => {
             handlers.onEnrolled(ok, seconds)
@@ -401,6 +418,8 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     },
     status: () => serverStatus(statusUrl, token),
     hosted: isHostedAddress(address),
+    // Round 10 (31.4): the engine's own wall behind the recogniser's.
+    onlyOwner,
     ...(wakeWord === undefined ? {} : { wakeWord }),
   })
 

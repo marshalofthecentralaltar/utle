@@ -34,6 +34,7 @@
  *   Model        'stt-rt-v5' is the current real-time model name seen in Soniox's material in 2026; Estonian
  *                is among its 60+ languages. SONIOX_MODEL overrides it.
  */
+import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import type { RawData } from 'ws'
 import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
@@ -145,17 +146,37 @@ export function sonioxErrorLine(code: number, message: string | undefined): stri
 }
 
 /**
- * Maps Soniox tokens onto Ütle utterances: finals accumulate, non-finals replace, `<end>` or `<fin>`
- * closes the utterance. Pure, so the test can script it.
+ * Round 10 (31.2): Soniox has no speaker gate yet (work package E). While only the owner is
+ * obeyed, every Soniox utterance is denied with this reason, and its words never leave the server.
  */
-export function createUtteranceMapper(send: (message: AsrServerMessage) => void): { tokens(tokens: SonioxToken[]): void; flushed(): void } {
+export const SONIOX_ONLY_OWNER_REASON = 'model_unavailable'
+
+export interface MapperPolicy {
+  /** True while the browser asks for only the owner's voice. */
+  onlyOwner(): boolean
+  /** The session id in each rejection. */
+  sessionId: string
+}
+
+/**
+ * Maps Soniox tokens onto Ütle utterances: finals accumulate, non-finals replace, `<end>` or `<fin>`
+ * closes the utterance. Pure, so the test can script it. Round 10: with only the owner on (policy),
+ * no partial is sent and each final becomes a rejection without its words.
+ */
+export function createUtteranceMapper(send: (message: AsrServerMessage) => void, policy: MapperPolicy = { onlyOwner: () => false, sessionId: '' }): { tokens(tokens: SonioxToken[]): void; flushed(): void } {
   let final = ''
   let nonFinal = ''
   let lastPartial = ''
+  let segments = 0
 
   const emitFinal = (): void => {
     const text = (final + nonFinal).trim()
-    if (text !== '') send({ type: 'final', text })
+    if (text !== '') {
+      if (policy.onlyOwner()) {
+        segments += 1
+        send({ type: 'rejected', decision: { segmentId: segments, sessionId: policy.sessionId, profileVersion: '', verdict: 'unknown', reason: SONIOX_ONLY_OWNER_REASON, timings: { judgeMs: 0 } } })
+      } else send({ type: 'final', text })
+    }
     final = ''
     nonFinal = ''
     lastPartial = ''
@@ -175,7 +196,7 @@ export function createUtteranceMapper(send: (message: AsrServerMessage) => void)
       }
       nonFinal = pending
       const partial = (final + nonFinal).trim()
-      if (partial !== '' && partial !== lastPartial) send({ type: 'partial', text: partial })
+      if (partial !== '' && partial !== lastPartial && !policy.onlyOwner()) send({ type: 'partial', text: partial })
       lastPartial = partial
     },
     flushed() {
@@ -204,7 +225,9 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
   const connect = options.connect ?? ((url: string): SocketLike => new WebSocket(url))
   const model = options.model ?? process.env.SONIOX_MODEL ?? SONIOX_DEFAULT_MODEL
   const keepaliveMs = options.keepaliveMs ?? SONIOX_KEEPALIVE_MS
-  const mapper = createUtteranceMapper(send)
+  // Round 10 (31.2): the browser's onlyOwner message; while on, Soniox's words are denied (no speaker gate on this path).
+  let onlyOwner = false
+  const mapper = createUtteranceMapper(send, { onlyOwner: () => onlyOwner, sessionId: randomUUID() })
   const buffered: Buffer[] = []
   let upstreamReady = false
   let browserClosed = false
@@ -297,7 +320,13 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
       } else buffered.push(pcm)
       return
     }
-    if (rawToString(data).includes('"flush"') && upstreamReady && upstream.readyState === OPEN) upstream.send(SONIOX_FINALIZE)
+    const raw = rawToString(data)
+    const onlyOwnerFrame = onlyOwnerOf(raw)
+    if (onlyOwnerFrame !== null) {
+      onlyOwner = onlyOwnerFrame
+      return
+    }
+    if (raw.includes('"flush"') && upstreamReady && upstream.readyState === OPEN) upstream.send(SONIOX_FINALIZE)
   })
 
   ws.on('close', (code: number) => {
@@ -309,6 +338,19 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
       upstream.close()
     }
   })
+}
+
+/** Round 10: the `on` of an onlyOwner text frame, or null for any other frame. */
+function onlyOwnerOf(raw: string): boolean | null {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (typeof value !== 'object' || value === null) return null
+  const record = value as Record<string, unknown>
+  return record.type === 'onlyOwner' && typeof record.on === 'boolean' ? record.on : null
 }
 
 function rawToString(data: RawData): string {

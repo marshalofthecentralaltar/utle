@@ -384,4 +384,19 @@ describe('issue #3: Soniox with only the owner on', () => {
     const finals = browser.json.filter((m): m is AsrServerMessage => typeof m === 'object' && m !== null && (m as { type?: unknown }).type === 'final')
     expect(finals).toEqual([])
   })
+
+  it('round 10 (31.2): sends a model_unavailable rejection without the words and no partials; off again, words flow as before', () => {
+    const { browser, upstream } = session()
+    browser.text(JSON.stringify({ type: 'onlyOwner', on: true }))
+    upstream.open()
+    upstream.text(response([{ text: 'saa', is_final: false }]))
+    upstream.text(response([{ text: 'saada', is_final: true }, { text: '<end>', is_final: true }]))
+    const after = browser.json.slice(1) as Array<Record<string, unknown>>
+    expect(after.map((m) => m.type)).toEqual(['rejected'])
+    expect(after[0]?.decision).toMatchObject({ segmentId: 1, verdict: 'unknown', reason: 'model_unavailable', profileVersion: '' })
+    expect(JSON.stringify(after)).not.toContain('saada')
+    browser.text(JSON.stringify({ type: 'onlyOwner', on: false }))
+    upstream.text(response([{ text: 'jah', is_final: true }, { text: '<end>', is_final: true }]))
+    expect(browser.json.at(-1)).toEqual({ type: 'final', text: 'jah' })
+  })
 })

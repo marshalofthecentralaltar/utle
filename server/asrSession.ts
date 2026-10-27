@@ -1,8 +1,8 @@
-import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE } from '../src/speech/asrProtocol.ts'
-import type { AsrServerMessage } from '../src/speech/asrProtocol.ts'
+import { randomUUID } from 'node:crypto'
+import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE, verdictFor } from '../src/speech/asrProtocol.ts'
+import type { AsrServerMessage, SpeakerDecision, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import type { Capture } from './capture.ts'
-import type { EnrolPhrase, Judgement, SpeakerGate } from './speaker.ts'
-import { continued } from './speaker.ts'
+import type { EnrolPhrase, Judgement, SpeakerGate, SpeakerVerification } from './speaker.ts'
 import type { FilteredFrame, SpeechFilter, VadFactory } from './vad.ts'
 import { createSpeechFilter } from './vad.ts'
 
@@ -43,6 +43,13 @@ export interface Decoder {
    * or the one in progress (before a flush's reset). Null when the server has no voice profile.
    */
   judge?(): Judgement | null | Promise<Judgement | null>
+  /**
+   * Round 10 (31.2): the fail-closed check of the same frames as judge, used with only the owner
+   * on. Absent (no gate at all) or failing: the utterance is denied.
+   */
+  verify?(): SpeakerVerification | Promise<SpeakerVerification>
+  /** Round 10 (31.1): the stored profile's version (empty without one), for the speakerSession announcement. */
+  profileVersion?(): string | Promise<string>
   /** Round 4: learns the owner's voice from the next `seconds` of speech. Resolves once learnt, or false once given up. */
   enrol?(seconds: number): Promise<boolean>
   /**
@@ -217,6 +224,13 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       if (!gate) return null
       return gate.judge(ended ?? kept)
     },
+    verify() {
+      if (!gate) return { judgement: null, reason: 'profile_missing', profileVersion: '' }
+      return gate.verify(ended ?? kept)
+    },
+    profileVersion() {
+      return gate?.profileVersion() ?? ''
+    },
     enrol(seconds) {
       if (!gate) return Promise.resolve(false)
       finishEnrolment(false)
@@ -291,6 +305,8 @@ export interface AsrSessionOptions {
   onError?: (error: unknown) => void
   /** Each final's verdict, for the server log: numbers only, never the text. */
   onJudged?: (judgement: Judgement, onlyOwner: boolean) => void
+  /** Round 10 (31.1): this session's id in every decision. Default a random UUID. */
+  sessionId?: string
 }
 
 interface QueuedFrame {
@@ -339,8 +355,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   let lastReport = -Infinity
   let onlyOwner = false
   let foreignFinals = 0
-  /** Round 7, continuity: when the last owner final judged on its score went; null after an other final. */
-  let ownerAt: number | null = null
+  /** Round 10 (31.1): the session id every decision carries, and the count of finals decided (the segment ids). */
+  const sessionId = options.sessionId ?? randomUUID()
+  let segments = 0
 
   const report = (ms: number): void => {
     send({ type: 'lag', ms })
@@ -393,29 +410,91 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     options.onError?.(error)
   }
 
+  /** Round 10 (31.2): tells the client the session and profile version its decisions must carry. */
+  const announce = (): void => {
+    let version: string | Promise<string>
+    try {
+      version = decoder.profileVersion?.() ?? ''
+    } catch {
+      version = ''
+    }
+    const tell = (profileVersion: string): void => {
+      if (!closed && onlyOwner) send({ type: 'speakerSession', sessionId, profileVersion })
+    }
+    if (version instanceof Promise) version.then(tell, () => tell(''))
+    else tell(version)
+  }
+
+  /** Round 10 (31.2): writes the clip with UTLE_CAPTURE; never in the way of the words. */
+  const captured = (text: string, judgement: Judgement | null): void => {
+    try {
+      void Promise.resolve(decoder.capture?.(text, judgement)).catch(() => undefined)
+    } catch {
+      // Calibration only.
+    }
+  }
+
+  /**
+   * Round 10 (31.2): with only the owner on, the final's own frames are verified; only
+   * verified_owner sends the words, with the decision. Anything else, a missing verify and a verify
+   * that fails included, sends a rejection without the words.
+   */
+  const sendVerified = (text: string, then: () => void): void => {
+    const started = now()
+    segments += 1
+    const segment = segments
+    const decide = (verification: SpeakerVerification | null): void => {
+      if (closed) return
+      const reason: SpeakerReason = verification?.reason ?? 'verification_error'
+      const judgement = verification?.judgement ?? null
+      const decision: SpeakerDecision = {
+        segmentId: segment,
+        sessionId,
+        profileVersion: verification?.profileVersion ?? '',
+        verdict: verdictFor(reason),
+        reason,
+        timings: judgement?.seconds === undefined ? { judgeMs: Math.max(0, now() - started) } : { judgeMs: Math.max(0, now() - started), speechMs: Math.round(judgement.seconds * 1000) },
+      }
+      if (judgement !== null && judgement.score !== 0) decision.score = judgement.score
+      if (reason === 'verified_owner') send({ type: 'final', text, speaker: 'owner', segment, decision })
+      else {
+        send({ type: 'rejected', decision })
+        foreignFinals += 1
+      }
+      options.onJudged?.({ speaker: decision.verdict, score: judgement?.score ?? 0, ...(judgement?.seconds === undefined ? {} : { seconds: judgement.seconds }), reason }, true)
+      captured(text, judgement)
+      then()
+    }
+    let verified: SpeakerVerification | Promise<SpeakerVerification> | undefined
+    try {
+      verified = decoder.verify?.()
+    } catch {
+      decide(null)
+      return
+    }
+    if (verified instanceof Promise) verified.then(decide, () => decide(null))
+    else decide(verified ?? null)
+  }
+
   /**
    * Sends text as a final, with the speaker when the decoder can judge one, then goes on. A judge
    * that fails (review) loses the verdict, not the words: the final goes without a speaker.
+   * Round 10: with only the owner on, sendVerified instead (fail closed).
    */
   const sendFinal = (text: string, then: () => void): void => {
-    const deliver = (judged: Judgement | null | undefined): void => {
+    if (onlyOwner) {
+      sendVerified(text, then)
+      return
+    }
+    const deliver = (judgement: Judgement | null | undefined): void => {
       if (closed) return
-      // Round 7: a short word right after the owner spoke is his (continuity, server/speaker.ts).
-      const at = now()
-      const judgement = judged ? continued(judged, ownerAt, at) : judged
-      if (judgement?.speaker === 'owner' && judgement.reason === undefined) ownerAt = at
-      else if (judgement?.speaker === 'other') ownerAt = null
       if (judgement) {
         send({ type: 'final', text, speaker: judgement.speaker })
         options.onJudged?.(judgement, onlyOwner)
         if (onlyOwner && judgement.speaker !== 'owner') foreignFinals += 1
       } else send({ type: 'final', text })
       // Round 7: UTLE_CAPTURE writes the clip and its words; without it the decoder does nothing here.
-      try {
-        void Promise.resolve(decoder.capture?.(text, judgement ?? null)).catch(() => undefined)
-      } catch {
-        // Calibration only: never in the way of the words.
-      }
+      captured(text, judgement ?? null)
       then()
     }
     let judged: Judgement | null | Promise<Judgement | null> | undefined
@@ -525,7 +604,10 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       }
       learning.then(
         (ok) => {
-          if (!closed) send({ type: 'enrolled', ok, seconds })
+          if (closed) return
+          send({ type: 'enrolled', ok, seconds })
+          // Round 10 (31.2): a new profile is a new version.
+          if (ok) announce()
         },
         () => {
           if (!closed) send({ type: 'enrolled', ok: false, seconds })
@@ -534,6 +616,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     },
     onlyOwner(on) {
       onlyOwner = on
+      if (on) announce()
     },
     enrolScript(phrases) {
       if (closed) return
@@ -546,7 +629,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       }
       learning.then(
         (result) => {
-          if (!closed) send({ type: 'enrolled', ok: result.ok, seconds: result.seconds, phrases: result.phrases })
+          if (closed) return
+          send({ type: 'enrolled', ok: result.ok, seconds: result.seconds, phrases: result.phrases })
+          if (result.ok) announce()
         },
         () => {
           if (!closed) send({ type: 'enrolled', ok: false, seconds: 0, phrases: 0 })
