@@ -2134,7 +2134,71 @@ its own. Written before the code, as the rule in `CLAUDE.md` asks.
 
 ### 30.1 The first run (ONBOARD lane)
 
-(lane ONBOARD writes this)
+Gaps G1 to G4 of the plan: a helper who is not a developer installs Ütle for someone who cannot
+use their hands. Before this round the install opened only the microphone page, the server address
+sat at the end of the settings page, the strip said "npm run dev" whatever the address was, and
+nothing on the strip said whether the server answered.
+
+**The welcome page (`extension/welcome.html`, `extension/src/welcome.ts`).** `chrome.runtime.onInstalled`
+with reason `install` opens it instead of `permission.html`; the microphone ask is its step 1.
+`permission.html` stays for the re-ask path (`utle-mic-blocked` from the offscreen document). The
+page has the strip mounted and loads `dist/page.js` like the new-tab page, and `background.ts`
+treats it as it treats `newtab.html` and `options.html` (page commands as `utle-page-run`), so
+`näita numbreid` and a number press any of its buttons. Every card head and every button is a
+dwell target: 1 s with the amber fill, as on the settings page, or a click. Estonian first, the
+English line dim under it. A card whose condition holds gets `data-done="true"`: a green edge and
+"Tehtud". Five cards, in order:
+
+| # | Card | What is on it | Done when |
+|---|---|---|---|
+| 1 | Mikrofon | On load the page reads `navigator.permissions` for the microphone; when the answer is "prompt" it asks at once (Chrome's own question), as the old page did. Refused: the blocked line and **Proovi uuesti**. On a grant it sends `utle-mic-granted`, so a listen that waited for it starts. | The permission is `granted`. |
+| 2 | Server | Two choices: **Samas arvutis** (the server runs on this computer: the stored address and token are removed, so the local default `ws://localhost:5173/api/asr` holds) and **Teises arvutis** (the address and the võti fields appear, filled from storage). **Proovi ühendust** stores the fields and calls `GET /api/status` through `serverCheck` (connection.ts), the settings page's path. The result line: "Proovin…", then "Vale võti." (401), "Ei saa ühendust." with a hint that names the situation (local: start it, `npm run dev`; hosted: check the internet or ask whoever runs the server), or the "Ühendus töötab" line with the profile line, green. The result is also written to the strip's connection state. | The last check answered `live` or `no_key`. |
+| 3 | Proovi | A large text box, armed for dictation when the page opens and again when the card or **Kirjuta siia** is pressed (`armElement`, the same armed box page.ts types into). "Vajuta mikrofoni ja ütle: tere". The words appear in the box as he speaks (the usual previews). | The box holds words that have stood still for 1 s (`DEMO_SETTLE_MS`): a final has landed. The card says "Töötab." |
+| 4 | Hääl | Optional. **Õpeta mu hääl lausetega** opens `options.html#onlyOwner`, the settings page scrolled to Minu hääl. | The step 2 check names a profile whose voice is learnt. Not needed for card 5. |
+| 5 | Valmis | Three example phrases (the first three of `strip.examples`), **Abi** and **Seaded**. | Cards 1 to 3 are done. |
+
+**Opening it again.** By voice: "ava juhend", "ava alustamine", "alustamine", "juhend", English
+"setup", "open the guide", "open setup". Rules only (`browserIntent.ts` phrases): the command is
+`{ kind: 'openSettings', section: 'welcome' }`, which brings an open welcome tab to the front or
+opens one, as "ava seaded" does for the settings page. The line is "Avan alustamise." By hand: the
+toolbar icon's context menu (`contextMenus` permission, `contexts: ['action']`) has three items,
+**Alustamine** (the welcome page), **Seaded** (the settings page) and **Abi** (lane HELP's
+`help.html` when the extension has it, else the extension README on GitHub). The menu is made on
+every `onInstalled`.
+
+**Server-down lines (G2).** The extension's recogniser keeps trying while listening is on
+(`keepTrying` in `src/speech/local.ts`; the dev page keeps the old give-up, which switches it to
+Chrome's recogniser): after a failed or lost connection it tries again after 1, 2, 4 and then every
+5 s (`RECONNECT_MS`), and reports each change of its connection (`onConnection`: `connecting`,
+`connected`, `down`) once, never once per try. A server message `unavailable` (no model) still gives
+up with the old line. The engine shows, once per outage, in the strip's problem line:
+
+| Situation | Line |
+|---|---|
+| The address is local (ws:// to localhost, 127.0.0.1 or [::1]) | "Kõneserver ei vasta. Palu abilisel see käivitada (npm run dev)." |
+| The address is hosted (wss://, or any other host) | "Kõneserver ei vasta. Kontrolli internetiühendust või palu abilisel vaadata serverit." |
+| The status check answered 401 | "Serveri võti on vale." (the existing `badToken`) |
+
+When the socket is ready again after an outage the problem line clears and the line says "Server
+vastab jälle." once. Listening stays on through the outage, so the microphone opens again by itself;
+turning listening off ends the outage, and the next start that fails says the line again.
+
+**The connection dot (G3).** A 22 px dot in the top-left corner of the strip's microphone square (and
+of the folded pill), from `StripState.connection`, also on the square as `data-connection`:
+
+| State | Colour | Word (hover, dwell, `title`) | Set by |
+|---|---|---|---|
+| `connected` | green | Ühendatud | the socket is ready; a status check (below) that answered |
+| `connecting` | amber | Ühendan | the start state; the first try of a listen |
+| `down` | red | Server ei vasta | a failed or lost socket, until it is ready; a status check that did not answer or answered 401 |
+
+Besides the socket, the service worker checks `/api/status` at install, at browser start and when
+the stored address or token changes, so the dot means something before the first listen; the welcome
+page's and the settings page's **Proovi ühendust** write their result too. While listening is off
+the dot shows the last check: it is not polled.
+
+**Not verified.** A real helper doing the first run; Chrome's install flow from the Web Store (the
+unpacked load and Playwright's fresh profile are what was run).
 
 ### 30.2 Help inside the product (HELP lane)
 
