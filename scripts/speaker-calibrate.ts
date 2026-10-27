@@ -9,6 +9,13 @@
  *   ... --profile models/speaker/owner.json                             also score every clip against a stored
  *                                                                        profile (read only), with the model that made it
  *
+ * Round 10 (issue #4), the model sweep (scripts/speaker-sweep.ts; writes JSON, not scores.json):
+ *   npx tsx scripts/speaker-calibrate.ts --labels <labels.tsv> --owner-speaker <name> --models all
+ *   npx tsx scripts/speaker-calibrate.ts <dir> --models all           (owner-/other- names, as above)
+ *   ... --models titanet-small,campplus,eres2net,resnet34              (npx tsx scripts/speaker-models.ts fetches them)
+ *   ... --json <file>                                                  default: next to the labels, artifacts/ in the repo
+ *   ... --far-target 0.01                                              the operating point: lowest threshold with FAR <= target
+ *
  * The owner is enrolled through the real gate (server/speaker.ts: one phrase per owner clip, the
  * profile is their mean, as scripted enrolment makes it) into a temporary profile, and every other
  * clip is judged by the gate against it (the `gate` column). Each owner clip's score is against the
@@ -23,10 +30,17 @@ import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import { OWNER_THRESHOLD, SPEAKER_MODEL_FILE, cosine, createSpeakerGate, embeddedSamples, meanEmbedding, normalised, pickThreshold } from '../server/speaker.ts'
 import type { EnrolPhrase } from '../server/speaker.ts'
 import { loadSpeakerModel } from '../server/speakerModel.ts'
+import { runSweep } from './speaker-sweep.ts'
 import { readAnyWav } from './wav.ts'
 
 const argv = process.argv.slice(2)
-const flag = (name: string): string | undefined => {
+// Round 10 (issue #4): --labels or --models runs the model sweep (scripts/speaker-sweep.ts) instead;
+// without them everything below runs exactly as before.
+if (argv.includes('--labels') || argv.includes('--models')) {
+  await runSweep(argv)
+  process.exit(0)
+}
+const flag =(name: string): string | undefined => {
   const at = argv.indexOf(name)
   return at === -1 ? undefined : argv.splice(at, 2)[1]
 }
