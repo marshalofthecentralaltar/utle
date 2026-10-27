@@ -2425,4 +2425,44 @@ layout (`strip.ts`, another lane). A postimees headline ends with its comment co
 
 ### 30.6 The store (SHIP lane)
 
-(lane SHIP writes this)
+Everything the Chrome Web Store needs is in the repository, except the developer account and the
+upload, which are Ralf's (a one-time registration fee and an outward-facing act).
+
+**The packet.** `npm run ext:pack` (`scripts/pack.ts`) writes `extension/out/utle-<version>.zip`
+holding exactly `manifest.json`, the six pages (`options.html`, `offscreen.html`,
+`permission.html`, `newtab.html`, `welcome.html`, `help.html`), `dist/`, `relay.js` and `icons/`.
+Nothing under `src/`, `test/` or `store/` goes in. Next to it in the repository: `docs/STORE.md`
+holds the listing (Estonian first, then English): name, summary of at most 132 characters,
+description, category, single purpose, the `<all_urls>` justification, the data declarations, the
+privacy policy URL and visibility Unlisted, and the numbered upload checklist for Ralf.
+`extension/store/` holds the five screenshots. The manifest's `description` is the one the store
+shows under the name, so it carries Estonian first and English after in one string, and
+`action.default_title` is Estonian ("Ütle: mikrofon sisse või välja").
+
+**The version rule.** Every upload has a higher `version` in `extension/manifest.json` than the
+last one uploaded; the zip's name follows it. This round's is 0.4.0 (0.3.0 was round 6's, never
+uploaded). A change that only touches docs or the site does not bump it.
+
+**The privacy policy URL.** `https://utle.ee/privaatsus` (`site/privaatsus.html`) once utle.ee's
+DNS points at Vercel; until then the GitHub page of `docs/PRIVACY.md`. Both say the same.
+
+**The screenshots.** `scripts/store-shots.ts` loads the built extension in Playwright's Chromium,
+headed, on a fresh profile, the way `extension/test/run.ts` does, and serves the suite's stand-in
+pages from `extension/test/fixtures/` on port 5185 (localhost and 127.0.0.1). No real site, no login. Each shot is a
+1280×800 viewport: (1) the WhatsApp stand-in with a conversation open and a message in the box,
+the strip showing the words heard; (2) the video stand-in with the numbered labels on; (3) the
+welcome page; (4) the settings page; (5) the help page with a group open. The strip's text in shot
+1 is written into the strip's state directly (no microphone in the script). The script reads each
+PNG's header back and prints its size; anything other than 1280×800 fails it. Re-run it after a
+visible change to any of those pages and commit the new PNGs.
+
+**The check of the packet.** `scripts/pack-check.ts` unpacks the zip into a temporary folder, loads
+that folder (not `extension/`) as an unpacked extension on a fresh profile, checks that the
+welcome page opens on install, sends "abi" through the localhost relay as the suite sends commands
+and checks that `help.html` opens, and saves `docs/proof/r9-pack-welcome.png`. A file missing from
+`PACKED_FILES` shows up there as a page that does not load.
+
+**Install routes.** (A) Today: a helper unpacks the zip and loads the folder with Developer mode,
+Load unpacked, on any Chrome or Edge. (B) Once Ralf uploads: the unlisted store link, no developer
+mode. `extension/README.md` "Install on a locked computer" and the landing page's "Paigaldamine"
+section say both.

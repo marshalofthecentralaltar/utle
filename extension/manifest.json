@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Ütle",
-  "version": "0.3.0",
-  "description": "Speak in Estonian: the words go into the message box of the page you are on, and the browser moves by voice.",
+  "version": "0.4.0",
+  "description": "Kirjuta sõnumeid ja kasuta veebi eesti keeles rääkides. Write messages and use the web by speaking Estonian.",
   "icons": {
     "16": "icons/16.png",
     "48": "icons/48.png",
@@ -22,7 +22,7 @@
     "service_worker": "dist/background.js"
   },
   "action": {
-    "default_title": "Ütle: microphone on or off",
+    "default_title": "Ütle: mikrofon sisse või välja",
     "default_icon": {
       "16": "icons/16.png",
       "48": "icons/48.png",
