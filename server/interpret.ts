@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk'
 import type { Doc } from '../src/core/document.ts'
 import { numberOf } from '../src/core/document.ts'
 import { InterpretRequestSchema } from '../src/core/intent.ts'
@@ -7,19 +6,8 @@ import { applyOps } from '../src/core/ops.ts'
 import { STRINGS } from '../src/core/strings.ts'
 import { SYSTEM_PROMPT, userMessage } from './prompt.ts'
 import { TOOLS, intentFromToolCall } from './tools.ts'
-
-/** The part of a model reply this module reads. The SDK's Message satisfies it. */
-export interface ModelReply {
-  stop_reason: string | null
-  content: ReadonlyArray<{ type: string; id?: string; name?: string; input?: unknown }>
-}
-
-/** The part of the SDK client this module uses, so tests can pass a fake. */
-export interface MessagesClient {
-  messages: {
-    create(params: Anthropic.MessageCreateParamsNonStreaming, options?: { timeout?: number }): Promise<ModelReply>
-  }
-}
+import { ModelError, modelTool } from './model/types.ts'
+import type { Model, ModelAsk, ModelReplyNeutral, ModelToolCall } from './model/types.ts'
 
 export type InterpretErrorCode = 'bad_request' | 'upstream_unavailable' | 'upstream_rejected' | 'timeout'
 
@@ -69,21 +57,20 @@ export function problemWith(doc: Doc, intent: Intent): string | null {
 
 function toInterpretError(error: unknown): InterpretError {
   if (error instanceof InterpretError) return error
-  if (error instanceof Anthropic.APIConnectionTimeoutError) {
-    return new InterpretError('timeout', 'The assistant took too long.')
+  if (!(error instanceof ModelError)) return new InterpretError('upstream_unavailable', 'The assistant is unreachable.')
+  switch (error.kind) {
+    case 'timeout':
+      return new InterpretError('timeout', error.message)
+    case 'busy':
+    case 'unreachable':
+      return new InterpretError('upstream_unavailable', error.message)
+    case 'no_key':
+    case 'rejected':
+      return new InterpretError('upstream_rejected', `The assistant rejected the request (${error.status ?? 0}).`)
   }
-  if (error instanceof Anthropic.APIConnectionError) {
-    return new InterpretError('upstream_unavailable', 'The assistant is unreachable.')
-  }
-  if (error instanceof Anthropic.APIError) {
-    const status = error.status ?? 0
-    if (status === 429 || status >= 500) {
-      return new InterpretError('upstream_unavailable', 'The assistant is busy or unavailable.')
-    }
-    return new InterpretError('upstream_rejected', `The assistant rejected the request (${status}).`)
-  }
-  return new InterpretError('upstream_unavailable', 'The assistant is unreachable.')
 }
+
+const INTERPRET_TOOLS = TOOLS.map(modelTool)
 
 /**
  * Turns one utterance into one Intent that is known to fit the document.
@@ -91,7 +78,7 @@ function toInterpretError(error: unknown): InterpretError {
  * the error goes back once, and a second failure becomes not_understood.
  * Logs the outcome only, never document text or the utterance (principle P9).
  */
-export async function interpret(input: unknown, deps: { client: MessagesClient; model: string }): Promise<Intent> {
+export async function interpret(input: unknown, deps: { model: Model }): Promise<Intent> {
   const parsed = InterpretRequestSchema.safeParse(input)
   if (!parsed.success || parsed.data.utterance.trim() === '') {
     throw new InterpretError('bad_request', 'The request is malformed.')
@@ -99,7 +86,8 @@ export async function interpret(input: unknown, deps: { client: MessagesClient; 
   const request = parsed.data
   const t = STRINGS[request.lang ?? 'en']
   const started = Date.now()
-  const messages: Anthropic.MessageParam[] = [{ role: 'user', content: userMessage(request) }]
+  // Round 9 (30.5.1): through the one door. A failed call goes back once as a correction.
+  const corrections: Array<{ call: ModelToolCall; error: string }> = []
 
   const finish = (intent: Intent, attempts: number): Intent => {
     console.info(`[interpret] kind=${intent.kind} attempts=${attempts} ms=${Date.now() - started}`)
@@ -107,30 +95,19 @@ export async function interpret(input: unknown, deps: { client: MessagesClient; 
   }
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    let reply: ModelReply
+    let reply: ModelReplyNeutral
     try {
-      reply = await deps.client.messages.create(
-        {
-          model: deps.model,
-          max_tokens: MAX_TOKENS,
-          system: SYSTEM_PROMPT,
-          tools: TOOLS,
-          tool_choice: { type: 'any', disable_parallel_tool_use: true },
-          messages,
-        },
-        { timeout: REQUEST_TIMEOUT_MS },
-      )
+      const ask: ModelAsk = { system: SYSTEM_PROMPT, user: userMessage(request), tools: INTERPRET_TOOLS, maxTokens: MAX_TOKENS, timeoutMs: REQUEST_TIMEOUT_MS, ...(corrections.length > 0 ? { corrections: [...corrections] } : {}) }
+      reply = await deps.model.ask(ask)
     } catch (error) {
       const mapped = toInterpretError(error)
       console.info(`[interpret] error=${mapped.code} attempts=${attempt} ms=${Date.now() - started}`)
       throw mapped
     }
 
-    if (reply.stop_reason === 'refusal' || reply.stop_reason === 'max_tokens') {
-      return finish(notUnderstood(t.couldNotWork), attempt)
-    }
-    const call = reply.content.find((block) => block.type === 'tool_use')
-    if (!call?.id || !call.name) {
+    // A refusal, a cut-off answer or no tool call at all.
+    const call = reply.call
+    if (reply.stop !== 'tool' || !call || !call.id || !call.name) {
       return finish(notUnderstood(t.couldNotWork), attempt)
     }
 
@@ -140,20 +117,7 @@ export async function interpret(input: unknown, deps: { client: MessagesClient; 
       : `The call to ${call.name} does not match any tool's input schema.`
     if (intent && problem === null) return finish(intent, attempt)
 
-    messages.push(
-      { role: 'assistant', content: [{ type: 'tool_use', id: call.id, name: call.name, input: call.input }] },
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: call.id,
-            is_error: true,
-            content: `${problem} Nothing was changed. Call one tool again with a corrected input.`,
-          },
-        ],
-      },
-    )
+    corrections.push({ call, error: `${problem} Nothing was changed. Call one tool again with a corrected input.` })
   }
 
   return finish(notUnderstood(t.notSafe), MAX_ATTEMPTS)

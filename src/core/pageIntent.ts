@@ -121,6 +121,21 @@ export interface IntentAnswer {
    * Absent or empty: this utterance is one goal.
    */
   plan?: string[]
+  /**
+   * Round 9 (ARCHITECTURE 30.5.3): what the ask cost, for the engine's tally per task. Counts and
+   * names only. The engine reads it for nothing else.
+   */
+  usage?: IntentUsage
+}
+
+/** Tokens of one ask (input at full price, output, read from and written to the cache) and who answered. */
+export interface IntentUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  provider: string
+  model: string
 }
 
 const Id = z.number().int().nonnegative()
@@ -203,7 +218,9 @@ const PlaceIntentSchema: z.ZodType<PlaceIntent> = z.object({ kind: z.literal('pl
 export const ModelIntentSchema: z.ZodType<ModelIntent> = z.union([PageIntentSchema, PlaceIntentSchema])
 // ---------- end of wake word and places ----------
 
-export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: ModelIntentSchema, say: Short, done: z.boolean().optional(), plan: z.array(z.string().max(200)).max(12).optional() })
+const Count = z.number().int().nonnegative()
+const IntentUsageSchema: z.ZodType<IntentUsage> = z.object({ input: Count, output: Count, cacheRead: Count, cacheWrite: Count, provider: z.string().max(40), model: z.string().max(100) })
+export const IntentAnswerSchema: z.ZodType<IntentAnswer> = z.object({ intent: ModelIntentSchema, say: Short, done: z.boolean().optional(), plan: z.array(z.string().max(200)).max(12).optional(), usage: IntentUsageSchema.optional() })
 
 /** Round 4: a chain of goals may take this many steps in all, and this long. */
 export const MAX_CHAIN_STEPS = 16
