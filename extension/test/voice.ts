@@ -7,6 +7,7 @@
 //   npx tsx extension/test/voice.ts           dictation with live words and send, scroll and tab, the new-tab page
 //   npx tsx extension/test/voice.ts baseline  the dictation timings as main b901d29 behaved (no previews, 700 ms hold)
 //   npx tsx extension/test/voice.ts down      start with the dev server STOPPED; start it when told
+//   UTLE_ONLY=onlyowner                        only section 7: only the owner with the real models (a server of its own)
 
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
@@ -478,6 +479,185 @@ async function serverDown(extensionDir: string): Promise<void> {
   }
 }
 
+// ---------- only the owner, with the real models (round 10, ARCHITECTURE 31; issue #3 review 1) ----------
+// A server of its own in this process (the same attachAsr as the dev server, the decode worker, the
+// real recogniser, TitaNet and Silero), whose one profile is made here from the stand-in owner's
+// clips of scripts/fixtures/speaker-set in a temporary UTLE_DATA_DIR. models/speaker/owner.json is
+// never read or written. The clips under test are held out of the profile.
+
+const SPEAKER_SET = join(repoRoot, 'scripts/fixtures/speaker-set')
+/** The owner clips the profile is made of; owner-sentence-2 and owner-jah-1 are held out. */
+const ENROL_CLIPS = ['owner-dictate-send-1', 'owner-dictate-send-2', 'owner-numbers-one-1', 'owner-numbers-one-2', 'owner-scroll-tab-1', 'owner-scroll-tab-2', 'owner-sentence-1']
+
+/** A 16-bit PCM WAV as 100 ms float frames at 16 kHz. */
+function wavFrames(path: string): Float32Array[] {
+  const file = readFileSync(path)
+  let at = 12
+  let data: Buffer | null = null
+  let rate = 0
+  while (at + 8 <= file.length) {
+    const id = file.toString('ascii', at, at + 4)
+    const size = file.readUInt32LE(at + 4)
+    if (id === 'fmt ') rate = file.readUInt32LE(at + 12)
+    if (id === 'data') data = file.subarray(at + 8, at + 8 + size)
+    at += 8 + size + (size % 2)
+  }
+  if (data === null || rate !== 16000) throw new Error(`${path}: not 16 kHz PCM (${rate})`)
+  const n = Math.floor(data.length / 2)
+  const frames: Float32Array[] = []
+  for (let i = 0; i < n; i += 1600) {
+    const frame = new Float32Array(Math.min(1600, n - i))
+    for (let k = 0; k < frame.length; k += 1) frame[k] = data.readInt16LE((i + k) * 2) / 32768
+    frames.push(frame)
+  }
+  return frames
+}
+
+interface Heard {
+  type: string
+  text?: string
+  decision?: { segmentId: number; reason: string; verdict: string; score?: number; profileVersion: string; timings: { judgeMs: number; speechMs?: number } }
+}
+
+async function onlyOwnerReal(extensionDir: string): Promise<void> {
+  console.log('\n== 7. only the owner with the real models: a profile from the stand-in owner, held-out clips, other voices ==')
+  const { createServer } = await import('node:http')
+  const { WebSocket } = await import('ws')
+  const { attachAsr } = await import('../../server/asr.ts')
+  const { createSpeakerGate, profilePath } = await import('../../server/speaker.ts')
+  const { loadSpeakerModel } = await import('../../server/speakerModel.ts')
+  const dataDir = await mkdtemp(join(tmpdir(), 'utle-onlyowner-'))
+  const profile = profilePath(repoRoot, { UTLE_DATA_DIR: dataDir }, '')
+  const server = createServer((req, res) => {
+    // The extension asks for the status; the model is "off" here (no /api/intent), speech is local.
+    res.setHeader('access-control-allow-origin', '*')
+    if ((req.url ?? '').startsWith('/api/status')) {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ intent: 'no_key', speech: { local: true, soniox: false } }))
+      return
+    }
+    res.statusCode = 404
+    res.end()
+  })
+  try {
+    // The profile: one read phrase per enrolment clip, through the real gate and TitaNet.
+    const model = loadSpeakerModel(repoRoot)
+    if (!model.ok) throw new Error(`speaker model: ${model.reason}`)
+    const maker = createSpeakerGate(model.extractor, { profilePath: profile })
+    const phrases = ENROL_CLIPS.map((name) => maker.phrase(wavFrames(join(SPEAKER_SET, `${name}.wav`)))).filter((p) => p !== null)
+    const enrolled = maker.enrolPhrases(phrases)
+    console.log(`      profile ${profile} (UTLE_DATA_DIR=${dataDir}): ${phrases.length} phrases, version ${maker.profileVersion()}`)
+    check('7. the profile is written under UTLE_DATA_DIR (profilePath), never models/speaker', enrolled && profile.startsWith(dataDir) && profile.endsWith('owner.json'), profile)
+
+    attachAsr(server, repoRoot, { profileFor: () => profile })
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    const address = server.address()
+    const port = typeof address === 'object' && address !== null ? address.port : 0
+    const asr = `ws://localhost:${port}/api/asr`
+
+    // ---- the wire: what leaves the server for each clip, with only the owner on ----
+    const ws = new WebSocket(asr)
+    const heard: Heard[] = []
+    ws.on('message', (data) => heard.push(JSON.parse(String(data)) as Heard))
+    const ready = await waitUntil(async () => heard.some((m) => m.type === 'ready'), 60_000)
+    check('7. the server with the real models is ready', ready)
+    ws.send(JSON.stringify({ type: 'onlyOwner', on: true }))
+    const announced = await waitUntil(async () => heard.some((m) => m.type === 'speakerSession'), 5000)
+    const session = heard.find((m) => m.type === 'speakerSession') as (Heard & { sessionId?: string; profileVersion?: string }) | undefined
+    check('7. onlyOwner is answered with the session and the profile version made here', announced && session?.profileVersion === maker.profileVersion(), JSON.stringify(session))
+
+    const play = async (name: string): Promise<Heard[]> => {
+      const from = heard.length
+      for (const frame of wavFrames(join(SPEAKER_SET, `${name}.wav`))) {
+        ws.send(frame.buffer)
+        await sleep(100)
+      }
+      // A second and a half of room at the fixtures' noise floor (a microphone never gives digital
+      // zeros): the endpoint, then a flush in case none came.
+      for (let i = 0; i < 15; i += 1) {
+        ws.send(Float32Array.from({ length: 1600 }, () => (Math.random() - 0.5) * 0.001).buffer)
+        await sleep(100)
+      }
+      ws.send(JSON.stringify({ type: 'flush' }))
+      await waitUntil(async () => heard.slice(from).some((m) => m.type === 'final' || m.type === 'rejected'), 8000)
+      await sleep(500)
+      return heard.slice(from)
+    }
+    const line = (name: string, got: Heard[]): Heard | undefined => {
+      const outcome = got.find((m) => m.type === 'final' || m.type === 'rejected')
+      const d = outcome?.decision
+      console.log(`      ${name}: ${got.map((m) => m.type).join(' ')} -> ${outcome?.type ?? 'nothing'} ${d ? `reason=${d.reason} score=${d.score ?? '-'} judgeMs=${d.timings.judgeMs} speechMs=${d.timings.speechMs ?? '-'}` : ''}${outcome?.text ? ` text=${JSON.stringify(outcome.text)}` : ''}`)
+      return outcome
+    }
+    const worded = (got: Heard[]): Heard[] => got.filter((m) => typeof m.text === 'string' && m.text !== '')
+
+    // The one word first: played after the pitched clip in the same session, the recogniser's
+    // partial "jah" never reached an endpoint or a flush final (seen 2026-10-27, both paddings).
+    const short = await play('owner-jah-1')
+    const shortOutcome = line('owner-jah-1 (held out, one word)', short)
+    check('7c. the owner’s one word: insufficient_audio or rejected_other, no words', shortOutcome?.type === 'rejected' && (shortOutcome.decision?.reason === 'insufficient_audio' || shortOutcome.decision?.reason === 'rejected_other') && worded(short).length === 0, shortOutcome?.decision?.reason ?? '')
+
+    const owner = await play('owner-sentence-2')
+    const ownerOutcome = line('owner-sentence-2 (held out, long)', owner)
+    check('7a. the held-out owner sentence: a final with a verified_owner decision', ownerOutcome?.type === 'final' && ownerOutcome.decision?.reason === 'verified_owner' && ownerOutcome.decision.verdict === 'owner')
+    check('7a. its only words are the verified final (no partial words)', worded(owner).length === 1 && worded(owner)[0] === ownerOutcome)
+
+    for (const other of ['other-vesta-1', 'other-kalev-1', 'other-mari-pitch20-1']) {
+      const got = await play(other)
+      const outcome = line(other, got)
+      check(`7b. ${other}: rejected, no message with words (partials included)`, outcome?.type === 'rejected' && worded(got).length === 0, `${outcome?.decision?.reason ?? 'no decision'}`)
+    }
+
+    ws.close()
+
+    // ---- the extension: another voice into an armed chat box, only the owner on ----
+    const s = await launch(extensionDir, join(SPEAKER_SET, 'other-vesta-1.wav'))
+    try {
+      await s.sw.evaluate((url) => chrome.storage.local.set({ asrUrl: url, onlyOwner: true }), asr)
+      const page = s.ctx.pages()[0] ?? (await s.ctx.newPage())
+      const CHAT = `${FIX}/chat.html`
+      await page.goto(CHAT)
+      await page.bringToFront()
+      await page.waitForFunction(() => (window as unknown as { lexicalReady?: boolean }).lexicalReady === true)
+      await waitUntil(async () => s.permission.closedAfterMs !== null, 8000)
+      await sleep(1200)
+      const m = await measure(s.sw, CHAT)
+      if (!m) throw new Error('no strip')
+      const boxes = new Set<string>()
+      let sampling = true
+      const sampler = (async () => {
+        while (sampling) {
+          boxes.add(await page.evaluate(() => (window as unknown as { lexicalText: () => string }).lexicalText()).catch(() => ''))
+          await sleep(100)
+        }
+      })()
+      await page.mouse.click(m.mic.left + m.mic.width / 2, m.mic.top + m.mic.height / 2)
+      await page.mouse.move(640, 200)
+      const foreignLine = async (): Promise<string> => s.sw.evaluate(async () => ((await chrome.storage.session.get('stripState')).stripState as { foreign?: string } | undefined)?.foreign ?? '')
+      let seen = ''
+      const foreign = await waitUntil(async () => {
+        const f = await foreignLine()
+        if (f !== '') seen = f
+        return f !== ''
+      }, 25_000)
+      await sleep(3000)
+      sampling = false
+      await sampler
+      const sent = await page.evaluate(() => (window as unknown as { sent: () => string[] }).sent())
+      const url = s.ctx.pages().map((p) => p.url())
+      const offscreen = await s.sw.evaluate(async () => (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] }))[0]?.documentUrl ?? '')
+      console.log(`      extension: offscreen ${offscreen.includes('onlyOwner=1') ? 'with' : 'WITHOUT'} onlyOwner=1; boxes seen ${JSON.stringify([...boxes])}; sent ${JSON.stringify(sent)}; strip foreign ${JSON.stringify(seen)}`)
+      check('7b. extension: another voice is heard and dropped (the strip says so)', foreign && offscreen.includes('onlyOwner=1'))
+      check('7b. extension: the chat box stayed empty the whole time, nothing sent, no navigation', [...boxes].every((b) => b.trim() === '') && sent.length === 0 && url.includes(CHAT))
+    } finally {
+      await close(s)
+    }
+  } finally {
+    server.close()
+    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function main(): Promise<void> {
   await mkdir(join(repoRoot, 'docs/proof'), { recursive: true })
   const mode = process.argv[2]
@@ -501,9 +681,13 @@ async function main(): Promise<void> {
     if (!only || only === 'dictate') await dictateAndSend(extensionDir, false)
     if (!only || only === 'scroll') await scrollAndTab(extensionDir)
     if (!only || only === 'newtab') await newTabPage(extensionDir)
+    // Round 10: only the owner, with a server of this process over the real models.
+    if (!only || only === 'onlyowner') await onlyOwnerReal(extensionDir)
   }
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
   process.exitCode = failures === 0 ? 0 : 1
+  // The decode worker of section 7's server keeps the process alive.
+  process.exit()
 }
 
 main().catch((error: unknown) => {
