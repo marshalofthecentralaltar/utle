@@ -63,6 +63,20 @@ The loop for each round:
 
 ## Where things stand
 
+### Round 9 (2026-10-27 night, overnight and unattended): done, merged into main, pushed
+
+Ralf's brief of 2026-10-26: make Ütle usable by everyone, plan first, then execute with agents. Plan
+`docs/plans/2026-10-27-usable-by-everyone.md`; spec ARCHITECTURE 30; `HANDOFF.md` 1k has what works, by what it is
+proven, and what only Ralf can do. Six lanes (REALPAGES, ONBOARD, FAULTS, HELP, SHIP, MODEL), each reviewed with the
+full diff and the proofs re-run; defect rounds on ONBOARD (the strip under a page's cookie bar, found by REALPAGES)
+and MODEL (the default model failed 15 of 78 eval cases; now 77). The internet was down for about five hours in the
+night and every agent was resumed from disk. Final `main` 91867cf: gate 3884 tests, suite ALL PASS, voice test ALL
+PASS, pack check PASS, eval 77/78 on Sonnet 5.5, pushed to origin.
+
+Next round candidates: the store upload (Ralf), the real-voice pass over the new pages, the round 9 plan's lane C
+(DeepSeek drill, needs a key), the three faults left in HANDOFF 4 (F6 to F8), the postimees comment count read as
+"(11)", "suur a" in an e-mail field typing "a".
+
 ### Round 8 (2026-10-22 night, overnight and unattended): done, merged into main, not pushed
 
 Ralf's list of 2026-10-22 (17 items), triaged in `docs/plans/2026-10-22-round-8-plan.md`; `HANDOFF.md` 1j has

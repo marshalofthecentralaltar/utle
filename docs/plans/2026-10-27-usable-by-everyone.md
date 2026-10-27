@@ -301,6 +301,12 @@ Acceptance criteria and proof:
 | Round 9 plan A, B | Lane MODEL |
 | Round 9 plan C | Ralf (key) |
 
-## 7. Results (filled at close)
+## 7. Results (filled at close, 2026-10-27 about 12:30)
 
-(see HANDOFF.md 1k)
+Gate on main at plan time: green (3499 tests). All six lanes merged into `main` 91867cf and pushed: gate 3884 tests,
+suite ALL PASS, voice test ALL PASS, pack check PASS, eval 77/78 on the default model. Defect rounds: ONBOARD one
+(the strip under a page's bottom consent layer, found by REALPAGES), MODEL one (the default model's eval, 63 to 77).
+The exit test of section 4 holds: a fresh Chromium profile with the 0.4.0 zip loaded unpacked opens the welcome page
+and "abi" opens help (`scripts/pack-check.ts`, `docs/proof/r9-pack-welcome.png`). Section 5 stands: the store upload,
+the site deploy, a real voice, a DeepSeek key and the logged-in sites are Ralf's. Environment: the internet dropped
+for about five hours; all five first-wave agents died and were resumed from their transcripts with disk verified.

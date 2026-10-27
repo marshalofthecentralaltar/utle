@@ -469,6 +469,39 @@ this order: on any news page say "loe ette" in Edge (network voices on in Edge's
 bar must say there is no Estonian voice); on YouTube "keri edasi üks minut"; in Gmail "kirjuta meil <nimi>",
 "teema: proov", dictate, "saada".
 
+## 1k. Round 9 (2026-10-27, overnight and unattended): usable by everyone
+
+Plan: `docs/plans/2026-10-27-usable-by-everyone.md`. Spec: `docs/ARCHITECTURE.md` section 30 (30.1 to 30.6, one per
+lane). Six lanes on Opus 5.5 in their own worktrees, each reviewed by the orchestrator against the full diff with the
+proofs re-run, merged into `main` in the order REALPAGES, ONBOARD (two checkpoints), FAULTS, HELP, SHIP, MODEL (two
+rounds), pushed to origin after each merge. The machine lost its internet for about five hours in the night; every
+lane agent died with it and was resumed from disk at 10:00.
+
+**What a new user gets now, in one paragraph:** the install opens **Alustamine**, five cards a helper walks through
+(microphone, server, a demo box, voice, ready); the strip's microphone carries a connection dot and says, once, when
+the server is gone and once when it is back, in words a helper can act on; "abi" opens **Mida saab öelda**, every
+phrase grouped and read aloud on request, and the settings and help pages take `näita numbreid`; the strip folds out
+of the way of a page's own cookie bar; "kirjuta siis mulle" is dictation, a long comment box with a Send button sends,
+a search that navigates answers ok; the public Estonian pages the product was never run on were run (table in
+`docs/proof/r9-real-pages.md`) and what they showed wrong was fixed; the store packet is ready at 0.4.0
+(`docs/STORE.md`, `extension/store/`, `npm run ext:pack`), and a helper can load the zip unpacked today; the model
+behind `/api/intent` is a configuration string with a fallback, the eval prints dollars per completed task, and the
+default model (Sonnet 5.5) passes 77 of 78 scripted asks instead of 63.
+
+**The merged tree** (`main` 91867cf): `npm run check` green (3884 tests); `npx tsx extension/test/run.ts` ALL PASS;
+`UTLE_REAL=1 npx tsx extension/test/voice.ts` ALL PASS; `npx tsx scripts/pack-check.ts` PACK PASS (the zip loads, the
+welcome page opens, "abi" opens help); `UTLE_MODEL=anthropic:claude-sonnet-5-5 npx tsx scripts/intent-eval.ts`
+77/78, p50 1679 ms, $0.0057 per completed task, $0.44 the run. Every proof run by the orchestrator on `main`.
+
+**Only Ralf can do**, in this order: (1) the Web Store developer account and the upload (`docs/STORE.md`, "Ralf's
+ten minutes"); (2) deploy the site's new Paigaldamine section (`site/`, by hand); (3) a real voice through the
+welcome page and the help page, and the ten-minute calibration with a friend (1g); (4) a DeepSeek key for the round 9
+plan's lane C drill; (5) the logged-in sites (WhatsApp, Gmail, Messenger selectors).
+
+**Not verified by anyone**: a real helper doing the first run; branded Chrome's install from the store; the strip's
+fold on sites whose sticky footer mentions cookies (it would stay folded); the spend ring written by a real service
+worker; a real eye tracker on any new page. The lane paragraphs below have each lane's own list.
+
 ## 1k-REALPAGES. Round 9 (2026-10-27): what Ütle sees on real public pages
 
 `npx tsx scripts/real-pages.ts` opens youtube.com, a watch page, google.ee, postimees.ee, delfi.ee,
