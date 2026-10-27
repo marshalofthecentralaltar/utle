@@ -23,6 +23,8 @@ import type { BoxState, BrowserResult } from '../../src/browser/protocol.ts'
 import { copyFileSync } from 'node:fs'
 // ---------- wake word and places (29.4) ----------
 import { placeCommand, placeRowsFrom, placeVoice, placesFrom } from '../../src/core/places.ts'
+import { PHRASE_GROUPS, phraseSentence } from '../../src/core/phrases.ts'
+import { readingText } from '../../src/core/reading.ts'
 // ---------- end of wake word and places ----------
 import { createUtleServer } from '../../server/app.ts'
 
@@ -1475,6 +1477,122 @@ async function main(): Promise<void> {
       const barUnmuted = await waitUntil(async () => (await stripNow()).micMuted === false, 5000)
       line('read', 'Loe riba ette: a bar line mutes the microphone', barMuted && barSpoken === 'Lugemine on lõppenud.' && barUnmuted, `spoken=${JSON.stringify(barSpoken)} micMuted true while it spoke=${barMuted}, false after=${barUnmuted}`)
       await sw.evaluate(() => chrome.storage.local.remove('readBar'))
+
+      // ---------- help inside the product (round 9, HELP lane, 30.2) ----------
+      // The commands come from the real rules, as the engine would get them from his words.
+      {
+        const NOBOX = { present: false, text: '', armed: false }
+        const fromWords = (words: string, hints = false): unknown => inpageStep({ ...initialInpage('et'), hints }, words, NOBOX).commands[0]
+        const helpBase = await sw.evaluate(() => chrome.runtime.getURL('help.html'))
+        const helpTabs = async (): Promise<number> => sw.evaluate(async (base) => (await chrome.tabs.query({})).filter((t) => (t.url ?? t.pendingUrl ?? '').startsWith(base)).length, helpBase)
+        const helpPage = async (hash: string): Promise<Page | undefined> => {
+          await waitUntil(async () => ctx.pages().some((p) => p.url() === `${helpBase}${hash}`), 5000)
+          return ctx.pages().find((p) => p.url().startsWith(helpBase))
+        }
+        const openGroup = async (page: Page | undefined, name: string): Promise<{ heading: string; cards: number; pressed: string }> => {
+          await page?.waitForFunction((n) => document.querySelector('#open h2')?.textContent === n, name, { timeout: 5000 }).catch(() => undefined)
+          const none = { heading: '(no page)', cards: 0, pressed: '' }
+          if (!page) return none
+          return page.evaluate(() => ({
+            heading: document.querySelector('#open h2')?.textContent ?? '',
+            cards: document.querySelectorAll('#groups .choice').length,
+            pressed: document.querySelector('#groups .choice[aria-pressed="true"]')?.textContent ?? '',
+          }))
+        }
+        const openCommand = fromWords('abi kerimine')
+        r = await send(openCommand)
+        let help = await helpPage('#kerimine')
+        let shown = await openGroup(help, 'Kerimine')
+        line('openHelp', '"abi kerimine" -> help.html#kerimine, 14 cards, Kerimine open', r !== 'timeout' && r.ok && JSON.stringify(openCommand) === '{"kind":"openHelp","group":"kerimine"}' && help?.url() === `${helpBase}#kerimine` && shown.cards === 14 && shown.heading === 'Kerimine' && shown.pressed.startsWith('Kerimine'), `${describe(r)} command=${JSON.stringify(openCommand)} url=${help?.url() ?? '(none)'} ${JSON.stringify(shown)}`)
+        r = await send(fromWords('abi vormid'))
+        help = await helpPage('#vormid')
+        shown = await openGroup(help, 'Vormid')
+        line('openHelp', '"abi vormid" with the page open -> the same tab, Vormid open', r !== 'timeout' && r.ok && (await helpTabs()) === 1 && shown.heading === 'Vormid', `${describe(r)} tabs=${await helpTabs()} ${JSON.stringify(shown)}`)
+        const plain = fromWords('abi')
+        r = await send(plain)
+        help = await helpPage('')
+        shown = await openGroup(help, 'Sõnumid')
+        line('openHelp', '"abi" -> help.html, the first group (Sõnumid) open', r !== 'timeout' && r.ok && JSON.stringify(plain) === '{"kind":"openHelp"}' && (await helpTabs()) === 1 && shown.heading === 'Sõnumid', `${describe(r)} url=${help?.url() ?? '(none)'} ${JSON.stringify(shown)}`)
+        r = await send(fromWords('abi kerimine'))
+        help = await helpPage('#kerimine')
+        shown = await openGroup(help, 'Kerimine')
+        await help?.waitForTimeout(300)
+        await help?.screenshot({ path: join(repoRoot, 'docs/proof/r9-help.png'), fullPage: true })
+        const inView = (await help?.evaluate(() => {
+          const b = document.querySelector('#open h2')?.getBoundingClientRect()
+          return b !== undefined && b.top >= 0 && b.bottom < window.innerHeight
+        })) === true
+        check('help: "abi kerimine" scrolls the open group into view', inView)
+
+        // "loe ette" on the help page reads the open group, sentence by sentence (30.2.4).
+        await inOffscreen('globalThis.__fakeSpeech.endMs = 50')
+        const spokenBefore = (((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]).length
+        const group = PHRASE_GROUPS.find((g) => g.id === 'kerimine')
+        const expected = readingText(group ? [group.name, group.intro, ...group.phrases.map(phraseSentence)] : []).sentences
+        r = await send(fromWords('loe ette'))
+        const readDone = await waitUntil(async () => ((((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]).length - spokenBefore >= expected.length && (await stripNow()).reading === false), 15_000)
+        const heard = (((await inOffscreen('globalThis.__fakeSpeech.spoken')) ?? []) as string[]).slice(spokenBefore)
+        const same = JSON.stringify(heard) === JSON.stringify(expected)
+        line(
+          'read',
+          'loe ette on help.html#kerimine: the open group only, sentence by sentence',
+          r !== 'timeout' && r.ok && readDone && same && !heard.some((h) => /Sõnumid|Scrolling|scroll down/u.test(h)),
+          `${describe(r)} sentences=${heard.length}/${expected.length} first two: ${JSON.stringify(heard.slice(0, 2))}${same ? '' : ` expected: ${JSON.stringify(expected)} heard: ${JSON.stringify(heard)}`}`,
+        )
+
+        // Numbers on the help page: the cards come first; "viis" presses the fifth card, Kerimine.
+        r = await send(fromWords('abi'))
+        help = await helpPage('')
+        await openGroup(help, 'Sõnumid')
+        r = await send(fromWords('näita numbreid'))
+        const helpHints = r !== 'timeout' && r.ok ? (r.hints ?? 0) : 0
+        r = await send(fromWords('viis', true))
+        shown = await openGroup(help, 'Kerimine')
+        line('clickHint', 'help.html: "näita numbreid" numbers the cards, "viis" opens the fifth (Kerimine)', helpHints >= 14 && r !== 'timeout' && r.ok && shown.heading === 'Kerimine' && help?.url() === `${helpBase}#kerimine`, `hints=${helpHints} ${describe(r)} ${JSON.stringify(shown)}`)
+        await send({ kind: 'hideHints' })
+        await help?.close()
+
+        // Numbers on the settings page (G7): "näita numbreid" labels the choices; "kolm" presses the third, Suur (192).
+        r = await send(fromWords('ava seaded'))
+        const optionsBase = await sw.evaluate(() => chrome.runtime.getURL('options.html'))
+        await waitUntil(async () => ctx.pages().some((p) => p.url().startsWith(optionsBase)), 5000)
+        const settings = ctx.pages().find((p) => p.url().startsWith(optionsBase))
+        await settings?.waitForSelector('.choice', { timeout: 5000 }).catch(() => undefined)
+        // Whatever the third button changes is put back afterwards.
+        const storedBefore = await sw.evaluate(() => chrome.storage.local.get(null))
+        // The labels go on what is on screen, in page order; the third such button is the one "kolm" must press.
+        await settings?.evaluate(() => {
+          window.scrollTo(0, 0)
+          const w = window as unknown as { clicked: string[] }
+          w.clicked = []
+          document.addEventListener('click', (e) => w.clicked.push(((e.target as Element | null)?.closest('button, a, input') as HTMLElement | null)?.innerText ?? '(none)'), true)
+        })
+        r = await send(fromWords('näita numbreid'))
+        const optionHints = r !== 'timeout' && r.ok ? (r.hints ?? 0) : 0
+        await settings?.waitForTimeout(300)
+        await settings?.screenshot({ path: join(repoRoot, 'docs/proof/r9-options-numbers.png') })
+        const third = await settings?.evaluate(() => {
+          const onScreen = [...document.querySelectorAll<HTMLElement>('main button, main a[href], main input, main select, main textarea')].filter((el) => {
+            const b = el.getBoundingClientRect()
+            return b.width > 0 && b.height > 0 && b.bottom > 0 && b.top < window.innerHeight && el.checkVisibility()
+          })
+          return onScreen[2]?.innerText ?? '(none)'
+        })
+        r = await send(fromWords('kolm', true))
+        await settings?.waitForTimeout(300)
+        const clicked = ((await settings?.evaluate(() => (window as unknown as { clicked: string[] }).clicked)) ?? []) as string[]
+        line('clickHint', 'options.html: "näita numbreid" labels the buttons, "kolm" presses the third on screen', optionHints >= 3 && r !== 'timeout' && r.ok && clicked.length === 1 && clicked[0] === third, `hints=${optionHints} third on screen=${JSON.stringify(third)} clicked=${JSON.stringify(clicked)} ${describe(r)}`)
+        await send({ kind: 'hideHints' })
+        await settings?.close()
+        // Only the keys the press changed are put back, so nothing else hears a change.
+        await sw.evaluate(async (all) => {
+          const now = await chrome.storage.local.get(null)
+          const added = Object.keys(now).filter((k) => !(k in all))
+          const changed = Object.fromEntries(Object.entries(all).filter(([k, v]) => JSON.stringify(now[k]) !== JSON.stringify(v)))
+          if (added.length > 0) await chrome.storage.local.remove(added)
+          if (Object.keys(changed).length > 0) await chrome.storage.local.set(changed)
+        }, storedBefore)
+      }
       await cdp.detach().catch(() => undefined)
     }
 

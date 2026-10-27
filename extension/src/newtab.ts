@@ -4,6 +4,7 @@
 // cannot inject into an extension page; page commands arrive as utle-page-run messages instead.
 
 import { SITES } from '../../src/core/browserIntent.ts'
+import { HELP_EXAMPLES } from '../../src/core/phrases.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
 import type { ToPage } from './messages.ts'
@@ -90,7 +91,7 @@ export function exampleWindow(list: readonly string[], at: number, count = 3): s
   return out
 }
 
-/** Under the tiles: "Ütle:" and three example phrases, three more every 6 s. */
+/** Under the tiles: "Ütle:" and three example phrases from src/core/phrases.ts (30.2), three more every 6 s. */
 function examples(): void {
   const p = document.getElementById('examples')
   if (!p) return
@@ -105,14 +106,14 @@ function examples(): void {
   p.replaceChildren(lead, ...spans)
   let at = 0
   const show = (): void => {
-    const three = exampleWindow(text.examples, at)
+    const three = exampleWindow(HELP_EXAMPLES, at)
     spans.forEach((span, i) => (span.textContent = three[i] ?? ''))
   }
   show()
   setInterval(() => {
     p.classList.add('fade')
     setTimeout(() => {
-      at = (at + 3) % text.examples.length
+      at = (at + 3) % HELP_EXAMPLES.length
       show()
       p.classList.remove('fade')
     }, 400)

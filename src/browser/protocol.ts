@@ -91,6 +91,8 @@ export type BrowserCommand =
   | { kind: 'openSettings'; section?: 'andmed' | 'welcome'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
   /** One utterance for the entry flow on the options page; only that page answers it. */
   | { kind: 'savedEntry'; utterance: string }
+  // Round 9 (30.2): the help page, at one group (a PHRASE_GROUPS id) or the first. Rules only, never the model.
+  | { kind: 'openHelp'; group?: string }
   // ---------- mail (29.3) ----------
   /** On Gmail: a new message (Compose), to (a name or an address) into To, body into the message; the body is armed when To has something. Elsewhere Gmail's compose page opens in a new tab first. */
   | { kind: 'compose'; to?: string; body?: string }

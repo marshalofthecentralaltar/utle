@@ -227,8 +227,8 @@ võti on vale.". When the server answers again the microphone reopens by itself 
   see "Only your own voice" above) and the
   choice **Kuula ainult mind** / **Kuula kõiki** (`onlyOwner`, default off; takes effect the next
   time listening starts). The speech-model and
-  development-page addresses are under "Täpsemalt". The same strip is mounted there. (Numbering the
-  buttons by voice needs the service worker to treat options.html like newtab.html; see HANDOFF.md.)
+  development-page addresses are under "Täpsemalt". The same strip is mounted there, and `näita numbreid`
+  numbers its buttons: say the number to press one (round 9, ARCHITECTURE 30.2.5).
 - **Push-to-talk by looking** (`listenMode: gaze`): the microphone square, or the whole bar when
   the gaze target is Kogu riba, listens while the eye-tracker pointer rests on it. It starts after
   250 ms on the target (a pass-through does nothing) and stops 600 ms after the pointer leaves
@@ -261,95 +261,8 @@ võti on vale.". When the server answers again the microphone reopens by itself 
 - When the speech server falls behind by more than one second, a thin dim line under the amber
   one says "Kõne jääb maha N s" until it has caught up. While a chain of goals runs (below) a
   line in the same place says where it is: "2/4 · ava Karini viimane sõnum".
-- What to say (the exact phrases come from `src/core/inpage.ts` and `src/core/browserIntent.ts`; the
-  full tables are `docs/ARCHITECTURE.md` 21.1, 22 and 23.4):
-  - dictation: anything that is not a command is added to the message box. What the fixed phrases do
-    not recognise goes to the model with what is on the page ("uus leht", "vajuta Mari", "pane
-    vaiksemaks"); it needs `ANTHROPIC_API_KEY` on the dev server. Since round 4 almost every
-    dictation is checked by the model after it is typed (anything under 60 words; it was 14): a
-    chain of commands can be long. The words stay unless the model says they were a command.
-  - chains (round 4): several goals in one breath, "mine whatsappi, siis ava Karini viimane sõnum,
-    siis kustuta see kõigi jaoks" or "mine youtube'i, otsi kassivideod, mängi esimene ja pane heli
-    vaiksemaks". Say `siis`, `ja siis`, `ja`, `ning`, `seejärel` or `pärast seda` between goals; a pause
-    is fine: after a joining word Ütle waits 2.5 s for the rest instead of 150 ms, and a part that
-    starts with `siis` (or `ja siis`, `seejärel`, `pärast seda`) within 2.5 s of the last words goes on
-    from them without starting over. The model splits the goals and the engine does them one by
-    one, at most 16 page steps and 90 s in all, four steps and 15 s per goal; the strip shows
-    "2/4 · …". Any other utterance stops the chain; a plain `saada` waits behind it. Words that are
-    a message ("kirjuta et tulen homme") are never split.
-  - `saada`, `saada ära`, `saadake`, `saadame`: sends what is in the box. Never guessed from a misheard
-    word: "sada" and "saata" are typed.
-  - corrections: `mitte kolm, vaid neli`, `kolme asemel neli`, `kustuta viimane sõna`, `kustuta viimane
-    lause`, `kustuta kõik`, `uus rida`, `punkt`, `võta tagasi`; `tagasi` alone undoes while there are
-    words in the box, and goes back a page otherwise.
-  - editing inside the text (round 3; the box in front, armed or focused): the caret with `mine algusesse`,
-    `mine lõppu`, `rea algusesse`, `rea lõppu`, `lause algusesse`, `lause lõppu`, `sõna tagasi`, `kolm sõna edasi`,
-    `mine sõna homme ette`, `mine sõna homme taha`, `pärast sõna homme`, `mine kooli juurde`; a selection with
-    `vali kõik`, `vali see sõna`, `vali see lause`, `vali see rida`, `vali viimane sõna`, `vali viimane lause`,
-    `vali sõna homme`, `vali homme`; typing at the caret with `kirjuta siia vahele kell viis`, `lisa siia kell viis`,
-    `sisesta kell viis` (a space and a capital are added as the place needs); keys with `kustuta täht`,
-    `kustuta kolm tähte`, `kustuta valitud`, `kustuta ees`, `kustuta sõna homme`, `vasakule`, `paremale kolm korda`,
-    `üks rida üles`, `kaks rida alla`, `tee uuesti` (redo), `järgmine väli` (Tab, which arms the field it lands in);
-    English: `go to the start`, `go before homme`, `select the sentence`, `insert hello`, `delete three letters`,
-    `line up`, `redo`, `next field`. A word that is not in the box goes to the model instead (it may be a section of
-    the page). `võta tagasi` stays the whole-box undo. On Google Docs only the keys and typing work (its editor is a
-    canvas with no text to find in): `sõna tagasi`, `rea algusesse`, `kustuta täht`, `tee uuesti`, `kirjuta siia vahele …`;
-    `võta tagasi` there needs the model to answer `pressKey Undo`. Tested on `fixtures/essay.html`, never on Docs itself.
-  - forms (round 5): an ID code, a phone number, an e-mail address or a PIN by voice. Click the field (or
-    `näita numbreid` and its number, or `kirjuta siia`), then say the digits one by one: `kolm üheksa null kaks
-    üks null null null null üks` becomes 39021000001; `kakskümmend kolm` is 23 too. Say `ät` for @, `punkt` for a
-    dot, `sidekriips` for -, `alakriips` for _, `pluss` for +, letters by name (`bee`, `ess`), `suur a` for A:
-    `ralf punkt sepp ät gmail punkt com` is ralf.sepp@gmail.com, `pluss kolm seitse kaks ...` is +372... The
-    field's own type says what it is for (e-post, telefon, isikukood, PIN, summa); into a one-line field nothing is
-    typed live: the words are checked first, then the field is filled whole and the bar reads it back,
-    "Kirjutasin: 39021000001 (ütle „edasi“ või „valmis“)", a PIN as dots. `numbritena` writes everything as
-    digits until `tavaliselt`; `kirjuta kood 3902`, `sisesta e-post ...`, `kirjuta telefon ...` name the kind for
-    one utterance and need no model. In a form field `valmis`, `olen valmis`, `edasi` (English `done`, `next`) go to
-    the next field, and `kinnita`, `logi sisse`, `sisesta` (`submit`, `log in`) submit it as Enter would, whatever
-    the field holds. A code said in two breaths joins up without a space. Tested on `fixtures/login.html`, a
-    Smart-ID-like page, not on the real one.
-  - `katkesta` (also `tühista kõik`, `lõpeta kõik`, `stopp kõik`, `cancel`): drops everything in flight at once,
-    the chain, the question to the model, the queued words, with "Katkestatud."; it works while resting too and
-    is never typed. `katkesta sõnum` still clears the box.
-  - scrolling: `keri alla`, `keri üles` (80% of the view, smoothly), `keri natuke alla`, `natuke üles`,
-    `veidi alla` (a third), `keri aeglaselt alla`, `keri tasa üles`, `aeglaselt alla` (a steady 90 px/s until
-    stopped), `stopp`, `seis`, `aitab`, `lõpeta`, `lõpeta kerimine`, `kerimine seis` (stop), `lehe algusesse`,
-    `lehe lõppu`. While there are words in the box a one-word `stopp` or `aitab` is typed (it is a reply);
-    `lõpeta kerimine` always stops. `keri edasi` and `keri tagasi` skip in the video.
-  - seek by an amount (round 8): `keri edasi üks minut`, `keri kaks minutit tagasi`, `keri tagasi pool minutit`,
-    `keri edasi poolteist minutit`, `keri edasi 30 sekundit`, `skip back thirty seconds`; bare `keri edasi` is 10 s.
-  - sound-alikes (round 3): a command heard the Estonian way is still understood, and the amber line says
-    what it took it to be ("Sain aru: „ava juutuub“"): `ava juutuba`, `mine guugel`, `aga whatsapp` (for
-    "ava whatsapp"), `vatsap`, `keri ala`, `geri alla`, `saadake`. Site names with case endings too
-    (`mine whatsappi`, `youtube'i`). Never for sending, resting, waking or undo.
-  - browser: `järgmine vaheleht`, `eelmine vaheleht`, `kolmas vaheleht`, `uus leht`, `sulge`, `mine tagasi`,
-    `laadi uuesti`, `ava whatsapp`, `otsi kassivideod` (the site's own search, Google when it has none),
-    `otsi googlest ilm`, `näita numbreid`, `vajuta viis`, `peida numbrid`, `kirjuta siia` (arm the focused
-    field), `tühjenda otsing`, `sulge aken` / `välja` (Escape), `enter`, `mängi`, `paus`, `vaiksemaks`,
-    `täisekraan`;
-  - the bar: `peida riba` folds it to the pill, `näita riba` brings it back;
-  - the page's size (round 5): `suurenda`, `tee suuremaks`, `suurem kiri`, `suumi sisse` zoom in one step
-    (the steps are 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300 %), `vähenda`, `tee väiksemaks`,
-    `väiksem kiri`, `suumi välja` zoom out one step,
-    `tavaline suurus`, `algne suurus`, `suumi tagasi` go back to 100 %; English `zoom in`, `make it bigger`,
-    `larger text`, `zoom out`, `make it smaller`, `reset zoom`, `normal size`. It is Chrome's own tab zoom, so the
-    setting sticks for the site, and the bar zooms with the page: at 200 % the bar is also twice as big, which
-    is intended (it is drawn in the page's pixels). The labels and the undo stay as they were;
-  - `puhka` stops typing, `ärka üles` resumes.
-  - push-to-talk by looking: nothing to say; look at the microphone (or the whole bar) and speak, look
-    away and the words are delivered. Set it on the settings page (**Kuulamine: Vaatamisega**).
-- **Meil** (round 8, docs/ARCHITECTURE.md 29.3): `kirjuta meil Marile` (also `kirjuta kiri Marile`, `saada
-  meil Jaanile`, `write an email to Mari`) opens a new message in Gmail with Mari in To, and the message body is
-  ready for your words; `kirjuta meil Marile, et tulen homme` writes the body too; `uus meil` opens an empty one
-  with To ready. Off Gmail it opens Gmail's compose page in a new tab first. In the message, `teema Koosolek`
-  writes the subject, `lisa koopia` (`lisa koopia Jaanile`) opens Cc, `valmis` or `järgmine väli` moves To,
-  Cc, Subject, body in turn, and `saada` clicks Send (never Enter, which is a new line in a mail). Only
-  in the message: anywhere else a sentence that begins with "teema" is typed like any other. What you
-  say into To or Cc is written as an address ("ät", "punkt"). On any page the e-mail addresses and phone
-  numbers it shows are read off it (text and links, at most 20), so `võta see meiliaadress siit lehelt ja
-  kirjuta talle, et tulen homme` or `kirjuta talle meil` opens a new mail to that address; the model may only
-  pick an address the page shows, never one of its own. Tested on `fixtures/gmail.html` and `fixtures/cv.html`;
-  the Gmail selectors are unverified on real Gmail.
+- What to say: every phrase, grouped, is in "What to say" below, generated from `src/core/phrases.ts`; in the
+  product, say `abi` (or `mida ma öelda saan`, `help`) and the help page opens; `abi kerimine` opens one group.
 - The toolbar icon also turns listening on and off.
 - When the speech model is not running, the strip says so in one amber line; start `npm run dev` and
   turn the microphone on again.
@@ -403,6 +316,253 @@ microphone does not listen while a bar line is spoken (a second or two).
 To check it by ear (not done by the tests, whose Chromium has no Estonian voice): in Edge, open a news
 article, turn listening on, say `loe ette`, then press the microphone after a sentence or two, then
 say `loe edasi`.
+
+## What to say
+
+<!-- phrases:start: generated by `npx tsx scripts/phrases-doc.ts` from src/core/phrases.ts; edit the source, not this -->
+
+Generated from `src/core/phrases.ts`, the one source of the phrases: the help page (`extension/help.html`, say `abi`) shows it, the new-tab page rotates its examples, and `src/core/phrases.test.ts` runs every Estonian form below through the rule it names (`src/core/inpage.ts`, `src/core/browserIntent.ts`, `src/core/places.ts`, `src/core/savedEntry.ts`, `src/core/reading.ts`, `src/core/wake.ts`), so a phrase that drifts fails `npm run check`. 240 Estonian forms in 113 entries and 14 groups. The full tables are `docs/ARCHITECTURE.md` 21.1, 22, 23.4 and 30.2. Anything that is not a command is typed into the message box; what no fixed phrase covers goes to the model with what is on the page.
+
+### Sõnumid (Messages)
+
+Help page: `help.html#sonumid`, or say `abi sõnumid`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `tulen homme kell viis` | (anything that is not a command) | Typed into the message box. |
+| `kirjuta Marile`, `ava vestlus Mariga` | write to Mari, open chat with Mari | Opens the chat with Mari. |
+| `kirjuta Marile, et jõuan kell viis` | tell Mari that I arrive at five | Opens the chat with Mari and writes the sentence. It does not send. |
+| `saada`, `saada ära`, `saadake`, `saadame` | send, send it | Sends what is in the box. |
+| `mine whatsappi, siis ava Karini viimane sõnum` | go to whatsapp, then open Karin's last message | A chain: the goals are done one after the other (needs the model). |
+
+Words that may be a command ("saa...", "keri...") are not typed until they turn out not to be one. What the fixed phrases do not recognise goes to the model with what is on the page ("uus leht", "vajuta Mari", "pane vaiksemaks"); it needs `ANTHROPIC_API_KEY` on the server. Almost every dictation under 60 words is checked by the model after it is typed; the words stay unless the model says they were a command. Chains: say `siis`, `ja siis`, `ja`, `ning`, `seejärel` or `pärast seda` between goals; after a joining word Ütle waits 2.5 s for the rest, and a part that starts with `siis` within 2.5 s goes on from the last words. At most 16 page steps and 90 s in all, four steps and 15 s per goal; the strip shows "2/4 · …". Any other utterance stops the chain; a plain `saada` waits behind it. A message ("kirjuta et tulen homme") is never split. `saada` is never guessed from a misheard word: "sada" and "saata" are typed.
+
+### Parandamine (Corrections)
+
+Help page: `help.html#parandamine`, or say `abi parandamine`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `mitte kolm, vaid neli`, `kolme asemel neli` | not three but four | The last "kolm" in the box becomes "neli". |
+| `kustuta viimane sõna` | delete the last word | Removes the last word. |
+| `kustuta viimane lause` | delete the last sentence | Removes the last sentence. |
+| `kustuta kõik`, `katkesta sõnum` | delete everything | Empties the box. |
+| `uus rida` | new line | Adds a line break. |
+| `punkt`, `koma` | full stop, comma | Adds the mark. |
+| `võta tagasi`, `tagasi` | undo | Puts back the text from before the last change. |
+| `kustuta täht`, `kustuta kolm tähte`, `kustuta valitud` | delete a letter, delete three letters | Backspace, once or the number of times said; the selection. |
+| `kustuta ees` | delete ahead | The Delete key. |
+| `kustuta sõna homme` | delete the word homme | Selects the word and deletes it. |
+| `tee uuesti` | redo | Redo. |
+
+`tagasi` alone undoes while there are words in the box, and goes back a page otherwise. `võta tagasi` is the whole-box undo. `kustuta sõna homme` and the keys work at the caret in the box in front; a word that is not in the box goes to the model instead (it may be a section of the page).
+
+### Tekstis liikumine (Moving in the text)
+
+Help page: `help.html#tekstis`, or say `abi tekstis liikumine`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `mine algusesse`, `mine lõppu` | go to the start, go to the end | The caret to the start or the end of the text. |
+| `rea algusesse`, `rea lõppu` | start of the line, end of the line | The caret to the start or the end of the line. |
+| `lause algusesse`, `lause lõppu` | start of the sentence, end of the sentence | The caret to the start or the end of the sentence. |
+| `sõna tagasi`, `kolm sõna edasi` | word back, three words forward | The caret by words. |
+| `mine sõna homme ette`, `mine sõna homme taha`, `pärast sõna homme`, `mine kooli juurde` | go before homme, go after homme | The caret before or after the word named. |
+| `vali kõik`, `vali see sõna`, `vali see lause`, `vali see rida` | select all, select the sentence | Selects everything, the word, the sentence or the line. |
+| `vali viimane sõna`, `vali viimane lause`, `vali sõna homme`, `vali homme` | select the last word, select homme | Selects the last word, the last sentence or the word named. |
+| `kirjuta siia vahele kell viis`, `lisa siia kell viis`, `sisesta kell viis` | insert hello | Types at the caret. |
+| `vasakule`, `paremale kolm korda`, `üks rida üles`, `kaks rida alla` | arrow left, right three times, line up | The arrow keys, once or the number of times said. |
+| `järgmine väli` | next field | Tab, and arms the field it lands in. |
+
+These work in the box in front, armed or focused. A space and a capital are added as the place needs when typing at the caret. `järgmine väli` (Tab) arms the field it lands in. A word that is not in the box goes to the model instead. On Google Docs only the keys and typing work (its editor is a canvas with no text to find in): `sõna tagasi`, `rea algusesse`, `kustuta täht`, `tee uuesti`, `kirjuta siia vahele …`; `võta tagasi` there needs the model to answer `pressKey Undo`. Tested on `fixtures/essay.html`, never on Docs itself.
+
+### Vormid (Forms)
+
+Help page: `help.html#vormid`, or say `abi vormid`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `kirjuta siia` | write here | Makes the focused field the place the words go. |
+| `kolm üheksa null kaks üks null null null null null üks`, `kakskümmend kolm` | three nine zero two | Into a code, phone or number field: typed as digits. |
+| `ralf punkt sepp ät gmail punkt com` | ralf dot sepp at gmail dot com | Into an e-mail field: ralf.sepp@gmail.com. |
+| `ät`, `sidekriips`, `alakriips`, `pluss` | at, hyphen, underscore, plus | The marks @ - _ and +; "punkt" is a dot inside the address. |
+| `bee`, `ess`, `suur a` | letters by name | Letters by their names; "suur a" is a capital. |
+| `pluss kolm seitse kaks viis viis viis` | plus three seven two | Into a phone field: +372555. |
+| `numbritena` | as digits | Writes everything as digits until told otherwise. |
+| `tavaliselt` | normally | Back to ordinary writing. |
+| `kirjuta kood 3902` | type code 3902 | One value as a code, without the model. |
+| `sisesta e-post ralf ät gmail punkt com`, `kirjuta telefon viis viis viis` | enter email …, type phone … | Names the kind for one utterance. |
+| `valmis`, `olen valmis`, `edasi` | done, next | In a form field: the next field. |
+| `kinnita`, `logi sisse`, `sisesta` | submit, log in | In a form field: submits the form, as Enter would. |
+
+Click the field (or `näita numbreid` and its number, or `kirjuta siia`), then say the digits one by one. The field's own type says what it is for (e-post, telefon, isikukood, PIN, summa); into a one-line field nothing is typed live: the words are checked first, then the field is filled whole and the bar reads it back, "Kirjutasin: 39021000001 (ütle „edasi“ või „valmis“)", a PIN as dots. `valmis` and `edasi` go to the next field and `kinnita` submits only in a one-line field he armed. A code said in two breaths joins up without a space. Tested on `fixtures/login.html`, a Smart-ID-like page, not on the real one.
+
+### Kerimine (Scrolling)
+
+Help page: `help.html#kerimine`, or say `abi kerimine`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `keri alla`, `keri üles` | scroll down, scroll up | Scrolls most of a screen, smoothly. |
+| `keri natuke alla`, `natuke üles`, `veidi alla` | scroll down a little | A third of a screen. |
+| `keri aeglaselt alla`, `keri tasa üles`, `aeglaselt alla` | scroll down slowly | A steady slow scroll until stopped. |
+| `stopp`, `seis`, `aitab`, `lõpeta`, `lõpeta kerimine`, `kerimine seis` | stop | Stops the scroll. |
+| `lehe algusesse`, `lehe lõppu` | scroll to the top, scroll to the bottom | Goes to the top or the end of the page. |
+| `keri ala`, `geri alla` | (heard the Estonian way) | A command misheard by a sound is still understood. |
+
+`keri alla` and `keri üles` move 80% of the view, smoothly; `natuke` a third; `aeglaselt` a steady 90 px/s until stopped. While there are words in the box a one-word `aitab` is typed (it is a reply); `lõpeta kerimine` always stops. `keri edasi` and `keri tagasi` skip in the video. A command heard the Estonian way is still understood, and the amber line says what it took it to be ("Sain aru: „keri alla“").
+
+### Vahelehed ja saidid (Tabs and sites)
+
+Help page: `help.html#vahelehed`, or say `abi vahelehed ja saidid`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `ava youtube`, `ava whatsapp`, `mine whatsappi`, `mine youtube'i` | open youtube, go to whatsapp | Opens a known site. |
+| `ava juutuba`, `mine guugel`, `aga whatsapp`, `ava vatsap` | (heard the Estonian way) | Also when the name is heard the Estonian way. |
+| `mine postimees.ee` | go to postimees.ee | Opens an address. |
+| `otsi kassivideod` | search for cat videos | Searches on the site in front, or Google. |
+| `otsi googlest ilm` | search google for weather | Searches Google. |
+| `järgmine vaheleht`, `eelmine vaheleht`, `kolmas vaheleht` | next tab, previous tab, third tab | Switches tabs. |
+| `uus leht` | new page | Opens a new tab. |
+| `sulge` | close | Closes this tab. |
+| `mine tagasi`, `mine edasi` | page back, go forward | The page history. |
+| `laadi uuesti` | reload | Reloads the page. |
+| `näita numbreid` | show numbers | Puts a number on everything clickable. |
+| `vajuta viis` | click five | Clicks number five. |
+| `viis`, `kolm` | five | With the numbers showing: clicks that number. |
+| `peida numbrid` | hide numbers | Hides the numbers. |
+| `tühjenda otsing` | clear the search | Empties the search box. |
+| `sulge aken`, `välja`, `enter` | close the window, escape, enter | The Escape or Enter key. |
+| `suurenda`, `tee suuremaks`, `suurem kiri`, `suumi sisse` | zoom in, make it bigger, larger text | Zooms in one step, kept per site. |
+| `vähenda`, `tee väiksemaks`, `väiksem kiri`, `suumi välja` | zoom out, make it smaller | Zooms out one step. |
+| `tavaline suurus`, `algne suurus`, `suumi tagasi` | normal size, reset zoom | Back to 100 %. |
+| `peida riba`, `näita riba` | hide the bar, show the bar | Folds the bar to a small pill, and back. |
+| `ava seaded`, `seaded` | open settings | Opens the settings page. |
+
+Known site names: WhatsApp, Messenger, Facebook, Gmail, Google, YouTube, Postimees, Delfi, ERR, LinkedIn, CV.ee, CV Keskus, Töötukassa, with case endings (`mine whatsappi`, `youtube'i`) and as an Estonian ear spells them (`ava juutuba`, `mine guugel`, `ava vatsap`). Never guessed: sending, resting, waking, undo. `otsi` uses the site's own search, Google when it has none. The zoom is Chrome's own tab zoom (steps 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300 %), so it sticks for the site, and the bar zooms with the page. With the numbers showing, a number alone presses it.
+
+### Video (Video)
+
+Help page: `help.html#video`, or say `abi video`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `mängi`, `paus` | play, pause | Plays or pauses the video. |
+| `vaiksemaks`, `valjemaks` | volume down, volume up | The volume. |
+| `täisekraan` | full screen | Full screen. |
+| `keri edasi`, `keri tagasi` | skip forward, skip back | Skips 10 s in the video. |
+| `keri edasi üks minut`, `keri kaks minutit tagasi`, `keri tagasi pool minutit`, `keri edasi poolteist minutit`, `keri edasi 30 sekundit` | skip back thirty seconds | Skips by the amount said. |
+
+Bare `keri edasi` and `keri tagasi` skip 10 s; an amount can be said in minutes or seconds.
+
+### Meil (E-mail)
+
+Help page: `help.html#meil`, or say `abi meil`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `kirjuta meil Marile`, `kirjuta kiri Marile`, `saada meil Jaanile`, `write an email to Mari` | write an email to Mari | Opens a new message with Mari in To; the body is ready for your words. |
+| `kirjuta meil Marile, et tulen homme` | email Mari that I will come tomorrow | Writes the body too. |
+| `uus meil` | new email | Opens an empty message with To ready. |
+| `teema Koosolek` | subject Meeting | Writes the subject. |
+| `lisa koopia`, `lisa koopia Jaanile` | add a copy | Opens Cc. |
+| `kirjuta talle meil`, `võta see meiliaadress siit lehelt ja kirjuta talle, et tulen homme` | write to the address on this page | A new mail to an address the page shows (needs the model). |
+
+Off Gmail a new mail opens Gmail's compose page in a new tab first. In the message, `valmis` or `järgmine väli` moves To, Cc, Subject, body in turn, and `saada` clicks Send (never Enter, which is a new line in a mail). `teema` and `lisa koopia` act only in the message: anywhere else a sentence that begins with "teema" is typed. What you say into To or Cc is written as an address ("ät", "punkt"). The e-mail addresses and phone numbers a page shows are read off it (at most 20), so `kirjuta talle meil` opens a new mail to that address; the model may only pick an address the page shows. Tested on `fixtures/gmail.html` and `fixtures/cv.html`; the Gmail selectors are unverified on real Gmail.
+
+### Dokument (Document)
+
+Help page: `help.html#dokument`, or say `abi dokument`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `paksuks`, `tee paksuks`, `kaldkirja`, `allajoonitud` | bold, italic, underline | Formats the selection. |
+| `pealkirjaks`, `tavaline tekst` | heading, normal text | The paragraph as a heading, or back to text. |
+| `loendiks`, `uus lõik` | bulleted list, new paragraph | A list, or a new paragraph. |
+| `vali lõik`, `vali viimased kolm sõna` | select the paragraph, select the last three words | Selects the paragraph or the last words. |
+| `küsimärk`, `hüüumärk` | question mark, exclamation mark | Ends the sentence with the mark. |
+| `loe viimane lause ette`, `loe see ette` | read the last sentence, read this | Reads the last sentence, or the whole box, aloud. |
+| `saada` | send | Sends nothing: "Dokumendis ei saadeta." |
+
+A box is a document when it is Google Docs, a textarea or rich editor holding over 500 characters, or a rich editor with headings, lists or paragraphs of its own (never a chat's message box). There a pause of up to 20 seconds does not end the sentence. Only `punkt`, `küsimärk`, `hüüumärk` and `uus lõik` break a sentence. One-word words such as `välja`, `sulge`, `edasi`, `tagasi`, `paus` are typed, not obeyed; the model is asked only when you start with a command word (`vali`, `tee`, `muuda`, `loe`, `kustuta`, `ava`, `mine`, `kirjuta` …). On Google Docs the formats are Docs' own shortcuts, tested on a stand-in only. A plain textarea has no bold or italics and says so.
+
+### Lugemine (Reading aloud)
+
+Help page: `help.html#lugemine`, or say `abi lugemine`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `loe ette`, `loe lehte ette` | read the page | Reads the article of the page aloud. |
+| `loe see ette` | read this | Reads the armed box, the page when no box is armed. |
+| `loe valitud ette` | read the selection | Reads the selected text. |
+| `loe edasi` | continue reading | Goes on from the next sentence after a stop. |
+| `lõpeta lugemine` | stop reading | Stops the reading. |
+| `stopp`, `aitab`, `paus`, `peata` | stop | While it reads: stops the reading first. |
+
+The article is its headline and paragraphs, without the menus, the sidebar, the footer, the cookie banner or the bar. The microphone keeps listening while it reads, so you can say `stopp` over the voice; every other word heard meanwhile is dropped. Pressing the bar's microphone or the toolbar icon also stops a reading. The voice is the browser's own Estonian voice: Chrome has none today, Microsoft Edge has two (Anu and Kert) when its online voices are on. Where no Estonian voice exists nothing is read and the bar says so; Ütle never reads Estonian with an English voice.
+
+### Minu andmed (My details)
+
+Help page: `help.html#minu-andmed`, or say `abi minu andmed`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `minu andmed`, `ava minu andmed` | my details | Opens the settings page at Minu andmed. |
+| `lisa uus e-post`, `salvesta mu telefon`, `lisa uus isikukood` | add a new email, save my phone | Opens Minu andmed with the voice entry started. |
+| `r`, `a`, `ell`, `punkt`, `ät` | letters, one at a time | In the entry: a letter or a mark at a time. |
+| `gmail`, `mail punkt ee` | gmail | In the entry: adds the ending. |
+| `kustuta`, `kustuta kõik` | delete, delete everything | In the entry: removes the last letter, or all. |
+| `loe ette` | read it back | In the entry: reads it back letter by letter on the bar. |
+| `valmis` | done | In the entry: saves it. |
+| `katkesta` | cancel | In the entry: leaves without saving. |
+| `minu e-post`, `mu meil`, `kirjuta mu telefon`, `sisesta minu isikukood` | my email, my phone | In a field: the saved value is typed whole. |
+
+Kept in `chrome.storage.local` (key `savedValues`) on this computer only; the model is told the names, never the values. The first e-mail is called "minu e-post"; a second one of the same kind asks for a name first ("töö e-post"). With two saved and no name the bar asks "Kumb?"; answer with the name, a word of it or `esimene` / `teine`. Spelling: `punkt` is ., `ät` is @, `kriips` is -, `alakriips` is _; numbers become digits; `gmail`, `hotmail`, `outlook`, `icloud`, `yahoo`, `mail punkt ee` add the ending, `oma lõpp` takes it off. An e-mail without @ is not saved. No passwords: a password field is never filled from here.
+
+### Minu kohad (My places)
+
+Help page: `help.html#minu-kohad`, or say `abi minu kohad`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `vaata uudiseid`, `näita uudiseid`, `ava uudised` | show the news | Opens your news place. |
+| `pane raadio käima`, `ava raadio` | put the radio on | Opens your radio place. |
+| `mis ilm on`, `näita ilma` | what's the weather | Opens your weather place. |
+| `ava mu mail`, `ava meil`, `vaata videoid` | open my mail, watch videos | Opens your mail or video place. |
+| `lisa koht uudised`, `salvesta see koht uudised`, `see on mu uudised` | save this place as news | Saves the tab in front under that word. |
+| `lisa koht` | save this place | Asks for the word; say it next. |
+| `eemalda koht uudised` | remove the place news | Removes the place. |
+
+Not while a message box is armed: there the words are typed. Defaults: uudised → Postimees, raadio → Vikerraadio's live page, ilm → Ilmateenistus, mail → Gmail, kalender → Google Kalender, kaart → Google Maps, video → YouTube; no bank. The model is told only the words and never sees an address. To save your own, open the page and say `lisa koht uudised`: the address of the tab in front is saved under that word. The settings page's **Minu kohad** section lists them; a helper can type a word and an address there. Stored under `places`.
+
+### Hääl (Listening)
+
+Help page: `help.html#haal`, or say `abi hääl`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `puhka`, `ära kuula` | sleep, stop listening | Stops typing what it hears, until woken. |
+| `ärka üles` | wake up | Starts again. |
+| `katkesta`, `tühista kõik`, `lõpeta kõik`, `stopp kõik` | cancel | Stops everything in flight at once. |
+| `Ütle, keri alla` | Ütle, scroll down | With the wake word: the command starts with the word. |
+| `Ütle` | Ütle | The word alone opens a 20 s window. |
+| `aitab`, `see on kõik` | that's all | Closes the window. |
+
+`katkesta` drops everything in flight at once (the chain, the question to the model, the queued words) with "Katkestatud."; it works while resting too and is never typed. With the wake word (settings, **Kuulamine: Äratussõnaga**) only what starts with the word is acted on; "Ütle" alone opens a 20 s window in which sentences need no word, closed by `aitab`, `see on kõik` or `saada`. The word is matched by sound and must be first. Push-to-talk by looking needs nothing said: look at the microphone (or the whole bar) and speak.
+
+### Abi (Help)
+
+Help page: `help.html#abi`, or say `abi abi`.
+
+| Estonian | English | What happens |
+|---|---|---|
+| `abi`, `mida ma öelda saan`, `mida ma saan öelda`, `näita käske` | help, what can I say | Opens the help page. |
+| `abi kerimine`, `abi vormid`, `abi minu andmed` | help scrolling | Opens the help page at that group. |
+
+Rules only, never the model. With words in the armed box a one-word `abi` is typed ("Abi!" is a message). `loe ette` on the help page reads the open group. The page is `extension/help.html`; `help.html#kerimine` opens a group.
+
+<!-- phrases:end -->
 
 ## Minu andmed: an e-mail, a phone number, an ID code (round 6)
 

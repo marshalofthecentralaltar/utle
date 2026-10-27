@@ -339,6 +339,8 @@ const SOFT_WORDS = new Set([
   'seaded', 'settings',
   // Round 9 (30.1): the welcome page the same way.
   'juhend', 'alustamine', 'setup',
+  // Round 9 (30.2.2): "Abi!" is a message too.
+  'abi',
 ])
 
 /** M7: "stopp" while the labels show hides them. */
@@ -393,6 +395,8 @@ const KEEPS_HINTS = new Set<BrowserCommand['kind']>([
   'showHints', 'scroll', 'ping', 'readBox', 'setText', 'pressSend', 'readPage', 'media', 'bar', 'arm', 'clearField', 'zoom',
   // Round 6: the settings open in a tab of their own; the page in front is untouched.
   'openSettings', 'savedEntry',
+  // Round 9: the help page opens in a tab of its own too.
+  'openHelp',
 ])
 /** Commands that leave the same message box in front, so the undo texts still belong to it. */
 const KEEPS_BOX = new Set<BrowserCommand['kind']>([...KEEPS_HINTS, 'hideHints', 'read'])
