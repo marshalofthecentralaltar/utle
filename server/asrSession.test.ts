@@ -809,6 +809,35 @@ describe('the fail-closed decision on the server (round 10, 31.2)', () => {
     expect(sent.filter((m) => m.type === 'partial').at(-1)).toEqual({ type: 'partial', text: 'ava' })
   })
 
+  it('review 2: an utterance signalled with activity whose words came to nothing is closed with insufficient_audio (endpoint or flush); off mode is unchanged', () => {
+    const run = (on: boolean, script: DecodeResult[], flush: boolean): AsrServerMessage[] => {
+      const sent: AsrServerMessage[] = []
+      const loop = new Loop()
+      let i = 0
+      const decoder: Decoder = { accept: () => script[i++] ?? { text: '', endpoint: false }, reset() {}, close() {}, profileVersion: () => 'v1-p' }
+      const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule, sessionId: 's' })
+      session.onlyOwner(on)
+      for (let k = 0; k < script.length; k += 1) {
+        session.audio(frame(1))
+        loop.settle()
+      }
+      if (flush) {
+        session.flush()
+        loop.settle()
+      }
+      return sent.filter((m) => m.type !== 'speakerSession')
+    }
+    const atEndpoint: DecodeResult[] = [{ text: 'Jah', endpoint: false }, { text: '', endpoint: true }]
+    const beforeFlush: DecodeResult[] = [{ text: 'Jah', endpoint: false }, { text: '', endpoint: false }]
+    for (const [script, flush] of [[atEndpoint, false], [beforeFlush, true]] as const) {
+      expect(run(true, script, flush)).toEqual([
+        { type: 'activity' },
+        { type: 'rejected', decision: { segmentId: 1, sessionId: 's', profileVersion: 'v1-p', verdict: 'unknown', reason: 'insufficient_audio', timings: { judgeMs: 0 } } },
+      ])
+      expect(run(false, script, flush)).toEqual([{ type: 'partial', text: 'Jah' }])
+    }
+  })
+
   it('segments count up through the session, rejected or not', () => {
     const { gate, sent, loop, session } = strict()
     gate.answer = { speaker: 'owner', score: 0.7, seconds: 1 }

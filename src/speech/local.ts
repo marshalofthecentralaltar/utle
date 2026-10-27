@@ -57,6 +57,14 @@ export function reconnectDelay(attempt: number): number {
   return RECONNECT_MS[Math.min(Math.max(attempt, 1), RECONNECT_MS.length) - 1] ?? 5000
 }
 
+/**
+ * Round 10 (review 2): with only the owner obeyed, a flush waits at most this long for the final or
+ * rejection of the utterance in progress; then what is held goes and the utterance is forgotten. A
+ * server that closes every signalled utterance (31.2) answers well within it; this is the guard for
+ * one that does not (an older server, a lost message).
+ */
+export const STRICT_FLUSH_WAIT_MS = 3000
+
 /** Round 10 (31.3): stands for an utterance in progress whose words the server withheld; never delivered. */
 const SPEAKING = '\u2026'
 
@@ -183,6 +191,13 @@ export function createLocalRecognizer(
   /** Frames not sent because the socket was full; the next sent frame ends the lag. */
   let dropping = false
 
+  /** Round 10 (review 2): the bounded wait of a flush with only the owner obeyed. */
+  let flushWait: ReturnType<typeof setTimeout> | null = null
+  const clearFlushWait = (): void => {
+    if (flushWait !== null) clearTimeout(flushWait)
+    flushWait = null
+  }
+
   const cancelSettle = (): void => {
     if (settle !== null) clearTimeout(settle)
     settle = null
@@ -229,6 +244,7 @@ export function createLocalRecognizer(
   }
 
   const onFinal = (text: string): void => {
+    clearFlushWait()
     cancelSettle()
     handlers.onInterim('')
     current = ''
@@ -275,6 +291,7 @@ export function createLocalRecognizer(
     authorized = null
   }
   const onForeignFinal = (reason?: SpeakerReason): void => {
+    clearFlushWait()
     cancelSettle()
     handlers.onInterim('')
     current = ''
@@ -324,6 +341,7 @@ export function createLocalRecognizer(
   // ---- end of the owner's voice ----
 
   const teardown = (): void => {
+    clearFlushWait()
     forgetAuthorization()
     if (retry !== null) clearTimeout(retry)
     retry = null
@@ -431,6 +449,7 @@ export function createLocalRecognizer(
       socket = null
       // Round 10 (31.3): nothing verified on this connection runs after it; what is held goes.
       if (strict) {
+        clearFlushWait()
         forgetAuthorization()
         assembler.dispose()
         current = ''
@@ -508,6 +527,17 @@ export function createLocalRecognizer(
       // With words in progress the server's final is moments away: it joins what is held, then all goes at once.
       if (asked && current !== '' && released === null) {
         flushed = true
+        if (strict) {
+          // Round 10 (review 2): never wait for ever on an utterance the server did not close.
+          clearFlushWait()
+          flushWait = setTimeout(() => {
+            flushWait = null
+            if (!flushed) return
+            flushed = false
+            current = ''
+            assembler.releaseNow()
+          }, STRICT_FLUSH_WAIT_MS)
+        }
         return
       }
       assembler.releaseNow()

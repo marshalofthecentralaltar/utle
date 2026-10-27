@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS, SPEAKER_REASONS, verdictFor } from './asrProtocol.ts'
 import type { SpeakerDecision, SpeakerReason } from './asrProtocol.ts'
-import { MAX_BUFFERED_BYTES, RECONNECT_MS, RETRAIN_AFTER_DROPS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
+import { MAX_BUFFERED_BYTES, RECONNECT_MS, RETRAIN_AFTER_DROPS, STRICT_FLUSH_WAIT_MS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
 
 /** Stands in for the browser's WebSocket: records what is sent and lets the test play the server. */
@@ -892,6 +892,35 @@ describe('local recogniser (browser side)', () => {
         ownerFinal('et ma jõuan')
         expect(h.onUtterance.mock.calls.map(([t]) => t)).toEqual(['kirjuta Marile et ma jõuan'])
         expect(h.onInterim.mock.calls.filter(([t]) => t !== '')).toEqual([])
+      })
+
+      it('review 2: activity, then no final ever, then a push-to-talk flush: no hang, nothing unverified, the next verified final goes alone', () => {
+        const h = spies()
+        const r = createLocalRecognizer(h, () => false, { onUnavailable: () => undefined, connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), onlyOwner: true, holdMs: 150 })
+        r.start()
+        socket().says({ type: 'ready' })
+        announce()
+        const held = ownerFinal('kirjuta Marile')
+        // Another voice's word: the server signals it, and then nothing (the lost "jah").
+        socket().says({ type: 'activity' })
+        r.flush?.()
+        expect(h.onUtterance).not.toHaveBeenCalled()
+        vi.advanceTimersByTime(STRICT_FLUSH_WAIT_MS)
+        // The held, verified words go (nothing is stuck behind the lost utterance); the unverified one never does.
+        expect(h.onUtterance.mock.calls).toEqual([['kirjuta Marile', held]])
+        // The next owner utterance in the same session is verified and goes alone, nothing stale with it.
+        const next = ownerFinal('ava uus vaheleht')
+        vi.advanceTimersByTime(150)
+        expect(h.onUtterance.mock.calls).toEqual([
+          ['kirjuta Marile', held],
+          ['ava uus vaheleht', next],
+        ])
+        expect(h.onUtteranceContinued).not.toHaveBeenCalled()
+        expect(h.onInterim.mock.calls.filter(([t]) => t !== '')).toEqual([])
+        // A later flush with nothing in progress releases at once.
+        r.flush?.()
+        vi.advanceTimersByTime(10_000)
+        expect(h.onUtterance).toHaveBeenCalledTimes(2)
       })
 
       it('a stop with a flush pending delivers no unverified words', () => {

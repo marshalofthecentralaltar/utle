@@ -109,7 +109,7 @@ interface Session {
   permission: { opened: number; closedAfterMs: number | null }
 }
 
-async function launch(extensionDir: string, wav: string | null): Promise<Session> {
+async function launch(extensionDir: string, wav: string | null, loop = false): Promise<Session> {
   const profile = await mkdtemp(join(tmpdir(), 'utle-voice-'))
   const args = [
     `--disable-extensions-except=${extensionDir}`,
@@ -117,7 +117,8 @@ async function launch(extensionDir: string, wav: string | null): Promise<Session
     '--use-fake-ui-for-media-stream',
     '--use-fake-device-for-media-stream',
   ]
-  if (wav) args.push(`--use-file-for-fake-audio-capture=${wav}%noloop`)
+  // Round 10 (section 7): a short clip loops, so it is heard whenever the microphone opens.
+  if (wav) args.push(`--use-file-for-fake-audio-capture=${wav}${loop ? '' : '%noloop'}`)
   // Headed: Playwright's headless Chromium crashes as soon as the extension's service worker is evaluated.
   const ctx = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: false, viewport: { width: 1280, height: 800 }, args })
   const permission: Session['permission'] = { opened: 0, closedAfterMs: null }
@@ -572,10 +573,11 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
         ws.send(frame.buffer)
         await sleep(100)
       }
-      // A second and a half of room at the fixtures' noise floor (a microphone never gives digital
-      // zeros): the endpoint, then a flush in case none came.
-      for (let i = 0; i < 15; i += 1) {
-        ws.send(Float32Array.from({ length: 1600 }, () => (Math.random() - 0.5) * 0.001).buffer)
+      // 1.2 s of digital silence, then a flush (push-to-talk released). This is the padding that
+      // reproduced the lost one-word utterance below (review 2): the recogniser's text went empty
+      // at the endpoint after a partial.
+      for (let i = 0; i < 12; i += 1) {
+        ws.send(new Float32Array(1600).buffer)
         await sleep(100)
       }
       ws.send(JSON.stringify({ type: 'flush' }))
@@ -586,21 +588,17 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
     const line = (name: string, got: Heard[]): Heard | undefined => {
       const outcome = got.find((m) => m.type === 'final' || m.type === 'rejected')
       const d = outcome?.decision
-      console.log(`      ${name}: ${got.map((m) => m.type).join(' ')} -> ${outcome?.type ?? 'nothing'} ${d ? `reason=${d.reason} score=${d.score ?? '-'} judgeMs=${d.timings.judgeMs} speechMs=${d.timings.speechMs ?? '-'}` : ''}${outcome?.text ? ` text=${JSON.stringify(outcome.text)}` : ''}`)
+      console.log(`      ${name}: ${got.map((m) => m.type).join(' ')} -> ${outcome?.type ?? 'nothing'} ${d ? `segment=${d.segmentId} reason=${d.reason} score=${d.score ?? '-'} judgeMs=${d.timings.judgeMs} speechMs=${d.timings.speechMs ?? '-'}` : ''}${outcome?.text ? ` text=${JSON.stringify(outcome.text)}` : ''}`)
       return outcome
     }
     const worded = (got: Heard[]): Heard[] => got.filter((m) => typeof m.text === 'string' && m.text !== '')
+    const ownerLong = (label: string, got: Heard[]): void => {
+      const outcome = line(`owner-sentence-2 (held out, long${label})`, got)
+      check(`7a. owner sentence${label}: a final with a verified_owner decision`, outcome?.type === 'final' && outcome.decision?.reason === 'verified_owner' && outcome.decision.verdict === 'owner')
+      check(`7a. owner sentence${label}: its only words are the verified final, nothing stale in it`, worded(got).length === 1 && worded(got)[0] === outcome && !/\bjah\b/i.test(outcome?.text ?? ''), outcome?.text ?? '')
+    }
 
-    // The one word first: played after the pitched clip in the same session, the recogniser's
-    // partial "jah" never reached an endpoint or a flush final (seen 2026-10-27, both paddings).
-    const short = await play('owner-jah-1')
-    const shortOutcome = line('owner-jah-1 (held out, one word)', short)
-    check('7c. the owner’s one word: insufficient_audio or rejected_other, no words', shortOutcome?.type === 'rejected' && (shortOutcome.decision?.reason === 'insufficient_audio' || shortOutcome.decision?.reason === 'rejected_other') && worded(short).length === 0, shortOutcome?.decision?.reason ?? '')
-
-    const owner = await play('owner-sentence-2')
-    const ownerOutcome = line('owner-sentence-2 (held out, long)', owner)
-    check('7a. the held-out owner sentence: a final with a verified_owner decision', ownerOutcome?.type === 'final' && ownerOutcome.decision?.reason === 'verified_owner' && ownerOutcome.decision.verdict === 'owner')
-    check('7a. its only words are the verified final (no partial words)', worded(owner).length === 1 && worded(owner)[0] === ownerOutcome)
+    ownerLong('', await play('owner-sentence-2'))
 
     for (const other of ['other-vesta-1', 'other-kalev-1', 'other-mari-pitch20-1']) {
       const got = await play(other)
@@ -608,10 +606,22 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
       check(`7b. ${other}: rejected, no message with words (partials included)`, outcome?.type === 'rejected' && worded(got).length === 0, `${outcome?.decision?.reason ?? 'no decision'}`)
     }
 
+    // Acceptance-matrix row: a stranger, then the owner's short word, in one session. Before review
+    // 2 this "jah" showed activity and then nothing (on main with the mode off too: a partial, then
+    // no final). The server now closes every signalled utterance.
+    const short = await play('owner-jah-1')
+    const shortOutcome = line('owner-jah-1 (held out, one word, right after the pitched voice)', short)
+    check('7c. the owner\u2019s one word after another voice: closed with insufficient_audio or rejected_other, no words', shortOutcome?.type === 'rejected' && (shortOutcome.decision?.reason === 'insufficient_audio' || shortOutcome.decision?.reason === 'rejected_other') && worded(short).length === 0, shortOutcome?.decision?.reason ?? '')
+
+    // The next owner long clip in the same session: verified and delivered, alone.
+    ownerLong(', next in the same session', await play('owner-sentence-2'))
+    const segments = heard.flatMap((m) => (m.decision ? [m.decision.segmentId] : []))
+    check('7. segments count up one per utterance, none skipped or repeated', segments.every((id, i) => id === i + 1), JSON.stringify(segments))
+
     ws.close()
 
     // ---- the extension: another voice into an armed chat box, only the owner on ----
-    const s = await launch(extensionDir, join(SPEAKER_SET, 'other-vesta-1.wav'))
+    const s = await launch(extensionDir, join(SPEAKER_SET, 'other-vesta-1.wav'), true)
     try {
       await s.sw.evaluate((url) => chrome.storage.local.set({ asrUrl: url, onlyOwner: true }), asr)
       const page = s.ctx.pages()[0] ?? (await s.ctx.newPage())

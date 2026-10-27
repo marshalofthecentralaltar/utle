@@ -358,6 +358,26 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   /** Round 10 (31.1): the session id every decision carries, and the count of finals decided (the segment ids). */
   const sessionId = options.sessionId ?? randomUUID()
   let segments = 0
+  /** Round 10 (review 2): the profile version last announced, for a rejection made without a verification. */
+  let announced = ''
+  /** Round 10 (review 2): words of the utterance in progress were signalled (a partial or an activity) and not yet closed. */
+  let signalled = false
+
+  /**
+   * Round 10 (review 2): with only the owner on, an utterance the client was told about (activity)
+   * whose words came to nothing (the recogniser's text went empty at the endpoint or before a
+   * flush) is closed with a rejection, insufficient_audio, never left open. Measured 2026-10-27: a
+   * one-word "jah" after another voice in the same session showed a partial and then neither a
+   * final nor anything else, on main with the mode off too.
+   */
+  const closeEmpty = (): void => {
+    const had = signalled
+    signalled = false
+    if (!had || !onlyOwner) return
+    segments += 1
+    send({ type: 'rejected', decision: { segmentId: segments, sessionId, profileVersion: announced, verdict: 'unknown', reason: 'insufficient_audio', timings: { judgeMs: 0 } } })
+    foreignFinals += 1
+  }
 
   const report = (ms: number): void => {
     send({ type: 'lag', ms })
@@ -419,6 +439,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       version = ''
     }
     const tell = (profileVersion: string): void => {
+      announced = profileVersion
       if (!closed && onlyOwner) send({ type: 'speakerSession', sessionId, profileVersion })
     }
     if (version instanceof Promise) version.then(tell, () => tell(''))
@@ -515,15 +536,23 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     const text = /[\p{L}\p{N}]/u.test(heard) ? heard : ''
     // Round 10 (31.2): with only the owner on, unverified words never leave the server: the client
     // gets a wordless activity signal instead of the partial (it keeps the assembler's hold alive).
-    if (text !== last && text !== '') send(onlyOwner ? { type: 'activity' } : { type: 'partial', text })
+    if (text !== last && text !== '') {
+      send(onlyOwner ? { type: 'activity' } : { type: 'partial', text })
+      signalled = true
+    }
     last = text
     if (!result.endpoint) {
       then()
       return
     }
     last = ''
-    if (text === '') then()
-    else sendFinal(text, then)
+    if (text === '') {
+      closeEmpty()
+      then()
+    } else {
+      signalled = false
+      sendFinal(text, then)
+    }
   }
 
   const step = (): void => {
@@ -545,8 +574,13 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
         schedule(step)
       }
       // Judged before the reset: the frames of the utterance in progress are still the decoder's.
-      if (text !== '') sendFinal(text, next)
-      else next()
+      if (text !== '') {
+        signalled = false
+        sendFinal(text, next)
+      } else {
+        closeEmpty()
+        next()
+      }
       return
     }
     queuedMs -= item.ms

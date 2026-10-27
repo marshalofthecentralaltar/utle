@@ -2661,6 +2661,19 @@ without `verify`, or a verify that throws or rejects, is `verification_error`, d
 goes either (review round 1): where the mode off sends `{ type: 'partial', text }`, the session sends
 the wordless `{ type: 'activity' }`, so no unverified word leaves the server, on the local or the
 hosted wire. The log line names the reason, never the words.
+
+**Every signalled utterance is closed** (review round 2). Measured on 2026-10-27 with the real
+models: when the one-word owner clip `owner-jah-1` followed `other-mari-pitch20-1` in one session,
+with 1.2 s of digital silence after each clip, the recogniser gave a partial "Jah" and then empty
+text at the endpoint, so no final went. This happened on origin/main (47a7837) with the mode off
+too: a partial, then nothing. It is a recogniser behaviour that predates round 10, and the mode-off
+wire is left as it is. With the mode on, the session now remembers that it sent an `activity`
+(`signalled`). An endpoint or a flush whose text came to nothing then closes the utterance with a
+`rejected` decision, reason `insufficient_audio`, `judgeMs` 0, the announced profile version. The
+client never waits for an utterance the server forgot either. With the mode on, a flush that waits
+for a final waits at most `STRICT_FLUSH_WAIT_MS` (3000 ms), then releases what is held and forgets
+the utterance in progress. Unverified words are never delivered. The next verified final goes on
+its own.
 `foreignFinals` counts every rejection.
 
 **Soniox** (`server/soniox.ts`). There is no speaker gate on the Soniox path in B (attaching
