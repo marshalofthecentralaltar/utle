@@ -623,7 +623,6 @@ describe('local recogniser (browser side)', () => {
       expect(dropsFinal(true, 'unknown')).toBe(true)
       expect(dropsFinal(true, 'other')).toBe(true)
       expect(dropsFinal(true, 'owner')).toBe(false)
-      expect(dropsFinal(true, undefined)).toBe(false)
     })
 
     it('strict mode: counts drops in a row, the third drop message once, and an obeyed final starts over', () => {
@@ -708,6 +707,36 @@ describe('local recogniser (browser side)', () => {
         [true, 8],
         [false, 8],
       ])
+    })
+
+    // Issue #3 work package A: the baseline that fails on main.
+    it('issue #3: a final without a speaker decision is not delivered while only the owner is obeyed', () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'final', text: 'saada' })
+      vi.advanceTimersByTime(5000)
+      socket().says({ type: 'final', text: 'kustuta see', speaker: 'owner' })
+      vi.advanceTimersByTime(5000)
+      expect(utterances).toEqual([])
+      expect(foreign).toBe(2)
+      expect(dropsFinal(true, undefined)).toBe(true)
+      expect(dropsFinal(false, undefined)).toBe(false)
+    })
+
+    it('issue #3: a settled quick reply is never released before its verdict, and no partial is shown', () => {
+      const r = makeOwner(true)
+      r.start()
+      socket().says({ type: 'ready' })
+      socket().says({ type: 'partial', text: 'jah' })
+      vi.advanceTimersByTime(INSTANT_SETTLE_MS)
+      expect(utterances).toEqual([])
+      vi.advanceTimersByTime(5000)
+      expect(utterances).toEqual([])
+      expect(interims.filter((text) => text !== '')).toEqual([])
+      // A flush does not release it either.
+      r.flush?.()
+      expect(utterances).toEqual([])
     })
 
     it('does nothing for an enrolment while stopped', () => {

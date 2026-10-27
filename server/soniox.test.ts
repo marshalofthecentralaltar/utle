@@ -372,3 +372,16 @@ describe('soniox lag (review R3 M4)', () => {
     expect(browser.json).toEqual([{ type: 'ready' }])
   })
 })
+
+// Issue #3 work package A: the baseline that fails on main. Soniox has no speaker verdict, so with
+// onlyOwner on its words must never reach the browser as an obeyable final.
+describe('issue #3: Soniox with only the owner on', () => {
+  it('sends no final without a verdict while only the owner is obeyed', () => {
+    const { browser, upstream } = session()
+    browser.text(JSON.stringify({ type: 'onlyOwner', on: true }))
+    upstream.open()
+    upstream.text(response([{ text: 'saada', is_final: true }, { text: '<end>', is_final: true }]))
+    const finals = browser.json.filter((m): m is AsrServerMessage => typeof m === 'object' && m !== null && (m as { type?: unknown }).type === 'final')
+    expect(finals).toEqual([])
+  })
+})

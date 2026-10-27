@@ -81,6 +81,8 @@ interface Options {
   wakeWord?: string
   /** Round 9 (30.1): the server's address is hosted (wss://, or another host). */
   hosted?: boolean
+  /** Issue #3 (B): Kuula ainult mind is on: nothing speech-driven runs without a verified owner decision. */
+  onlyOwner?: boolean
 }
 
 const ITEMS = [
@@ -180,6 +182,7 @@ function setup(options: Options = {}) {
     status: () => Promise.resolve(options.status ?? 'live'),
     ...(options.wakeWord === undefined ? {} : { wakeWord: options.wakeWord }),
     ...(options.hosted === undefined ? {} : { hosted: options.hosted }),
+    ...(options.onlyOwner === undefined ? {} : { onlyOwner: options.onlyOwner }),
     spend: (record) => spends.push(record),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
@@ -2767,5 +2770,32 @@ describe('round 9 (30.5.4): spend per task', () => {
     const text = JSON.stringify(t.spends)
     for (const secret of ['kassivideo', 'youtube', 'avan', 'palun']) expect(text).not.toContain(secret)
     expect(Object.keys(t.spends[0] ?? {}).sort()).toEqual(['asks', 'cacheRead', 'goals', 'input', 'model', 'ms', 'outcome', 'output', 'provider', 'steps'])
+  })
+})
+
+// Issue #3 work package A: the baseline that fails on main. With Kuula ainult mind on, nothing
+// speech-driven may reach the page or the model before the server verified the owner's voice for
+// that very segment.
+describe('issue #3: only the owner, fail closed in the engine', () => {
+  it('a partial with only-owner on types nothing into the box and is not shown', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    t.partial('saada')
+    t.partial('saada see')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    expect(t.heard).toEqual([])
+  })
+
+  it('an utterance without a speaker decision runs nothing, asks no model and is not shown', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    t.say('saada')
+    t.say(SENTENCE)
+    t.continued(`${SENTENCE} siis saada`, 'siis saada')
+    await t.engine.idle()
+    expect(t.ran).toEqual([])
+    expect(t.asked).toEqual([])
+    expect(t.heard).toEqual([])
   })
 })

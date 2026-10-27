@@ -851,3 +851,59 @@ describe('capture (round 7, UTLE_CAPTURE)', () => {
     expect(readFileSync(join(dir, CAPTURE_LOG), 'utf8')).toBe('20261021T080000123-owner-0.700.wav\t0.700\towner\tava uus\n20261021T080000123-none-0.000.wav\t0.000\tnone\tsaada\n')
   })
 })
+
+// Issue #3 work package A: the baseline that fails on main. With onlyOwner on, the server never
+// sends words the speaker gate did not verify as the owner's, for that utterance itself.
+describe('issue #3: only the owner, fail closed on the server', () => {
+  const owned = (sent: AsrServerMessage[]): string[] => sent.flatMap((m) => (m.type === 'final' && m.speaker === 'owner' ? [m.text] : []))
+  const texts = (sent: AsrServerMessage[]): string[] => sent.flatMap((m) => (m.type === 'final' ? [m.text] : []))
+
+  it("a stranger's short word right after the owner spoke is never promoted to the owner", () => {
+    const { gate, sent, loop, clock, session } = setupWithGate()
+    session.onlyOwner(true)
+    gate.answer = { speaker: 'owner', score: 0.7, seconds: 1.6 }
+    feed(session, loop, [1, 2, 0])
+    clock.now += 4000
+    gate.answer = { speaker: 'other', score: 0.168, seconds: 0.45 }
+    feed(session, loop, [1, 0])
+    clock.now += 1000
+    gate.answer = { speaker: 'unknown', score: 0, seconds: 0.4 }
+    feed(session, loop, [3, 0])
+    expect(owned(sent)).toEqual(['ava uus'])
+    expect(texts(sent)).toEqual(['ava uus'])
+  })
+
+  it('a final with no verdict (no profile) is not sent with its words', () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.onlyOwner(true)
+    gate.answer = null
+    feed(session, loop, [1, 0])
+    expect(texts(sent)).toEqual([])
+  })
+
+  it('a judge that fails sends no words', async () => {
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    let calls = 0
+    const decoder: Decoder = {
+      accept: () => ({ text: 'saada', endpoint: true }),
+      reset() {},
+      close() {},
+      judge() {
+        calls += 1
+        if (calls === 1) throw new Error('no embedding')
+        return Promise.reject(new Error('worker gone'))
+      },
+    }
+    const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule })
+    session.onlyOwner(true)
+    session.audio(frame(1))
+    loop.settle()
+    session.audio(frame(1))
+    loop.settle()
+    await Promise.resolve()
+    await Promise.resolve()
+    loop.settle()
+    expect(texts(sent)).toEqual([])
+  })
+})
