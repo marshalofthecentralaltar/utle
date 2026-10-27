@@ -275,6 +275,8 @@ phrases({ kind: 'zoom', direction: 'reset' }, 'tavaline suurus', 'algne suurus',
 // Round 6 (26.4): the settings page and its Minu andmed section; "lisa uus e-post" starts saving one by voice.
 // Written as cleanForBrowser leaves them ("e-post" is "epost"). "lisa e-post" without "uus" is the saved e-mail (26.2).
 phrases({ kind: 'openSettings' }, 'ava seaded', 'seaded', 'ava sätted', 'sätted', 'open settings', 'open the settings', 'settings')
+// Round 9 (30.1): the first-run page, again by voice.
+phrases({ kind: 'openSettings', section: 'welcome' }, 'ava juhend', 'juhend', 'ava alustamine', 'alustamine', 'setup', 'open setup', 'open the guide', 'open the setup guide')
 phrases({ kind: 'openSettings', section: 'andmed' }, 'ava minu andmed', 'minu andmed', 'mu andmed', 'ava mu andmed', 'my details', 'open my details', 'my data')
 phrases(
   { kind: 'openSettings', section: 'andmed', add: 'email' },

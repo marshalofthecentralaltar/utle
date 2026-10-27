@@ -34,6 +34,22 @@ export function isSocketAddress(value: string): boolean {
   }
 }
 
+/** Round 9 (30.1): wss://, or a host other than this computer. A local address is ws:// to localhost, 127.0.0.1 or [::1]. */
+export function isHostedAddress(address: string): boolean {
+  try {
+    const url = new URL(address)
+    if (url.protocol === 'wss:') return true
+    return !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+/** Round 9 (30.1): what a status check means for the strip's connection dot. */
+export function connectionOf(state: ServerState): 'connected' | 'down' {
+  return state === 'live' || state === 'no_key' ? 'connected' : 'down'
+}
+
 /** The server's http address for path, from the recogniser's (ws(s)://host/api/asr → http(s)://host/path). The query (engine, token) is dropped. */
 export function serverUrl(asrAddress: string, path: string): string {
   const url = new URL(asrAddress)

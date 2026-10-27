@@ -45,12 +45,18 @@ export interface StripState {
   reading: boolean
   /** The microphone is handed silence because something is being spoken aloud (the pause rule). */
   micMuted: boolean
+  // ---------- the first run (30.1, ONBOARD lane) ----------
+  /** The connection dot on the microphone: the socket, or the last /api/status check while not listening. */
+  connection: ConnectionState
 }
+
+/** Round 9 (30.1): connected (green), connecting (amber), down (red). */
+export type ConnectionState = 'connected' | 'connecting' | 'down'
 
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, wakeOpen: false, connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, wakeOpen: false, connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false, connection: 'connecting' }
 
 /** To the service worker. */
 export type ToBackground =
@@ -148,6 +154,9 @@ export interface StripMeasure {
   gaze: string
   /** The lag line's text, or '' when hidden. */
   lag: string
+  /** Round 9 (30.1): the visible microphone's data-connection, and the dot's word (its title). */
+  connection: string
+  connectionWord: string
 }
 
 export type RunAnswer = { result: BrowserResult }

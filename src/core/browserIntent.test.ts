@@ -416,3 +416,28 @@ describe('reading aloud (29.5): read phrases', () => {
     expect(STRINGS.et.read.skipped).toBe('Jätsin ühe lause vahele.')
   })
 })
+
+// ---------- the first run (30.1, ONBOARD lane) ----------
+describe('round 9: "ava juhend" and "alustamine" open the welcome page (30.1)', () => {
+  const WELCOME: BrowserCommand = { kind: 'openSettings', section: 'welcome' }
+  const NO_BOX = { present: false, text: '', armed: false }
+  it.each(['ava juhend', 'Ava juhend.', 'juhend', 'ava alustamine', 'alustamine', 'Alustamine.', 'setup', 'open setup', 'open the guide'])('juhend / alustamine: "%s" is the welcome page', (said) => {
+    expect(browserIntent(said)).toEqual(WELCOME)
+    for (const box of [NO_BOX, { present: true, text: '', armed: false }, { present: true, text: '', armed: true }]) {
+      const step = inpageStep(initialInpage('et'), said, box)
+      expect(step.commands).toEqual([WELCOME])
+      expect(step.ask).toBeUndefined()
+    }
+  })
+  it('juhend / alustamine: the lines, in Estonian and English', () => {
+    expect(inpageStep(initialInpage('et'), 'ava juhend', NO_BOX).line).toBe('Avan alustamise.')
+    expect(STRINGS.en.browserDoing(WELCOME)).toBe('Opening the setup guide.')
+    // The settings and Minu andmed keep their own lines.
+    expect(STRINGS.et.browserDoing({ kind: 'openSettings' })).toBe('Avan seaded.')
+    expect(STRINGS.et.browserDoing({ kind: 'openSettings', section: 'andmed' })).toBe('Avan minu andmed.')
+  })
+  it('juhend / alustamine: inside a message with words in the box, "juhend" alone is a word of the message', () => {
+    const step = inpageStep(initialInpage('et'), 'juhend', { present: true, text: 'Saatsin sulle', armed: true })
+    expect(step.commands).not.toEqual([WELCOME])
+  })
+})

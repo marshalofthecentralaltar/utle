@@ -12,7 +12,8 @@
     "tabs",
     "scripting",
     "storage",
-    "offscreen"
+    "offscreen",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"

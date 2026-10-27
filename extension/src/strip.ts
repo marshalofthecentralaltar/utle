@@ -146,6 +146,15 @@ button { font-family: ${FONT}; }
 .pillmic { width: ${PILL_SIZE}px; height: ${PILL_SIZE}px; border-radius: 50%; gap: 0; font-size: 0; box-shadow: 0 2px 12px rgba(0,0,0,.5); background: var(--bg); }
 .pillmic[data-state="listening"] { background: var(--green); }
 .pillmic .dot { width: 30px; height: 30px; }
+/* Round 9 (30.1): the connection dot, top-left on the microphone; its word under the label on hover or dwell. */
+.conn { position: absolute; top: 8px; left: 8px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #141414; box-sizing: border-box; z-index: 2; background: var(--amber); }
+.mic[data-connection="connected"] .conn { background: var(--green); }
+.mic[data-connection="down"] .conn { background: #ff5c5c; }
+.mic[data-state="listening"] .conn { border-color: var(--ink); }
+.pillmic .conn { top: 4px; left: 4px; width: 18px; height: 18px; }
+.connword { display: none; position: relative; z-index: 1; font-size: 13px; font-weight: 700; line-height: 1.1; text-align: center; padding: 0 4px; }
+.mic:hover .connword, .mic.dwelling .connword { display: block; }
+.pillmic .connword { display: none !important; }
 .show { width: ${SHOW_SIZE}px; height: ${SHOW_SIZE}px; border-radius: 10px; font-size: 13px; box-shadow: 0 2px 12px rgba(0,0,0,.5); }
 `
 
@@ -195,6 +204,11 @@ function dwellable(el: HTMLElement, onFire: () => void, when: () => boolean = ()
   })
 }
 
+/** Round 9 (30.1): the dot's word for a connection state. */
+export function connectionWord(state: string): string {
+  return state === 'connected' ? text.connConnected : state === 'down' ? text.connDown : text.connConnecting
+}
+
 function micButton(className: string): { mic: HTMLButtonElement; label: HTMLSpanElement } {
   const mic = document.createElement('button')
   mic.type = 'button'
@@ -206,7 +220,13 @@ function micButton(className: string): { mic: HTMLButtonElement; label: HTMLSpan
   dot.className = 'dot'
   const label = document.createElement('span')
   label.className = 'label'
-  mic.append(fill, dot, label)
+  // Round 9 (30.1): the connection dot and its word.
+  const conn = document.createElement('span')
+  conn.className = 'conn'
+  conn.setAttribute('aria-hidden', 'true')
+  const word = document.createElement('span')
+  word.className = 'connword'
+  mic.append(fill, dot, label, word, conn)
   return { mic, label }
 }
 
@@ -435,6 +455,13 @@ export function mountStrip(): void {
       dot.classList.toggle('on', state.wakeOpen === true)
     }
     // ---------- end of wake word and places ----------
+    // Round 9 (30.1): the connection dot.
+    for (const m of [mic, pillMic]) {
+      m.dataset.connection = state.connection
+      m.title = connectionWord(state.connection)
+      const word = m.querySelector<HTMLSpanElement>('.connword')
+      if (word) word.textContent = connectionWord(state.connection)
+    }
     bar.hidden = state.hidden
     pill.hidden = !state.hidden
     if (state.hidden) {
@@ -547,6 +574,8 @@ export function mountStrip(): void {
       hidden: state.hidden,
       gaze: gazeEl?.dataset.gaze ?? '',
       lag: lag.textContent ?? '',
+      connection: visibleMic.dataset.connection ?? '',
+      connectionWord: visibleMic.title,
     }
     reply(answer)
     return false

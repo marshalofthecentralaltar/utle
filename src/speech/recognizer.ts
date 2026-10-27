@@ -42,6 +42,8 @@ export interface RecognizerHandlers {
   onEnrolled?(ok: boolean, seconds: number, phrases?: number): void
   /** Round 7: scripted enrolment has heard this many phrases. */
   onEnrolPhrase?(count: number): void
+  /** Round 9 (30.1): the socket to the server changed: connecting (a start), connected (ready), down (refused or lost). Once per change. */
+  onConnection?(state: 'connecting' | 'connected' | 'down'): void
 }
 
 export const LANGUAGES = [

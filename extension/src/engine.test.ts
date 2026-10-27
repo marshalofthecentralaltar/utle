@@ -78,6 +78,8 @@ interface Options {
   status?: 'live' | 'no_key' | 'bad_token' | 'unreachable'
   /** Round 8 (29.4.1): wake mode with this word. */
   wakeWord?: string
+  /** Round 9 (30.1): the server's address is hosted (wss://, or another host). */
+  hosted?: boolean
 }
 
 const ITEMS = [
@@ -114,6 +116,10 @@ function setup(options: Options = {}) {
   const chains: string[] = []
   const busy: number[] = []
   const enrols: number[] = []
+  // Round 9 (30.1): every problem and line published, and every connection state.
+  const problems: string[] = []
+  const lines: string[] = []
+  const connections: string[] = []
   const used = options.logic ?? logic
   const engine = createEngine({
     logic: {
@@ -151,6 +157,9 @@ function setup(options: Options = {}) {
       if (patch.lag !== undefined) lags.push(patch.lag)
       if (patch.chain !== undefined) chains.push(patch.chain)
       if (patch.busySeconds !== undefined) busy.push(patch.busySeconds)
+      if (patch.problem !== undefined) problems.push(patch.problem)
+      if (patch.line !== undefined) lines.push(patch.line)
+      if (patch.connection !== undefined) connections.push(patch.connection)
       Object.assign(state, patch)
     },
     recognizer: (h, isInstant, onUnavailable) => {
@@ -168,6 +177,7 @@ function setup(options: Options = {}) {
     tabs: () => Promise.resolve(options.tabs ?? TABS),
     status: () => Promise.resolve(options.status ?? 'live'),
     ...(options.wakeWord === undefined ? {} : { wakeWord: options.wakeWord }),
+    ...(options.hosted === undefined ? {} : { hosted: options.hosted }),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
   /** Round 4: the recogniser continues the last utterance ("siis ..."). */
@@ -209,6 +219,10 @@ function setup(options: Options = {}) {
     enrols,
     foreign,
     enrolled,
+    problems,
+    lines,
+    connections,
+    connection: (s: 'connecting' | 'connected' | 'down'): void => handlers?.onConnection?.(s),
   }
 }
 
@@ -2547,4 +2561,92 @@ describe('reading aloud (29.5): "stopp" while reading stops the reading first', 
       })
     }
   }
+})
+
+// ---------- the first run (30.1, ONBOARD lane): server-down lines and the connection dot ----------
+describe('the server going away and coming back (30.1)', () => {
+  const S = STRINGS.et.strip
+  const count = (list: string[], value: string): number => list.filter((x) => x === value).length
+
+  it('server down: a local address says the local line once, however often the socket fails; listening stays on', async () => {
+    const t = setup()
+    t.engine.start()
+    await t.engine.idle()
+    t.connection('connecting')
+    t.connection('down')
+    t.connection('down')
+    t.connection('down')
+    expect(t.state.problem).toBe(S.serverDownLocal)
+    expect(count(t.problems, S.serverDownLocal)).toBe(1)
+    expect(t.state.listening).toBe(true)
+    expect(t.state.connection).toBe('down')
+    expect(S.serverDownLocal).toBe('Kõneserver ei vasta. Palu abilisel see käivitada (npm run dev).')
+    expect(STRINGS.en.strip.serverDownLocal).toBe('The speech server is not answering. Ask your helper to start it (npm run dev).')
+  })
+
+  it('hosted: a hosted address says the hosted line instead', async () => {
+    const t = setup({ hosted: true })
+    t.engine.start()
+    await t.engine.idle()
+    t.connection('down')
+    expect(t.state.problem).toBe(S.serverDownHosted)
+    expect(S.serverDownHosted).toBe('Kõneserver ei vasta. Kontrolli internetiühendust või palu abilisel vaadata serverit.')
+    expect(STRINGS.en.strip.serverDownHosted).toBe('The speech server is not answering. Check the internet connection or ask your helper to look at the server.')
+  })
+
+  it('server down: a 401 from the status says the wrong-token line, not the down line', async () => {
+    const t = setup({ status: 'bad_token', hosted: true })
+    t.engine.start()
+    await t.engine.idle()
+    t.connection('down')
+    expect(t.state.problem).toBe(S.badToken)
+    expect(t.problems).not.toContain(S.serverDownHosted)
+  })
+
+  it('server back: "Server vastab jälle." once when the socket is ready again, and the problem clears', async () => {
+    const t = setup()
+    t.engine.start()
+    await t.engine.idle()
+    t.connection('connecting')
+    t.connection('connected')
+    expect(t.lines).not.toContain(S.serverBack)
+    t.connection('down')
+    t.connection('connected')
+    t.connection('connected')
+    expect(t.state.problem).toBe('')
+    expect(t.state.line).toBe(S.serverBack)
+    expect(count(t.lines, S.serverBack)).toBe(1)
+    expect(S.serverBack).toBe('Server vastab jälle.')
+    expect(STRINGS.en.strip.serverBack).toBe('The server is answering again.')
+    // A second outage is a new one: the line is said again, once.
+    t.connection('down')
+    t.connection('down')
+    t.connection('connected')
+    expect(count(t.problems, S.serverDownLocal)).toBe(2)
+    expect(count(t.lines, S.serverBack)).toBe(2)
+  })
+
+  it('server down: turning listening off ends the outage; the next failing start says the line again', async () => {
+    const t = setup()
+    t.engine.start()
+    await t.engine.idle()
+    t.connection('down')
+    t.engine.stop()
+    t.engine.start()
+    t.connection('connecting')
+    t.connection('down')
+    expect(count(t.problems, S.serverDownLocal)).toBe(2)
+    expect(t.lines).not.toContain(S.serverBack)
+  })
+
+  it('server down: the connection dot follows the socket (connecting, connected, down)', async () => {
+    const t = setup()
+    t.engine.start()
+    await t.engine.idle()
+    t.connection('connecting')
+    t.connection('connected')
+    t.connection('down')
+    t.connection('connected')
+    expect(t.connections.slice(-4)).toEqual(['connecting', 'connected', 'down', 'connected'])
+  })
 })

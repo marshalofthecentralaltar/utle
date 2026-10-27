@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS } from './asrProtocol.ts'
-import { MAX_BUFFERED_BYTES, RETRAIN_AFTER_DROPS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
+import { MAX_BUFFERED_BYTES, RECONNECT_MS, RETRAIN_AFTER_DROPS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
 
 /** Stands in for the browser's WebSocket: records what is sent and lets the test play the server. */
@@ -743,3 +743,101 @@ describe('wake mode and the recogniser (29.4.1)', () => {
   })
 })
 // ---------- end of wake word and places ----------
+
+// ---------- the first run (30.1, ONBOARD lane): keep trying, report the connection once per change ----------
+describe('the connection while listening (30.1)', () => {
+  let states: string[]
+  let unavailable: number
+  const make = (keepTrying: boolean) =>
+    createLocalRecognizer(
+      { onUtterance: () => undefined, onInterim: () => undefined, onError: () => undefined, onConnection: (state) => states.push(state) },
+      () => false,
+      { onUnavailable: () => (unavailable += 1), connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), keepTrying },
+    )
+  const last = (): FakeSocket => {
+    const s = FakeSocket.made.at(-1)
+    if (!s) throw new Error('no socket was opened')
+    return s
+  }
+  beforeEach(() => {
+    vi.useFakeTimers()
+    FakeSocket.made = []
+    FakeAudio.made = []
+    states = []
+    unavailable = 0
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('server down: a refused first connection is down once, tried again 1, 2, 4, then every 5 s, never given up', () => {
+    const r = make(true)
+    r.start()
+    expect(states).toEqual(['connecting'])
+    last().drops()
+    expect(states).toEqual(['connecting', 'down'])
+    expect(unavailable).toBe(0)
+    const at: number[] = []
+    let t = 0
+    for (let i = 0; i < 6; i++) {
+      const before = FakeSocket.made.length
+      while (FakeSocket.made.length === before) {
+        vi.advanceTimersByTime(100)
+        t += 100
+      }
+      at.push(t)
+      last().drops()
+    }
+    expect(at).toEqual([1000, 3000, 7000, 12000, 17000, 22000])
+    expect(RECONNECT_MS).toEqual([1000, 2000, 4000, 5000])
+    expect(states).toEqual(['connecting', 'down'])
+    expect(unavailable).toBe(0)
+  })
+
+  it('server back: a lost connection is down once and connected once it is ready again; the microphone opens again', async () => {
+    const r = make(true)
+    r.start()
+    last().says({ type: 'ready' })
+    await Promise.resolve()
+    expect(states).toEqual(['connecting', 'connected'])
+    expect(FakeAudio.made).toHaveLength(1)
+    last().drops()
+    vi.advanceTimersByTime(1000)
+    last().drops()
+    vi.advanceTimersByTime(2000)
+    expect(states).toEqual(['connecting', 'connected', 'down'])
+    last().says({ type: 'ready' })
+    await Promise.resolve()
+    expect(states).toEqual(['connecting', 'connected', 'down', 'connected'])
+    expect(FakeAudio.made).toHaveLength(2)
+    // The wait starts again from 1 s after a good connection.
+    last().drops()
+    const before = FakeSocket.made.length
+    vi.advanceTimersByTime(1000)
+    expect(FakeSocket.made.length).toBe(before + 1)
+  })
+
+  it('server down: a stop ends the trying; the next start reports connecting again', () => {
+    const r = make(true)
+    r.start()
+    last().drops()
+    r.stop()
+    const before = FakeSocket.made.length
+    vi.advanceTimersByTime(30_000)
+    expect(FakeSocket.made.length).toBe(before)
+    r.start()
+    expect(states).toEqual(['connecting', 'down', 'connecting'])
+  })
+
+  it('server down: "unavailable" (no model) still gives up, and without keepTrying a refused socket gives up as before', () => {
+    const a = make(true)
+    a.start()
+    last().says({ type: 'unavailable', reason: 'model_missing' })
+    expect(unavailable).toBe(1)
+    const b = make(false)
+    b.start()
+    last().drops()
+    expect(unavailable).toBe(2)
+    expect(states.at(-1)).toBe('down')
+  })
+})

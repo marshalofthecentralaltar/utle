@@ -84,8 +84,11 @@ export type BrowserCommand =
   /** Chrome's tab zoom: in and out by one step, reset to 100%. Text grows with it. */
   | { kind: 'zoom'; direction: 'in' | 'out' | 'reset' }
   // Round 6: Minu andmed (docs/ARCHITECTURE.md 26.4, 26.5).
-  /** Opens the options page (or brings it to the front), at the Minu andmed section; add starts the voice entry flow for that kind. */
-  | { kind: 'openSettings'; section?: 'andmed'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
+  /**
+   * Opens the options page (or brings it to the front), at the Minu andmed section; add starts the voice entry flow for that kind.
+   * Round 9 (30.1): section welcome is the first-run page, welcome.html, instead.
+   */
+  | { kind: 'openSettings'; section?: 'andmed' | 'welcome'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
   /** One utterance for the entry flow on the options page; only that page answers it. */
   | { kind: 'savedEntry'; utterance: string }
   // ---------- mail (29.3) ----------

@@ -41,6 +41,20 @@ export interface LocalOptions {
    * server cannot judge voices), are delivered.
    */
   onlyOwner?: boolean
+  /**
+   * Round 9 (30.1): never give up on a refused or lost socket while listening is on; try again
+   * after RECONNECT_MS. The extension sets it; the dev page keeps the give-up, which switches it to
+   * Chrome's recogniser. A server message `unavailable` (no model) gives up either way.
+   */
+  keepTrying?: boolean
+}
+
+/** Round 9 (30.1): the waits before each new try in an outage; the last one repeats. */
+export const RECONNECT_MS = [1000, 2000, 4000, 5000] as const
+
+/** Round 9 (30.1): the wait before try number `attempt` (1 for the first try after a failure). */
+export function reconnectDelay(attempt: number): number {
+  return RECONNECT_MS[Math.min(Math.max(attempt, 1), RECONNECT_MS.length) - 1] ?? 5000
 }
 
 /** Round 7: after this many dropped finals in a row the bar says once to teach the voice again. */
@@ -127,6 +141,13 @@ export function createLocalRecognizer(
   let socket: SocketLike | null = null
   let audio: AudioSource | null = null
   let retry: ReturnType<typeof setTimeout> | null = null
+  /** Round 9 (30.1): the last connection state reported, so each change is reported once. */
+  let connection: 'connecting' | 'connected' | 'down' | null = null
+  const report = (state: 'connecting' | 'connected' | 'down'): void => {
+    if (connection === state) return
+    connection = state
+    handlers.onConnection?.(state)
+  }
   let settle: ReturnType<typeof setTimeout> | null = null
   let settling = ''
   /** The words of a quick reply released from a partial, until the server's final for them arrives. */
@@ -311,6 +332,7 @@ export function createLocalRecognizer(
         case 'ready':
           served = true
           attempts = 0
+          report('connected')
           afterReady()
           listen()
           return
@@ -346,6 +368,13 @@ export function createLocalRecognizer(
       audio = null
       handlers.onInterim('')
       if (!running) return
+      report('down')
+      // Round 9 (30.1): the extension waits for the server to come back, once per change on the strip.
+      if (options.keepTrying === true) {
+        attempts += 1
+        retry = setTimeout(open, reconnectDelay(attempts))
+        return
+      }
       // Refused before it ever answered: nothing is listening on this machine.
       if (!served) {
         giveUp()
@@ -382,6 +411,8 @@ export function createLocalRecognizer(
       running = true
       served = false
       attempts = 0
+      connection = null
+      report('connecting')
       open()
     },
     stop() {

@@ -91,6 +91,9 @@ export interface EngineDeps {
   // ---------- reading aloud (29.5) ----------
   /** A reading aloud is in progress: a stop word (isReadStop) stops it first and does nothing else. Absent: never. */
   reading?(): boolean
+  // ---------- the first run (30.1, ONBOARD lane) ----------
+  /** The server's address is hosted (wss://, or a host other than this computer): the down line says so. */
+  hosted?: boolean
 }
 
 export interface Engine {
@@ -234,6 +237,9 @@ export function createEngine(deps: EngineDeps): Engine {
   let modelOff = false
   /** 27.3: the server refused the token. The standing line and the socket's failure name it. */
   let badToken = false
+  /** Round 9 (30.1): the socket failed while listening; the down line was said once and waits for the server. */
+  let outage = false
+  const downLine = (): string => (badToken ? text.badToken : deps.hosted === true ? text.serverDownHosted : text.serverDownLocal)
   /**
    * Round 4: the goals the last utterance finished, in his words, so a continued utterance
    * ("siis ava Karin") can carry them as `completed`.
@@ -1195,6 +1201,26 @@ export function createEngine(deps: EngineDeps): Engine {
     onEnrolled() {
       endEnrolment()
     },
+    onConnection(state) {
+      // Round 9 (30.1): once per outage the down line, once when it is back "Server vastab jälle.".
+      if (state === 'down') {
+        if (!listening || outage) {
+          deps.publish({ connection: 'down' })
+          return
+        }
+        outage = true
+        deps.publish({ connection: 'down', problem: downLine() })
+        return
+      }
+      if (state === 'connected' && outage) {
+        outage = false
+        deps.publish({ connection: 'connected', problem: '', line: text.serverBack })
+        return
+      }
+      // A try in an outage stays red until the socket is ready.
+      if (state === 'connecting' && outage) return
+      deps.publish({ connection: state })
+    },
     onLag(ms) {
       // Round 3: how far behind the speech server is. Shown from LAG_SHOWN_MS, cleared once it is below.
       if (ms > LAG_SHOWN_MS) {
@@ -1264,7 +1290,7 @@ export function createEngine(deps: EngineDeps): Engine {
     () => {
       listening = false
       endEnrolment()
-      deps.publish({ listening: false, problem: badToken ? text.badToken : text.modelUnreachable })
+      deps.publish({ listening: false, problem: badToken ? text.badToken : text.modelUnreachable, connection: 'down' })
     },
   )
 
@@ -1274,6 +1300,8 @@ export function createEngine(deps: EngineDeps): Engine {
     badToken = status === 'bad_token'
     modelOff = status === 'no_key' || badToken
     deps.publish({ modelProblem: badToken ? text.badToken : modelOff ? inpageText.modelOff : '' })
+    // Round 9 (30.1): a 401 learnt after the socket failed names the token, not the server.
+    if (outage && badToken) deps.publish({ problem: downLine() })
   })
 
   const start = (): void => {
@@ -1286,6 +1314,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const stop = (): void => {
     if (!listening) return
     listening = false
+    outage = false
     recognizer.stop()
     // Stopped in the middle of an utterance: no final will come, so its preview goes.
     dropLive()
