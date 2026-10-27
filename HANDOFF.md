@@ -609,6 +609,28 @@ Ralf's key); the `thinking: { type: 'disabled' }` field is from third-party docs
 the DeepSeek peak hours in `scripts/prices.ts`; the `utle-spend` ring in a real Chrome (the ring
 logic is tested, the service-worker write is not).
 
+## 1l. Round 10, prompt 1 (2026-10-27 evening): the fail-closed speaker gate (#3 A+B) and the measurement tools (#4)
+
+Plan: `docs/plans/2026-10-28-round-10-testers-week.md`. Two lanes on Opus 5.5, each reviewed against the full diff
+with the proofs re-run, two defect rounds each.
+
+- **GATE (#3 A and B): PR #10, branch `r10-gate`, open, not merged (the issue's rule: Ralf reviews first).** Spec
+  ARCHITECTURE 31. Typed `SpeakerDecision` per segment (8 reasons); with only-owner on, nothing speech-driven reaches
+  the page, the model, the queue, wake or read-aloud without `verified_owner` for that segment, session and profile
+  version. Continuity (round 7's 10 s promotion of short words) is gone. The server sends no unverified words (a wordless
+  `activity` instead of partials) and closes every signalled utterance with a final or a rejection; Soniox with
+  only-owner on rejects everything (`model_unavailable`) until package E. Real-model proof: `UTLE_ONLY=onlyowner
+  UTLE_REAL=1 npx tsx extension/test/voice.ts` (stand-in owner profile in a temp `UTLE_DATA_DIR`): owner long 0.818
+  verified, strangers 0.068 to 0.388 rejected, owner "jah" (0.3 s of speech) insufficient_audio, judge 48 to 119 ms.
+  UX change: only-owner on without a profile now denies everything (profile_missing). Not done: C to F.
+- **MEASURE (#4): merged to `main` (47a7837).** `scripts/record.ts` (12 enrolment phrases first, then 31 prompts;
+  consent text is a DRAFT for Ralf), `label.ts`, `wer.ts` (TalTech, Soniox), `speaker-calibrate.ts --labels --models
+  all` (four models, buckets on seconds of speech, profile from enrol clips, FAR-target operating point), `latency.ts`.
+  Tables in `docs/proof/r10-measure.md`, synthetic only. Proving FAR at most 1 % needs about 381 stranger clips; three
+  people recording will not reach it, so real numbers will rank models, not certify the target.
+- Pre-existing on main, found here: a one-word utterance right after another voice can end with a partial and no
+  final (the recogniser's text empties at the endpoint). Closed in only-owner mode by GATE; off mode unchanged.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
