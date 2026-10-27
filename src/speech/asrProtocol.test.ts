@@ -54,6 +54,7 @@ describe('the speaker decision (round 10, 31.1)', () => {
     expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'saada', speaker: 'owner', segment: 1, decision: { reason: 'verified_owner' } }))).toEqual({ type: 'final', text: 'saada', speaker: 'owner' })
     expect(parseAsrMessage(JSON.stringify({ type: 'rejected', decision: { reason: 'rejected_other' } }))).toBeNull()
     expect(parseAsrMessage(JSON.stringify({ type: 'speakerSession', ...SESSION }))).toEqual({ type: 'speakerSession', ...SESSION })
+    expect(parseAsrMessage(JSON.stringify({ type: 'activity', text: 'leaked' }))).toEqual({ type: 'activity' })
   })
 
   it('authorizes denies missing, unannounced, other-session, other-profile, stale and inconsistent decisions', () => {

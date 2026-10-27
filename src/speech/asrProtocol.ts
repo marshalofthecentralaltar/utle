@@ -32,6 +32,8 @@ export type AsrServerMessage =
   | { type: 'final'; text: string; speaker?: Speaker; segment?: number; decision?: SpeakerDecision }
   /** Round 10 (31.2): only the owner is obeyed and this utterance was not verified as his: no words, only why. */
   | { type: 'rejected'; decision: SpeakerDecision }
+  /** Round 10 (31.2): only the owner is obeyed: speech is being decoded, words withheld until verified (replaces partial). */
+  | { type: 'activity' }
   /** Round 10 (31.2): the session and profile version every decision on this socket must carry (sent while onlyOwner is on). */
   | { type: 'speakerSession'; sessionId: string; profileVersion: string }
   /** Round 4: the voice profile was learnt (or not). Round 7: phrases is how many read phrases made it (scripted enrolment). */
@@ -188,6 +190,8 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
       const decision = parseDecision(record.decision)
       return decision === null ? null : { type: 'rejected', decision }
     }
+    case 'activity':
+      return { type: 'activity' }
     case 'speakerSession':
       return typeof record.sessionId === 'string' && typeof record.profileVersion === 'string' ? { type: 'speakerSession', sessionId: record.sessionId, profileVersion: record.profileVersion } : null
     case 'enrolled': {

@@ -420,7 +420,7 @@ describe('the speaker on a final (round 4)', () => {
     expect(sent.filter((message) => message.type === 'final')).toEqual([])
     expect(sent.filter((message) => message.type === 'rejected').map((m) => (m.type === 'rejected' ? m.decision.reason : ''))).toEqual(['rejected_other'])
     expect(gate.judged.map((frames) => frames.length)).toEqual([2])
-    expect(sent.at(-1)).toEqual({ type: 'partial', text: 'vaheleht' })
+    expect(sent.at(-1)).toEqual({ type: 'activity' })
     expect(session.stats().foreignFinals).toBe(1)
   })
 
@@ -782,10 +782,32 @@ describe('the fail-closed decision on the server (round 10, 31.2)', () => {
       expect(finals).toEqual([])
       expect(rejections).toHaveLength(1)
       expect(rejections[0]).toMatchObject({ segmentId: 1, sessionId: 'session-A', reason, verdict: reason === 'mixed_speakers' || reason === 'rejected_other' ? 'other' : 'unknown' })
-      expect(sent.filter((m) => m.type !== 'partial' && 'text' in m)).toEqual([])
+      // Partials included (round 10, review 1): no words at all leave the server.
+      expect(sent.filter((m) => 'text' in m)).toEqual([])
       expect(session.stats().foreignFinals).toBe(1)
     })
   }
+
+  it('review 1: no words but a verified final leave the server while only the owner is on, partials included; a wordless activity instead', () => {
+    const { gate, sent, loop, session } = strict()
+    gate.answer = { speaker: 'other', score: 0.2, seconds: 1.5 }
+    feed(session, loop, [1, 2, 3, 0])
+    gate.answer = { speaker: 'unknown', score: 0, seconds: 0.4 }
+    session.audio(frame(1))
+    session.audio(frame(2))
+    session.flush()
+    loop.settle()
+    gate.answer = { speaker: 'owner', score: 0.8, seconds: 1.5 }
+    feed(session, loop, [3, 1, 0])
+    const worded = sent.filter((m) => 'text' in m && m.text !== '')
+    expect(worded).toEqual([expect.objectContaining({ type: 'final', text: 'vaheleht ava', decision: expect.objectContaining({ reason: 'verified_owner' }) })])
+    expect(sent.filter((m) => m.type === 'partial')).toEqual([])
+    expect(sent.filter((m) => m.type === 'activity').length).toBeGreaterThan(0)
+    // Off again: partials with words, as before.
+    session.onlyOwner(false)
+    feed(session, loop, [1, 0])
+    expect(sent.filter((m) => m.type === 'partial').at(-1)).toEqual({ type: 'partial', text: 'ava' })
+  })
 
   it('segments count up through the session, rejected or not', () => {
     const { gate, sent, loop, session } = strict()

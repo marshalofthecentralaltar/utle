@@ -2657,8 +2657,10 @@ With onlyOwner on, the session (1) answers the client's `onlyOwner` message with
 succeeded; (2) at each final verifies the utterance's own frames (never an earlier verdict) and
 sends `{ type: 'final', text, speaker: 'owner', segment, decision }` only for `verified_owner`;
 (3) otherwise sends `{ type: 'rejected', decision }` and the words are not sent; (4) a decoder
-without `verify`, or a verify that throws or rejects, is `verification_error`, denied. Partials
-still go (the client keeps them inert, 31.3). The log line names the reason, never the words.
+without `verify`, or a verify that throws or rejects, is `verification_error`, denied. No partial
+goes either (review round 1): where the mode off sends `{ type: 'partial', text }`, the session sends
+the wordless `{ type: 'activity' }`, so no unverified word leaves the server, on the local or the
+hosted wire. The log line names the reason, never the words.
 `foreignFinals` counts every rejection.
 
 **Soniox** (`server/soniox.ts`). There is no speaker gate on the Soniox path in B (attaching
@@ -2670,8 +2672,8 @@ check (E decides the privacy side).
 
 ### 31.3 The client barrier (`src/speech/local.ts`)
 
-With `onlyOwner` on: partials are kept only to know that an utterance is in progress (for a
-flush); none reaches `onInterim`, none is a quick reply (`isInstant` is never asked of a partial,
+With `onlyOwner` on: an `activity` message (or a partial, from an older server) only marks an
+utterance in progress (for a flush, and to keep the assembler's hold alive); none reaches `onInterim`, none is a quick reply (`isInstant` is never asked of a partial,
 so `releaseInstant` never runs), and a stop never delivers the words in progress. A final reaches
 the assembler only when `authorizes` holds for its own decision and segment; every other final and
 every `rejected` message is a drop (`onForeign(streak, reason)`). The assembler's utterances then

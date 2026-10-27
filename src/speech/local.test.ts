@@ -876,6 +876,24 @@ describe('local recogniser (browser side)', () => {
         expect(h.onForeign).toHaveBeenCalledTimes(2)
       })
 
+      it('review 1: a wordless activity keeps the hold alive and makes a flush wait for the final, showing nothing', () => {
+        const h = spies()
+        const r = createLocalRecognizer(h, () => false, { onUnavailable: () => undefined, connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), onlyOwner: true, holdMs: 150 })
+        r.start()
+        socket().says({ type: 'ready' })
+        announce()
+        ownerFinal('kirjuta Marile')
+        vi.advanceTimersByTime(100)
+        socket().says({ type: 'activity' })
+        vi.advanceTimersByTime(100)
+        expect(h.onUtterance).not.toHaveBeenCalled()
+        r.flush?.()
+        expect(h.onUtterance).not.toHaveBeenCalled()
+        ownerFinal('et ma jõuan')
+        expect(h.onUtterance.mock.calls.map(([t]) => t)).toEqual(['kirjuta Marile et ma jõuan'])
+        expect(h.onInterim.mock.calls.filter(([t]) => t !== '')).toEqual([])
+      })
+
       it('a stop with a flush pending delivers no unverified words', () => {
         const h = spies()
         const r = strictWith(h)

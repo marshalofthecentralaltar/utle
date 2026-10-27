@@ -57,6 +57,9 @@ export function reconnectDelay(attempt: number): number {
   return RECONNECT_MS[Math.min(Math.max(attempt, 1), RECONNECT_MS.length) - 1] ?? 5000
 }
 
+/** Round 10 (31.3): stands for an utterance in progress whose words the server withheld; never delivered. */
+const SPEAKING = '\u2026'
+
 /** Round 7: after this many dropped finals in a row the bar says once to teach the voice again. */
 export const RETRAIN_AFTER_DROPS = 3
 
@@ -400,6 +403,11 @@ export function createLocalRecognizer(
           return
         case 'rejected':
           if (strict) onForeignFinal(message.decision.reason)
+          return
+        case 'activity':
+          // Round 10 (31.2): speech in progress, words withheld by the server: an utterance is in
+          // progress (for a flush) and the hold stays alive; nothing is shown or typed.
+          if (strict) onPartial(SPEAKING)
           return
         case 'speakerSession':
           // A new session starts the segments over; a new profile version (after enrolment) in the same session does not.

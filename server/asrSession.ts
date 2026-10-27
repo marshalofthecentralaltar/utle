@@ -513,7 +513,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     // Round 7: text with no letter or digit (a lone "." the recogniser can make of a breath) is no words.
     const heard = result.text.trim()
     const text = /[\p{L}\p{N}]/u.test(heard) ? heard : ''
-    if (text !== last && text !== '') send({ type: 'partial', text })
+    // Round 10 (31.2): with only the owner on, unverified words never leave the server: the client
+    // gets a wordless activity signal instead of the partial (it keeps the assembler's hold alive).
+    if (text !== last && text !== '') send(onlyOwner ? { type: 'activity' } : { type: 'partial', text })
     last = text
     if (!result.endpoint) {
       then()
