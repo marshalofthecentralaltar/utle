@@ -6,7 +6,8 @@ import { STRINGS } from '../core/strings.ts'
 const TIMEOUT_MS = 25_000
 
 const ErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string() }) })
-const StatusSchema = z.object({ mode: z.enum(['live', 'rehearsal']), model: z.string().nullable() })
+// Round 9 (30.5.2): model became { primary, fallback, last }; this page reads only the mode.
+const StatusSchema = z.object({ mode: z.enum(['live', 'rehearsal']) })
 
 export type ServerStatus = z.infer<typeof StatusSchema>
 

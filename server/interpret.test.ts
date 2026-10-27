@@ -3,9 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SAMPLE_DOC } from '../src/core/document.ts'
 import type { InterpretRequest } from '../src/core/intent.ts'
 import { InterpretError, interpret } from './interpret.ts'
-import type { MessagesClient, ModelReply } from './interpret.ts'
+import { anthropicModel } from './model/anthropic.ts'
+import type { AnthropicReply as ModelReply, MessagesClient } from './model/anthropic.ts'
 
 type CreateParams = Parameters<MessagesClient['messages']['create']>[0]
+
+/** Round 9: interpret goes through the one door; here the real Anthropic adapter over a fake SDK client. */
+const via = (client: MessagesClient, id = 'm') => ({ model: anthropicModel(client, id) })
 
 function toolCall(name: string, input: unknown, id = 'toolu_1'): ModelReply {
   return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name, input }] }
@@ -50,7 +54,7 @@ afterEach(() => {
 describe('interpret', () => {
   it('turns a valid propose_edit call into an intent with one model call', async () => {
     const { client, calls } = fakeClient(FRIDAY_CALL)
-    const intent = await interpret(request(), { client, model: 'm' })
+    const intent = await interpret(request(), via(client))
     expect(intent).toEqual({
       kind: 'propose_edit',
       summary: 'Budget: Thursday becomes Friday.',
@@ -73,7 +77,7 @@ describe('interpret', () => {
       toolCall('navigate', { block_id: 'b3', read_aloud: true }),
       toolCall('not_understood', { message: 'Say that again.' }),
     )
-    const deps = { client, model: 'm' }
+    const deps = via(client)
     const edit = await interpret(request(), deps)
     expect(edit.kind === 'propose_edit' && edit.ops.map((o) => o.op)).toEqual([
       'insert_block',
@@ -85,14 +89,14 @@ describe('interpret', () => {
     expect(await interpret(request(), deps)).toEqual({ kind: 'not_understood', message: 'Say that again.' })
   })
 
-  it('F4 (30.3): lets the model choose (auto, one call at most) and asks for the tool in the prompt, four strict tools', async () => {
+  it('asks for at most one call to one of four strict tools, with tool_choice auto (forced tool use is a 400 on Sonnet 5.5 and Opus 5.5)', async () => {
     const { client, calls } = fakeClient(FRIDAY_CALL)
-    await interpret(request(), { client, model: 'claude-haiku-4-5' })
+    await interpret(request(), via(client, 'claude-haiku-4-5'))
     const params = calls[0]
     expect(params?.model).toBe('claude-haiku-4-5')
     // F4: 'any' is answered 400 by the current models with these tools (round 9 plan §0).
     expect(params?.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true })
-    expect(String(params?.system)).toContain('Respond by calling exactly one tool. Never reply in text.')
+    expect(JSON.stringify(params?.system)).toContain('Respond by calling exactly one tool. Never reply in text.')
     const tools = params?.tools ?? []
     const names = tools.map((t) => ('name' in t ? t.name : ''))
     expect(names.sort()).toEqual(['ask_which', 'navigate', 'not_understood', 'propose_edit'])
@@ -101,7 +105,7 @@ describe('interpret', () => {
 
   it('sends the document with numbers and ids, and the utterance', async () => {
     const { client, calls } = fakeClient(FRIDAY_CALL)
-    await interpret(request(), { client, model: 'm' })
+    await interpret(request(), via(client))
     const text = lastUserText(calls[0] as CreateParams)
     expect(text).toContain('#6 id=b6 p: Spending is within plan.')
     expect(text).toContain('#3 id=b3 h2: Summary')
@@ -118,7 +122,7 @@ describe('interpret', () => {
           ops: [{ op: 'replace_text', blockId: 'b6', find: 'Thursday', replace: 'Friday' }],
         },
       }),
-      { client, model: 'm' },
+      via(client),
     )
     const text = lastUserText(calls[0] as CreateParams)
     expect(text).toContain('Budget: Thursday becomes Friday.')
@@ -140,7 +144,7 @@ describe('interpret', () => {
           picked: 1,
         },
       }),
-      { client, model: 'm' },
+      via(client),
     )
     const text = lastUserText(calls[0] as CreateParams)
     expect(text).toContain('2. id=b10 "The second supplier has not confirmed a start date."')
@@ -154,7 +158,7 @@ describe('interpret', () => {
       'toolu_bad',
     )
     const { client, calls } = fakeClient(ambiguous, FRIDAY_CALL)
-    const intent = await interpret(request(), { client, model: 'm' })
+    const intent = await interpret(request(), via(client))
     expect(intent.kind).toBe('propose_edit')
     expect(calls).toHaveLength(2)
     const retry = calls[1]?.messages ?? []
@@ -173,7 +177,7 @@ describe('interpret', () => {
       ops: [{ op: 'replace_text', block_id: 'b6', find: 'Monday', replace: 'Friday' }],
     })
     const { client, calls } = fakeClient(bad, bad)
-    const intent = await interpret(request(), { client, model: 'm' })
+    const intent = await interpret(request(), via(client))
     expect(intent.kind).toBe('not_understood')
     expect(calls).toHaveLength(2)
   })
@@ -195,7 +199,7 @@ describe('interpret', () => {
     ]
     for (const bad of cases) {
       const { client, calls } = fakeClient(bad, FRIDAY_CALL)
-      const intent = await interpret(request(), { client, model: 'm' })
+      const intent = await interpret(request(), via(client))
       expect(intent.kind).toBe('propose_edit')
       expect(calls).toHaveLength(2)
     }
@@ -209,15 +213,15 @@ describe('interpret', () => {
     ]
     for (const reply of replies) {
       const { client, calls } = fakeClient(reply)
-      expect((await interpret(request(), { client, model: 'm' })).kind).toBe('not_understood')
+      expect((await interpret(request(), via(client))).kind).toBe('not_understood')
       expect(calls).toHaveLength(1)
     }
   })
 
   it('rejects a malformed request without calling the model', async () => {
     const { client, calls } = fakeClient(FRIDAY_CALL)
-    await expect(interpret({ utterance: 'x' }, { client, model: 'm' })).rejects.toMatchObject({ code: 'bad_request' })
-    await expect(interpret(request({ utterance: '   ' }), { client, model: 'm' })).rejects.toBeInstanceOf(InterpretError)
+    await expect(interpret({ utterance: 'x' }, via(client))).rejects.toMatchObject({ code: 'bad_request' })
+    await expect(interpret(request({ utterance: '   ' }), via(client))).rejects.toBeInstanceOf(InterpretError)
     expect(calls).toHaveLength(0)
   })
 
@@ -233,7 +237,7 @@ describe('interpret', () => {
     ]
     for (const [error, code] of cases) {
       const { client } = fakeClient(error)
-      await expect(interpret(request(), { client, model: 'm' })).rejects.toMatchObject({ code })
+      await expect(interpret(request(), via(client))).rejects.toMatchObject({ code })
     }
   })
 
@@ -246,7 +250,7 @@ describe('interpret', () => {
       ops: [{ op: 'replace_text', block_id: 'b6', find: 'Monday', replace: 'Friday' }],
     })
     const { client } = fakeClient(bad, FRIDAY_CALL)
-    await interpret(request(), { client, model: 'm' })
+    await interpret(request(), via(client))
     const logged = spies.flatMap((spy) => spy.mock.calls.flat().map(String)).join('\n')
     expect(logged).not.toContain('Spending is within plan')
     expect(logged).not.toContain('budget deadline')

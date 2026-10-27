@@ -556,6 +556,26 @@ justification. Found, not fixed (outside the lane): the settings page's keyboard
 "Klaviatuuriga (Tom)" / "By keyboard (Tom)" (`src/core/strings.ts` `formTitle`), a person's name in
 a user-facing heading; the store screenshot of the settings page shows the Server section instead.
 
+## 1k-MODEL. Round 9, MODEL lane (2026-10-27): one door to any model, cost per completed task
+
+What works: every model call goes through `server/model/` (ARCHITECTURE 30.5). `UTLE_MODEL` takes
+`provider:model` (bare ids stay Anthropic), `UTLE_FALLBACK` names a second model asked only after a
+fast failure, never after a timeout; `/api/status` says `model: { primary, fallback, last }`.
+Answers carry `usage`, the server log gains `in= out= cached= provider=`, the engine emits one
+`[spend]` record per task (done, stopped, unclear, cancelled, tookTooLong, rules) and the service
+worker keeps the last 200 under `utle-spend`. `/api/interpret` uses `tool_choice: auto` now.
+Proven by: 47 tests in `server/model/` (fakes only), `intent.test.ts` on a fake Model, the spend
+tests in `engine.test.ts` and `spend.test.ts`, three dev-server starts on 5175 (the anthropic form,
+the bare form, and `deepseek:` without its key refusing to start with the variable named), one live
+ask showing `last: primary`, and the eval on `anthropic:claude-sonnet-5-5` at 2026-10-27 08:06 UTC:
+63 / 78 passed before the default-model fixes; after them (ARCHITECTURE 30.5.6: two wrapped shapes
+lifted, three prompt lines, a guard against repeating a failed click, five cases widened or
+corrected) Sonnet passes 77 / 78 at $0.0057 per completed task, p50 1.6 s, and Opus 77 / 78 the same
+hour (the plan's checklist, row 1). Not verified: anything on DeepSeek or a second host (lane C, needs
+Ralf's key); the `thinking: { type: 'disabled' }` field is from third-party docs, not a live call;
+the DeepSeek peak hours in `scripts/prices.ts`; the `utle-spend` ring in a real Chrome (the ring
+logic is tested, the service-worker write is not).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

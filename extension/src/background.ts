@@ -21,6 +21,9 @@ import { isMailPage } from './sites.ts'
 // ---------- wake word and places (29.4) ----------
 import { PLACES_KEY, placeNoun, placeRowsFrom, placeRowsWith } from '../../src/core/places.ts'
 import { WAKE_WORD_KEY, wakeWordFrom } from '../../src/core/wake.ts'
+// Round 9 (30.5.4): the offscreen engine's spend records, kept in chrome.storage.local (utle-spend).
+import { listenForSpend } from './spendStore.ts'
+listenForSpend()
 // ---------- end of wake word and places ----------
 
 /** Where the section 20 development page runs unless the options page says otherwise. */

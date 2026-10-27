@@ -4,15 +4,17 @@
  *
  *   npm run smoke
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { SAMPLE_DOC } from '../src/core/document.ts'
 import type { Intent } from '../src/core/intent.ts'
 import { initialSession, step } from '../src/core/session.ts'
 import type { Session } from '../src/core/session.ts'
 import { InterpretError, interpret } from '../server/interpret.ts'
-import type { MessagesClient } from '../server/interpret.ts'
+import { modelFromEnv } from '../server/model/index.ts'
+import type { Model } from '../server/model/index.ts'
 
-const MODEL = process.env.UTLE_MODEL ?? 'claude-haiku-4-5'
+// Round 9 (30.5): the model through the one door; UTLE_MODEL takes the provider:model syntax.
+const configured = modelFromEnv({ ...process.env, UTLE_MODEL: process.env.UTLE_MODEL ?? 'claude-haiku-4-5' })
+const MODEL = configured.primary
 const MAX_MODEL_CALLS = 14
 
 const LINES = [
@@ -34,14 +36,11 @@ const LINES = [
 const LONG_SENTENCE = 'The supplier reported two invoice errors in the first week, which were corrected the same day.'
 
 let modelCalls = 0
-const anthropic = new Anthropic({ maxRetries: 1 })
-const client: MessagesClient = {
-  messages: {
-    create: (params, options) => {
-      modelCalls += 1
-      if (modelCalls > MAX_MODEL_CALLS) throw new Error(`smoke: more than ${MAX_MODEL_CALLS} model calls, stopping`)
-      return anthropic.messages.create(params, options)
-    },
+const model: Model = {
+  ask: (ask) => {
+    modelCalls += 1
+    if (modelCalls > MAX_MODEL_CALLS) throw new Error(`smoke: more than ${MAX_MODEL_CALLS} model calls, stopping`)
+    return configured.model.ask(ask)
   },
 }
 
@@ -72,7 +71,7 @@ async function main(): Promise<void> {
     if (effect) {
       const started = Date.now()
       try {
-        const intent = await interpret(effect.request, { client, model: MODEL })
+        const intent = await interpret(effect.request, { model })
         outcome = `${describe(intent)} ${Date.now() - started} ms`
         if (intent.kind === 'not_understood') failures.push(`line ${index + 1}: not understood`)
         session = step(session, { type: 'intent', seq: effect.seq, intent }).state

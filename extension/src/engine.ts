@@ -8,6 +8,7 @@ import { chainLine, firstGoal, hasConnective } from '../../src/core/chain.ts'
 import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import { savedNames } from '../../src/core/saved.ts'
+import type { SpendOutcome, SpendRecord } from '../../src/core/spend.ts'
 import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
@@ -94,6 +95,8 @@ export interface EngineDeps {
   // ---------- the first run (30.1, ONBOARD lane) ----------
   /** The server's address is hosted (wss://, or a host other than this computer): the down line says so. */
   hosted?: boolean
+  /** Round 9 (30.5.4): one record per task as it ends, never with words. Absent: nothing is kept. */
+  spend?(record: SpendRecord): void
 }
 
 export interface Engine {
@@ -374,6 +377,14 @@ export function createEngine(deps: EngineDeps): Engine {
     dropped: boolean
     /** Round 8 (29.2): it came more than DOCUMENT_PAUSE_MS after the previous final; in a document the open sentence is closed first. */
     paused?: boolean
+    /** Round 9 (30.5.4): what the model work cost, summed in askOnce. */
+    spend: { asks: number; input: number; output: number; cacheRead: number; ms: number; provider: string; model: string; steps: number; goals: number }
+    /** Round 9: how the model work ended, when it got that far; null otherwise. */
+    ending: 'done' | 'stopped' | 'unclear' | null
+    /** Round 9: the watchdog gave it up. */
+    timedOut: boolean
+    /** Round 9: a type-first job whose utterance a verification took over; the verification's job reports. */
+    handedOff: boolean
   }
 
   /** Every job not finished: the one in its turn of the queue, those waiting for it, the verifications. */
@@ -434,7 +445,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // ---- end of busy seconds ----
 
   const newJob = (utterance: string, send: boolean): Job => {
-    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false, started: null, watchdog: null, dropped: false }
+    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false, started: null, watchdog: null, dropped: false, spend: { asks: 0, input: 0, output: 0, cacheRead: 0, ms: 0, provider: '', model: '', steps: 0, goals: 1 }, ending: null, timedOut: false, handedOff: false }
     jobs.add(job)
     return job
   }
@@ -463,6 +474,7 @@ export function createEngine(deps: EngineDeps): Engine {
   }
   const tookTooLong = (job: Job): void => {
     if (!jobs.has(job) || job.cancelled) return
+    job.timedOut = true
     job.dropped = true
     giveUp(job)
     if (job.chain !== null) showChain(null)
@@ -481,11 +493,24 @@ export function createEngine(deps: EngineDeps): Engine {
     watch(job)
     busyCheck()
   }
+  /** Round 9 (30.5.4): how a task ended, for its spend record. */
+  const outcomeOf = (job: Job): SpendOutcome => {
+    if (job.timedOut) return 'tookTooLong'
+    if (job.cancelled || job.dropped) return 'cancelled'
+    if (job.spend.asks === 0) return 'rules'
+    return job.ending ?? 'stopped'
+  }
+  /** Round 9 (30.5.4): one record per task, at its end; none for a job a verification took over. */
+  const reportSpend = (job: Job): void => {
+    if (job.handedOff || !deps.spend) return
+    const { asks, steps, goals, input, cacheRead, output, ms, provider, model } = job.spend
+    deps.spend({ outcome: outcomeOf(job), asks, steps, goals, input, cacheRead, output, ms, provider, model })
+  }
   /** The job is over, however it ended. */
   const endWork = (job: Job): void => {
     unwatch(job)
     job.started = null
-    jobs.delete(job)
+    if (jobs.delete(job)) reportSpend(job)
     busyCheck()
   }
   // ---- end of the watchdog ----
@@ -616,7 +641,19 @@ export function createEngine(deps: EngineDeps): Engine {
       const request: IntentRequest = { lang: deps.lang, utterance: (chain === null ? job.utterance : chain.goal).slice(0, UTTERANCE_CHARS), page, tabs, recent: recentBefore, care: careOf(job) }
       if (steps.length > 0) request.steps = steps
       if (chain !== null) request.chain = chain
+      const asked = Date.now()
       answer = await askWithTimeout(request, controller)
+      // Round 9 (30.5.4): every ask counts, a failed one with its time and no tokens.
+      job.spend.asks += 1
+      job.spend.ms += Date.now() - asked
+      if (!('error' in answer) && answer.usage) {
+        const { usage } = answer
+        job.spend.input += usage.input + usage.cacheWrite
+        job.spend.output += usage.output
+        job.spend.cacheRead += usage.cacheRead
+        job.spend.provider = usage.provider
+        job.spend.model = usage.model
+      }
     } finally {
       job.controller = null
     }
@@ -732,7 +769,12 @@ export function createEngine(deps: EngineDeps): Engine {
       const outcome = await perform(step, u, '', job)
       u = null
       if (job.dropped) return 'stopped'
-      if (heard.intent.kind === 'unclear') return steps.some((s) => s.ok) ? 'done' : 'stopped'
+      if (heard.intent.kind === 'unclear') {
+        if (steps.some((s) => s.ok)) return 'done'
+        // Round 9: an unclear with no step of it run is its own ending.
+        if (steps.length === 0) job.ending = 'unclear'
+        return 'stopped'
+      }
       // A step with nothing to run did nothing: the model hears that, not a success.
       const ok = outcome.ok && step.commands.length > 0
       if (!ok) failures += 1
@@ -768,14 +810,22 @@ export function createEngine(deps: EngineDeps): Engine {
     let heard = first
     let since = job.arrived
     if (job.chain !== null) showChain(job.chain)
+    // Round 9 (30.5.4): done only when the last goal ended done and nothing remained.
+    let finished = false
     try {
       for (;;) {
         const end = await runGoal(job, box, recentBefore, heard, u, since, Math.min(MAX_INTENT_STEPS, MAX_CHAIN_STEPS - taken.n), taken)
         u = null
         const chain = job.chain
-        if (end !== 'done' || chain === null) break
+        if (end !== 'done' || chain === null) {
+          finished = end === 'done'
+          break
+        }
         const [goal, ...remaining] = chain.remaining
-        if (goal === undefined) break
+        if (goal === undefined) {
+          finished = true
+          break
+        }
         if (taken.n >= MAX_CHAIN_STEPS || Date.now() - started > MAX_CHAIN_MS || job.interrupted) break
         job.chain = { ...chain, completed: clipGoals([...chain.completed, chain.goal]), goal, remaining }
         showChain(job.chain)
@@ -794,6 +844,9 @@ export function createEngine(deps: EngineDeps): Engine {
       const chain = job.chain
       lastDone = clipGoals(chain === null ? [job.utterance] : [...chain.completed, chain.goal])
       if (chain !== null) showChain(null)
+      job.ending ??= finished ? 'done' : 'stopped'
+      job.spend.steps += taken.n
+      job.spend.goals = chain === null ? 1 : chain.completed.length + 1
     }
   }
 
@@ -820,9 +873,15 @@ export function createEngine(deps: EngineDeps): Engine {
       beginWork(job)
       try {
         const heard = await askOnce(job, box, box.text, recentBefore, [])
-        if (heard === null || heard.intent.kind === 'dictate' || heard.intent.kind === 'unclear') return
+        if (heard === null) return
+        // Round 9 (30.5.4): the words stay as typed: dictation is the task done, unclear its own ending.
+        if (heard.intent.kind === 'dictate' || heard.intent.kind === 'unclear') {
+          job.ending = heard.intent.kind === 'dictate' ? 'done' : 'unclear'
+          return
+        }
         // Round 5 (review M7): a long sentence judged one plain command with nothing after it stays.
         if (heard.intent.kind === 'command' && !heard.more && heard.plan.length === 0 && wordCount(job.utterance) >= LONG_COMMAND_WORDS) {
+          job.ending = 'done'
           say(inpageText.keptWords)
           return
         }
@@ -919,7 +978,11 @@ export function createEngine(deps: EngineDeps): Engine {
         const typed = await perform(rules, u)
         const typedSession = session
         const expected = rules.commands.reduce<string | null>((text, c) => (c.kind === 'setText' ? c.text : text), null)
-        if (!job.cancelled) verify(job, box, before, typedSession, typed, expected, recentBefore)
+        if (!job.cancelled) {
+          // Round 9: the verification's job reports the task's spend, not this one.
+          job.handedOff = true
+          verify(job, box, before, typedSession, typed, expected, recentBefore)
+        }
         return
       }
       // Nothing was typed, so there is nothing to show yet: wait for the model.
@@ -945,6 +1008,7 @@ export function createEngine(deps: EngineDeps): Engine {
         // Review of round 5: in a field he armed himself, a model that cannot tell leaves the
         // typing to the rules, as type-first does everywhere else; nothing is lost to "ei saanud aru".
         if (single && box.armed && heard.intent.kind === 'unclear' && heard.plan.length === 0) {
+          job.ending = 'unclear'
           await perform(rules, u, '', job)
           return
         }

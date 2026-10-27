@@ -11,6 +11,8 @@ import type { AudioSource } from '../../src/speech/local.ts'
 import type { Recognizer } from '../../src/speech/recognizer.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { askTimeoutMs, createEngine } from './engine.ts'
+import { spendLine } from '../../src/core/spend.ts'
+import type { SpendMessage } from './spendStore.ts'
 import type { AskFailure, InpageLogic } from './engine.ts'
 import type { PlacesAnswer, RunAnswer, SavedAnswer, StripState, TabsAnswer, ToBackground, ToOffscreen } from './messages.ts'
 import { savedFrom } from '../../src/core/saved.ts'
@@ -327,6 +329,11 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
 
   const engine = createEngine({
     logic,
+    // Round 9 (30.5.4): one record per task to the console and to the service worker's ring; never words.
+    spend: (record) => {
+      console.info(spendLine(record))
+      chrome.runtime.sendMessage({ type: 'utle-spend', record } satisfies SpendMessage).catch(() => undefined)
+    },
     lang: 'et',
     run,
     publish: readAloud.publish,

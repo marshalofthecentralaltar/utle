@@ -3,17 +3,21 @@
  * pages, through the real model and the real pageIntent. Multi-step cases simulate the engine's
  * loop (M7.2): each step has its own page, the earlier steps go back as `steps`, and a step can be
  * reported as failed to test recovery. Prints pass or fail with the latency per ask, then p50/p95
- * latency and the pass rate. Spends a few cents.
+ * latency and the pass rate. Round 9 (ARCHITECTURE 30.5.5): each case is a task; per case it prints
+ * the tokens and dollars, and at the end the table that decides anything: $ per completed task
+ * (total spend over the cases passed, so failures pay in the denominator). Spends a few cents.
  *
  *   npx tsx scripts/intent-eval.ts
- *     ANTHROPIC_API_KEY        required
- *     UTLE_MODEL=<id>          the model (default claude-opus-5-5)
- *     UTLE_EVAL_ONLY=<text>    only cases whose name, utterance or site contains the text
- *     UTLE_EVAL_JSON=<path>    also write every ask's result to this JSON file
+ *     UTLE_MODEL=<provider:model>    the model, as the server reads it (default the server's,
+ *                                    anthropic:claude-sonnet-5-5); its key in the environment
+ *                                    (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, ...)
+ *     UTLE_FALLBACK=<provider:model> optional, as the server reads it
+ *     UTLE_EVAL_ONLY=<text>          only cases whose name, utterance or site contains the text
+ *     UTLE_EVAL_JSON=<path>          also write every ask's result and every task's record to this JSON file
+ *     UTLE_EVAL_RAW=1                also print the model's raw tool input on every ask
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { writeFileSync } from 'node:fs'
-import { hasConnective } from '../src/core/chain.ts'
+import { firstGoal, hasConnective } from '../src/core/chain.ts'
 import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, TabSummary } from '../src/core/pageIntent.ts'
 // ---------- wake word and places (29.4) ----------
 import { DEFAULT_PLACES, placeNouns } from '../src/core/places.ts'
@@ -21,12 +25,37 @@ import { DEFAULT_PLACES, placeNouns } from '../src/core/places.ts'
 import type { Lang } from '../src/core/strings.ts'
 import type { PageContext } from '../src/browser/protocol.ts'
 import { pageIntent } from '../server/intent.ts'
-import type { MessagesClient } from '../server/interpret.ts'
+import { ModelConfigError, NO_USAGE, modelFromEnv } from '../server/model/index.ts'
+import type { Model, ModelUsage } from '../server/model/index.ts'
+import { costOf, deepseekPeak } from './prices.ts'
 
 /** Round 5: the engine's CAREFUL_WORDS (extension/src/engine.ts): from this many words the ask is careful. */
 const CAREFUL_WORDS = 8
 
-const MODEL = process.env.UTLE_MODEL ?? 'claude-opus-5-5'
+function configuredModel(): ReturnType<typeof modelFromEnv> {
+  try {
+    return modelFromEnv(process.env)
+  } catch (error) {
+    if (error instanceof ModelConfigError) {
+      console.error(`intent-eval: ${error.message}`)
+      process.exit(2)
+    }
+    throw error
+  }
+}
+const CONFIGURED = configuredModel()
+const MODEL = CONFIGURED.primary
+/** UTLE_EVAL_RAW=1: print the model's raw tool input on every ask, for triage (synthetic pages only). */
+const RAW = process.env.UTLE_EVAL_RAW === '1'
+const EVAL_MODEL: Model = RAW
+  ? {
+      ask: async (ask) => {
+        const reply = await CONFIGURED.model.ask(ask)
+        console.log(`  raw stop=${reply.stop} ${JSON.stringify(reply.call?.input ?? null)}`)
+        return reply
+      },
+    }
+  : CONFIGURED.model
 const ONLY = (process.env.UTLE_EVAL_ONLY ?? '').toLowerCase()
 const JSON_PATH = process.env.UTLE_EVAL_JSON
 
@@ -556,7 +585,8 @@ const CASES: Case[] = [
   // the message; openConversation is wrong when he is already in Mari's chat. unclear (tell him to
   // say "saada") is the safe answer; send is accepted because he plainly asked for it in Mari's chat.
   one('saada see marile', WHATSAPP_CHAT, [UNCLEAR, { kind: 'send' }]),
-  one('homme asemel täna', WHATSAPP_CHAT, { kind: 'edit', edit: 'replace' }),
+  // Round 9: the box must hold the word to swap; with 'Tere Mari' an unclear (Opus 5.5's answer) was the right one.
+  one('homme asemel täna', { ...WHATSAPP_CHAT, box: { ...WHATSAPP_CHAT.box, text: 'Tulen homme' } }, { kind: 'edit', edit: 'replace' }),
 
   // --- Google, tabs, history -------------------------------------------------------------------
   one('mine vatsapi', GOOGLE, goTo('whatsapp')),
@@ -574,7 +604,8 @@ const CASES: Case[] = [
   one('ava sport', NEWS, click(4)),
 
   // --- Gmail: inbox rows and a compose form ----------------------------------------------------
-  one('kirjuta uus kiri', GMAIL_INBOX, click(2)),
+  // Round 9: the compose command (29.3) is as good as clicking Koosta.
+  one('kirjuta uus kiri', GMAIL_INBOX, [click(2), { kind: 'command', command: 'compose' }]),
   one('ava kiri jaanilt', GMAIL_INBOX, click(5)),
   one('kirjuta teema', GMAIL_COMPOSE, focus(2)),
   one('lisa saaja', GMAIL_COMPOSE, focus(1)),
@@ -606,8 +637,9 @@ const CASES: Case[] = [
 
   // --- New tab: sites, sleep, chit-chat --------------------------------------------------------
   one('whatsapp', NEW_TAB, goTo('whatsapp')),
-  one('mina youtube', NEW_TAB, goTo('youtube')),
-  one('open youtube', NEW_TAB, goTo('youtube'), { lang: 'en' }),
+  // Round 9 (30.5.6): clicking the YouTube tile on the new-tab page is as good as going to the address.
+  one('mina youtube', NEW_TAB, [goTo('youtube'), click(2)]),
+  one('open youtube', NEW_TAB, [goTo('youtube'), click(2)], { lang: 'en' }),
   one('puhka', NEW_TAB, { kind: 'sleep' }),
   one('kirjuta midagi', NEW_TAB, UNCLEAR),
   one('mis kell on', NEW_TAB, UNCLEAR),
@@ -716,7 +748,31 @@ interface AskResult {
   wanted: Expectation | Expectation[]
   problem: string | null
   error?: string
+  care: 'quick' | 'careful'
+  /** Round 9: the ask's tokens (zero when it failed) and their price, and who answered. */
+  usage: ModelUsage
+  usd: number
+  provider: string
 }
+
+/** Round 9 (30.5.5): one case as one task, for the table and UTLE_EVAL_JSON. Counts only. */
+interface TaskRecord {
+  name: string
+  passed: boolean
+  asks: number
+  input: number
+  cacheRead: number
+  output: number
+  usd: number
+  ms: number
+}
+
+const sumUsage = (asks: readonly AskResult[]): ModelUsage =>
+  asks.reduce((t, a) => ({ input: t.input + a.usage.input, output: t.output + a.usage.output, cacheRead: t.cacheRead + a.usage.cacheRead, cacheWrite: t.cacheWrite + a.usage.cacheWrite }), NO_USAGE)
+const sumUsd = (asks: readonly AskResult[]): number => asks.reduce((t, a) => t + a.usd, 0)
+const dollars = (usd: number): string => (Number.isFinite(usd) ? `$${usd.toFixed(5)}` : '$?')
+/** Tokens not read from the cache: full-price input and cache writes. */
+const fresh = (u: ModelUsage): number => u.input + u.cacheWrite
 
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0
@@ -728,17 +784,23 @@ function siteOf(page: PageContext): string {
   return page.url.startsWith('chrome://') ? page.url : new URL(page.url).hostname
 }
 
-async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boolean; asks: AskResult[] }> {
+async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: AskResult[] }> {
   const asks: AskResult[] = []
   const steps: IntentStep[] = []
   let passed = true
+  // Round 9 (30.5.6): a multi-step case written as one goal (done:false between its steps) may be
+  // answered the round 4 way: done:true for the first goal with the rest in plan. The engine then
+  // runs the rest as a chain, so the eval does too: the chain it derives is asked for the next steps.
+  let derived = null as IntentChain | null
+  let previousGoal: string | undefined
   for (const [i, step] of c.steps.entries()) {
+    const chain = step.chain ?? derived ?? undefined
     // Round 4: a new chain goal starts with no steps, as the engine asks it.
-    const previous = c.steps[i - 1]
-    if (step.chain !== undefined && step.chain.goal !== previous?.chain?.goal) steps.length = 0
-    const utterance = step.utterance ?? c.utterance
+    if (chain !== undefined && chain.goal !== previousGoal) steps.length = 0
+    previousGoal = chain?.goal
+    const utterance = step.utterance ?? (step.chain === undefined && derived !== null ? derived.goal : c.utterance)
     // Round 5: care as the engine chooses it: a chain, eight words or more, or a connective is careful.
-    const care: IntentRequest['care'] = step.chain !== undefined || c.steps.some((s) => s.chain !== undefined) || utterance.trim().split(/\s+/).length >= CAREFUL_WORDS || hasConnective(utterance) ? 'careful' : 'quick'
+    const care: IntentRequest['care'] = chain !== undefined || c.steps.some((s) => s.chain !== undefined) || c.utterance.trim().split(/\s+/).length >= CAREFUL_WORDS || hasConnective(c.utterance) ? 'careful' : 'quick'
     const request: IntentRequest = {
       lang: c.lang ?? 'et',
       utterance,
@@ -747,14 +809,14 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
       recent: c.recent ?? [],
       care,
       ...(steps.length > 0 ? { steps: [...steps] } : {}),
-      ...(step.chain !== undefined ? { chain: step.chain } : {}),
+      ...(chain !== undefined ? { chain } : {}),
     }
     const site = siteOf(step.page)
     const started = Date.now()
     let answer: IntentAnswer | null = null
     let error: string | undefined
     try {
-      answer = await pageIntent(request, { client, model: MODEL })
+      answer = await pageIntent(request, { model })
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
     }
@@ -763,8 +825,10 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
     if (answer && problem === null) {
       problem = matches(answer.intent, step.expect)
       const done = answer.done !== false
-      if (problem === null && step.done !== undefined && done !== step.done) problem = `done ${done}`
       const planned = answer.plan?.length ?? 0
+      // done:true with goals left (in its plan, or in the derived chain) carries on as a chain: the same as done:false here.
+      const carriesOn = done && step.done === false && step.chain === undefined && (planned > 0 || (derived?.remaining.length ?? 0) > 0)
+      if (problem === null && step.done !== undefined && done !== step.done && !carriesOn) problem = `done ${done}`
       if (problem === null && step.plan !== undefined && planned !== step.plan) problem = `plan ${JSON.stringify(answer.plan ?? [])}`
     }
     const ok = problem === null
@@ -781,13 +845,17 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
       wanted: step.expect,
       problem,
       ...(error ? { error } : {}),
+      care,
+      usage: answer?.usage ? { input: answer.usage.input, output: answer.usage.output, cacheRead: answer.usage.cacheRead, cacheWrite: answer.usage.cacheWrite } : NO_USAGE,
+      usd: answer?.usage ? costOf(answer.usage.model, answer.usage, new Date(started)) : 0,
+      provider: answer?.usage?.provider ?? '',
     }
     asks.push(result)
     const label = c.steps.length > 1 ? `${c.name} [${i + 1}/${c.steps.length}]` : `"${c.utterance}"`
     const tail = problem ? ` (wanted ${JSON.stringify(step.expect)}, got ${problem})` : ''
     const plan = answer?.plan && answer.plan.length > 0 ? ` plan=${JSON.stringify(answer.plan)}` : ''
     console.log(
-      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms ${care.padEnd(7)} ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${plan}${tail}`,
+      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms ${care.padEnd(7)} ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${plan}${tail} [in=${fresh(result.usage)} cached=${result.usage.cacheRead} out=${result.usage.output} ${dollars(result.usd)}${result.provider !== '' && result.provider !== MODEL.split(':')[0] ? ` via ${result.provider}` : ''}]`,
     )
     if (!ok || !answer) {
       passed = false
@@ -796,8 +864,22 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
     // What the engine would report back: the step as taken, with the simulated outcome.
     const outcome = step.outcome ?? { ok: true, message: '' }
     steps.push({ action: actionOf(answer.intent), say: answer.say, ok: outcome.ok, message: outcome.message })
-    const nextGoal = c.steps[i + 1]?.chain?.goal !== step.chain?.goal
-    if (answer.done !== false && outcome.ok && i < c.steps.length - 1 && !nextGoal) {
+    let nextGoal = c.steps[i + 1]?.chain?.goal !== step.chain?.goal
+    const more = i < c.steps.length - 1
+    if (answer.done !== false && outcome.ok && more && !nextGoal && step.chain === undefined) {
+      // Round 9: the derived chain (see above): the first goal's plan starts it, each goal done shifts it.
+      const plan = answer.plan ?? []
+      if (derived === null && plan.length > 0) {
+        const [goal = '', ...remaining] = plan
+        derived = { original: c.utterance.slice(0, 1000), completed: [firstGoal(c.utterance, plan, answer.say)], goal, remaining }
+        nextGoal = true
+      } else if (derived !== null && derived.remaining.length > 0) {
+        const [goal = '', ...remaining] = derived.remaining
+        derived = { ...derived, completed: [...derived.completed, derived.goal], goal, remaining }
+        nextGoal = true
+      }
+    }
+    if (answer.done !== false && outcome.ok && more && !nextGoal) {
       // The model said it was done but the case expected more: the engine's loop would stop here.
       // (After a failed step the engine asks once more whatever done said, so that case goes on.)
       console.log(`FAIL             ${''.padEnd(18)} ${c.name}: done=true after step ${i + 1}, the loop stops`)
@@ -809,35 +891,64 @@ async function runCase(c: Case, client: MessagesClient): Promise<{ passed: boole
 }
 
 async function main(): Promise<void> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('intent-eval: ANTHROPIC_API_KEY is not set')
+  if (!CONFIGURED.ready) {
+    console.error(`intent-eval: ${MODEL} has no key (ANTHROPIC_API_KEY is not set)`)
     process.exit(2)
   }
-  const anthropic = new Anthropic({ maxRetries: 0 })
-  const client: MessagesClient = { messages: { create: (params, options) => anthropic.messages.create(params, options) } }
   const selected = CASES.filter((c) => {
     if (ONLY === '') return true
     const sites = c.steps.map((s) => siteOf(s.page)).join(' ')
     return `${c.name} ${c.utterance} ${sites}`.toLowerCase().includes(ONLY)
   })
-  console.log(`model ${MODEL}, ${selected.length} cases${ONLY ? ` (UTLE_EVAL_ONLY=${ONLY})` : ''}`)
+  const at = new Date()
+  console.log(`model ${MODEL}${CONFIGURED.fallback ? `, fallback ${CONFIGURED.fallback}` : ''}, ${selected.length} cases${ONLY ? ` (UTLE_EVAL_ONLY=${ONLY})` : ''}, ${at.toISOString()}`)
 
   let passed = 0
   const all: AskResult[] = []
+  const tasks: TaskRecord[] = []
   for (const c of selected) {
-    const result = await runCase(c, client)
+    const result = await runCase(c, EVAL_MODEL)
     if (result.passed) passed += 1
     all.push(...result.asks)
+    const usage = sumUsage(result.asks)
+    const usd = sumUsd(result.asks)
+    const ms = result.asks.reduce((t, a) => t + a.ms, 0)
+    tasks.push({ name: c.name, passed: result.passed, asks: result.asks.length, input: fresh(usage), cacheRead: usage.cacheRead, output: usage.output, usd, ms })
+    console.log(`  task ${result.passed ? 'done  ' : 'failed'} ${c.name}: ${result.asks.length} asks, tokens in=${fresh(usage)} cached=${usage.cacheRead} out=${usage.output}, ${dollars(usd)}`)
   }
 
   const latencies = all.map((a) => a.ms).sort((a, b) => a - b)
   const p50 = percentile(latencies, 50)
   const p95 = percentile(latencies, 95)
+  const byCare = (care: AskResult['care']): number => percentile(all.filter((a) => a.care === care).map((a) => a.ms).sort((a, b) => a - b), 50)
   const rate = selected.length > 0 ? Math.round((100 * passed) / selected.length) : 0
-  console.log(`\n${passed}/${selected.length} cases passed (${rate}%), ${all.length} asks, latency p50 ${p50} ms, p95 ${p95} ms`)
+  console.log('')
+  console.log(`${passed}/${selected.length} cases passed (${rate}%), ${all.length} asks, latency p50 ${p50} ms, p95 ${p95} ms; p50 quick ${byCare('quick')} ms, careful ${byCare('careful')} ms`)
+
+  // Round 9 (30.5.5): the table. "Per completed task" is the total over every case divided by the cases passed.
+  const total = sumUsage(all)
+  const totalUsd = sumUsd(all)
+  const wasted = tasks.filter((t) => !t.passed).reduce((t, task) => t + task.usd, 0)
+  const per = (n: number): string => (passed > 0 ? (n / passed).toFixed(0) : '-')
+  const table = {
+    model: MODEL,
+    pass: `${passed}/${selected.length}`,
+    asksPerTask: selected.length > 0 ? all.length / selected.length : 0,
+    tokensPerCompletedTask: passed > 0 ? { input: fresh(total) / passed, cacheRead: total.cacheRead / passed, output: total.output / passed } : null,
+    usdPerCompletedTask: passed > 0 ? totalUsd / passed : null,
+    usdWastedOnFailedTasks: wasted,
+    usdTotal: totalUsd,
+    p50,
+    p95,
+  }
+  console.log('')
+  console.log('| model | pass | asks per task | tokens per completed task (in / cached / out) | $ per completed task | $ wasted on failed tasks | p50 / p95 ms |')
+  console.log('|---|---|---|---|---|---|---|')
+  console.log(`| ${MODEL} | ${table.pass} (${rate} %) | ${table.asksPerTask.toFixed(2)} | ${per(fresh(total))} / ${per(total.cacheRead)} / ${per(total.output)} | ${table.usdPerCompletedTask === null ? '-' : dollars(table.usdPerCompletedTask)} | ${dollars(wasted)} | ${p50} / ${p95} |`)
+  console.log(`total spend ${dollars(totalUsd)}${MODEL.startsWith('deepseek:') ? `; DeepSeek ${deepseekPeak(at) ? 'peak' : 'off-peak'} prices (unverified hours)` : ''}`)
 
   if (JSON_PATH) {
-    const report = { model: MODEL, at: new Date().toISOString(), cases: selected.length, passed, asks: all.length, p50, p95, results: all }
+    const report = { model: MODEL, fallback: CONFIGURED.fallback, at: at.toISOString(), hourUtc: at.getUTCHours(), deepseekPeak: deepseekPeak(at), cases: selected.length, passed, asks: all.length, p50, p95, p50Quick: byCare('quick'), p50Careful: byCare('careful'), table, tasks, results: all }
     writeFileSync(JSON_PATH, JSON.stringify(report, null, 2))
     console.log(`wrote ${JSON_PATH}`)
   }

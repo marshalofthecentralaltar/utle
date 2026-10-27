@@ -268,7 +268,7 @@ benchmark).
 
 ## 6. The checklist (lane C ticks it; nothing below is true until a date stands next to it)
 
-- [ ] Eval on `anthropic:claude-sonnet-5-5`, same hour as the next line: pass __ / 62, p50 __ ms quick, __ ms careful, $ __ per completed task.
+- [x] Eval on `anthropic:claude-sonnet-5-5`, 2026-10-27 08:41 UTC (10:41 Tallinn), lane MODEL round 2, after the default-model fixes (ARCHITECTURE 30.5.6): pass 77 / 78 (the set has 78 cases, not 62), p50 1580 ms quick, 1777 ms careful (p50 1586 / p95 2825 over all 93 asks), $0.00569 per completed task, $0.036 wasted on the one failed task, $0.438 in all; 1.19 asks per task; tokens per completed task 569 in / 12986 cached / 188 out. The one failure, the WhatsApp delete chain (done:true one step before the confirming button), passed in the run of 08:33 (78 / 78); it is flaky on Sonnet. Same hour on `anthropic:claude-opus-5-5` (08:44 UTC): 77 / 78, p50 2516 ms, $0.00836 per completed task. Before the fixes (08:06 UTC): Sonnet 63 / 78, $0.00620 per completed task. The DeepSeek line below is still to run.
 - [ ] Eval on `deepseek:deepseek-flash`: pass __ / 62, p50 __ / __ ms, $ __ per completed task, tool call missed __ times, failed cases: __.
 - [ ] Switch drill: wrong primary key falls to the fallback in one ask; wrong fallback key changes nothing.
 - [ ] Same weights on a second host (`__`): pass __, p50 __.

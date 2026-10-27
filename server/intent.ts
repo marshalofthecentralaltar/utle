@@ -1,10 +1,10 @@
-import Anthropic from '@anthropic-ai/sdk'
 import { IntentRequestSchema, pageIntentFrom } from '../src/core/pageIntent.ts'
 import type { IntentAnswer, IntentRequest } from '../src/core/pageIntent.ts'
 import { STRINGS } from '../src/core/strings.ts'
 import { InterpretError } from './interpret.ts'
-import type { MessagesClient, ModelReply } from './interpret.ts'
 import { ANSWER_TOOL, CAREFUL_PROMPT, INTENT_SYSTEM_PROMPT, intentUserMessage } from './intentPrompt.ts'
+import { ModelError, modelTool } from './model/types.ts'
+import type { Model, ModelAsk, ModelReplyNeutral } from './model/types.ts'
 
 /**
  * M7 (docs/plans/2026-10-05-m7-understanding.md): POST /api/intent. One utterance the rules did
@@ -55,23 +55,21 @@ function withoutNulls(value: unknown): unknown {
   return value
 }
 
+/** The door's failure as the route's error; a rejected key keeps the message no_key, which the extension reads. */
 function toIntentError(error: unknown): InterpretError {
   if (error instanceof InterpretError) return error
-  if (error instanceof Anthropic.APIConnectionTimeoutError) {
-    return new InterpretError('timeout', 'The assistant took too long.')
+  if (!(error instanceof ModelError)) return new InterpretError('upstream_unavailable', 'The assistant is unreachable.')
+  switch (error.kind) {
+    case 'timeout':
+      return new InterpretError('timeout', error.message)
+    case 'no_key':
+      return new InterpretError('upstream_rejected', 'no_key')
+    case 'rejected':
+      return new InterpretError('upstream_rejected', error.message)
+    case 'busy':
+    case 'unreachable':
+      return new InterpretError('upstream_unavailable', error.message)
   }
-  if (error instanceof Anthropic.APIConnectionError) {
-    return new InterpretError('upstream_unavailable', 'The assistant is unreachable.')
-  }
-  if (error instanceof Anthropic.APIError) {
-    const status = error.status ?? 0
-    if (status === 401 || status === 403) return new InterpretError('upstream_rejected', 'no_key')
-    if (status === 429 || status >= 500) {
-      return new InterpretError('upstream_unavailable', 'The assistant is busy or unavailable.')
-    }
-    return new InterpretError('upstream_rejected', `The assistant rejected the request (${status}).`)
-  }
-  return new InterpretError('upstream_unavailable', 'The assistant is unreachable.')
 }
 
 /** Round 4: the model may plan this many goals after the one it acts on, each this long (IntentAnswerSchema). */
@@ -89,10 +87,10 @@ function planFrom(value: unknown): string[] {
 }
 
 /** The answer tool's input, as the model sent it. */
-function answerFrom(reply: ModelReply): { intent: unknown; say: string; done: boolean; plan: string[] } | null {
-  if (reply.stop_reason === 'refusal' || reply.stop_reason === 'max_tokens') return null
-  const call = reply.content.find((block) => block.type === 'tool_use' && block.name === ANSWER_TOOL.name)
-  if (!call || typeof call.input !== 'object' || call.input === null) return null
+function answerFrom(reply: ModelReplyNeutral): { intent: unknown; say: string; done: boolean; plan: string[] } | null {
+  if (reply.stop !== 'tool') return null
+  const call = reply.call
+  if (!call || call.name !== ANSWER_TOOL.name || typeof call.input !== 'object' || call.input === null) return null
   const input = withoutNulls(call.input) as Record<string, unknown>
   return {
     intent: input.intent,
@@ -104,7 +102,60 @@ function answerFrom(reply: ModelReply): { intent: unknown; say: string; done: bo
   }
 }
 
-export async function pageIntent(input: unknown, deps: { client: MessagesClient; model: string }): Promise<IntentAnswer> {
+const ANSWER = modelTool(ANSWER_TOOL)
+
+/**
+ * Round 9 (ARCHITECTURE 30.5.6): the shapes Sonnet 5.5 gets wrong in form but right in substance.
+ * It wraps a place or a saved value as a command ({ kind: 'command', command: { kind: 'place', noun } });
+ * the schema has them at the top. Exactly these two kinds are lifted out, with nothing but their own
+ * fields; every other shape goes to pageIntentFrom as it came, and the strict validation stands.
+ */
+export function liftWrapped(intent: unknown): unknown {
+  if (typeof intent !== 'object' || intent === null) return intent
+  const outer = intent as Record<string, unknown>
+  if (outer.kind !== 'command' || typeof outer.command !== 'object' || outer.command === null) return intent
+  const inner = outer.command as Record<string, unknown>
+  if (inner.kind === 'place') return { kind: 'place', noun: inner.noun }
+  if (inner.kind === 'insertSaved') return { kind: 'insertSaved', name: inner.name }
+  return intent
+}
+
+/** Commands whose step line names their target by id (the engine's kindSummary: "command clickItem 9"). */
+const BY_ID = new Set(['clickItem', 'focusItem', 'hover', 'contextMenu', 'scrollTo'])
+
+/**
+ * Round 9 (30.5.6): the prompt says never to repeat the identical failed action, and on a quick ask
+ * Sonnet 5.5 sometimes does. The same click on the same id after it failed would fail again, so it
+ * is answered unclear instead.
+ */
+export function repeatsFailedStep(intent: unknown, steps: IntentRequest['steps']): boolean {
+  if (!steps || steps.length === 0 || typeof intent !== 'object' || intent === null) return false
+  const outer = intent as Record<string, unknown>
+  const command = outer.command as Record<string, unknown> | undefined
+  if (outer.kind !== 'command' || typeof command?.kind !== 'string' || !BY_ID.has(command.kind) || typeof command.id !== 'number') return false
+  const action = `command ${command.kind} ${command.id}`
+  return steps.some((step) => !step.ok && step.action === action)
+}
+
+/**
+ * The ask for one request, provider-neutral (ARCHITECTURE 30.5.1). The fixed prompt is the
+ * cacheable prefix; round 5: a careful ask adds its paragraph after it, so that prefix stays the same.
+ */
+export function intentAsk(request: IntentRequest): ModelAsk {
+  const care: Care = request.care ?? 'quick'
+  const settings = careSettings(care)
+  return {
+    system: INTENT_SYSTEM_PROMPT,
+    ...(care === 'careful' ? { systemExtra: CAREFUL_PROMPT } : {}),
+    user: intentUserMessage(request),
+    tools: [ANSWER],
+    effort: settings.effort,
+    maxTokens: settings.maxTokens,
+    timeoutMs: settings.timeoutMs,
+  }
+}
+
+export async function pageIntent(input: unknown, deps: { model: Model }): Promise<IntentAnswer> {
   const parsed = IntentRequestSchema.safeParse(input)
   if (!parsed.success || parsed.data.utterance.trim() === '') {
     throw new InterpretError('bad_request', 'The request is malformed.')
@@ -112,36 +163,25 @@ export async function pageIntent(input: unknown, deps: { client: MessagesClient;
   const request = parsed.data
   const started = Date.now()
   const care: Care = request.care ?? 'quick'
-  const settings = careSettings(care)
 
-  let reply: ModelReply
+  let reply: ModelReplyNeutral
   try {
-    reply = await deps.client.messages.create(
-      {
-        model: deps.model,
-        max_tokens: settings.maxTokens,
-        output_config: { effort: settings.effort },
-        // The fixed prompt is marked for caching: every call shares the same prefix (tools, then system).
-        // Round 5: a careful ask adds a second block after it, so the cached first block stays identical.
-        system: [
-          { type: 'text', text: INTENT_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-          ...(care === 'careful' ? [{ type: 'text' as const, text: CAREFUL_PROMPT }] : []),
-        ],
-        tools: [ANSWER_TOOL],
-        tool_choice: { type: 'auto', disable_parallel_tool_use: true },
-        messages: [{ role: 'user', content: intentUserMessage(request) }],
-      },
-      { timeout: settings.timeoutMs },
-    )
+    reply = await deps.model.ask(intentAsk(request))
   } catch (error) {
     const mapped = toIntentError(error)
-    console.info(`[intent] error=${mapped.code} care=${care} ms=${Date.now() - started}`)
+    const provider = error instanceof ModelError ? ` provider=${error.provider}` : ''
+    console.info(`[intent] error=${mapped.code} care=${care} ms=${Date.now() - started}${provider}`)
     throw mapped
   }
 
   const raw = answerFrom(reply)
-  const intent = raw ? pageIntentFrom(raw.intent, request) : null
+  const lifted = raw ? liftWrapped(raw.intent) : null
+  const intent = raw && !repeatsFailedStep(lifted, request.steps) ? pageIntentFrom(lifted, request) : null
   const answer: IntentAnswer = intent && raw ? { intent, say: raw.say, done: raw.done, ...(raw.plan.length > 0 ? { plan: raw.plan } : {}) } : unclear(request)
-  console.info(`[intent] kind=${answer.intent.kind} done=${answer.done !== false} plan=${answer.plan?.length ?? 0} care=${care} ms=${Date.now() - started}`)
+  // Round 9 (30.5.3): what the ask cost, for the engine's tally. Counts and names only.
+  const { usage } = reply
+  answer.usage = { ...usage, provider: reply.provider, model: reply.model }
+  const tokens = `in=${usage.input + usage.cacheWrite} out=${usage.output} cached=${usage.cacheRead} provider=${reply.provider}`
+  console.info(`[intent] kind=${answer.intent.kind} done=${answer.done !== false} plan=${answer.plan?.length ?? 0} care=${care} ms=${Date.now() - started} ${tokens}`)
   return answer
 }

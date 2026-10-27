@@ -24,6 +24,7 @@ unpacked.
 - Named exports only, except where a tool demands a default (`vite.config.ts`).
 - No `any` casts, no skipped tests, no enums (`erasableSyntaxOnly`).
 - The Anthropic key is read from `process.env.ANTHROPIC_API_KEY` on the server. Never create or commit a `.env` file.
+- Every model call goes through `server/model/` (ARCHITECTURE 30.5); nothing else imports a provider's SDK or wire format.
 - The server never logs document text, utterances or audio.
 - Test first. Behaviour changes start in `src/core/*.test.ts`.
 
@@ -36,7 +37,14 @@ unpacked.
 - `npx tsx extension/test/run.ts` runs every browser command in Chromium.
 - `UTLE_REAL=1 npx tsx extension/test/voice.ts` (PowerShell: `$env:UTLE_REAL=1; npx tsx extension/test/voice.ts`) runs recorded speech through the real model and the real command logic (without `UTLE_REAL=1` it uses a stand-in); needs `npx vite --port 5193 --strictPort`.
 - `npm run smoke` runs the old demo script through the real model. It spends a few cents.
-- `npx tsx scripts/intent-eval.ts` runs 28 Estonian utterances through `/api/intent`'s model against fake pages (needs `ANTHROPIC_API_KEY`).
+- `npx tsx scripts/intent-eval.ts` runs the intent cases through `/api/intent`'s model against fake pages and ends with the cost table ($ per completed task); `UTLE_MODEL` picks the model as the server does.
+
+## Model variables (ARCHITECTURE 30.5)
+
+- `UTLE_MODEL=provider:model`: unset is `anthropic:claude-sonnet-5-5`; a bare id without a colon is Anthropic.
+- `UTLE_FALLBACK=provider:model`: optional; asked only after a fast failure of the first (401, 403, 429, 5xx, unreachable, refusal), never after a timeout.
+- Keys, read from the environment only: `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `FIREWORKS_API_KEY`, `OPENROUTER_API_KEY`; `openai:<model>` takes `UTLE_MODEL_URL` and `UTLE_MODEL_KEY` (`UTLE_FALLBACK_URL`, `UTLE_FALLBACK_KEY` in the fallback slot).
+- An unknown provider or a missing non-Anthropic key stops the server at start with the variable named. Prices for the eval: `scripts/prices.ts`.
 
 ## Not verifiable without a person
 

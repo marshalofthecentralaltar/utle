@@ -34,6 +34,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+// Round 9 (30.5.5): the price table lives in scripts/prices.ts, shared with intent-eval.
+import { priceOf } from './prices.ts'
 
 const MODEL = process.env.UTLE_MODEL ?? 'claude-opus-5-5'
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -42,12 +44,6 @@ const EFFORT: Effort = EFFORT_LEVELS.find((e) => e === process.env.UTLE_EFFORT) 
 const JSON_OUT = process.env.UTLE_FORMAT === 'json'
 const SCHEMA = { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false }
 
-/** USD per million tokens, input and output (claude-api skill table, cached 2026-10-06). */
-const PRICES: Record<string, { input: number; output: number }> = {
-  'claude-opus-5-5': { input: 4, output: 20 },
-  'claude-sonnet-5-5': { input: 2, output: 10 },
-  'claude-haiku-5-5': { input: 0.1, output: 0.5 },
-}
 
 /** The proposed cleaning prompt. Estonian, because the text is. */
 export const CLEAN_PROMPT = `Sa puhastad eestikeelset dikteeritud teksti, mille kõnetuvastus on kuulnud. Inimene ei saa kätega kirjutada; tekst läheb otse sõnumikasti, esseesse või vormi välja.
@@ -171,7 +167,7 @@ async function main(): Promise<void> {
     console.log(`     WER raw ${rawE}/${ref.length}  cleaned ${cleanE}/${ref.length}  ${ms} ms  ${message.usage.input_tokens} in ${message.usage.output_tokens} out${notes.length > 0 ? `  ${notes.join('; ')}` : ''}\n`)
     if (notes.length > 0) flagged.push(`#${row.n}: ${notes.join('; ')}`)
   }
-  const price = PRICES[MODEL]
+  const price = priceOf(MODEL)
   const per1000 = price ? ((inputTokens / rows.length) * price.input + (outputTokens / rows.length) * price.output) / 1000 : Number.NaN
   console.log('== totals')
   console.log(`WER raw     ${((100 * rawErrors) / refWords).toFixed(1)} % (${rawErrors}/${refWords})`)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PageContext } from '../browser/protocol.ts'
-import { IntentRequestSchema, pageIntentFrom } from './pageIntent.ts'
+import { IntentAnswerSchema, IntentRequestSchema, pageIntentFrom } from './pageIntent.ts'
 import type { IntentRequest } from './pageIntent.ts'
 
 const PAGE: PageContext = {
@@ -135,5 +135,25 @@ describe('reading aloud (29.5): the schema accepts read and rejects an unknown w
     expect(read({ what: 'everything' })).toBeNull()
     expect(read({ what: 'sentence' })).toBeNull()
     expect(read({})).toBeNull()
+  })
+})
+
+describe('round 9 (30.5.3): the answer may carry usage', () => {
+  const ANSWER = { intent: { kind: 'unclear', say: '' }, say: '' }
+  const USAGE = { input: 12, output: 40, cacheRead: 6800, cacheWrite: 0, provider: 'anthropic', model: 'claude-sonnet-5-5' }
+  it('usage: the schema accepts an answer with usage and keeps it', () => {
+    const parsed = IntentAnswerSchema.safeParse({ ...ANSWER, usage: USAGE })
+    expect(parsed.success && parsed.data.usage).toEqual(USAGE)
+  })
+  it('usage: the schema accepts an answer without usage, as before', () => {
+    const parsed = IntentAnswerSchema.safeParse(ANSWER)
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && 'usage' in parsed.data).toBe(false)
+  })
+  it('usage: negative or fractional counts, or a missing field, are rejected', () => {
+    expect(IntentAnswerSchema.safeParse({ ...ANSWER, usage: { ...USAGE, input: -1 } }).success).toBe(false)
+    expect(IntentAnswerSchema.safeParse({ ...ANSWER, usage: { ...USAGE, output: 1.5 } }).success).toBe(false)
+    const { provider: _provider, ...noProvider } = USAGE
+    expect(IntentAnswerSchema.safeParse({ ...ANSWER, usage: noProvider }).success).toBe(false)
   })
 })

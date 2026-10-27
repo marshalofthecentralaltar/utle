@@ -4,6 +4,7 @@ import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pag
 import { pageIntentFrom } from '../../src/core/pageIntent.ts'
 import { applyIntent, initialInpage, inpageInstant, inpagePreview, inpageResult, inpageStep } from '../../src/core/inpage.ts'
 import type { SavedItem } from '../../src/core/saved.ts'
+import type { SpendRecord } from '../../src/core/spend.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, PLACE_ASK_MS, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
@@ -120,6 +121,7 @@ function setup(options: Options = {}) {
   const problems: string[] = []
   const lines: string[] = []
   const connections: string[] = []
+  const spends: SpendRecord[] = []
   const used = options.logic ?? logic
   const engine = createEngine({
     logic: {
@@ -178,6 +180,7 @@ function setup(options: Options = {}) {
     status: () => Promise.resolve(options.status ?? 'live'),
     ...(options.wakeWord === undefined ? {} : { wakeWord: options.wakeWord }),
     ...(options.hosted === undefined ? {} : { hosted: options.hosted }),
+    spend: (record) => spends.push(record),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
   /** Round 4: the recogniser continues the last utterance ("siis ..."). */
@@ -223,6 +226,7 @@ function setup(options: Options = {}) {
     lines,
     connections,
     connection: (s: 'connecting' | 'connected' | 'down'): void => handlers?.onConnection?.(s),
+    spends,
   }
 }
 
@@ -2648,5 +2652,120 @@ describe('the server going away and coming back (30.1)', () => {
     t.connection('down')
     t.connection('connected')
     expect(t.connections.slice(-4)).toEqual(['connecting', 'connected', 'down', 'connected'])
+  })
+})
+
+describe('round 9 (30.5.4): spend per task', () => {
+  const unarmed: BoxState = { present: false, text: '', armed: false }
+  const armed: BoxState = { present: true, text: 'Tere.', armed: true }
+  const goTo = (url: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'goTo', url } })
+  const click = (id: number): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'clickItem', id } })
+  const SCROLL: IntentAnswer['intent'] = { kind: 'command', command: { kind: 'scroll', direction: 'down' } }
+  const USAGE = { input: 100, output: 10, cacheRead: 6900, cacheWrite: 0, provider: 'anthropic', model: 'claude-sonnet-5-5' }
+  const paid = (intent: IntentAnswer['intent'], say: string, done: boolean, plan?: string[]): IntentAnswer => ({ intent, say, done, ...(plan ? { plan } : {}), usage: USAGE })
+  const script = (...answers: Array<IntentAnswer | AskFailure>) => {
+    let i = 0
+    return () => Promise.resolve(answers[Math.min(i++, answers.length - 1)] as IntentAnswer | AskFailure)
+  }
+  const thenHang = (first: IntentAnswer) => {
+    let n = 0
+    return (): Promise<IntentAnswer | AskFailure> => (n++ === 0 ? Promise.resolve(first) : new Promise(() => undefined))
+  }
+  const after = (ms: number, a: IntentAnswer | AskFailure) => new Promise<IntentAnswer | AskFailure>((resolve) => setTimeout(() => resolve(a), ms))
+
+  it('spend: three asks and a failed step make one record, done, with the tokens summed', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      answers: (c) => (c.kind === 'clickItem' ? { ok: false, code: 'not_found', message: 'gone' } : { ok: true }),
+      // goTo with more to do; a click that misses (asked again although it said done); a scroll that ends it.
+      ask: script(paid(goTo('https://www.youtube.com/'), 'lähen', false), paid(click(1), 'mängin', true), paid(SCROLL, 'kerin', true)),
+    })
+    t.engine.start()
+    t.say('mine youtube ja mängi midagi')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(3)
+    expect(t.spends).toHaveLength(1)
+    expect(t.spends[0]).toMatchObject({ outcome: 'done', asks: 3, steps: 3, goals: 1, input: 300, cacheRead: 20_700, output: 30, provider: 'anthropic', model: 'claude-sonnet-5-5' })
+    expect(t.spends[0]?.ms).toBeGreaterThanOrEqual(0)
+  })
+
+  it('spend: a chain counts its goals and every ask of every goal', async () => {
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      ask: (request) => Promise.resolve(request.chain === undefined ? paid(goTo('https://a.ee/'), 'a', true, ['b', 'c']) : paid(goTo('https://b.ee/'), 'b', true)),
+    })
+    t.engine.start()
+    t.say('a ja b ja c')
+    await t.engine.idle()
+    expect(t.spends).toEqual([expect.objectContaining({ outcome: 'done', asks: 3, steps: 3, goals: 3, input: 300 })])
+  })
+
+  it('spend: a task the rules finish with no model is outcome rules, no asks', async () => {
+    const t = setup()
+    t.engine.start()
+    t.say('tere')
+    t.say('vaikus')
+    await t.engine.idle()
+    expect(t.spends).toEqual([
+      { outcome: 'rules', asks: 0, steps: 0, goals: 1, input: 0, cacheRead: 0, output: 0, ms: 0, provider: '', model: '' },
+      { outcome: 'rules', asks: 0, steps: 0, goals: 1, input: 0, cacheRead: 0, output: 0, ms: 0, provider: '', model: '' },
+    ])
+  })
+
+  it('spend: an unclear answer with nothing run is outcome unclear', async () => {
+    const t = setup({ logic: asking, box: unarmed, ask: script(paid({ kind: 'unclear', say: 'Mida?' }, '', true)) })
+    t.engine.start()
+    t.say('kaks kolm neli')
+    await t.engine.idle()
+    expect(t.spends).toEqual([expect.objectContaining({ outcome: 'unclear', asks: 1, steps: 0, input: 100 })])
+  })
+
+  it('spend: an ask with no answer counts as an ask with no tokens, outcome stopped', async () => {
+    const t = setup({ logic: asking, box: unarmed, ask: script({ error: 'unreachable' }) })
+    t.engine.start()
+    t.say('kaks kolm neli')
+    await t.engine.idle()
+    expect(t.spends).toEqual([expect.objectContaining({ outcome: 'stopped', asks: 1, input: 0, output: 0, provider: '' })])
+  })
+
+  it('spend: a type-first dictation reports once, from its verification: done', async () => {
+    const t = setup({ logic: asking, box: armed, ask: script(paid({ kind: 'dictate', text: 'tulen' }, '', true)) })
+    t.engine.start()
+    t.say('tulen')
+    await t.engine.idle()
+    expect(t.spends).toEqual([expect.objectContaining({ outcome: 'done', asks: 1, steps: 0, input: 100 })])
+  })
+
+  it('spend: "katkesta" during a chain records the chain as cancelled, with the asks it made', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, ask: thenHang(paid(goTo('https://www.youtube.com/'), 'lähen', true, ['otsi kassivideod', 'mängi esimene'])) })
+    t.engine.start()
+    t.say("mine youtube'i, otsi kassivideod ja mängi esimene")
+    await vi.advanceTimersByTimeAsync(SETTLE_MS + 100)
+    t.say('katkesta')
+    await vi.advanceTimersByTimeAsync(ASK_TIMEOUT_CAREFUL_MS * 2)
+    const chain = t.spends.find((r) => r.asks > 0)
+    expect(chain).toMatchObject({ outcome: 'cancelled', asks: 2, input: 100 })
+  })
+
+  it('spend: the watchdog records tookTooLong', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: asking, box: unarmed, goToMs: COMMAND_TIMEOUT_MS - 1000, ask: () => after(13_000, paid(goTo('https://a.ee/'), 'lähen', false)) })
+    t.engine.start()
+    t.say('ava palun see uus video mis eile tuli')
+    await vi.advanceTimersByTimeAsync(JOB_WATCHDOG_MS + 60_000)
+    expect(t.spends).toEqual([expect.objectContaining({ outcome: 'tookTooLong', asks: 1, input: 100 })])
+  })
+
+  it('spend: the records carry counts and names only, never the words or the page', async () => {
+    const t = setup({ logic: asking, box: unarmed, ask: script(paid(goTo('https://www.youtube.com/watch?v=x'), 'avan kassivideo', true)) })
+    t.engine.start()
+    t.say('ava kassivideo palun')
+    await t.engine.idle()
+    const text = JSON.stringify(t.spends)
+    for (const secret of ['kassivideo', 'youtube', 'avan', 'palun']) expect(text).not.toContain(secret)
+    expect(Object.keys(t.spends[0] ?? {}).sort()).toEqual(['asks', 'cacheRead', 'goals', 'input', 'model', 'ms', 'outcome', 'output', 'provider', 'steps'])
   })
 })

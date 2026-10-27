@@ -3,7 +3,6 @@ import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { join } from 'node:path'
-import Anthropic from '@anthropic-ai/sdk'
 import { InterpretRequestSchema } from '../src/core/intent.ts'
 import { MODEL_DIR, attachAsr } from './asr.ts'
 import type { AttachOptions } from './asr.ts'
@@ -11,12 +10,11 @@ import { LOCAL_USER, authState, httpUser, tokenUsers, upgradeUser } from './auth
 import type { TokenUser } from './auth.ts'
 import { pageIntent } from './intent.ts'
 import { InterpretError, interpret } from './interpret.ts'
-import type { InterpretErrorCode, MessagesClient } from './interpret.ts'
+import type { InterpretErrorCode } from './interpret.ts'
+import { modelFromEnv, modelStatus } from './model/index.ts'
 import { rehearse } from './rehearsal.ts'
 import { profilePath, profileSummary } from './speaker.ts'
 
-/** Sonnet 5.5: the eval on Opus 5.5 gave p50 2.7 s per command, too slow for a spoken command. UTLE_MODEL overrides. */
-const DEFAULT_MODEL = 'claude-sonnet-5-5'
 const MAX_BODY_BYTES = 1_000_000
 
 const STATUS: Record<InterpretErrorCode, number> = {
@@ -98,7 +96,7 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
 
 /**
  * The API of ARCHITECTURE 27.1, on any http server (Vite's in development, server/serve.ts in production).
- *   GET  /api/status     which interpreter answers, whether /api/intent has a key, which speech engines can run, whether a token is needed
+ *   GET  /api/status     which interpreter answers, which model (primary, fallback, last), whether /api/intent has a key, which speech engines can run, whether a token is needed
  *   POST /api/intent     one unrecognised utterance with the page in, one IntentAnswer out (M7)
  *   POST /api/interpret  one utterance in, one Intent out
  *   WS   /api/asr        the local recogniser (20.1), or Soniox (23.4); attached when httpServer is given
@@ -111,19 +109,13 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
   const users = tokenUsers(env)
   // Each caller's voice profile file (27.6): owner.json for the open server, profiles/<id>.json per token.
   const profileOf = (user: TokenUser): string => profilePath(options.root, env, user.id)
-  let client: MessagesClient | null = null
-  const model = (): string => env.UTLE_MODEL ?? DEFAULT_MODEL
-
-  const getClient = (): MessagesClient => {
-    if (!client) {
-      const anthropic = new Anthropic({ maxRetries: 0 })
-      client = { messages: { create: (params, opts) => anthropic.messages.create(params, opts) } }
-    }
-    return client
-  }
+  // Round 9 (30.5.2): the model behind both routes, from UTLE_MODEL and UTLE_FALLBACK. A slot that
+  // names an unknown provider or lacks its key throws here, so the server does not start with it.
+  const configured = modelFromEnv(env)
+  if (httpServer) console.info(`[model] primary=${configured.primary} fallback=${configured.fallback ?? 'none'}${configured.ready ? '' : ' (no key: rules only)'}`)
 
   const answer = async (input: unknown) => {
-    if (!rehearsal) return interpret(input, { client: getClient(), model: model() })
+    if (!rehearsal) return interpret(input, { model: configured.model })
     const parsed = InterpretRequestSchema.safeParse(input)
     if (!parsed.success) throw new InterpretError('bad_request', 'The request is malformed.')
     return rehearse(parsed.data)
@@ -156,14 +148,14 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
       next()
       return
     }
-    const intent = env.ANTHROPIC_API_KEY ? 'live' : 'no_key'
+    const intent = configured.ready ? 'live' : 'no_key'
     // local: the model files are on disk (whether the addon loads is only known at the first connection).
     const speech = { local: existsSync(join(options.root, MODEL_DIR)), soniox: Boolean(env.SONIOX_API_KEY) }
     const auth = authState(users.length === 0 ? undefined : 'on')
     // The caller's profile (27.6): which user the token is, and whether that user's voice is learnt.
     const user = httpUser(req, users) ?? LOCAL_USER
     const profile = { name: user.name, ...profileSummary(profileOf(user)) }
-    send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent, speech, auth, profile } : { mode: 'live', model: model(), intent, speech, auth, profile })
+    send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent, speech, auth, profile } : { mode: 'live', model: modelStatus(configured), intent, speech, auth, profile })
   })
 
   mount('/api/intent', (req, res, next) => {
@@ -175,8 +167,8 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
     void (async () => {
       try {
         const input = await jsonBody(req)
-        if (!env.ANTHROPIC_API_KEY) throw new InterpretError('upstream_rejected', 'no_key')
-        send(res, 200, await pageIntent(input, { client: getClient(), model: model() }))
+        if (!configured.ready) throw new InterpretError('upstream_rejected', 'no_key')
+        send(res, 200, await pageIntent(input, { model: configured.model }))
       } catch (error) {
         const known = toKnownError(error)
         send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })

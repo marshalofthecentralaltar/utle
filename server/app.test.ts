@@ -166,3 +166,30 @@ describe('profiles per token (round 7, HOST lane)', () => {
     expect(opened).toEqual([join(dir, 'profiles', `${profileId('ta')}.json`), join(dir, 'profiles', `${profileId('tb')}.json`)])
   })
 })
+
+describe('the model in /api/status (round 9, 30.5.2)', () => {
+  it('model: reports primary, fallback and last, the default primary when UTLE_MODEL is unset', async () => {
+    const host = await serve({ ANTHROPIC_API_KEY: 'k' })
+    expect(await (await fetch(`http://${host}/api/status`)).json()).toMatchObject({ mode: 'live', intent: 'live', model: { primary: 'anthropic:claude-sonnet-5-5', fallback: null, last: null } })
+  })
+
+  it('model: a bare id and the anthropic: form are the same primary; a fallback is named', async () => {
+    const bare = await serve({ ANTHROPIC_API_KEY: 'k', UTLE_MODEL: 'claude-opus-5-5' })
+    expect(await (await fetch(`http://${bare}/api/status`)).json()).toMatchObject({ model: { primary: 'anthropic:claude-opus-5-5' } })
+    const both = await serve({ ANTHROPIC_API_KEY: 'k', UTLE_MODEL: 'anthropic:claude-sonnet-5-5', UTLE_FALLBACK: 'deepseek:deepseek-flash', DEEPSEEK_API_KEY: 'dk' })
+    expect(await (await fetch(`http://${both}/api/status`)).json()).toMatchObject({ model: { primary: 'anthropic:claude-sonnet-5-5', fallback: 'deepseek:deepseek-flash', last: null } })
+  })
+
+  it('model: with no key in any slot the intent is no_key and /api/intent answers no_key without asking', async () => {
+    const host = await serve({})
+    expect(await (await fetch(`http://${host}/api/status`)).json()).toMatchObject({ intent: 'no_key', model: { primary: 'anthropic:claude-sonnet-5-5' } })
+    const res = await fetch(`http://${host}/api/intent`, { method: 'POST', body: '{}' })
+    expect(res.status).toBe(502)
+    expect(await res.json()).toMatchObject({ error: { code: 'upstream_rejected', message: 'no_key' } })
+  })
+
+  it('model: a DeepSeek primary without DEEPSEEK_API_KEY stops the server at start, naming the variable', () => {
+    expect(() => createUtleServer({ root: '.', env: { UTLE_MODEL: 'deepseek:deepseek-flash' }, asr: false })).toThrow('UTLE_MODEL=deepseek:deepseek-flash needs DEEPSEEK_API_KEY')
+    expect(() => createUtleServer({ root: '.', env: { UTLE_MODEL: 'gemini:x' }, asr: false })).toThrow('unknown provider "gemini"')
+  })
+})

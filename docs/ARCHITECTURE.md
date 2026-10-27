@@ -2421,7 +2421,145 @@ layout (`strip.ts`, another lane). A postimees headline ends with its comment co
 
 ### 30.5 One door to any model, cost per completed task (MODEL lane)
 
-(lane MODEL writes this; the plan is `docs/plans/2026-10-25-round-9-model-provider.md`)
+Plan: `docs/plans/2026-10-25-round-9-model-provider.md`, lanes A and B. Lane C (the drill on a
+real DeepSeek key) is the owner's.
+
+**30.5.1 The door.** Every model call of the server goes through one interface in `server/model/`:
+`Model.ask(ask: ModelAsk): Promise<ModelReplyNeutral>`. Nothing outside `server/model/` imports a
+provider's SDK or speaks its wire format.
+
+```ts
+interface ModelTool { name: string; description: string; schema: Record<string, unknown>; strict?: boolean }
+interface ModelToolCall { id: string; name: string; input: unknown }
+interface ModelAsk {
+  system: string                 // the fixed, cacheable prefix
+  systemExtra?: string           // CAREFUL_PROMPT, after the cached block
+  user: string                   // the one user turn
+  tools: readonly ModelTool[]    // one for /api/intent, four for /api/interpret
+  corrections?: ReadonlyArray<{ call: ModelToolCall; error: string }>  // /api/interpret's retry
+  effort?: 'low' | 'high'        // absent: the provider's default
+  maxTokens: number
+  timeoutMs: number
+}
+interface ModelReplyNeutral {
+  call: ModelToolCall | null     // the first tool call, or null
+  stop: 'tool' | 'text' | 'cut' | 'refusal'
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number }
+  provider: string; model: string; ms: number
+}
+```
+
+The plan's `tool` (one) became `tools` (a list) and `call` carries the tool's name and id, so the
+old `/api/interpret` demo path (four tools, one corrective turn) goes through the same door. `usage`
+counts tokens billed at the full input price (`input`), read from the cache (`cacheRead`), written
+to it (`cacheWrite`) and generated (`output`); the four never overlap, so cost is a sum of four
+products. A failure is thrown as a `ModelError` with `kind`: `timeout`, `unreachable` (connection
+refused or lost), `busy` (429, 5xx), `no_key` (401, 403) or `rejected` (any other status, with it).
+
+- `anthropic.ts`: the SDK call of round 8 moved verbatim: the first system block marked
+  `cache_control: ephemeral`, `systemExtra` as a second block only when given, `output_config.effort`
+  only when given, `tool_choice: { type: 'auto', disable_parallel_tool_use: true }` (forced tool use
+  is a 400 on Sonnet 5.5 and Opus 5.5, so `/api/interpret` loses its `any`), the SDK timeout, no
+  retries. `stop_reason` `max_tokens` is `cut` (even with a tool call in it), `refusal` is
+  `refusal`, a tool call is `tool`, else `text`. Usage: `input_tokens`, `output_tokens`,
+  `cache_read_input_tokens`, `cache_creation_input_tokens`.
+- `openaiCompat.ts`: one `fetch` to `${baseUrl}/chat/completions` with an `AbortSignal.timeout`.
+  Body: `model`, `messages` (one system message, `system` and `systemExtra` joined by a blank line so
+  the cached prefix stays the same; the user turn; per correction an assistant `tool_calls` turn and a
+  `tool` turn), `tools` as `{ type: 'function', function: { name, description, parameters } }`
+  (`strict` only when true), `tool_choice` the one function by name (or `required` for several),
+  `max_tokens`. DeepSeek gets `thinking: { type: 'disabled' }` on every ask (plan 4.3: a careful ask
+  on a non-thinking fallback gets no thinking); the field name is from third-party docs of V4 Flash,
+  not yet from a live call (lane C). `finish_reason` `length` is `cut`, `content_filter` is
+  `refusal`; `tool_calls[0].function.arguments` is parsed with `JSON.parse` in a try and a failure
+  is `text`. Usage: `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` when present (DeepSeek),
+  else `prompt_tokens` less `prompt_tokens_details.cached_tokens`.
+- `fallback.ts`: `withFallback(primary, fallback | null)` is itself a `Model` and remembers which one
+  gave the last reply (`last: 'primary' | 'fallback' | null`, null before any). The fallback is asked
+  only after a fast failure of the primary: `no_key`, `busy`, `unreachable`, or a reply with
+  `stop: 'refusal'`. Never after `timeout` or `rejected`: a spoken command that waited 7 s does not
+  wait 7 more, and a 400 is our bug, not the provider's.
+- `config.ts` parses the strings below; `index.ts` has `modelFromEnv(env)`, which returns the
+  composed `Model` with its labels, or throws the configuration's one-line message.
+
+**30.5.2 The configuration.** One string per slot, provider and model joined by a colon:
+
+| `UTLE_MODEL` / `UTLE_FALLBACK` | provider | base URL | key |
+|---|---|---|---|
+| `claude-sonnet-5-5` (no colon) or `anthropic:claude-sonnet-5-5` | Anthropic SDK | SDK default | `ANTHROPIC_API_KEY` |
+| `deepseek:<model>` | OpenAI-compatible | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` |
+| `fireworks:<model>` | OpenAI-compatible | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
+| `openrouter:<model>` | OpenAI-compatible | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
+| `openai:<model>` | OpenAI-compatible | `UTLE_MODEL_URL` (fallback slot: `UTLE_FALLBACK_URL`) | `UTLE_MODEL_KEY` (fallback slot: `UTLE_FALLBACK_KEY`) |
+
+`UTLE_MODEL` unset is `anthropic:claude-sonnet-5-5` (unchanged default); `UTLE_FALLBACK` unset or
+empty is no fallback. An unknown provider, an empty model, or a non-Anthropic slot without its key
+or URL stops the server at start with one line naming the variable. A missing `ANTHROPIC_API_KEY`
+does not: that is the known "no model, rules only" state, reported by `/api/status` as
+`intent: 'no_key'` as before. `/api/status` gains `model: { primary, fallback, last }`
+(`primary` and `fallback` as `provider:model`, `fallback` null when unset); in rehearsal mode
+`model` stays null.
+
+**30.5.3 What the server says about cost.** `/api/intent`'s answer carries
+`usage: { input, output, cacheRead, cacheWrite, provider, model }` (optional in
+`IntentAnswerSchema`), and its log line gains `in= out= cached= provider=`; never words. An error
+line keeps its shape and gains `provider=` only.
+
+**30.5.4 The usage record, per completed task.** The unit is the engine's `Job` (one utterance to
+its end). `Job.spend` sums `asks`, `input`, `output`, `cacheRead` and `ms` over every `askOnce`
+(a failed ask counts as an ask with its time and no tokens) and keeps the provider and model of
+the last answer. When the job ends, in `endWork`, the one place every ending passes, the engine
+emits one record:
+
+`{ outcome, asks, steps, goals, input, output, cacheRead, ms, provider, model }`
+
+`outcome` is `tookTooLong` (the watchdog), else `cancelled` ("katkesta", or a later utterance that
+cancelled it), else `rules` (no ask was made: the rules finished it), else what the model work
+ended in: `done`, `unclear` (the answer was unclear and no step of it ran), or `stopped` (step
+limit, failures, no answer). A type-first job that hands its utterance to a background verification
+emits nothing; the verification's job emits the record (a dictate verdict, the words staying, is
+`done`). The record holds no words, no page and no address. The engine passes it to `deps.spend`;
+the offscreen document logs it as `[spend] outcome=… asks=… …` and sends it to the service worker,
+which keeps the last 200 in `chrome.storage.local` under `utle-spend`
+(`extension/src/spendStore.ts`; an offscreen document cannot reach storage itself).
+
+**30.5.5 The eval's number.** `scripts/intent-eval.ts` builds its model with `modelFromEnv` (so
+`UTLE_MODEL=deepseek:deepseek-flash npx tsx scripts/intent-eval.ts` is the whole switch; the
+default is now the server's), prints tokens and dollars per case, and ends with the table
+`model | pass | asks per task | tokens per completed task (in / cached / out) | $ per completed task | $ wasted on failed tasks | p50 / p95 ms`.
+"Per completed task" divides the total over all cases by the cases passed, so failures pay in the
+denominator; "wasted" is the spend on the failed cases. Prices per model id are in
+`scripts/prices.ts` (moved out of `flow-eval.ts`), with DeepSeek's peak and off-peak rates by the
+hour of the ask; `UTLE_EVAL_JSON` gets per-task records and the hour of the run.
+
+**30.5.6 The eval on the default model.** Round 8's eval ran on Opus 5.5 while the server's default
+is Sonnet 5.5; on Sonnet it passed 63 of 78 (2026-10-27 08:06 UTC). The fifteen failures, by cause:
+
+- Right in substance, wrong in shape (seven cases: three places, four saved values). Sonnet wraps a
+  place or a saved value as a command, `{ kind: 'command', command: { kind: 'place', noun } }`.
+  `liftWrapped` in `server/intent.ts` lifts exactly these two kinds to the top, with only their own
+  field (`noun`, `name`), before `pageIntentFrom`; every other shape is validated as it came.
+- The prompt was unclear to Sonnet (three changes to `INTENT_SYSTEM_PROMPT`, one static text, so
+  the cached prefix stays one prefix): "tagasi" in an armed box with text is the edit undo, never
+  pressKey Undo (Google Docs only); a search that serves opening or playing something is done:false;
+  in the WhatsApp delete, the choice "Kustuta kõigi jaoks" is done:false because a confirming
+  dialog follows. ("tagasi" in a chat box reaches the model only in the eval, which calls
+  `pageIntent` directly; in the extension the rules answer it before any ask.)
+- The identical failed action repeated (one case): `repeatsFailedStep` answers unclear when the
+  answer is the same id-addressed command (clickItem, focusItem, hover, contextMenu, scrollTo on the
+  same id) as a step that failed, as the prompt already asked.
+- The case expected one of two acceptable answers (widened, not loosened): "mina youtube" and
+  "open youtube" on the new-tab page accept clicking the YouTube tile as well as going to the
+  address; "kirjuta uus kiri" in Gmail accepts the compose command as well as clicking Koosta; the
+  four multi-step cases written as one goal (done:false between steps) accept the round 4 answer,
+  done:true with the rest in `plan`, and the eval then asks the rest as the chain the engine would
+  derive. One case had wrong data: "homme asemel täna" ran on a box without "homme"; the box now
+  holds "Tulen homme".
+
+After the fixes (08:41 UTC): Sonnet 5.5 77 / 78 ($0.0057 per completed task, p50 1.6 s), Opus 5.5
+77 / 78 the same hour ($0.0084, p50 2.5 s). Sonnet's one miss, the WhatsApp delete chain stopping a
+step before the confirming button, passed in the run before; Opus's, scrolling again where the
+steps show it already scrolled, is Opus's own.
 
 ### 30.6 The store (SHIP lane)
 
