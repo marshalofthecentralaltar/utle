@@ -1505,6 +1505,8 @@ async function main(): Promise<void> {
       }
     }, UTLE)
     await utle.waitForTimeout(500)
+    // The closed windows can take longer than 500 ms to go under load (round 9: two failures with lanes in parallel): wait until only Ütle's is left.
+    for (let i = 0; i < 30 && (await sw.evaluate(async () => (await chrome.windows.getAll({ windowTypes: ['normal'] })).length)) > 1; i++) await utle.waitForTimeout(100)
     r = await send({ kind: 'showHints' })
     line('showHints', 'with no ordinary window -> no_target', r !== 'timeout' && !r.ok && r.code === 'no_target', describe(r))
     r = await send({ kind: 'newTab', url: `${T}/page-one.html` })
