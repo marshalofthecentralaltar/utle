@@ -53,7 +53,7 @@ describe('the OpenAI-compatible adapter builds the request from a ModelAsk', () 
     await model(fetch).ask(intentAsk(REQUEST))
     expect(sent[0]?.url).toBe('https://api.example.test/chat/completions')
     expect(sent[0]?.init.method).toBe('POST')
-    expect((sent[0]?.init.headers as Record<string, string>).authorization).toBe('Bearer sk-test-key')
+    expect((sent[0]?.init.headers as Record<string, string> | undefined)?.authorization).toBe('Bearer sk-test-key')
     const body = sent[0]?.body ?? {}
     expect(body.model).toBe('deepseek-flash')
     expect(body.max_tokens).toBe(400)

@@ -108,6 +108,15 @@ Several people can share one server, each with their own voice profile (round 7)
 SHA-256); without `UTLE_DATA_DIR` they go to `models/speaker/profiles/`. With no `UTLE_TOKEN` at all
 (the dev server) the one profile stays `models/speaker/owner.json`, as before.
 
+The model behind the understanding (round 9, `docs/ARCHITECTURE.md` 30.5) is one variable,
+`UTLE_MODEL=provider:model` (unset: `anthropic:claude-sonnet-5-5`; a bare id such as
+`claude-opus-5-5` is still Anthropic), and an optional fallback, `UTLE_FALLBACK`, in the same
+syntax, asked only when the first fails fast (never after a timeout). Providers: `anthropic`
+(`ANTHROPIC_API_KEY`), `deepseek` (`DEEPSEEK_API_KEY`), `fireworks` (`FIREWORKS_API_KEY`),
+`openrouter` (`OPENROUTER_API_KEY`), or `openai:<model>` with `UTLE_MODEL_URL` / `UTLE_MODEL_KEY`
+(`UTLE_FALLBACK_URL` / `UTLE_FALLBACK_KEY` for the fallback). `/api/status` says
+`"model":{"primary","fallback","last"}`, `last` being which of the two gave the last answer.
+
 Deploy on Railway: **`docs/DEPLOY.md`** has every command (`railway login`, the variables, the
 volume at `/data`, `railway up`, the three checks). Then, on each computer, the Ütle settings page →
 **Server**: address `wss://<domain>/api/asr`, that person's token, **Proovi ühendust**. "Vale võti"

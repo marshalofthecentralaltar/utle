@@ -56,8 +56,24 @@ the numbers).
    "ralf:<token 1>,kasutaja:<token 2>" | railway variable set UTLE_TOKEN --stdin --skip-deploys
    ```
 
-   Optional: `SONIOX_API_KEY` (the second recogniser), `UTLE_MODEL` (the Claude model). Do not set
-   `PORT`: Railway sets it.
+   Optional: `SONIOX_API_KEY` (the second recogniser), `UTLE_MODEL` (the model behind the
+   understanding, `provider:model`; unset is `anthropic:claude-sonnet-5-5`). Do not set `PORT`:
+   Railway sets it.
+
+   Optional, a fallback model (round 9, ARCHITECTURE 30.5): asked only when the first one fails
+   fast (rejected key, 429, 5xx, unreachable, a refusal), never after a timeout. Its key goes in the
+   same way, and `/api/status` then says `"model":{"primary":…,"fallback":"deepseek:deepseek-flash","last":…}`.
+   **A real user's page goes to the fallback**: name its host in `docs/PRIVACY.md` first, and do not
+   use DeepSeek's own endpoint for a real user (plan section 1, "Data"; the eval's stand-in pages only).
+
+   ```powershell
+   railway variable set "UTLE_FALLBACK=fireworks:<model id>" "FIREWORKS_API_KEY=..." --skip-deploys
+   ```
+
+   The known providers and their key variables: `deepseek` (`DEEPSEEK_API_KEY`), `fireworks`
+   (`FIREWORKS_API_KEY`), `openrouter` (`OPENROUTER_API_KEY`); any other OpenAI-compatible host as
+   `UTLE_FALLBACK=openai:<model>` with `UTLE_FALLBACK_URL` and `UTLE_FALLBACK_KEY`. A slot that names
+   an unknown provider or lacks its key stops the server at start, and the deploy log names the variable.
 
 5. Add the volume where the profiles live, so a redeploy keeps everyone's voice:
 

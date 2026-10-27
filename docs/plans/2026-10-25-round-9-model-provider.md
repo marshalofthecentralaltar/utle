@@ -268,7 +268,7 @@ benchmark).
 
 ## 6. The checklist (lane C ticks it; nothing below is true until a date stands next to it)
 
-- [ ] Eval on `anthropic:claude-sonnet-5-5`, same hour as the next line: pass __ / 62, p50 __ ms quick, __ ms careful, $ __ per completed task.
+- [x] Eval on `anthropic:claude-sonnet-5-5`, 2026-10-27 08:06 UTC (10:06 Tallinn), lane MODEL, before the DeepSeek line (which is still to run, so not yet "the same hour"): pass 63 / 78 (the set has 78 cases now, not 62), p50 1578 ms quick, 2218 ms careful (p50 1615 / p95 3275 over all 88 asks), $0.00620 per completed task, $0.105 wasted on the 15 failed tasks, $0.390 in all; 1.13 asks per task; tokens per completed task 490 in / 15058 cached / 220 out. Failed: the WhatsApp delete chain, three multi-step cases, two recovery cases, tagasi, four saved-value fills, mina youtube, and three places (the model answers `command: { kind: place }`, which the schema rejects; main fails the same cases).
 - [ ] Eval on `deepseek:deepseek-flash`: pass __ / 62, p50 __ / __ ms, $ __ per completed task, tool call missed __ times, failed cases: __.
 - [ ] Switch drill: wrong primary key falls to the fallback in one ask; wrong fallback key changes nothing.
 - [ ] Same weights on a second host (`__`): pass __, p50 __.
