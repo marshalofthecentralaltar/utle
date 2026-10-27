@@ -1,21 +1,37 @@
 # Publishing Ütle
 
-For Ralf. Written 5 October 2026. Nothing here has been done: the repository has no remote and has
-not been published. Publishing is your decision.
+For Ralf. Written 5 October 2026, when the repository had no remote and had not been published.
+Since then the source has been published on GitHub (the repository page answered unauthenticated on
+27 October 2026); the store upload is still your decision.
 
 ## What "public" can mean today
 
-Today "public" can only mean **public source code**: a public GitHub repository that anyone can
-read, copy and install by following `README.md`. Installing takes a terminal, Node.js, Git, about
-350 MB of disk and ten minutes, so in practice it reaches developers and helpers, not the people Ütle
-is for.
+*Updated 27 October 2026 (round 9, lane SHIP). The text of 5 October is kept below, marked.*
 
-It cannot mean a download from the Chrome Web Store yet. The extension does not recognise speech
-itself; it sends the microphone audio to a speech server on the same computer, which you start with
-`npm run dev`. A Web Store listing would install only the extension, which would then say "the
-speech model is not reachable" on every page. Google would also want a privacy policy, a reason for
-the "read and change all your data on all websites" permission, and a single clear purpose; those are
-doable, the missing speech server is not.
+The store route is open now. The speech server runs hosted on Railway since 23 October 2026
+(`docs/DEPLOY.md`: the address, the tokens, the three checks), so the extension alone, installed
+from the Chrome Web Store and given the server's address and a token on its welcome page, is a
+whole install. That is route 2 below, done. The source code is public on GitHub
+(`https://github.com/marshalofthecentralaltar/utle`).
+
+What is ready for the store: the zip (`npm run ext:pack`, version 0.4.0), the listing text in
+Estonian and English, the single purpose, every permission's justification, the data
+declarations, five screenshots and the privacy policy at `https://utle.ee/privaatsus`
+(`docs/STORE.md`, ARCHITECTURE 30.6). What is not done, and is yours: the developer account (a
+one-time fee) and the upload ("Ralf's ten minutes" in `docs/STORE.md`). Until then a helper loads
+the zip unpacked (`extension/README.md` "Install on a locked computer", route A).
+
+The audit's six points below were written for publishing the source; they apply to the store too,
+since the listing links the repository. They have not been rechecked in this round.
+
+*5 October 2026, kept as written:* Today "public" can only mean **public source code**: a public
+GitHub repository that anyone can read, copy and install by following `README.md`. Installing
+takes a terminal, Node.js, Git, about 350 MB of disk and ten minutes, so in practice it reaches
+developers and helpers, not the people Ütle is for. It cannot mean a download from the Chrome Web
+Store yet. The extension does not recognise speech itself; it sends the microphone audio to a
+speech server on the same computer, which you start with `npm run dev`. A Web Store listing would
+install only the extension, which would then say "the speech model is not reachable" on every
+page.
 
 ## Two realistic routes to a real download later
 

@@ -134,36 +134,47 @@ last final; `--enrol 2` first teaches the token's profile from the recording.
 
 ## Install on a locked computer
 
-1. Install Ütle from the Chrome Web Store: *(store link once published, unlisted)*. No developer
-   mode, nothing else on the computer.
-2. Open its settings (right-click the icon → **Options**) and fill **Server** as in step 5 above.
-3. Allow the microphone when the permission page asks.
+Two routes. Both need the speech server somewhere: on the same computer (`npm run dev`) or hosted
+("Hosted server" above).
 
-If the organisation's policy blocks the Chrome Web Store or extensions, nothing here works without
-IT: they must allow this one extension (by its store id) in the Chrome policy. There is no way
-around that from the user's side.
+**A. Today: a helper loads the zip.** Works on any Chrome and on Microsoft Edge, nothing installed
+but the browser.
+
+1. Get `utle-0.4.0.zip` (`npm run ext:pack` writes it to `extension/out/`) onto the computer and
+   unpack it into a folder that stays, for example `Documents\Ütle`. The extension is loaded from
+   that folder every time Chrome starts; deleting the folder removes it.
+2. Open `chrome://extensions` (Edge: `edge://extensions`), turn on **Developer mode**.
+3. **Load unpacked**, choose the folder (the one with `manifest.json` in it).
+4. The welcome page **Alustamine** opens by itself: walk its five cards as in "Load" step 4,
+   with the server's address and token in card 2.
+
+Chrome may show a line about developer-mode extensions when it starts; it can be closed. An update
+is the same steps with the new zip unpacked over the old folder, then the reload arrow on the Ütle
+card.
+
+**B. Once Ralf uploads to the Chrome Web Store** (unlisted): *(store link once published)*. Install
+from the link; no developer mode. The welcome page opens the same way. The listing text and the
+upload steps are in `docs/STORE.md`.
+
+If the organisation's policy blocks Developer mode, the Chrome Web Store or extensions, nothing here
+works without IT: they must allow this one extension (by its store id, once published) in the
+Chrome policy. There is no way around that from the user's side.
 
 ## The store zip
 
-`npm run ext:pack` builds the extension and writes `extension/out/utle-<version>.zip` (manifest,
-pages, `dist/`, `relay.js`, `icons/`, nothing else). Upload that in the Chrome Web Store developer
-dashboard. Bump `version` in `extension/manifest.json` for every upload. The icons are drawn by
-`npm run icons` (committed; run it only to change them).
+`npm run ext:pack` builds the extension and writes `extension/out/utle-<version>.zip`: exactly
+`manifest.json`, `options.html`, `offscreen.html`, `permission.html`, `newtab.html`,
+`welcome.html`, `help.html`, `relay.js`, `dist/` and `icons/`, nothing else. Upload that in the
+Chrome Web Store developer dashboard. Raise `version` in `extension/manifest.json` for every upload
+(0.4.0 now). The icons are drawn by `npm run icons` (committed; run it only to change them).
 
-What the listing needs that the repository cannot hold:
-
-- **Privacy policy URL**: publish `docs/PRIVACY.md` somewhere public (the file's page on GitHub
-  works) and paste its address.
-- **Screenshots**: 1280×800 or 640×400, at least one: the strip on WhatsApp Web, the settings page.
-- **Single purpose**: "Lets a person who cannot use their hands write messages and move the browser
-  by speaking Estonian."
-- **Host permission (`<all_urls>`) justification**: "The user speaks to whatever site they are on:
-  the extension must find the message box and the buttons on that page, type the spoken words into
-  it, and show its status bar there. It reads the page only when the user speaks a command."
-- **Remote code**: none; all code is in the package. **Data**: audio and page text go to the server
-  the user configured and, through it, to Anthropic (declare "website content" and "personal
-  communications"; not sold, not used for anything else).
-- Visibility **Unlisted**, so only people with the link find it.
+- `docs/STORE.md`: everything the listing asks for (name, summary, description, category, single
+  purpose, each permission's justification, data declarations, privacy policy URL, visibility
+  Unlisted), Estonian first, and Ralf's upload checklist.
+- `npx tsx scripts/store-shots.ts`: the five 1280×800 screenshots into `extension/store/`, from the
+  stand-in pages and the extension's own pages (no real site). Run it again after a visible change.
+- `npx tsx scripts/pack-check.ts`: unpacks the zip, loads it on a fresh profile, and checks that the
+  welcome page opens and "abi" opens the help page (`docs/proof/r9-pack-welcome.png`).
 
 ## After pulling a change
 

@@ -168,6 +168,9 @@ html[lang="en"] .q::before { content: '“'; } html[lang="en"] .q::after { conte
 .next li:last-child { border-bottom: 1px solid var(--line); }
 .next b { display: block; color: var(--ink); font-weight: 800; margin-bottom: 2px; }
 .about h2 { margin-bottom: 26px; }
+.install .lede { margin-bottom: 32px; max-width: 62ch; }
+.install h3 { margin: 0 0 14px; }
+.install-steps { padding-left: 1.4em; margin: 0; gap: 8px; }
 
 /* contact */
 .contact .card { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 32px clamp(32px, 5vw, 72px); align-items: center; padding: clamp(28px, 4vw, 48px); border-radius: 24px; background: var(--raised); border: 1px solid var(--line); }
@@ -373,6 +376,30 @@ footer p { max-width: 62ch; }
   </div>
 </section>
 
+<section class="status install" id="paigaldamine">
+  <div class="wrap">
+    <h2 data-i18n="instH">Paigaldamine</h2>
+    <p class="lede" data-i18n="instLede">Ütle töötab arvutis Google Chrome’is ja Microsoft Edge’is. Lisaks laiendusele on vaja kõneserverit: see jookseb samas arvutis või meie serveris, mille aadressi ja võtme saad meilt.</p>
+    <div class="grid">
+      <div>
+        <h3 data-i18n="instAT">Praegu: abiline laadib laienduse failist</h3>
+        <ol class="prose install-steps">
+          <li data-i18n="instA1">Laienduse ZIP-faili saad meilt, kui kirjutad aadressil tere@utle.ee.</li>
+          <li data-i18n="instA2">Paki fail lahti kausta, mis jääb arvutisse alles. Laiendus laaditakse igal käivitamisel sellest kaustast.</li>
+          <li data-i18n-html="instA3">Ava Chrome’is <b>chrome://extensions</b> (Edge’is edge://extensions), lülita paremas ülanurgas sisse arendaja režiim („Developer mode“), vajuta „Load unpacked“ ja vali see kaust.</li>
+          <li data-i18n="instA4">Avaneb leht „Alustamine“. Abiline teeb selle viis sammu ühe korra: mikrofon, server, proovimine, hääl ja valmis.</li>
+        </ol>
+      </div>
+      <div>
+        <h3 data-i18n="instBT">Hiljem: Chrome’i veebipoest</h3>
+        <div class="prose">
+          <p data-i18n="instB1">Kui Ütle on Chrome’i veebipoes, paigaldad selle lingilt ja arendaja režiimi pole vaja. Leht „Alustamine“ avaneb samamoodi. Veebipoe link ei ole veel avalik.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="about" id="meist">
   <div class="wrap">
     <h2 data-i18n="aboutH">Meist</h2>
@@ -460,6 +487,15 @@ footer p { max-width: 62ch; }
     statH: 'Where Ütle is now',
     stat1: 'Ütle is a <b>prototype</b>. It has been tried by the person it was built with and by our team. Most of it has passed automated tests with recorded speech and test pages; little has been tried with a real eye tracker or real forms.',
     stat2: 'Ütle works in Google Chrome on a computer, and only on web pages. It is not in the Chrome Web Store yet, so installing it needs our help for now.',
+    instH: 'Installing',
+    instLede: 'Ütle works in Google Chrome and Microsoft Edge on a computer. Besides the extension it needs a speech server: one on the same computer, or ours, whose address and token you get from us.',
+    instAT: 'Today: a helper loads the extension from a file',
+    instA1: 'You get the extension’s ZIP file from us: write to tere@utle.ee.',
+    instA2: 'Unpack it into a folder that stays on the computer. The extension is loaded from that folder every time the browser starts.',
+    instA3: 'In Chrome open <b>chrome://extensions</b> (in Edge edge://extensions), turn on “Developer mode” in the top right corner, press “Load unpacked” and choose the folder.',
+    instA4: 'The page “Alustamine” (Getting started) opens. A helper does its five steps once: microphone, server, a try, voice, done.',
+    instBT: 'Later: from the Chrome Web Store',
+    instB1: 'Once Ütle is in the Chrome Web Store, you install it from a link and Developer mode is not needed. The page “Alustamine” opens the same way. The store link is not public yet.',
     nextH: 'Next steps',
     n1T: 'First testers', n1: 'People who use Ütle on their own computer every day and tell us what does not work.',
     n2T: 'Chrome Web Store', n2: 'So that installing it needs no developer.',

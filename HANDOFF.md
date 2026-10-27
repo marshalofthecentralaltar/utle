@@ -525,6 +525,31 @@ voice saying any of it, the reading with a real Estonian voice (the suite's spee
 an eye tracker on the cards. The README had "kolm üheksa null kaks üks null null null null üks" for
 39021000001, one "null" short; the source has the right eleven digits.
 
+## 1k-SHIP. Round 9, SHIP lane (2026-10-27): the store packet, everything but Ralf's click
+
+Spec `docs/ARCHITECTURE.md` 30.6. `npm run ext:pack` writes `extension/out/utle-0.4.0.zip` (21
+files: manifest, the six pages with `welcome.html` now in `PACKED_FILES`, `dist/`, `relay.js`,
+`icons/`). Manifest 0.4.0, `description` Estonian then English in one string (108 characters, the
+store's summary), `default_title` "Ütle: mikrofon sisse või välja". `docs/STORE.md` holds the
+listing in both languages, every permission's justification, the data declarations, the privacy URL
+(`https://utle.ee/privaatsus` answered on 27 October, so the DNS is live; the GitHub page of
+`docs/PRIVACY.md` is the fallback) and "Ralf's ten minutes", the upload checklist. Five 1280×800
+screenshots in `extension/store/` by `npx tsx scripts/store-shots.ts` (stand-in pages only).
+`npx tsx scripts/pack-check.ts` unpacks the zip, loads it on a fresh profile: the welcome page
+opens and "abi" opens the help page (`docs/proof/r9-pack-welcome.png`). `extension/README.md`
+"Install on a locked computer" has route A (a helper loads the zip unpacked, Chrome or Edge) and
+route B (the store link, once published); `site/index.html` has a "Paigaldamine" section with the
+same two routes, **not deployed** (utle.ee deploys by hand from `site/`).
+
+What Ralf must do: register the developer account (one-time fee) and upload, steps 1 and 9 in
+`docs/STORE.md`; then put the store link into the README and the site and deploy the site. Not
+verified: the dashboard itself (its fields were taken from the README's list and Google's current
+form as known, not opened); whether the dashboard also requires a 440×280 promo tile (none made);
+the unpacked zip on Edge and on a managed computer; a reviewer's reading of the `<all_urls>`
+justification. Found, not fixed (outside the lane): the settings page's keyboard form is titled
+"Klaviatuuriga (Tom)" / "By keyboard (Tom)" (`src/core/strings.ts` `formTitle`), a person's name in
+a user-facing heading; the store screenshot of the settings page shows the Server section instead.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
