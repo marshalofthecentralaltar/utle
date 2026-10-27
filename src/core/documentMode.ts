@@ -2,6 +2,12 @@
  * Round 8, document mode (docs/ARCHITECTURE.md 29.2): the pure rules that differ when the armed
  * box is a document. Pure: the engine passes the times, inpage.ts the texts.
  */
+import type { BoxState } from '../browser/protocol.ts'
+
+/** F2 (30.3): the box is in document mode: the page says it is a document and it has no send button beside it. */
+export function inDocument(box: BoxState): boolean {
+  return box.document === true && box.send !== true
+}
 
 /** A final this long after the previous one starts a new sentence; within it the sentence goes on. */
 export const DOCUMENT_PAUSE_MS = 20_000

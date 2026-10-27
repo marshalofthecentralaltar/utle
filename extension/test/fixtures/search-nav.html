@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Search that navigates</title>
+  </head>
+  <body>
+    <h1>Otsing</h1>
+    <!-- F3 (30.3): Enter in the search leaves the page after 100 ms, as a site's script does; the form itself never submits. -->
+    <form id="search" role="search" onsubmit="return false">
+      <input id="q" type="search" name="q" aria-label="Otsi" />
+    </form>
+    <script>
+      document.getElementById('q').addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        const query = event.target.value
+        setTimeout(() => {
+          location.href = 'page-two.html?q=' + encodeURIComponent(query)
+        }, 100)
+      })
+    </script>
+  </body>
+</html>

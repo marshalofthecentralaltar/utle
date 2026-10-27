@@ -115,7 +115,9 @@ export async function interpret(input: unknown, deps: { client: MessagesClient; 
           max_tokens: MAX_TOKENS,
           system: SYSTEM_PROMPT,
           tools: TOOLS,
-          tool_choice: { type: 'any', disable_parallel_tool_use: true },
+          // F4 (30.3): 'any' is answered 400 by the current models with these tools; the prompt asks for
+          // the tool, and a reply without one is not_understood below.
+          tool_choice: { type: 'auto', disable_parallel_tool_use: true },
           messages,
         },
         { timeout: REQUEST_TIMEOUT_MS },

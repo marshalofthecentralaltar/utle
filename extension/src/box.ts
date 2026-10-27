@@ -292,7 +292,8 @@ export function boxState(el: HTMLElement | null, site: Site | null): BoxState {
   // mail (29.3.5): a field of a compose window says so; To and Cc take addresses, Subject plain text.
   const part = mailPartOf(el)
   const base: BoxState = { present: true, text: readText(el), armed: kind === 'composer' || armedElement() === el, kind, label: boxLabel(el), ...(part !== null ? { mail: true } : {}) }
-  if (!(el instanceof HTMLInputElement)) return documentBox(el, site, base)
+  // F2 (30.3): a box with a send button beside it says so; the core never takes it for a document.
+  if (!(el instanceof HTMLInputElement)) return documentBox(el, site, sendButtonBeside(el) !== null ? { ...base, send: true } : base)
   if (part === 'to' || part === 'cc') return { ...base, single: true, fieldKind: 'email' }
   if (part === 'subject') return { ...base, single: true, fieldKind: 'text' }
   return { ...base, single: true, fieldKind: kind === 'search' ? 'text' : fieldKindOf(el) }

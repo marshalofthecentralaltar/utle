@@ -2408,3 +2408,50 @@ describe('reading aloud (29.5): a reading keeps the box undo', () => {
     expect(undo.commands).toEqual([{ kind: 'setText', text: 'Tere' }])
   })
 })
+
+// ---------- F1 and F2 (30.3) ----------
+
+describe('F1 (30.3): siis mulle, the filler word is not a name', () => {
+  /** The WhatsApp composer, armed, as the page reports it. */
+  const composer: BoxState = { present: true, text: '', armed: true, kind: 'composer', label: 'Type a message' }
+
+  it.each(['Kirjuta siis mulle', 'kirjuta palun mulle', 'kirjuta siis mulle, et tulen'])('siis mulle: "%s" is typed into the composer', (u) => {
+    const step = inpageStep(session(), u, composer)
+    expect(step.commands).toHaveLength(1)
+    expect(step.commands[0]?.kind).toBe('setText')
+  })
+
+  it('siis mulle: a real two-word name still opens the chat', () => {
+    expect(inpageStep(session(), 'kirjuta Mari Maasikale', composer).commands).toEqual(only({ kind: 'openConversation', name: 'Mari Maasika' }))
+    expect(inpageStep(session(), 'kirjuta palun Marile', composer).commands).toEqual(only({ kind: 'openConversation', name: 'Mari' }))
+  })
+
+  it('siis mulle: the partial is previewed as dictation, not held as a command still being said', () => {
+    expect(inpagePreview(session(), 'kirjuta siis mulle', composer)).toBe('Kirjuta siis mulle')
+    expect(inpagePreview(session(), 'kirjuta siis', composer)).toBeNull()
+  })
+})
+
+describe('F2 (30.3): a long box with a send button is never a document', () => {
+  const LONG = 'Eesti suvi on lühike. '.repeat(30).trim()
+  /** A 600-character forum comment with a Post button beside it: the page says document and send both. */
+  const comment: BoxState = { present: true, text: LONG, armed: true, kind: 'composer', document: true, send: true }
+
+  it('long textarea with a send button: "saada" presses send', () => {
+    expect(LONG.length).toBeGreaterThan(600)
+    for (const u of ['saada', 'Saada ära.']) expect(inpageStep(session(), u, comment).commands, u).toEqual(only({ kind: 'pressSend' }))
+  })
+
+  it('long textarea with a send button: a long pause does not close the sentence, as in any message box', () => {
+    const open: BoxState = { ...comment, text: 'Tere Mari' }
+    const paused = session({ paused: true })
+    expect(inpageStep(paused, 'ma tulen homme', open).commands).toEqual(inpageStep(paused, 'ma tulen homme', box('Tere Mari')).commands)
+    expect(inpageStep(paused, 'ma tulen homme', { ...open, send: false }).commands).not.toEqual(inpageStep(paused, 'ma tulen homme', box('Tere Mari')).commands)
+  })
+
+  it('without a send button the long box stays a document: "saada" sends nothing', () => {
+    const essay: BoxState = { present: true, text: LONG, armed: true, document: true }
+    expect(inpageStep(session(), 'saada', essay).commands).toEqual([])
+    expect(inpageStep(session(), 'saada', essay).line).toBe(ET.inpage.documentNoSend)
+  })
+})

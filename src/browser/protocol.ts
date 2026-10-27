@@ -251,6 +251,12 @@ export interface BoxState {
    * site's composer. Absent or false: a message box, as before.
    */
   document?: boolean
+  /**
+   * F2 (30.3): true when the box has a send, post, comment or reply button in its form or within 200 px
+   * to its right or below. Such a box is never a document, whatever its length (inDocument in
+   * src/core/documentMode.ts). Absent: no such button was seen.
+   */
+  send?: boolean
   /** Round 8 (29.3.5): true for a field of a compose window (To, Cc, Subject, the body); "teema …" and "lisa koopia" act only there. */
   mail?: boolean
 }

@@ -36,6 +36,23 @@ const START_ET = /^(?:(?:kirjuta|uus) sõnum|sõnum|saada sõnum)(?: ((?:\p{L}+ 
 const START_ET_BARE = /^kirjuta ((?:\p{L}+ )?\p{L}+le)(?: sõnum)?$/u
 const START_EN = /^(?:(?:write|send|new) (?:a )?message(?: to)?|message)(?: (\p{L}+(?: \p{L}+)?))?$/u
 
+/** F1 (30.3): words said before a name that are never the first of a two-word name. */
+export const FILLERS: ReadonlySet<string> = new Set(['siis', 'ja', 'aga', 'nüüd', 'palun', 'kohe', 'ka'])
+/** F1: what after a filler makes the utterance dictation: the allative pronouns and the verbs ending in "-le". */
+export const NOT_A_NAME: ReadonlySet<string> = new Set(['mulle', 'sulle', 'talle', 'meile', 'teile', 'neile', 'endale', 'tule', 'mõtle', 'kuule', 'vaatle'])
+
+/**
+ * F1 (30.3): the Estonian recipient as spoken, without a leading filler word ("palun Marile" is
+ * "Marile"). Null when the word after the filler is a pronoun or a verb: "kirjuta siis mulle" is
+ * dictation, not a chat with "Siis Mul". A real two-word name is returned as it is.
+ */
+export function recipientFromSpoken(spoken: string): string | null {
+  const words = spoken.trim().split(/\s+/)
+  const [first, second] = words
+  if (words.length !== 2 || first === undefined || second === undefined || !FILLERS.has(first.toLowerCase())) return spoken
+  return NOT_A_NAME.has(second.toLowerCase()) ? null : second
+}
+
 function capitalise(word: string): string {
   return word.charAt(0).toLocaleUpperCase() + word.slice(1)
 }
@@ -64,7 +81,10 @@ export function asSentence(text: string): string {
 
 export function messageCommand(text: string): MessageCommand | null {
   const et = ONE_BREATH_ET.exec(text)
-  if (et?.[1] && et[2]) return { kind: 'start', to: nameFromSpoken(et[1], 'et'), text: asSentence(et[2]) }
+  if (et?.[1] && et[2]) {
+    const to = recipientFromSpoken(et[1])
+    return to === null ? null : { kind: 'start', to: nameFromSpoken(to, 'et'), text: asSentence(et[2]) }
+  }
   const en = ONE_BREATH_EN.exec(text)
   if (en?.[1] && en[2]) return { kind: 'start', to: nameFromSpoken(en[1], 'en'), text: asSentence(en[2]) }
 
@@ -74,7 +94,11 @@ export function messageCommand(text: string): MessageCommand | null {
   if (DROP.has(clean)) return { kind: 'drop' }
 
   const start = START_ET.exec(clean) ?? START_ET_BARE.exec(clean)
-  if (start) return { kind: 'start', to: start[1] ? nameFromSpoken(start[1], 'et') : null, text: null }
+  if (start) {
+    const to = start[1] ? recipientFromSpoken(start[1]) : undefined
+    if (to === null) return null
+    return { kind: 'start', to: to !== undefined ? nameFromSpoken(to, 'et') : null, text: null }
+  }
   const startEn = START_EN.exec(clean)
   if (startEn) {
     // "message" alone is too little to act on.

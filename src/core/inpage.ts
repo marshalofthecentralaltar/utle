@@ -2,8 +2,8 @@ import type { BoxState, BrowserCommand, BrowserFailure, BrowserResult, FieldKind
 import type { PageIntent } from './pageIntent.ts'
 import { BRIDGE_TIMED_OUT, BROWSER_PHRASES, browserUnderstood, SITES } from './browserIntent.ts'
 import { endsWithConnective } from './chain.ts'
-import { closeSentence, lastSentenceOf } from './documentMode.ts'
-import { messageCommand, nameFromSpoken } from './message.ts'
+import { closeSentence, inDocument, lastSentenceOf } from './documentMode.ts'
+import { FILLERS, NOT_A_NAME, messageCommand, nameFromSpoken } from './message.ts'
 import { mailCommand, mailFieldCommand } from './mail.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
@@ -905,7 +905,7 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
     }
     case 'send':
       // Round 8 (29.2): a document is written, never sent.
-      if (box.document === true) return none(s.inpage.documentNoSend)
+      if (inDocument(box)) return none(s.inpage.documentNoSend)
       if (!box.present) return none(s.inpage.nothingToSend)
       if (!box.armed) return none(s.inpage.noPlaceToWrite)
       if (box.text.trim() === '') return none(s.inpage.nothingToSend)
@@ -957,7 +957,7 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       const refused = armed()
       if (refused) return refused
       const kind = action.spell ?? session.spell ?? box.fieldKind ?? 'text'
-      const command: BrowserCommand = { kind: 'setText', text: joinField(documentBase(session, box), action.text, kind, box.document !== true) }
+      const command: BrowserCommand = { kind: 'setText', text: joinField(documentBase(session, box), action.text, kind, !inDocument(box)) }
       // A one-line form field reads back what it now holds (a PIN is counted, not shown, whatever mode "numbritena" set).
       const line = box.single === true ? s.inpage.typedInto(readBack(command.text, box.fieldKind === 'password' ? 'password' : kind)) : s.browserDoing(command)
       return { session: pushUndo(session, box.text), commands: [command], line }
@@ -1085,7 +1085,7 @@ export function inpagePreview(session: InpageSession, partial: string, box: BoxS
   const clean = normalise(partial)
   if (clean === '' || mayBeCommand(session, partial, clean)) return null
   // Round 8 (29.2): in a document a command verb is asked before anything is typed, so it is never previewed.
-  if (box.document === true && DOCUMENT_VERBS.has(clean.split(' ')[0] ?? '')) return null
+  if (inDocument(box) && DOCUMENT_VERBS.has(clean.split(' ')[0] ?? '')) return null
   return joinField(documentBase(session, box), partial.trim().replace(/\s+/g, ' '), session.spell ?? box.fieldKind ?? 'text', false)
 }
 
@@ -1131,6 +1131,8 @@ function pendingMessage(words: readonly string[]): boolean {
   else if (words[0] === 'kirjuta' || words[0] === 'saada' || words[0] === 'sõnum') rest = words.slice(1)
   else return false
   if (rest[0] === 'sõnum') rest = rest.slice(1)
+  // F1 (30.3): "kirjuta siis mulle" is dictation, as messageCommand rules for the final.
+  if (FILLERS.has(rest[0] ?? '') && NOT_A_NAME.has(rest[1] ?? '')) return false
   const first = rest[0]
   if (first === undefined) return true
   if (PRONOUN_WORDS.has(first)) return false
@@ -1193,23 +1195,23 @@ function lastWordsPattern(clean: string): Action | null {
 /** "uus lõik" is the paragraph in a document; in any other box it is the new line of "uus rida" (a paragraph could send a chat). */
 function documentClassified(classified: Classified, box: BoxState): Classified {
   const a = classified.action
-  if (box.document === true || a.kind !== 'browser' || a.command.kind !== 'format' || a.command.style !== 'paragraph') return classified
+  if (inDocument(box) || a.kind !== 'browser' || a.command.kind !== 'format' || a.command.style !== 'paragraph') return classified
   return { action: { kind: 'edit', edit: { kind: 'newLine' } }, understood: classified.understood }
 }
 
 /** In a document he armed, a one-word ordinary word is a word of the text, whatever the box holds; with the labels showing he is navigating. */
 function documentWord(session: InpageSession, utterance: string, box: BoxState, action: Action): boolean {
-  return box.document === true && box.present && box.armed && !session.hints && action.kind !== 'dictate' && DOCUMENT_WORDS.has(normalise(utterance))
+  return inDocument(box) && box.present && box.armed && !session.hints && action.kind !== 'dictate' && DOCUMENT_WORDS.has(normalise(utterance))
 }
 
 /** Whether a dictation may be asked about: always outside a document he armed; in one, only when it starts with a command verb. */
 function documentAsks(utterance: string, box: BoxState): boolean {
-  if (box.document !== true || !box.armed) return true
+  if (!inDocument(box) || !box.armed) return true
   return DOCUMENT_VERBS.has(normalise(utterance).split(' ')[0] ?? '')
 }
 
 /** The text a dictation joins onto: in a document after the pause window, with its open sentence closed. */
 function documentBase(session: InpageSession, box: BoxState): string {
-  return box.document === true && session.paused === true ? closeSentence(box.text) : box.text
+  return inDocument(box) && session.paused === true ? closeSentence(box.text) : box.text
 }
 // ---------- end of document mode ----------

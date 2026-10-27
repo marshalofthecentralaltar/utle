@@ -85,12 +85,14 @@ describe('interpret', () => {
     expect(await interpret(request(), deps)).toEqual({ kind: 'not_understood', message: 'Say that again.' })
   })
 
-  it('forces exactly one call to one of four strict tools', async () => {
+  it('F4 (30.3): lets the model choose (auto, one call at most) and asks for the tool in the prompt, four strict tools', async () => {
     const { client, calls } = fakeClient(FRIDAY_CALL)
     await interpret(request(), { client, model: 'claude-haiku-4-5' })
     const params = calls[0]
     expect(params?.model).toBe('claude-haiku-4-5')
-    expect(params?.tool_choice).toEqual({ type: 'any', disable_parallel_tool_use: true })
+    // F4: 'any' is answered 400 by the current models with these tools (round 9 plan §0).
+    expect(params?.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true })
+    expect(String(params?.system)).toContain('Respond by calling exactly one tool. Never reply in text.')
     const tools = params?.tools ?? []
     const names = tools.map((t) => ('name' in t ? t.name : ''))
     expect(names.sort()).toEqual(['ask_which', 'navigate', 'not_understood', 'propose_edit'])
