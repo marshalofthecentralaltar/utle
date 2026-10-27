@@ -15,11 +15,11 @@ Measured 2026-10-27 on Ralf's Windows machine, worktree `r10-measure`, dev serve
 
 | Script | What it does |
 |---|---|
-| `scripts/record.ts` | Prompts 31 phrases per person (10 commands, 10 dictations, 8 wake cases from #2, "saada", "jah", "üks" from #3), records each from the microphone as the extension takes it (echo cancellation, noise suppression, gain control, 16 kHz AudioContext) in a Chromium window served from 127.0.0.1, writes `<out>/<person>/<id>.wav` and appends `<out>/labels.tsv`. Refuses an `--out` inside the repository (exit 3). Without `--consent` it prints the consent text and stops. `--crosstalk` records the commands with kind `crosstalk`. |
+| `scripts/record.ts` | Prompts 43 phrases per person: first the 12 enrolment phrases of `src/core/enrolPhrases.ts` (kind `enrol`), then 10 commands, 10 dictations, 8 wake cases from #2, "saada", "jah", "üks" from #3), records each from the microphone as the extension takes it (echo cancellation, noise suppression, gain control, 16 kHz AudioContext) in a Chromium window served from 127.0.0.1, writes `<out>/<person>/<id>.wav` and appends `<out>/labels.tsv`. Refuses an `--out` inside the repository (exit 3). Without `--consent` it prints the consent text and stops; that text is a **DRAFT that Ralf must approve** (issue #9) before anyone is recorded. `--crosstalk` records the commands with kind `crosstalk`. |
 | `scripts/label.ts --import` | Adds a folder's wavs to `<out>/labels.tsv`. An `UTLE_CAPTURE` folder is read through its `log.tsv`: the gate's speaker verdict is not copied (speaker stays blank unless `--speaker` names the one person recorded), and the recognised text goes to `heard.tsv` as a typing hint, never into `reference`. |
 | `scripts/label.ts --edit` | Walks the clips with a blank speaker or reference; Enter keeps, text replaces, `p` plays the clip, `q` saves and stops. |
 
-`labels.tsv` columns: `file, speaker, reference, addressee (ütle/not/blank), kind (command, dictation, wake, short, crosstalk, other), duration_s`.
+`labels.tsv` columns: `file, speaker, reference, addressee (ütle/not/blank), kind (enrol, command, dictation, wake, short, crosstalk, other), duration_s`.
 
 Proof, SYNTHETIC (Chromium's fake microphone playing `et-jah-16k.wav`, out folder in the session scratchpad):
 
@@ -29,6 +29,8 @@ fake/short-saada.wav  1.77 s  "Saada."
 fake/short-jah.wav  2.01 s  "Jah."
 fake/short-yks.wav  2.02 s  "Üks."
 3 clips written
+$ npx tsx scripts/record.ts --person fake --out <scratch>/rec2 --consent --set enrol --auto 1 --fake-mic scripts/fixtures/et-jah-16k.wav --headless
+12 clips written   (fake/enrol-01.wav ... kind enrol, reference "Ava uus leht ja ava seaded." ...)
 $ npx tsx scripts/record.ts --person test --out scripts/out
 refused: ...\scripts\out is inside the repository ... (exit 3)
 $ npx tsx scripts/label.ts --import scripts/fixtures --out <scratch>/lab
@@ -66,41 +68,83 @@ for "kell kolm", which the digit rule counts as right. Text-to-speech is far cle
 room: these rates say the tool works, not how the engines hear people. ElevenLabs is a slot in
 `ENGINES` (no key), not implemented.
 
-## 3. Speaker gate: four models by length (M3), SYNTHETIC
+## 3. Speaker gate: four models by length of speech (M3), SYNTHETIC
 
-`npx tsx scripts/speaker-calibrate.ts --labels scripts/fixtures/labels.tsv --owner-speaker mari --models all`
+```
+npx tsx scripts/speaker-calibrate.ts --labels scripts/fixtures/labels-enrol.tsv --owner-speaker mari --models all
+npx tsx scripts/speaker-calibrate.ts --labels scripts/fixtures/labels.tsv       --owner-speaker mari --models all
+```
 
-Trials as the calibration always made them: an owner clip against the mean of the other owner clips
-(leave one out), an other clip against the mean of all owner clips; each clip embedded as the gate
-embeds it. Bucket = the trial clip's length. 0.54 is `OWNER_THRESHOLD`, set on TitaNet's scale; on the
-other three models it is shown for comparison only. Cells: rate [Wilson 95 % interval].
+Every clip is embedded as the gate embeds it (its 100 ms frames at or above SILENCE_RMS). **The bucket
+is the trial clip's seconds of speech** (those same frames), not its length: the fixture "jah" is a
+1.15 s clip with 0.3 s of speech. Both lengths are in the per-clip JSON (`seconds`, `speechSeconds`).
+0.54 is `OWNER_THRESHOLD`, set on TitaNet's scale; on the other three models it is shown for comparison
+only. Cells: rate [Wilson 95 % interval]. The 0.7 to 1 s bucket is empty in both runs (in the JSON).
 
-**SYNTHETIC**: 9 owner trials, 20 other trials. There are **no clips of 0.7 s or less** in this set
-(the shortest is 1.15 s), so that bucket is empty (n = 0) for every model, and 0.7 to 1 s is empty too.
+Two ways to make trials (`splitTrials`, printed as `method:`):
+- **enrol** (the product's way, used whenever the owner has clips of kind `enrol`): his profile is the
+  mean of his enrol clips only, and every other clip is a held-out trial: his non-enrol clips and every
+  clip of other people, their enrol clips included. `record.ts` now records the 12 enrolment phrases
+  of `src/core/enrolPhrases.ts` first, as kind `enrol`, so Ralf's recordings use this.
+- **leave-one-out** (fallback, no enrol clips; the round 7 method): an owner clip against the mean of
+  the other owner clips, an other clip against the mean of all owner clips.
 
-| Model | Bucket | n own | n oth | EER | Best t | FAR @0.54 | FRR @0.54 | FAR @best | FRR @best |
+### 3a. Enrol method, SYNTHETIC (`scripts/fixtures/labels-enrol.tsv`)
+
+The speaker set has no enrolment phrases, so `labels-enrol.tsv` (same clips as `labels.tsv`) marks as
+`enrol` the owner's four longest utterances (`owner-dictate-send-1`, `owner-sentence-2`,
+`owner-numbers-one-1`, `owner-scroll-tab-2`) and each other voice's long sentence (`other-*-3`, which
+still count as other trials). Held out: 5 owner trials ("saada", "jah", "üks", "keri alla", "Tere!",
+0.3 to 0.7 s of speech) and 20 other trials.
+
+| Model | Bucket (speech) | n own | n oth | EER | Best t | FAR @0.54 | FRR @0.54 | FAR @best | FRR @best |
+|---|---|---|---|---|---|---|---|---|---|
+| TitaNet-small | all | 5 | 20 | 57.5 % | 0.552 | 0.0 % [0-16] | 60.0 % [23-88] | 0.0 % [0-16] | 60.0 % [23-88] |
+| TitaNet-small | <=0.7 s | 5 | 6 | 36.7 % | 0.552 | 0.0 % [0-39] | 60.0 % [23-88] | 0.0 % [0-39] | 60.0 % [23-88] |
+| TitaNet-small | 1-2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
+| TitaNet-small | >2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
+| CAM++ en | all | 5 | 20 | 40.0 % | 0.763 | 60.0 % [39-78] | 0.0 % [0-43] | 0.0 % [0-16] | 100.0 % [57-100] |
+| CAM++ en | <=0.7 s | 5 | 6 | 36.7 % | 0.632 | 66.7 % [30-90] | 0.0 % [0-43] | 0.0 % [0-39] | 40.0 % [12-77] |
+| CAM++ en | 1-2 s | 0 | 7 | - | - | 57.1 % [25-84] | - | - | - |
+| CAM++ en | >2 s | 0 | 7 | - | - | 57.1 % [25-84] | - | - | - |
+| ERes2Net en | all | 5 | 20 | 40.0 % | 0.442 | 0.0 % [0-16] | 80.0 % [38-96] | 0.0 % [0-16] | 60.0 % [23-88] |
+| ERes2Net en | <=0.7 s | 5 | 6 | 36.7 % | 0.442 | 0.0 % [0-39] | 80.0 % [38-96] | 0.0 % [0-39] | 60.0 % [23-88] |
+| ERes2Net en | 1-2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
+| ERes2Net en | >2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
+| ResNet34 en | all | 5 | 20 | 40.0 % | 0.808 | 65.0 % [43-82] | 20.0 % [4-62] | 0.0 % [0-16] | 60.0 % [23-88] |
+| ResNet34 en | <=0.7 s | 5 | 6 | 36.7 % | 0.808 | 50.0 % [19-81] | 20.0 % [4-62] | 0.0 % [0-39] | 60.0 % [23-88] |
+| ResNet34 en | 1-2 s | 0 | 7 | - | - | 71.4 % [36-92] | - | - | - |
+| ResNet34 en | >2 s | 0 | 7 | - | - | 71.4 % [36-92] | - | - | - |
+
+Every held-out owner trial in this stand-in set is short, so the 1-2 s and >2 s rows have no owner
+trials and no EER; only FAR can be read there. That is a limit of the set, not of the method: Ralf's
+recordings hold out commands and dictations of every length.
+
+### 3b. Leave-one-out fallback, SYNTHETIC (`scripts/fixtures/labels.tsv`, no enrol clips)
+
+| Model | Bucket (speech) | n own | n oth | EER | Best t | FAR @0.54 | FRR @0.54 | FAR @best | FRR @best |
 |---|---|---|---|---|---|---|---|---|---|
 | TitaNet-small | all | 9 | 20 | 34.2 % | 0.577 | 0.0 % [0-16] | 33.3 % [12-65] | 0.0 % [0-16] | 33.3 % [12-65] |
-| TitaNet-small | <=0.7 s | 0 | 0 | - | - | - | - | - | - |
-| TitaNet-small | 1-2 s | 7 | 12 | 42.3 % | 0.577 | 0.0 % [0-24] | 42.9 % [16-75] | 0.0 % [0-24] | 42.9 % [16-75] |
-| TitaNet-small | >2 s | 2 | 8 | 0.0 % | 0.691 | 0.0 % [0-32] | 0.0 % [0-66] | 0.0 % [0-32] | 0.0 % [0-66] |
+| TitaNet-small | <=0.7 s | 5 | 6 | 36.7 % | 0.577 | 0.0 % [0-39] | 60.0 % [23-88] | 0.0 % [0-39] | 60.0 % [23-88] |
+| TitaNet-small | 1-2 s | 2 | 7 | 0.0 % | 0.647 | 0.0 % [0-35] | 0.0 % [0-66] | 0.0 % [0-35] | 0.0 % [0-66] |
+| TitaNet-small | >2 s | 1 | 7 | 0.0 % | 0.691 | 0.0 % [0-35] | 0.0 % [0-79] | 0.0 % [0-35] | 0.0 % [0-79] |
 | CAM++ en | all | 9 | 20 | 34.2 % | 0.879 | 55.0 % [34-74] | 11.1 % [2-44] | 0.0 % [0-16] | 77.8 % [45-94] |
-| CAM++ en | <=0.7 s | 0 | 0 | - | - | - | - | - | - |
-| CAM++ en | 1-2 s | 7 | 12 | 42.3 % | 0.879 | 66.7 % [39-86] | 0.0 % [0-35] | 0.0 % [0-24] | 71.4 % [36-92] |
-| CAM++ en | >2 s | 2 | 8 | 50.0 % | 0.626 | 37.5 % [14-69] | 50.0 % [9-91] | 0.0 % [0-32] | 100.0 % [34-100] |
+| CAM++ en | <=0.7 s | 5 | 6 | 45.0 % | 0.879 | 100.0 % [61-100] | 0.0 % [0-43] | 0.0 % [0-39] | 60.0 % [23-88] |
+| CAM++ en | 1-2 s | 2 | 7 | 53.6 % | 0.787 | 28.6 % [8-64] | 50.0 % [9-91] | 0.0 % [0-35] | 100.0 % [34-100] |
+| CAM++ en | >2 s | 1 | 7 | 21.4 % | 0.626 | 42.9 % [16-75] | 0.0 % [0-79] | 0.0 % [0-35] | 100.0 % [21-100] |
 | ERes2Net en | all | 9 | 20 | 34.2 % | 0.618 | 0.0 % [0-16] | 44.4 % [19-73] | 0.0 % [0-16] | 44.4 % [19-73] |
-| ERes2Net en | <=0.7 s | 0 | 0 | - | - | - | - | - | - |
-| ERes2Net en | 1-2 s | 7 | 12 | 31.0 % | 0.618 | 0.0 % [0-24] | 57.1 % [25-84] | 0.0 % [0-24] | 57.1 % [25-84] |
-| ERes2Net en | >2 s | 2 | 8 | 0.0 % | 0.798 | 0.0 % [0-32] | 0.0 % [0-66] | 0.0 % [0-32] | 0.0 % [0-66] |
+| ERes2Net en | <=0.7 s | 5 | 6 | 36.7 % | 0.431 | 0.0 % [0-39] | 80.0 % [38-96] | 0.0 % [0-39] | 60.0 % [23-88] |
+| ERes2Net en | 1-2 s | 2 | 7 | 0.0 % | 0.718 | 0.0 % [0-35] | 0.0 % [0-66] | 0.0 % [0-35] | 0.0 % [0-66] |
+| ERes2Net en | >2 s | 1 | 7 | 0.0 % | 0.829 | 0.0 % [0-35] | 0.0 % [0-79] | 0.0 % [0-35] | 0.0 % [0-79] |
 | ResNet34 en | all | 9 | 20 | 34.2 % | 0.815 | 80.0 % [58-92] | 11.1 % [2-44] | 0.0 % [0-16] | 44.4 % [19-73] |
-| ResNet34 en | <=0.7 s | 0 | 0 | - | - | - | - | - | - |
-| ResNet34 en | 1-2 s | 7 | 12 | 31.0 % | 0.789 | 83.3 % [55-95] | 14.3 % [3-51] | 0.0 % [0-24] | 42.9 % [16-75] |
-| ResNet34 en | >2 s | 2 | 8 | 0.0 % | 0.839 | 75.0 % [41-93] | 0.0 % [0-66] | 0.0 % [0-32] | 0.0 % [0-66] |
+| ResNet34 en | <=0.7 s | 5 | 6 | 36.7 % | 0.815 | 83.3 % [44-97] | 20.0 % [4-62] | 0.0 % [0-39] | 60.0 % [23-88] |
+| ResNet34 en | 1-2 s | 2 | 7 | 0.0 % | 0.839 | 85.7 % [49-97] | 0.0 % [0-66] | 0.0 % [0-35] | 0.0 % [0-66] |
+| ResNet34 en | >2 s | 1 | 7 | 0.0 % | 0.843 | 71.4 % [36-92] | 0.0 % [0-79] | 0.0 % [0-35] | 0.0 % [0-79] |
 
-(0.7-1 s rows, all n = 0, are in the JSON and the printed table.) The equal 34.2 % "all" EER of all four
-models is the coarseness of the set, not agreement: with 9 owner trials FRR moves in steps of 11 points
-and with 20 other trials FAR in steps of 5, and on every model the FAR/FRR crossing falls at 7 of 20
-against 3 of 9. With 9 and 20 trials the intervals are 30 to 60 points wide: this set cannot rank the models.
+The equal 34.2 % "all" EER of all four models is the coarseness of the set, not agreement: with 9
+owner trials FRR moves in steps of 11 points and with 20 other trials FAR in steps of 5, and on every
+model the FAR/FRR crossing falls at 7 of 20 against 3 of 9. With trials this few the intervals are 30
+to 60 points wide: neither set can rank the models.
 
 Default behaviour unchanged: `npx tsx scripts/speaker-calibrate.ts scripts/fixtures/speaker-set`
 rewrote `scores.json` with every field equal to the committed file except the per-clip `ms` timings
@@ -144,12 +188,14 @@ model row's p95 is the larger of two values.
 
 ## How Ralf records
 
-Consent first: before anyone is recorded, read them the text `record.ts` prints without `--consent`
+Consent first. The consent text in `record.ts` is a **DRAFT**: Ralf approves the wording (issue #9)
+before any recording. Then, before anyone is recorded, read them the text `record.ts` prints without `--consent`
 (what is recorded, that it stays on this computer, what it is for, that it is deleted after, that they
 can stop). Record only after a yes.
 
 1. Folders, outside the repository: `C:\temp\utle-voice` (the scripts refuse a folder inside it).
-2. Each person alone, about 5 minutes each, in a normal room with the microphone you use for Ütle:
+2. Each person alone, about 8 minutes each (the 12 enrolment phrases come first: they make the
+   owner's profile in the speaker table, as the product's enrolment does), in a normal room with the microphone you use for Ütle:
    ```
    npx tsx scripts/record.ts --person ralf --out C:/temp/utle-voice --consent
    npx tsx scripts/record.ts --person partner1 --out C:/temp/utle-voice --consent
@@ -173,5 +219,5 @@ can stop). Record only after a yes.
    Each writes its JSON next to `labels.tsv` (wer.json, speaker-sweep.json, latency.json). Copy only the
    counts and rates into the proof file; the JSON files hold what people said and stay in the folder.
 7. When the tables are written down: delete `C:\temp\utle-voice` entirely (recordings, labels, JSON,
-   capture folders). Soniox spend for the whole set is about $0.01 (about 5 minutes of audio per
+   capture folders). Soniox spend for the whole set is about $0.01 (about 8 minutes of audio per
    person at $0.12 per hour).

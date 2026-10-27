@@ -9,7 +9,8 @@
  * this script opens on a page it serves itself on 127.0.0.1. Nothing goes to any other server.
  *
  *   npx tsx scripts/record.ts --person ralf --out C:/temp/utle-voice --consent
- *     --set all | command,dictation,wake,short    which phrases (default all)
+ *     --set all | enrol,command,dictation,wake,short   which phrases (default all: the 12 enrolment
+ *                                                  phrases of src/core/enrolPhrases.ts first, kind enrol)
  *     --crosstalk                                  everyone talks at once while --person reads the
  *                                                  commands; clips get kind "crosstalk"
  *     --auto <seconds>                             no keys: each phrase is recorded for that long
@@ -17,7 +18,8 @@
  *     --headless                                   no window (only with --fake-mic)
  *
  * In the window: Space starts and stops a phrase, Backspace records the last phrase again, Escape ends.
- * Without --consent the script prints what the speaker agrees to and stops.
+ * Without --consent the script prints what the speaker agrees to and stops. That text is a DRAFT that
+ * Ralf must approve before any recording (issue #9).
  */
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -30,14 +32,20 @@ import { LABEL_COLUMNS, formatLabels, insideRepo, promptsFor } from './measure.t
 import type { Prompt } from './measure.ts'
 
 const HELP = `usage: npx tsx scripts/record.ts --person <name> --out <folder outside the repo> --consent
-  [--set all|command,dictation,wake,short] [--crosstalk] [--auto <seconds>] [--fake-mic <wav> [--headless]]
+  [--set all|enrol,command,dictation,wake,short] [--crosstalk] [--auto <seconds>] [--fake-mic <wav> [--headless]]
 
 Records each phrase into <out>/<person>/<phrase id>.wav (16 kHz mono) and appends to <out>/labels.tsv.
 The folder must be outside the repository: recordings are personal data and never go in git.
 In the window: Space starts and stops a phrase, Backspace records the last one again, Escape ends.`
 
-export const CONSENT = `Before recording, read this to the speaker and record only if they say yes:
-  - Ütle records your voice reading about 30 short Estonian phrases (about 5 minutes).
+/**
+ * DRAFT, NOT APPROVED (issue #9): only Ralf can sign off the consent text. Nobody is recorded until he
+ * has approved this wording (and its Estonian version) and removed this mark.
+ */
+export const CONSENT = `DRAFT CONSENT TEXT: NOT APPROVED. Ralf must approve this wording (issue #9) before anyone is recorded.
+
+Before recording, read this to the speaker and record only if they say yes:
+  - Ütle records your voice reading 43 short Estonian phrases (about 8 minutes).
   - The recordings stay on this computer, in the folder named by --out. They are not uploaded and
     not put in git. Only counts and scores (word error rates, similarity scores) are written down.
   - They are used to measure how well Ütle hears Estonian and tells your voice from Ralf's.

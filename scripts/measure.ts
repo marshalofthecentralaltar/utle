@@ -9,14 +9,18 @@
  *               The speaker gate's own verdict is never copied here: it is what is being measured.
  *   reference   what was said, typed by a person, in words (see normaliseEt for digits)
  *   addressee   "ütle" when the words were meant for Ütle, "not" when not, blank when unknown
- *   kind        command | dictation | wake | short | crosstalk | other
+ *   kind        enrol | command | dictation | wake | short | crosstalk | other (enrol: one of the 12
+ *               enrolment phrases, src/core/enrolPhrases.ts; the speaker sweep builds the owner's
+ *               profile from his enrol clips, as the product does)
  *   duration_s  the clip's length in seconds, two decimals
  */
+
+import { ENROL_PHRASES } from '../src/core/enrolPhrases.ts'
 
 export const LABEL_COLUMNS = ['file', 'speaker', 'reference', 'addressee', 'kind', 'duration_s'] as const
 
 export type Addressee = 'ütle' | 'not' | ''
-export const KINDS = ['command', 'dictation', 'wake', 'short', 'crosstalk', 'other'] as const
+export const KINDS = ['enrol', 'command', 'dictation', 'wake', 'short', 'crosstalk', 'other'] as const
 export type Kind = (typeof KINDS)[number]
 
 export interface LabelRow {
@@ -265,12 +269,14 @@ export interface Prompt {
 }
 
 /**
- * What record.ts asks each person to say. Commands and dictations as round 10's plan sets them (10
+ * What record.ts asks each person to say. First the 12 enrolment phrases the product learns a voice
+ * from (src/core/enrolPhrases.ts), then commands and dictations as round 10's plan sets them (10
  * each), the wake cases of issue #2's matrix (Ütle at the start, middle and end of a sentence;
  * "ütlen", "ütles"; a quoted "ütle"), and issue #3's short words. For the crosstalk set, everyone
  * talks at once while the owner reads the commands.
  */
 export const PROMPTS: readonly Prompt[] = [
+  ...ENROL_PHRASES.map((text, i): Prompt => ({ id: `enrol-${String(i + 1).padStart(2, '0')}`, text, kind: 'enrol', addressee: '' })),
   { id: 'cmd-01', text: 'Keri alla.', kind: 'command', addressee: 'ütle' },
   { id: 'cmd-02', text: 'Mine tagasi.', kind: 'command', addressee: 'ütle' },
   { id: 'cmd-03', text: 'Ava uus vaheleht.', kind: 'command', addressee: 'ütle' },
@@ -331,4 +337,24 @@ export function speechEndSample(samples: Float32Array, rate = 16000, threshold =
     if (Math.sqrt(sum / Math.max(1, stop - at)) >= threshold) end = stop
   }
   return end
+}
+
+// ---------- the speaker sweep's trials ----------
+
+export interface TrialClip {
+  label: 'owner' | 'other'
+  kind: Kind
+}
+
+/**
+ * How the sweep makes its trials (issue #3's held-out phrases). With owner clips of kind enrol: the
+ * owner's profile is the mean of his enrol clips only, as the product's enrolment makes it, and the
+ * trials are every other clip (his non-enrol clips, and every clip of other people, their enrol
+ * clips included). Without: leave one out, the round 7 method (each owner clip against the mean of
+ * the other owner clips, each other clip against all owner clips).
+ */
+export function splitTrials<T extends TrialClip>(clips: readonly T[]): { method: 'enrol' | 'leave-one-out'; enrol: T[]; trials: T[] } {
+  const enrol = clips.filter((c) => c.label === 'owner' && c.kind === 'enrol')
+  if (enrol.length === 0) return { method: 'leave-one-out', enrol: [], trials: [...clips] }
+  return { method: 'enrol', enrol, trials: clips.filter((c) => !enrol.includes(c)) }
 }

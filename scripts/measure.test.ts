@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROMPTS, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
+import { PROMPTS, splitTrials, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
 import type { LabelRow } from './measure.ts'
 
 describe('normaliseEt', () => {
@@ -131,5 +131,31 @@ describe('speechEndSample', () => {
     for (let i = 3200; i < 8000; i += 1) s[i] = i % 2 === 0 ? 0.2 : -0.2
     expect(speechEndSample(s)).toBe(8000)
     expect(speechEndSample(new Float32Array(1600).fill(0.0005))).toBe(0)
+  })
+})
+
+describe('splitTrials', () => {
+  const c = (label: 'owner' | 'other', kind: 'enrol' | 'command', id: string) => ({ label, kind, id })
+  it('with owner enrol clips: they make the profile, every other clip is a trial, enrol clips of others included', () => {
+    const clips = [c('owner', 'enrol', 'o-e1'), c('owner', 'enrol', 'o-e2'), c('owner', 'command', 'o-c'), c('other', 'enrol', 'x-e'), c('other', 'command', 'x-c')]
+    const split = splitTrials(clips)
+    expect(split.method).toBe('enrol')
+    expect(split.enrol.map((x) => x.id)).toEqual(['o-e1', 'o-e2'])
+    expect(split.trials.map((x) => x.id)).toEqual(['o-c', 'x-e', 'x-c'])
+  })
+  it('without owner enrol clips: leave one out over everything', () => {
+    const clips = [c('owner', 'command', 'a'), c('owner', 'command', 'b'), c('other', 'enrol', 'x')]
+    const split = splitTrials(clips)
+    expect(split.method).toBe('leave-one-out')
+    expect(split.enrol).toEqual([])
+    expect(split.trials).toHaveLength(3)
+  })
+})
+
+describe('enrolment prompts', () => {
+  it('come first: the 12 phrases of src/core/enrolPhrases.ts, kind enrol', () => {
+    const enrol = PROMPTS.filter((p) => p.kind === 'enrol')
+    expect(enrol).toHaveLength(12)
+    expect(PROMPTS.slice(0, 12)).toEqual(enrol)
   })
 })
