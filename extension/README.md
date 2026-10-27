@@ -189,6 +189,14 @@ internetiühendust või palu abilisel vaadata serverit." (a hosted one); a wrong
 võti on vale.". When the server answers again the microphone reopens by itself and the bar says
 "Server vastab jälle." once.
 
+## When the page asks (round 9, ARCHITECTURE 30.1)
+
+A cookie bar or a dialog of the page's own that lies under the strip (ilmateenistus.ee's bar,
+youtube.com's consent dialog) folds this tab's strip to the pill, whose title says "Riba on peidus,
+kuni leht küsib."; the pill moves to the top-right corner when the layer covers its own. The page's
+button can then be pressed with the pointer or a dwell. Once the layer is gone the bar comes back by
+itself within a second. A fold he asked for ("peida riba") never comes back by itself.
+
 ## Use
 
 - The strip sits at the bottom of every web page: near-black, ivory text, 128 px high by default.

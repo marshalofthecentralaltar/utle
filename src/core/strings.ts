@@ -351,6 +351,8 @@ export interface Strings {
     connConnected: string
     connConnecting: string
     connDown: string
+    /** 30.1: the pill's title while the strip is folded because the page asks something. */
+    askingFold: string
   }
 
   // Round 6 (Minu andmed, 26.5 and 26.6): the settings section and the voice entry flow.
@@ -1050,6 +1052,7 @@ const ET: Strings = {
     connConnected: 'Ühendatud',
     connConnecting: 'Ühendan',
     connDown: 'Server ei vasta',
+    askingFold: 'Riba on peidus, kuni leht küsib.',
   },
 
   andmed: {
@@ -1619,6 +1622,7 @@ const EN: Strings = {
     connConnected: 'Connected',
     connConnecting: 'Connecting',
     connDown: 'The server is not answering',
+    askingFold: 'The bar is hidden while the page is asking.',
   },
 
   andmed: {

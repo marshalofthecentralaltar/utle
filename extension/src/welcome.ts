@@ -196,6 +196,10 @@ where.append(local, hosted)
 const whereNote = document.createElement('p')
 whereNote.className = 'note'
 whereNote.id = 'serverNote'
+// The English on its own dim line under the Estonian, as everywhere on the page.
+const whereNoteEn = document.createElement('p')
+whereNoteEn.className = 'en'
+whereNoteEn.id = 'serverNoteEn'
 const fields = document.createElement('div')
 fields.className = 'fields'
 fields.id = 'serverFields'
@@ -218,7 +222,7 @@ const token = field('serverToken', `${text.serverToken} · ${en.serverToken}`, '
 const testRow = document.createElement('div')
 testRow.className = 'choices'
 testRow.append(choice('serverTest', text.serverTest, en.serverTest, () => void testServer()))
-server.section.append(where, whereNote, fields, testRow, server.result)
+server.section.append(where, whereNote, whereNoteEn, fields, testRow, server.result)
 
 let hostedChosen = false
 function pressWhere(isHosted: boolean): void {
@@ -226,7 +230,8 @@ function pressWhere(isHosted: boolean): void {
   local.setAttribute('aria-pressed', String(!isHosted))
   hosted.setAttribute('aria-pressed', String(isHosted))
   fields.hidden = !isHosted
-  whereNote.textContent = isHosted ? `${W.choiceHostedNote} ${WE.choiceHostedNote}` : `${W.choiceLocalNote} ${WE.choiceLocalNote}`
+  whereNote.textContent = isHosted ? W.choiceHostedNote : W.choiceLocalNote
+  whereNoteEn.textContent = isHosted ? WE.choiceHostedNote : WE.choiceLocalNote
 }
 
 /** Samas arvutis: the stored address and token go, so the local default holds; then it is tried. */

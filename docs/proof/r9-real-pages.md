@@ -1,16 +1,16 @@
 # What Ütle sees on real public pages (round 9, REALPAGES)
 
-Written by `npx tsx scripts/real-pages.ts`, last run 2026-10-27 08:14 UTC, Playwright Chromium 1280x900, locale et-EE, a fresh profile, no login. Method and columns: docs/ARCHITECTURE.md 30.4.
+Written by `npx tsx scripts/real-pages.ts`, last run 2026-10-27 08:33 UTC, Playwright Chromium 1280x900, locale et-EE, a fresh profile, no login. Method and columns: docs/ARCHITECTURE.md 30.4.
 
 | site | page | banner first (readPage before any click) | items (after accepting) | search field (SEARCH_FIELDS) | #movie_player | article (`loe ette`) | headline, no nav | strip covered | page bars under the strip | accept button and the pointer |
 |---|---|---|---|---|---|---|---|---|---|---|
-| youtube | https://www.youtube.com/ | yes (8 [dialog] items) | 11 | yes: `input[name="search_query"]` | n/a: not a watch page | n/a: not a news site | n/a: not a news site | no (strip top 772, height 128) | ytd-mini-guide-renderer.style-scope | FAULT: "Nõustu kõigiga" at y 757 to 797 is under the strip, the pointer cannot click it |
+| youtube | https://www.youtube.com/ | yes (8 [dialog] items) | 11 | yes: `input[name="search_query"]` | n/a: not a watch page | n/a: not a news site | n/a: not a news site | no (strip top 772, height 128) | ytd-mini-guide-renderer.style-scope | "Nõustu kõigiga" at y 757 to 797, the pointer clicked it |
 | youtube-watch | https://www.youtube.com/watch?v=jNQXAC9IVRw | none | 62 | yes: `input[name="search_query"]` | yes, holds the <video>; readPage lists "praegune video" | n/a: not a news site | n/a: not a news site | no (strip top 772, height 128) | none | n/a: no consent layer at load |
 | google | https://www.google.com/ | yes (8 [dialog] items) | 22 | yes: `textarea[name="q"]` | n/a: not a watch page | n/a: not a news site | n/a: not a news site | no (strip top 772, height 128) | none | "Nõustu kõigiga" at y 714 to 762, the pointer clicked it |
 | postimees | https://www.postimees.ee/ | yes (3 [dialog] items) | 48 | n/a: not a search site | n/a: not a watch page | 8 sentences | article ok | no (strip top 772, height 128) | none | "Olen nõus" at y 696 to 736, the pointer clicked it |
 | delfi | https://www.delfi.ee/ | yes (3 [dialog] items) | 58 | n/a: not a search site | n/a: not a watch page | 23 sentences | article ok | no (strip top 772, height 128) | none | "NÕUSTUN KÕIGIGA" at y 645 to 684, the pointer clicked it |
 | err | https://www.err.ee/ | yes (11 [dialog] items) | 44 | n/a: not a search site | n/a: not a watch page | 34 sentences | article ok | no (strip top 772, height 128) | none | "Nõustun kõigi küpsistega" at y 603 to 635, the pointer clicked it |
-| ilmateenistus | https://www.ilmateenistus.ee/ | yes (3 [dialog] items) | 33 | n/a: not a search site | n/a: not a watch page | n/a: not a news site | n/a: not a news site | no (strip top 772, height 128) | none | FAULT: "Nõustun" at y 806 to 850 is under the strip, the pointer cannot click it |
+| ilmateenistus | https://www.ilmateenistus.ee/ | yes (3 [dialog] items) | 33 | n/a: not a search site | n/a: not a watch page | n/a: not a news site | n/a: not a news site | no (strip top 772, height 128) | none | "Nõustun" at y 806 to 850, the pointer clicked it |
 | otse-err | https://otse.err.ee/k/etv | yes (11 [dialog] items) | 80 | n/a: not a search site | n/a: not a watch page | n/a: not a news site | n/a: not a news site | no (strip top 772, height 128) | none | "Nõustun kõigi küpsistega" at y 603 to 635, the pointer clicked it |
 
 ## Detail per site
@@ -18,7 +18,7 @@ Written by `npx tsx scripts/real-pages.ts`, last run 2026-10-27 08:14 UTC, Playw
 ### youtube
 
 - Load: ok (HTTP 200). Screenshot: `docs/proof/r9-real-youtube.png`.
-- Consent layer seen: tp-yt-paper-dialog#dialog.eom-v1-dialog.style-scope 700x838 pos=fixed z=2202 area=51%. Accepted with: Nõustu kõigiga, button y 757 to 797, the pointer could not click it (<utle-strip></utle-strip> intercepts pointer events); clicked by script.
+- Consent layer seen: tp-yt-paper-dialog#dialog.eom-v1-dialog.style-scope 700x838 pos=fixed z=2202 area=51%. Accepted with: Nõustu kõigiga, button y 757 to 797, clicked by the pointer.
 - readPage before any click: 16 items; the first six: `button:[dialog] Keel: Estonian`, `link:[dialog] Logi sisse`, `link:[dialog] küpsisefaile`, `button:[dialog] Ei nõustu küpsiste ja muude andmete kasutamisega kirjeldatud`, `button:[dialog] Nõustun küpsiste ja muude andmete kasutamisega kirjeldatud e`, `link:[dialog] Rohkem valikuid`.
 
 ### youtube-watch
@@ -66,7 +66,7 @@ Written by `npx tsx scripts/real-pages.ts`, last run 2026-10-27 08:14 UTC, Playw
 ### ilmateenistus
 
 - Load: ok (HTTP 200). Screenshot: `docs/proof/r9-real-ilmateenistus.png`.
-- Consent layer seen: section#tcpCookieConsent.tcp-cookie-consent 1265x145 pos=fixed z=1000 area=16%. Accepted with: Nõustun, button y 806 to 850, the pointer could not click it (<utle-strip></utle-strip> intercepts pointer events); clicked by script.
+- Consent layer seen: section#tcpCookieConsent.tcp-cookie-consent 1265x145 pos=fixed z=1000 area=16%. Accepted with: Nõustun, button y 806 to 850, clicked by the pointer.
 - readPage before any click: 37 items; the first six: `button:[dialog] Keeldun`, `button:[dialog] Nõustun`, `link:[dialog] küpsiseid`, `link:Keskkonnaagentuuri logo`, `link:Juurdepääsetavus`, `button:Eesti`.
 
 ### otse-err

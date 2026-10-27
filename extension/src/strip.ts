@@ -155,6 +155,8 @@ button { font-family: ${FONT}; }
 .connword { display: none; position: relative; z-index: 1; font-size: 13px; font-weight: 700; line-height: 1.1; text-align: center; padding: 0 4px; }
 .mic:hover .connword, .mic.dwelling .connword { display: block; }
 .pillmic .connword { display: none !important; }
+/* 30.1: folded because the page asks, with its layer over the bottom-right corner: the pill waits at the top. */
+.pill.top { top: 16px; bottom: auto; align-items: flex-start; }
 .show { width: ${SHOW_SIZE}px; height: ${SHOW_SIZE}px; border-radius: 10px; font-size: 13px; box-shadow: 0 2px 12px rgba(0,0,0,.5); }
 `
 
@@ -202,6 +204,67 @@ function dwellable(el: HTMLElement, onFire: () => void, when: () => boolean = ()
     if (!when()) return
     if (dwell.click()) onFire()
   })
+}
+
+// ---------- 30.1: the strip and a page's bottom layer ----------
+
+/** While the strip is folded because the page asks, it looks this often whether the layer is gone. */
+export const ASKING_POLL_MS = 500
+const ASKING_WORDS = /cookie|küpsis|nõustu|accept|consent/i
+const ASKING_DIALOG = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]'
+const OWN_TAGS = new Set(['UTLE-STRIP', 'UTLE-HINTS'])
+
+/** A place to write (a compose window, a chat box): a dialog that holds one is not a question. */
+function holdsTextField(el: Element): boolean {
+  return el.querySelector('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), textarea, [contenteditable=""], [contenteditable="true"]') !== null
+}
+
+/**
+ * The page's own asking layer around el, or null: a dialog without a text field, or a fixed layer
+ * (an absolute one with a z-index) under 3000 characters that says cookie, küpsis, nõustu, accept
+ * or consent. The readPage rule (page.ts) without its size test.
+ */
+export function askingLayer(el: Element | null): HTMLElement | null {
+  for (let e = el; e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+    if (OWN_TAGS.has(e.tagName)) return null
+    if (!(e instanceof HTMLElement)) continue
+    if (e.matches(ASKING_DIALOG)) {
+      if (!holdsTextField(e)) return e
+      continue
+    }
+    const s = getComputedStyle(e)
+    const layered = s.position === 'fixed' || (s.position === 'absolute' && s.zIndex !== 'auto')
+    if (!layered) continue
+    const words = e.textContent ?? ''
+    if (words.length < 3000 && ASKING_WORDS.test(words)) return e
+  }
+  return null
+}
+
+/** What asks under the strip's rectangle (the bottom `height` px of the viewport): fifteen points through it. */
+function askingUnder(height: number): HTMLElement | null {
+  const w = window.innerWidth
+  const h = window.innerHeight
+  for (const fy of [4, height / 2, height - 4]) {
+    for (const fx of [0.05, 0.25, 0.5, 0.75, 0.95]) {
+      for (const hit of document.elementsFromPoint(w * fx, h - fy)) {
+        if (OWN_TAGS.has(hit.tagName)) continue
+        const layer = askingLayer(hit)
+        if (layer) return layer
+        // Only the topmost page element at the point counts: what lies under it is not what he sees.
+        break
+      }
+    }
+  }
+  return null
+}
+
+/** The layer lies over the pill's corner (bottom right: the pill and its Näita control). */
+function coversCorner(layer: HTMLElement): boolean {
+  const r = layer.getBoundingClientRect()
+  const left = window.innerWidth - 16 - PILL_SIZE - 10 - SHOW_SIZE
+  const top = window.innerHeight - 16 - PILL_SIZE
+  return r.right > left && r.bottom > top && r.left < window.innerWidth && r.top < window.innerHeight
 }
 
 /** Round 9 (30.1): the dot's word for a connection state. */
@@ -309,6 +372,9 @@ export function mountStrip(): void {
   let settingsNow: StripSettings = DEFAULT_SETTINGS
   let state: StripState = INITIAL_STATE
   let lagOn = false
+  // 30.1: the page's asking layer while this tab's strip is folded for it; the stored hidden is his own fold.
+  let asking: HTMLElement | null = null
+  const folded = (): boolean => state.hidden || asking !== null
   const gazeMode = (): boolean => settingsNow.listenMode === 'gaze'
 
   // Gaze mode (round 3): the target listens while the pointer rests on it. The pointer's last
@@ -326,7 +392,7 @@ export function mountStrip(): void {
   let unbindGaze: (() => void) | null = null
   const gazeTargetEl = (): HTMLElement | null => {
     if (!gazeMode()) return null
-    if (state.hidden) return pillMic
+    if (folded()) return pillMic
     return settingsNow.gazeTarget === 'bar' ? bar : mic
   }
   const bindGaze = (): void => {
@@ -392,7 +458,7 @@ export function mountStrip(): void {
     fitted = null
   }
   const fitApp = (): void => {
-    if (state.hidden) return
+    if (folded()) return
     const h = settingsNow.barHeight
     const box = bottomBox(site === null ? null : SITES[site])
     if (!box) return
@@ -462,9 +528,12 @@ export function mountStrip(): void {
       const word = m.querySelector<HTMLSpanElement>('.connword')
       if (word) word.textContent = connectionWord(state.connection)
     }
-    bar.hidden = state.hidden
-    pill.hidden = !state.hidden
-    if (state.hidden) {
+    // 30.1: folded while the page asks; the pill says why, and leaves the corner when the layer covers it.
+    if (asking !== null && !state.hidden) pillMic.title = text.askingFold
+    pill.classList.toggle('top', asking !== null && !state.hidden && coversCorner(asking))
+    bar.hidden = folded()
+    pill.hidden = !folded()
+    if (folded()) {
       room.textContent = ''
       unfit()
     } else {
@@ -476,6 +545,23 @@ export function mountStrip(): void {
   }
   applySettings()
   render()
+
+  // 30.1: fold while the page asks under the strip; back by itself once it stops.
+  let askingPoll: ReturnType<typeof setInterval> | null = null
+  const checkAsking = (): void => {
+    const next = state.hidden ? null : askingUnder(settingsNow.barHeight)
+    if (next === asking) return
+    asking = next
+    render()
+    if (asking !== null && askingPoll === null) askingPoll = setInterval(checkAsking, ASKING_POLL_MS)
+    if (asking === null && askingPoll !== null) {
+      clearInterval(askingPoll)
+      askingPoll = null
+    }
+  }
+  checkAsking()
+  document.addEventListener('DOMContentLoaded', checkAsking)
+  window.addEventListener('load', checkAsking)
 
   // In gaze mode the microphone is not a toggle: a click or a dwell on it does nothing.
   const toggleMode = (): boolean => !gazeMode()
@@ -554,6 +640,7 @@ export function mountStrip(): void {
   setInterval(() => {
     stay()
     fitApp()
+    checkAsking()
   }, 1000)
 
   // For the tests: where the strip and the microphone are, and what they show.
@@ -563,7 +650,7 @@ export function mountStrip(): void {
       const r = el.getBoundingClientRect()
       return { left: r.left, top: r.top, width: r.width, height: r.height }
     }
-    const visibleMic = state.hidden ? pillMic : mic
+    const visibleMic = folded() ? pillMic : mic
     const answer: StripMeasure = {
       strip: box(bar),
       mic: box(visibleMic),
@@ -576,6 +663,11 @@ export function mountStrip(): void {
       lag: lag.textContent ?? '',
       connection: visibleMic.dataset.connection ?? '',
       connectionWord: visibleMic.title,
+      asking: asking !== null,
+      barShown: !bar.hidden,
+      pillTitle: pillMic.title,
+      pillTop: pill.classList.contains('top'),
+      pill: box(pillMic),
     }
     reply(answer)
     return false
