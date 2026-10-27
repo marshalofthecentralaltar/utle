@@ -14,6 +14,7 @@
  *   npx tsx scripts/speaker-calibrate.ts <dir> --models all           (owner-/other- names, as above)
  *   ... --models titanet-small,campplus,eres2net,resnet34              (npx tsx scripts/speaker-models.ts fetches them)
  *   ... --json <file>                                                  default: next to the labels, artifacts/ in the repo
+ *   ... --far-target 0.01                                              the operating point: lowest threshold with FAR <= target
  *
  * The owner is enrolled through the real gate (server/speaker.ts: one phrase per owner clip, the
  * profile is their mean, as scripted enrolment makes it) into a temporary profile, and every other

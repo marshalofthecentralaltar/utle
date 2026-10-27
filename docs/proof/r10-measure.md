@@ -78,8 +78,16 @@ npx tsx scripts/speaker-calibrate.ts --labels scripts/fixtures/labels.tsv       
 Every clip is embedded as the gate embeds it (its 100 ms frames at or above SILENCE_RMS). **The bucket
 is the trial clip's seconds of speech** (those same frames), not its length: the fixture "jah" is a
 1.15 s clip with 0.3 s of speech. Both lengths are in the per-clip JSON (`seconds`, `speechSeconds`).
-0.54 is `OWNER_THRESHOLD`, set on TitaNet's scale; on the other three models it is shown for comparison
-only. Cells: rate [Wilson 95 % interval]. The 0.7 to 1 s bucket is empty in both runs (in the JSON).
+Columns (cells: rate [Wilson 95 % interval]; the 0.7 to 1 s bucket is empty in both runs, in the JSON):
+- **EER, EER t**: the equal error rate and the threshold where FAR and FRR cross (closest pair).
+- **FAR / FRR @0.54**: at `OWNER_THRESHOLD`, set on TitaNet's scale; on the other three models for
+  comparison only.
+- **t @FAR<=1 %, FAR there, FRR there, Verified**: issue #3's operating point (`--far-target`, default
+  0.01). Verified "yes" is the lowest threshold where the Wilson upper bound of FAR is at most the
+  target. When no threshold can show that, the lowest threshold whose measured FAR is at most the
+  target, marked "not verifiable at n=<other trials>": showing FAR <= 1 % needs at least **381 other
+  trials, all rejected**. Neither column depends on how many owner trials there are; the earlier
+  "best t" (fewest errors in all) did, and is gone.
 
 Two ways to make trials (`splitTrials`, printed as `method:`):
 - **enrol** (the product's way, used whenever the owner has clips of kind `enrol`): his profile is the
@@ -97,24 +105,24 @@ The speaker set has no enrolment phrases, so `labels-enrol.tsv` (same clips as `
 still count as other trials). Held out: 5 owner trials ("saada", "jah", "üks", "keri alla", "Tere!",
 0.3 to 0.7 s of speech) and 20 other trials.
 
-| Model | Bucket (speech) | n own | n oth | EER | Best t | FAR @0.54 | FRR @0.54 | FAR @best | FRR @best |
-|---|---|---|---|---|---|---|---|---|---|
-| TitaNet-small | all | 5 | 20 | 57.5 % | 0.552 | 0.0 % [0-16] | 60.0 % [23-88] | 0.0 % [0-16] | 60.0 % [23-88] |
-| TitaNet-small | <=0.7 s | 5 | 6 | 36.7 % | 0.552 | 0.0 % [0-39] | 60.0 % [23-88] | 0.0 % [0-39] | 60.0 % [23-88] |
-| TitaNet-small | 1-2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
-| TitaNet-small | >2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
-| CAM++ en | all | 5 | 20 | 40.0 % | 0.763 | 60.0 % [39-78] | 0.0 % [0-43] | 0.0 % [0-16] | 100.0 % [57-100] |
-| CAM++ en | <=0.7 s | 5 | 6 | 36.7 % | 0.632 | 66.7 % [30-90] | 0.0 % [0-43] | 0.0 % [0-39] | 40.0 % [12-77] |
-| CAM++ en | 1-2 s | 0 | 7 | - | - | 57.1 % [25-84] | - | - | - |
-| CAM++ en | >2 s | 0 | 7 | - | - | 57.1 % [25-84] | - | - | - |
-| ERes2Net en | all | 5 | 20 | 40.0 % | 0.442 | 0.0 % [0-16] | 80.0 % [38-96] | 0.0 % [0-16] | 60.0 % [23-88] |
-| ERes2Net en | <=0.7 s | 5 | 6 | 36.7 % | 0.442 | 0.0 % [0-39] | 80.0 % [38-96] | 0.0 % [0-39] | 60.0 % [23-88] |
-| ERes2Net en | 1-2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
-| ERes2Net en | >2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | - | - |
-| ResNet34 en | all | 5 | 20 | 40.0 % | 0.808 | 65.0 % [43-82] | 20.0 % [4-62] | 0.0 % [0-16] | 60.0 % [23-88] |
-| ResNet34 en | <=0.7 s | 5 | 6 | 36.7 % | 0.808 | 50.0 % [19-81] | 20.0 % [4-62] | 0.0 % [0-39] | 60.0 % [23-88] |
-| ResNet34 en | 1-2 s | 0 | 7 | - | - | 71.4 % [36-92] | - | - | - |
-| ResNet34 en | >2 s | 0 | 7 | - | - | 71.4 % [36-92] | - | - | - |
+| Model | Bucket (speech) | n own | n oth | EER | EER t | FAR @0.54 | FRR @0.54 | t @FAR<=1 % | FAR there | FRR there | Verified |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| TitaNet-small | all | 5 | 20 | 57.5 % | 0.207 | 0.0 % [0-16] | 60.0 % [23-88] | 0.552 | 0.0 % [0-16] | 60.0 % [23-88] | not verifiable at n=20 |
+| TitaNet-small | <=0.7 s | 5 | 6 | 36.7 % | 0.184 | 0.0 % [0-39] | 60.0 % [23-88] | 0.552 | 0.0 % [0-39] | 60.0 % [23-88] | not verifiable at n=6 |
+| TitaNet-small | 1-2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | 0.464 | 0.0 % [0-35] | - | not verifiable at n=7 |
+| TitaNet-small | >2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | 0.442 | 0.0 % [0-35] | - | not verifiable at n=7 |
+| CAM++ en | all | 5 | 20 | 40.0 % | 0.624 | 60.0 % [39-78] | 0.0 % [0-43] | 0.763 | 0.0 % [0-16] | 100.0 % [57-100] | not verifiable at n=20 |
+| CAM++ en | <=0.7 s | 5 | 6 | 36.7 % | 0.624 | 66.7 % [30-90] | 0.0 % [0-43] | 0.632 | 0.0 % [0-39] | 40.0 % [12-77] | not verifiable at n=6 |
+| CAM++ en | 1-2 s | 0 | 7 | - | - | 57.1 % [25-84] | - | 0.763 | 0.0 % [0-35] | - | not verifiable at n=7 |
+| CAM++ en | >2 s | 0 | 7 | - | - | 57.1 % [25-84] | - | 0.688 | 0.0 % [0-35] | - | not verifiable at n=7 |
+| ERes2Net en | all | 5 | 20 | 40.0 % | 0.319 | 0.0 % [0-16] | 80.0 % [38-96] | 0.442 | 0.0 % [0-16] | 60.0 % [23-88] | not verifiable at n=20 |
+| ERes2Net en | <=0.7 s | 5 | 6 | 36.7 % | 0.319 | 0.0 % [0-39] | 80.0 % [38-96] | 0.442 | 0.0 % [0-39] | 60.0 % [23-88] | not verifiable at n=6 |
+| ERes2Net en | 1-2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | 0.379 | 0.0 % [0-35] | - | not verifiable at n=7 |
+| ERes2Net en | >2 s | 0 | 7 | - | - | 0.0 % [0-35] | - | 0.422 | 0.0 % [0-35] | - | not verifiable at n=7 |
+| ResNet34 en | all | 5 | 20 | 40.0 % | 0.614 | 65.0 % [43-82] | 20.0 % [4-62] | 0.808 | 0.0 % [0-16] | 60.0 % [23-88] | not verifiable at n=20 |
+| ResNet34 en | <=0.7 s | 5 | 6 | 36.7 % | 0.642 | 50.0 % [19-81] | 20.0 % [4-62] | 0.808 | 0.0 % [0-39] | 60.0 % [23-88] | not verifiable at n=6 |
+| ResNet34 en | 1-2 s | 0 | 7 | - | - | 71.4 % [36-92] | - | 0.757 | 0.0 % [0-35] | - | not verifiable at n=7 |
+| ResNet34 en | >2 s | 0 | 7 | - | - | 71.4 % [36-92] | - | 0.750 | 0.0 % [0-35] | - | not verifiable at n=7 |
 
 Every held-out owner trial in this stand-in set is short, so the 1-2 s and >2 s rows have no owner
 trials and no EER; only FAR can be read there. That is a limit of the set, not of the method: Ralf's
@@ -122,24 +130,24 @@ recordings hold out commands and dictations of every length.
 
 ### 3b. Leave-one-out fallback, SYNTHETIC (`scripts/fixtures/labels.tsv`, no enrol clips)
 
-| Model | Bucket (speech) | n own | n oth | EER | Best t | FAR @0.54 | FRR @0.54 | FAR @best | FRR @best |
-|---|---|---|---|---|---|---|---|---|---|
-| TitaNet-small | all | 9 | 20 | 34.2 % | 0.577 | 0.0 % [0-16] | 33.3 % [12-65] | 0.0 % [0-16] | 33.3 % [12-65] |
-| TitaNet-small | <=0.7 s | 5 | 6 | 36.7 % | 0.577 | 0.0 % [0-39] | 60.0 % [23-88] | 0.0 % [0-39] | 60.0 % [23-88] |
-| TitaNet-small | 1-2 s | 2 | 7 | 0.0 % | 0.647 | 0.0 % [0-35] | 0.0 % [0-66] | 0.0 % [0-35] | 0.0 % [0-66] |
-| TitaNet-small | >2 s | 1 | 7 | 0.0 % | 0.691 | 0.0 % [0-35] | 0.0 % [0-79] | 0.0 % [0-35] | 0.0 % [0-79] |
-| CAM++ en | all | 9 | 20 | 34.2 % | 0.879 | 55.0 % [34-74] | 11.1 % [2-44] | 0.0 % [0-16] | 77.8 % [45-94] |
-| CAM++ en | <=0.7 s | 5 | 6 | 45.0 % | 0.879 | 100.0 % [61-100] | 0.0 % [0-43] | 0.0 % [0-39] | 60.0 % [23-88] |
-| CAM++ en | 1-2 s | 2 | 7 | 53.6 % | 0.787 | 28.6 % [8-64] | 50.0 % [9-91] | 0.0 % [0-35] | 100.0 % [34-100] |
-| CAM++ en | >2 s | 1 | 7 | 21.4 % | 0.626 | 42.9 % [16-75] | 0.0 % [0-79] | 0.0 % [0-35] | 100.0 % [21-100] |
-| ERes2Net en | all | 9 | 20 | 34.2 % | 0.618 | 0.0 % [0-16] | 44.4 % [19-73] | 0.0 % [0-16] | 44.4 % [19-73] |
-| ERes2Net en | <=0.7 s | 5 | 6 | 36.7 % | 0.431 | 0.0 % [0-39] | 80.0 % [38-96] | 0.0 % [0-39] | 60.0 % [23-88] |
-| ERes2Net en | 1-2 s | 2 | 7 | 0.0 % | 0.718 | 0.0 % [0-35] | 0.0 % [0-66] | 0.0 % [0-35] | 0.0 % [0-66] |
-| ERes2Net en | >2 s | 1 | 7 | 0.0 % | 0.829 | 0.0 % [0-35] | 0.0 % [0-79] | 0.0 % [0-35] | 0.0 % [0-79] |
-| ResNet34 en | all | 9 | 20 | 34.2 % | 0.815 | 80.0 % [58-92] | 11.1 % [2-44] | 0.0 % [0-16] | 44.4 % [19-73] |
-| ResNet34 en | <=0.7 s | 5 | 6 | 36.7 % | 0.815 | 83.3 % [44-97] | 20.0 % [4-62] | 0.0 % [0-39] | 60.0 % [23-88] |
-| ResNet34 en | 1-2 s | 2 | 7 | 0.0 % | 0.839 | 85.7 % [49-97] | 0.0 % [0-66] | 0.0 % [0-35] | 0.0 % [0-66] |
-| ResNet34 en | >2 s | 1 | 7 | 0.0 % | 0.843 | 71.4 % [36-92] | 0.0 % [0-79] | 0.0 % [0-35] | 0.0 % [0-79] |
+| Model | Bucket (speech) | n own | n oth | EER | EER t | FAR @0.54 | FRR @0.54 | t @FAR<=1 % | FAR there | FRR there | Verified |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| TitaNet-small | all | 9 | 20 | 34.2 % | 0.365 | 0.0 % [0-16] | 33.3 % [12-65] | 0.577 | 0.0 % [0-16] | 33.3 % [12-65] | not verifiable at n=20 |
+| TitaNet-small | <=0.7 s | 5 | 6 | 36.7 % | 0.271 | 0.0 % [0-39] | 60.0 % [23-88] | 0.577 | 0.0 % [0-39] | 60.0 % [23-88] | not verifiable at n=6 |
+| TitaNet-small | 1-2 s | 2 | 7 | 0.0 % | 0.647 | 0.0 % [0-35] | 0.0 % [0-66] | 0.647 | 0.0 % [0-35] | 0.0 % [0-66] | not verifiable at n=7 |
+| TitaNet-small | >2 s | 1 | 7 | 0.0 % | 0.691 | 0.0 % [0-35] | 0.0 % [0-79] | 0.691 | 0.0 % [0-35] | 0.0 % [0-79] | not verifiable at n=7 |
+| CAM++ en | all | 9 | 20 | 34.2 % | 0.714 | 55.0 % [34-74] | 11.1 % [2-44] | 0.879 | 0.0 % [0-16] | 77.8 % [45-94] | not verifiable at n=20 |
+| CAM++ en | <=0.7 s | 5 | 6 | 45.0 % | 0.807 | 100.0 % [61-100] | 0.0 % [0-43] | 0.879 | 0.0 % [0-39] | 60.0 % [23-88] | not verifiable at n=6 |
+| CAM++ en | 1-2 s | 2 | 7 | 53.6 % | 0.484 | 28.6 % [8-64] | 50.0 % [9-91] | 0.787 | 0.0 % [0-35] | 100.0 % [34-100] | not verifiable at n=7 |
+| CAM++ en | >2 s | 1 | 7 | 21.4 % | 0.578 | 42.9 % [16-75] | 0.0 % [0-79] | 0.626 | 0.0 % [0-35] | 100.0 % [21-100] | not verifiable at n=7 |
+| ERes2Net en | all | 9 | 20 | 34.2 % | 0.379 | 0.0 % [0-16] | 44.4 % [19-73] | 0.618 | 0.0 % [0-16] | 44.4 % [19-73] | not verifiable at n=20 |
+| ERes2Net en | <=0.7 s | 5 | 6 | 36.7 % | 0.327 | 0.0 % [0-39] | 80.0 % [38-96] | 0.431 | 0.0 % [0-39] | 60.0 % [23-88] | not verifiable at n=6 |
+| ERes2Net en | 1-2 s | 2 | 7 | 0.0 % | 0.718 | 0.0 % [0-35] | 0.0 % [0-66] | 0.718 | 0.0 % [0-35] | 0.0 % [0-66] | not verifiable at n=7 |
+| ERes2Net en | >2 s | 1 | 7 | 0.0 % | 0.829 | 0.0 % [0-35] | 0.0 % [0-79] | 0.829 | 0.0 % [0-35] | 0.0 % [0-79] | not verifiable at n=7 |
+| ResNet34 en | all | 9 | 20 | 34.2 % | 0.754 | 80.0 % [58-92] | 11.1 % [2-44] | 0.815 | 0.0 % [0-16] | 44.4 % [19-73] | not verifiable at n=20 |
+| ResNet34 en | <=0.7 s | 5 | 6 | 36.7 % | 0.747 | 83.3 % [44-97] | 20.0 % [4-62] | 0.815 | 0.0 % [0-39] | 60.0 % [23-88] | not verifiable at n=6 |
+| ResNet34 en | 1-2 s | 2 | 7 | 0.0 % | 0.839 | 85.7 % [49-97] | 0.0 % [0-66] | 0.839 | 0.0 % [0-35] | 0.0 % [0-66] | not verifiable at n=7 |
+| ResNet34 en | >2 s | 1 | 7 | 0.0 % | 0.843 | 71.4 % [36-92] | 0.0 % [0-79] | 0.843 | 0.0 % [0-35] | 0.0 % [0-79] | not verifiable at n=7 |
 
 The equal 34.2 % "all" EER of all four models is the coarseness of the set, not agreement: with 9
 owner trials FRR moves in steps of 11 points and with 20 other trials FAR in steps of 5, and on every

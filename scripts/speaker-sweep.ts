@@ -1,8 +1,11 @@
 /**
  * Round 10, lane MEASURE (issue #4, for #3): the model sweep of scripts/speaker-calibrate.ts, run
- * when it is given --labels or --models. For each speaker model and each length bucket: EER, the
- * best threshold, FAR and FRR at the gate's OWNER_THRESHOLD and at the best threshold, the number of
- * owner and other trials, and Wilson 95 % intervals.
+ * when it is given --labels or --models. For each speaker model and each bucket of speech length: the
+ * owner and other trial counts, the EER and the threshold where it is reached, FAR and FRR at the
+ * gate's OWNER_THRESHOLD, and #3's operating point: the lowest threshold where FAR <= --far-target
+ * (default 0.01) with FRR there, all with Wilson 95 % intervals. When the other trials are too few to
+ * show FAR <= target (the interval's upper bound is above it), the table says "not verifiable at n=".
+ * There is no "fewest errors" threshold: it depends on how many clips each side has.
  *
  * Every clip is embedded the way the gate embeds it (embeddedSamples: its 100 ms frames at or above
  * SILENCE_RMS, then normalised). Trials (measure.ts splitTrials):
@@ -23,8 +26,8 @@ import { fileURLToPath } from 'node:url'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import { OWNER_THRESHOLD, SPEAKER_MODEL_FILE, cosine, embeddedSamples, meanEmbedding, normalised } from '../server/speaker.ts'
 import { loadSpeakerModel } from '../server/speakerModel.ts'
-import { BUCKETS, bucketOf, eer, insideRepo, parseLabels, ratesAt, splitTrials } from './measure.ts'
-import type { Bucket, Kind, Rates } from './measure.ts'
+import { BUCKETS, bucketOf, eer, insideRepo, operatingPoint, otherTrialsNeeded, parseLabels, ratesAt, splitTrials } from './measure.ts'
+import type { Bucket, Kind, OperatingPoint, Rates } from './measure.ts'
 import { sweepModels } from './speaker-models.ts'
 import { readAnyWav } from './wav.ts'
 
@@ -102,9 +105,10 @@ export interface SweepRow {
   nOwner: number
   nOther: number
   eer: number
-  bestThreshold: number
+  eerThreshold: number
   atCurrent: Rates
-  atBest: Rates
+  /** The lowest threshold with FAR <= farTarget, and the rates there. */
+  atTarget: OperatingPoint
 }
 
 export async function runSweep(argv: string[]): Promise<void> {
@@ -118,6 +122,8 @@ export async function runSweep(argv: string[]): Promise<void> {
   const split = splitTrials(clips)
   if (split.method === 'leave-one-out' && nOwnerClips < 2) throw new Error('need at least two owner clips (leave one out) or owner clips of kind enrol')
   if (!split.trials.some((c) => c.label === 'owner') || !split.trials.some((c) => c.label === 'other')) throw new Error('need at least one owner trial and one other trial')
+  const farTarget = Number(value('--far-target') ?? '0.01')
+  if (!(farTarget > 0 && farTarget < 1)) throw new Error('--far-target must be between 0 and 1, e.g. 0.01')
   const models = sweepModels(value('--models') ?? SPEAKER_MODEL_FILE)
   const synthetic = clips.some((c) => insideRepo(c.path, join(repoRoot, 'scripts', 'fixtures')))
   const banner = synthetic ? 'SYNTHETIC: TartuNLP text-to-speech voices from scripts/fixtures, not people. No model or threshold is picked from this.' : 'REAL recordings'
@@ -149,7 +155,7 @@ export async function runSweep(argv: string[]): Promise<void> {
       const owner = inBucket.filter((s) => s.label === 'owner').map((s) => s.score)
       const other = inBucket.filter((s) => s.label === 'other').map((s) => s.score)
       const e = eer(owner, other)
-      rows.push({ model: m.name, file: m.file, bucket, nOwner: owner.length, nOther: other.length, eer: e.eer, bestThreshold: e.bestThreshold, atCurrent: ratesAt(owner, other, OWNER_THRESHOLD), atBest: ratesAt(owner, other, e.bestThreshold) })
+      rows.push({ model: m.name, file: m.file, bucket, nOwner: owner.length, nOther: other.length, eer: e.eer, eerThreshold: e.eerThreshold, atCurrent: ratesAt(owner, other, OWNER_THRESHOLD), atTarget: operatingPoint(owner, other, farTarget) })
     }
   }
 
@@ -158,16 +164,20 @@ export async function runSweep(argv: string[]): Promise<void> {
   console.log(`${source}: ${nOwnerClips} owner clips, ${clips.length - nOwnerClips} other clips${skipped > 0 ? `, ${skipped} skipped (no speaker or crosstalk)` : ''}`)
   console.log(`method: ${split.method}: ${method}. Bucket = seconds of speech (frames the gate embeds).`)
   console.log(`FAR = others accepted / other trials, FRR = owner rejected / owner trials, [Wilson 95 % CI in %]; current = OWNER_THRESHOLD ${OWNER_THRESHOLD} (TitaNet's scale)\n`)
-  console.log(`${'model'.padEnd(14)}${'bucket'.padEnd(8)}${'n own'.padStart(6)}${'n oth'.padStart(6)}${'EER'.padStart(8)}${'best t'.padStart(8)}   ${'FAR@0.54'.padEnd(16)}${'FRR@0.54'.padEnd(16)}${'FAR@best'.padEnd(16)}FRR@best`)
+  const tgt = `${(farTarget * 100).toFixed(farTarget < 0.01 ? 1 : 0)}%`
+  console.log(`operating point: the lowest threshold with FAR <= ${tgt}; showing FAR <= ${tgt} needs at least ${otherTrialsNeeded(farTarget)} other trials, all rejected (Wilson upper bound)\n`)
+  console.log(`${'model'.padEnd(14)}${'bucket'.padEnd(8)}${'n own'.padStart(6)}${'n oth'.padStart(6)}${'EER'.padStart(8)}${'EER t'.padStart(8)}   ${'FAR@0.54'.padEnd(16)}${'FRR@0.54'.padEnd(16)}${`t@FAR<=${tgt}`.padEnd(10)}${'FAR there'.padEnd(16)}${'FRR there'.padEnd(16)}verified`)
   for (const r of rows) {
     const cell = (x: number, c: { low: number; high: number }): string => `${pct(x)} ${ci(c)}`.padEnd(16)
-    const empty = r.nOwner === 0 || r.nOther === 0
+    const noEer = r.nOwner === 0 || r.nOther === 0
+    const op = r.atTarget
+    const opCells = r.nOther === 0 ? `${'-'.padEnd(10)}${'-'.padEnd(16)}${'-'.padEnd(16)}-` : `${op.threshold.toFixed(3).padEnd(10)}${cell(op.rates.far, op.rates.farCi)}${r.nOwner === 0 ? '-'.padEnd(16) : cell(op.rates.frr, op.rates.frrCi)}${op.verifiable ? 'yes' : `not verifiable at n=${r.nOther}`}`
     console.log(
-      `${r.model.padEnd(14)}${r.bucket.padEnd(8)}${String(r.nOwner).padStart(6)}${String(r.nOther).padStart(6)}${pct(r.eer).padStart(8)}${(empty ? '-' : r.bestThreshold.toFixed(3)).padStart(8)}   ${cell(r.atCurrent.far, r.atCurrent.farCi)}${cell(r.atCurrent.frr, r.atCurrent.frrCi)}${empty ? '-'.padEnd(16) : cell(r.atBest.far, r.atBest.farCi)}${empty ? '-' : cell(r.atBest.frr, r.atBest.frrCi)}`,
+      `${r.model.padEnd(14)}${r.bucket.padEnd(8)}${String(r.nOwner).padStart(6)}${String(r.nOther).padStart(6)}${pct(r.eer).padStart(8)}${(noEer ? '-' : r.eerThreshold.toFixed(3)).padStart(8)}   ${cell(r.atCurrent.far, r.atCurrent.farCi)}${cell(r.atCurrent.frr, r.atCurrent.frrCi)}${opCells}`,
     )
   }
   const jsonPath = value('--json') ?? (insideRepo(source, repoRoot) ? join(repoRoot, 'artifacts', 'speaker-sweep.json') : join(dirname(source), 'speaker-sweep.json'))
   mkdirSync(dirname(jsonPath), { recursive: true })
-  writeFileSync(jsonPath, `${JSON.stringify({ synthetic, banner, source, method: split.method, enrolClips: split.enrol.map((c) => c.file), currentThreshold: OWNER_THRESHOLD, rows, scores: perClip }, null, 2)}\n`)
+  writeFileSync(jsonPath, `${JSON.stringify({ synthetic, banner, source, method: split.method, enrolClips: split.enrol.map((c) => c.file), currentThreshold: OWNER_THRESHOLD, farTarget, otherTrialsNeeded: otherTrialsNeeded(farTarget), rows, scores: perClip }, null, 2)}\n`)
   console.log(`\nwrote ${jsonPath}`)
 }

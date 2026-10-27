@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROMPTS, splitTrials, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
+import { PROMPTS, operatingPoint, otherTrialsNeeded, splitTrials, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
 import type { LabelRow } from './measure.ts'
 
 describe('normaliseEt', () => {
@@ -60,9 +60,8 @@ describe('statistics', () => {
   it('EER is 0 for separated scores, 0.5 for identical ones', () => {
     const sep = eer([0.8, 0.9], [0.1, 0.2])
     expect(sep.eer).toBe(0)
-    expect(sep.bestErrors).toBe(0)
-    expect(sep.bestThreshold).toBeGreaterThan(0.2)
-    expect(sep.bestThreshold).toBeLessThanOrEqual(0.8)
+    expect(sep.eerThreshold).toBeGreaterThan(0.2)
+    expect(sep.eerThreshold).toBeLessThanOrEqual(0.8)
     expect(eer([0.5, 0.5], [0.5, 0.5]).eer).toBe(0.5)
     expect(Number.isNaN(eer([], [0.1]).eer)).toBe(true)
   })
@@ -157,5 +156,40 @@ describe('enrolment prompts', () => {
     const enrol = PROMPTS.filter((p) => p.kind === 'enrol')
     expect(enrol).toHaveLength(12)
     expect(PROMPTS.slice(0, 12)).toEqual(enrol)
+  })
+})
+
+describe('EER threshold and the FAR-target operating point on an imbalanced set', () => {
+  // 5 owner trials, 20 other trials: the old "fewest errors" rule would sit at 0.552 (FAR 0, FRR 60 %).
+  const owner = [0.08, 0.12, 0.18, 0.55, 0.63]
+  const other = [0.1, 0.12, 0.15, 0.2, 0.22, 0.25, 0.28, 0.3, 0.31, 0.33, 0.35, 0.36, 0.38, 0.4, 0.41, 0.43, 0.45, 0.47, 0.5, 0.52]
+  it('eerThreshold is where FAR and FRR cross, not where the error count is smallest', () => {
+    const e = eer(owner, other)
+    const r = ratesAt(owner, other, e.eerThreshold)
+    expect(Math.abs(r.far - r.frr)).toBeLessThanOrEqual(0.1)
+    expect(e.eer).toBeCloseTo((r.far + r.frr) / 2)
+    expect(e.eerThreshold).toBeLessThan(0.5)
+  })
+  it('the operating point is the lowest threshold with FAR <= target, whatever the owner count', () => {
+    const op = operatingPoint(owner, other, 0.1)
+    expect(op.threshold).toBe(0.5)
+    expect(op.rates.falseAccepts).toBe(2)
+    expect(op.rates.frr).toBeCloseTo(0.6)
+    expect(op.verifiable).toBe(false)
+    // More owner trials do not move it.
+    expect(operatingPoint([...owner, ...owner, ...owner], other, 0.1).threshold).toBe(0.5)
+  })
+  it('FAR <= 1 % is not verifiable on 20 other trials, and is on enough of them', () => {
+    expect(operatingPoint(owner, other, 0.01).verifiable).toBe(false)
+    expect(operatingPoint(owner, other, 0.01).rates.far).toBe(0)
+    const n = otherTrialsNeeded(0.01)
+    expect(n).toBeGreaterThan(370)
+    expect(n).toBeLessThan(390)
+    const many = Array.from({ length: n }, (_, i) => i / (n * 10))
+    const op = operatingPoint([0.05, 0.9], many, 0.01)
+    expect(op.verifiable).toBe(true)
+    expect(op.rates.falseAccepts).toBe(0)
+    expect(op.rates.frr).toBe(0.5)
+    expect(op.rates.farCi.high).toBeLessThanOrEqual(0.01)
   })
 })

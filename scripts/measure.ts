@@ -202,20 +202,16 @@ export function ratesAt(owner: readonly number[], other: readonly number[], thre
 
 /**
  * Equal error rate: over every candidate threshold (each score, and just above the highest), the one
- * where |FAR - FRR| is smallest; the EER is their mean there. Also the threshold with the fewest
- * errors in all (ties toward the higher threshold, so others are dropped). NaN when a side is empty.
+ * where |FAR - FRR| is smallest; the EER is their mean there and eerThreshold that threshold. NaN when
+ * a side is empty. (No "fewest errors" threshold: with 5 owner and 20 other trials it trades owner
+ * rejections for strangers' by how many clips each side happens to have.)
  */
-export function eer(owner: readonly number[], other: readonly number[]): { eer: number; eerThreshold: number; bestThreshold: number; bestErrors: number } {
-  if (owner.length === 0 || other.length === 0) return { eer: Number.NaN, eerThreshold: Number.NaN, bestThreshold: Number.NaN, bestErrors: Number.NaN }
-  const all = [...owner, ...other]
-  const candidates = [...new Set(all)].sort((a, b) => a - b)
-  candidates.push((candidates[candidates.length - 1] ?? 0) + 1e-6)
+export function eer(owner: readonly number[], other: readonly number[]): { eer: number; eerThreshold: number } {
+  if (owner.length === 0 || other.length === 0) return { eer: Number.NaN, eerThreshold: Number.NaN }
   let eerValue = Number.NaN
   let eerThreshold = Number.NaN
   let gap = Number.POSITIVE_INFINITY
-  let bestThreshold = Number.NaN
-  let bestErrors = Number.POSITIVE_INFINITY
-  for (const t of candidates) {
+  for (const t of candidateThresholds(owner, other)) {
     const r = ratesAt(owner, other, t)
     const d = Math.abs(r.far - r.frr)
     if (d < gap) {
@@ -223,13 +219,48 @@ export function eer(owner: readonly number[], other: readonly number[]): { eer: 
       eerValue = (r.far + r.frr) / 2
       eerThreshold = t
     }
-    const errors = r.falseAccepts + r.falseRejects
-    if (errors <= bestErrors) {
-      bestErrors = errors
-      bestThreshold = t
-    }
   }
-  return { eer: eerValue, eerThreshold, bestThreshold, bestErrors }
+  return { eer: eerValue, eerThreshold }
+}
+
+/** Every score, ascending, and one just above the highest (where nothing passes). */
+function candidateThresholds(owner: readonly number[], other: readonly number[]): number[] {
+  const candidates = [...new Set([...owner, ...other])].sort((a, b) => a - b)
+  candidates.push((candidates[candidates.length - 1] ?? 0) + 1e-6)
+  return candidates
+}
+
+export interface OperatingPoint {
+  /** The lowest threshold where the measured FAR is at most farTarget; NaN when there are no other trials. */
+  threshold: number
+  rates: Rates
+  /** True only when the Wilson upper bound of FAR there is at most farTarget: the sample shows the target is met. */
+  verifiable: boolean
+}
+
+/**
+ * Issue #3's operating point, with FAR, FRR and their Wilson intervals there. It depends only on the
+ * other trials' scores, never on how many owner trials there are:
+ * - verified: the lowest threshold where the Wilson 95 % upper bound of FAR is at most farTarget (the
+ *   sample shows strangers stay under the target, keeping the most owner speech);
+ * - when no threshold can show that (too few other trials: 0 of 20 accepted still has an upper bound
+ *   of 16 %), the lowest threshold whose MEASURED FAR is at most farTarget, with verifiable false; the
+ *   table then says "not verifiable at n=...".
+ */
+export function operatingPoint(owner: readonly number[], other: readonly number[], farTarget: number): OperatingPoint {
+  if (other.length === 0) return { threshold: Number.NaN, rates: ratesAt(owner, other, Number.NaN), verifiable: false }
+  const candidates = candidateThresholds(owner, other)
+  const verified = candidates.find((t) => ratesAt(owner, other, t).farCi.high <= farTarget)
+  if (verified !== undefined) return { threshold: verified, rates: ratesAt(owner, other, verified), verifiable: true }
+  const measured = candidates.find((t) => ratesAt(owner, other, t).far <= farTarget) ?? Number.NaN
+  return { threshold: measured, rates: ratesAt(owner, other, measured), verifiable: false }
+}
+
+/** The number of other trials, all rejected, needed for the Wilson upper bound of FAR to reach farTarget. */
+export function otherTrialsNeeded(farTarget: number): number {
+  let n = 1
+  while (wilson(0, n).high > farTarget && n < 1_000_000) n += 1
+  return n
 }
 
 /** Issue #3's length buckets: very short (<= 0.7 s), short (1 to 2 s), long (> 2 s). 0.7 to 1 s is in no bucket and reported as such. */
