@@ -337,6 +337,8 @@ const SOFT_WORDS = new Set([
   'aitab', 'lõpeta',
   // Round 6: "seaded" opens the settings only when he is not writing.
   'seaded', 'settings',
+  // Round 9 (30.1): the welcome page the same way.
+  'juhend', 'alustamine', 'setup',
 ])
 
 /** M7: "stopp" while the labels show hides them. */

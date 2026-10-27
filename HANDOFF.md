@@ -486,6 +486,31 @@ subscriber teaser is no longer read as the article; err.ee's headline is no long
 youtube.com and ilmateenistus.ee the consent button is under the strip and a pointer or dwell cannot
 press it (voice still lists it). A postimees headline carries its comment count, read as "(11)".
 
+## 1k-ONBOARD. Round 9, ONBOARD lane (2026-10-27): the first run for a helper
+
+What works (ARCHITECTURE 30.1): the install opens `extension/welcome.html` (**Alustamine**) instead
+of the bare microphone page: five dwellable cards, Estonian with English under (Mikrofon, Kõneserver
+with **Samas arvutis** / **Teises arvutis** and **Proovi ühendust**, Proovi with an armed demo box,
+Hääl, Valmis). "ava juhend", "alustamine", "setup", "open the guide" reopen it (rules only); the
+toolbar icon's right-click menu has Alustamine, Seaded, Abi (Abi opens `help.html` when lane HELP's
+page is in the build, else the extension README on GitHub). While listening the extension never
+gives up on the server: it tries again after 1, 2, 4, then every 5 s, says once "Kõneserver ei
+vasta. Palu abilisel see käivitada (npm run dev)." (local address) or the hosted line, and once
+"Server vastab jälle." when it is back; the microphone reopens by itself. A dot on the microphone
+square shows the connection (green Ühendatud, amber Ühendan, red Server ei vasta).
+
+Proof: suite cases `welcome`, `welcome-server`, the connection dot and the menu in
+`extension/test/run.ts` (ALL PASS); `docs/proof/r9-welcome.png`, `r9-welcome-server.png`,
+`r9-strip-connection.png`; vitest "server down|server back|hosted" and "juhend|alustamine";
+`UTLE_REAL=1 npx tsx extension/test/voice.ts` ALL PASS and `voice.ts down` (local line once, back
+line once, no toggle).
+
+Not verified: a real helper doing the first run; the install flow of branded Chrome from the Web
+Store (only the unpacked load and Playwright's fresh profile were run); the dot while not listening
+shows the last status check and is not polled, so a server that dies while idle stays green until
+the next listen. Step 3's "a final landed" is "the words stood still for 1 s", not a signal from
+the engine.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

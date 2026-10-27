@@ -1,7 +1,7 @@
 import type { IntentRequest } from '../../src/core/pageIntent.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STRINGS } from '../../src/core/strings.ts'
-import { DEFAULT_ASR_URL, authHeaders, connectionFrom, serverCheck, serverStatus, socketAddress } from './connection.ts'
+import { DEFAULT_ASR_URL, authHeaders, connectionFrom, isHostedAddress, serverCheck, serverStatus, socketAddress } from './connection.ts'
 import { ENOUGH_PHRASES, asrAddress, askIntent, enrolledLine, foreignNotice, serverUrl, wakeWordParam } from './offscreenMain.ts'
 import { INITIAL_STATE } from './messages.ts'
 // ---------- reading aloud (29.5) ----------
@@ -542,5 +542,61 @@ describe('reading aloud (29.5): "Loe riba ette" (riba)', () => {
     expect(DEFAULT_SETTINGS.readBar).toBe(false)
     expect(settingsFrom({ readBar: true }).readBar).toBe(true)
     expect(settingsFrom({ readBar: 'yes' }).readBar).toBe(false)
+  })
+})
+
+// ---------- the first run (30.1, ONBOARD lane) ----------
+describe('the server going away, through the real recogniser and engine (30.1)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('hosted: wss:// or another host is hosted; ws:// to this computer is local', () => {
+    for (const a of ['ws://localhost:5173/api/asr', 'ws://127.0.0.1:5173/api/asr', 'ws://[::1]:5173/api/asr', 'ws://localhost:5173/api/asr?token=x']) expect(isHostedAddress(a)).toBe(false)
+    for (const a of ['wss://utle.up.railway.app/api/asr', 'ws://192.168.1.20:5173/api/asr', 'wss://localhost:8443/api/asr', 'ws://laptop.local:5173/api/asr']) expect(isHostedAddress(a)).toBe(true)
+    expect(isHostedAddress('not an address')).toBe(false)
+  })
+
+  it('server down then server back: the local line once over many failed tries, "Server vastab jälle." once, the microphone open again', async () => {
+    vi.useFakeTimers()
+    const sockets: Array<{ events: SocketEvents; socket: SocketLike }> = []
+    const connect = (events: SocketEvents): SocketLike => {
+      const socket: SocketLike = { readyState: 1, bufferedAmount: 0, send: () => undefined, close: () => events.close() }
+      sockets.push({ events, socket })
+      return socket
+    }
+    let mics = 0
+    const microphone: AudioSource = { start: () => ((mics += 1), Promise.resolve()), stop: () => undefined }
+    const patches: Array<Partial<StripState>> = []
+    const engine = createEngine({
+      logic: { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom },
+      lang: 'et',
+      run: () => Promise.resolve({ ok: true }),
+      publish: (patch) => patches.push(patch),
+      recognizer: (handlers, isInstant, onUnavailable) => createLocalRecognizer(handlers, isInstant, { onUnavailable, connect, holdMs: 0, audio: () => microphone, keepTrying: true }),
+      micBlocked: () => undefined,
+      ask: () => Promise.resolve({ error: 'unreachable' }),
+      tabs: () => Promise.resolve([]),
+      status: () => Promise.resolve('live'),
+      hosted: isHostedAddress('ws://localhost:5173/api/asr'),
+    })
+    engine.start()
+    // The server is stopped: every try is refused.
+    for (let i = 0; i < 5; i++) {
+      sockets.at(-1)?.events.close()
+      await vi.advanceTimersByTimeAsync(5000)
+    }
+    const S = STRINGS.et.strip
+    const problems = patches.flatMap((p) => (p.problem === undefined ? [] : [p.problem]))
+    expect(sockets.length).toBe(6)
+    expect(problems.filter((p) => p === S.serverDownLocal)).toHaveLength(1)
+    expect(patches.some((p) => p.listening === false)).toBe(false)
+    // It is started again: the next try is answered.
+    sockets.at(-1)?.events.message(JSON.stringify({ type: 'ready' }))
+    await vi.advanceTimersByTimeAsync(0)
+    const lines = patches.flatMap((p) => (p.line === undefined ? [] : [p.line]))
+    expect(lines.filter((l) => l === S.serverBack)).toHaveLength(1)
+    expect(patches.at(-1)).toMatchObject({ connection: 'connected', problem: '', line: S.serverBack })
+    expect(mics).toBe(1)
   })
 })

@@ -11,7 +11,7 @@ import type { EntryResult, EntryState } from '../../src/core/savedEntry.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
-import { CONNECTION_KEYS, connectionFrom, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
+import { CONNECTION_KEYS, connectionFrom, connectionOf, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
 import { STATE_KEY } from './messages.ts'
 import type { StripState, ToBackground, ToPage } from './messages.ts'
 import { BAR_HEIGHTS, SETTING_KEYS, mountStrip, settingsFrom } from './strip.ts'
@@ -721,6 +721,9 @@ function serverSection(): void {
       show(text.serverChecking)
       const connection = connectionFrom(await chrome.storage.local.get([...CONNECTION_KEYS]))
       const check = await serverCheck(serverUrl(connection.asrUrl, '/api/status'), connection.token)
+      // Round 9 (30.1): the result is the strip's connection dot too.
+      const dot: ToBackground = { type: 'utle-state', patch: { connection: connectionOf(check.state) } }
+      chrome.runtime.sendMessage(dot).catch(() => undefined)
       if (check.state === 'bad_token') show(text.serverWrongToken)
       else if (check.state === 'unreachable') show(text.serverUnreachable)
       else {
@@ -879,6 +882,9 @@ function placesSection(): void {
 }
 placesSection()
 // ---------- end of wake word and places ----------
+
+// Round 9 (30.1): the welcome page's "Õpeta mu hääl lausetega" opens options.html#onlyOwner.
+if (window.location.hash === '#onlyOwner') document.getElementById('onlyOwner')?.scrollIntoView({ block: 'start' })
 
 // ---------- the strip and page commands ----------
 

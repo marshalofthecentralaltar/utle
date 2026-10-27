@@ -130,6 +130,16 @@ async function main(): Promise<void> {
     const sw: Worker = ctx.serviceWorkers()[0] ?? (await ctx.waitForEvent('serviceworker'))
     await sw.evaluate((url) => chrome.storage.local.set({ utleUrl: url }), UTLE)
 
+    // Round 9 (30.1): the install opens the welcome page (the microphone is its step 1). It is closed
+    // here, as the old permission page closed itself, so the first window's tab is the target; the
+    // welcome section further down opens it again by voice.
+    const welcomeOnInstall = await waitUntil(async () => (await sw.evaluate(async () => (await chrome.tabs.query({})).filter((t) => (t.url ?? t.pendingUrl ?? '').includes('/welcome.html')).length)) === 1, 8000)
+    const permissionOnInstall = await sw.evaluate(async () => (await chrome.tabs.query({})).filter((t) => (t.url ?? t.pendingUrl ?? '').includes('/permission.html')).length)
+    check('welcome: install opens welcome.html, not the bare permission page', welcomeOnInstall && permissionOnInstall === 0, `permission tabs=${permissionOnInstall}`)
+    await sw.evaluate(async () => {
+      for (const t of await chrome.tabs.query({})) if (t.id !== undefined && (t.url ?? t.pendingUrl ?? '').includes('/welcome.html')) await chrome.tabs.remove(t.id)
+    })
+
     const first = ctx.pages()[0] ?? (await ctx.newPage())
     await first.goto(`${T}/page-one.html`)
 
@@ -181,8 +191,6 @@ async function main(): Promise<void> {
     }, UTLE)
     const utle: Page = await harness
     await utle.waitForLoadState('load')
-    const permissionGone = await waitUntil(async () => (await sw.evaluate(async () => (await chrome.tabs.query({})).filter((t) => (t.url ?? t.pendingUrl ?? '').includes('/permission.html')).length)) === 0, 5000)
-    check('permission page closed itself', permissionGone)
     const targetWindowId = await sw.evaluate(async (url) => {
       const all = await chrome.windows.getAll({ populate: true })
       return all.find((w) => !(w.tabs ?? []).some((t) => t.url === url))?.id ?? -1
@@ -1460,6 +1468,150 @@ async function main(): Promise<void> {
       const delfiItems = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
       const delfiDialog = delfiItems.filter((i) => i.text.startsWith('[dialog] '))
       line('readPage', 'delfi.ee: a page-covering banner lists only its own items', delfiDialog.length === 3 && delfiItems.filter((i) => i.role !== 'text').length === 3 && delfiDialog.some((i) => i.text === '[dialog] Nõustun kõigiga'), `items=${JSON.stringify(delfiItems.map((i) => i.text))}`)
+    }
+
+    // ---------- the first run (30.1, ONBOARD lane): the welcome page, its server step, the demo box, the dot, the menu ----------
+    {
+      const welcomeBase = await sw.evaluate(() => chrome.runtime.getURL('welcome.html'))
+      const NOTHING = { present: false, text: '', armed: false }
+      const fromWords = (words: string, box: BoxState = NOTHING): ReturnType<typeof inpageStep> => inpageStep(initialInpage('et'), words, box)
+      const welcomePage = async (): Promise<Page | undefined> => {
+        await waitUntil(async () => ctx.pages().some((p) => p.url().startsWith(welcomeBase)), 5000)
+        return ctx.pages().find((p) => p.url().startsWith(welcomeBase))
+      }
+      const welcomeTabId = async (): Promise<number> => sw.evaluate(async (base) => (await chrome.tabs.query({})).find((t) => (t.url ?? '').startsWith(base))?.id ?? -1, welcomeBase)
+      type StripM = { connection: string; connectionWord: string; micState: string }
+      const stripOn = async (tabId: number): Promise<StripM | null> => sw.evaluate(async (id) => (await chrome.tabs.sendMessage(id, { type: 'utle-strip-measure' }).catch(() => null)) as StripM | null, tabId)
+
+      // By voice: "ava juhend" from the real rules opens it in the window being driven.
+      const open = fromWords('ava juhend').commands[0]
+      r = await send(open)
+      const page = await welcomePage()
+      if (!page) throw new Error('the welcome page did not open')
+      await page.waitForSelector('#stepReady', { timeout: 5000 })
+      line('openSettings', '"ava juhend" -> welcome.html, five cards', r !== 'timeout' && r.ok && JSON.stringify(open) === '{"kind":"openSettings","section":"welcome"}' && (await page.locator('section.step').count()) === 5, `${describe(r)} command=${JSON.stringify(open)}`)
+      const cards = await page.evaluate(() => [...document.querySelectorAll('section.step .head .titles')].map((t) => [t.children[0]?.textContent ?? '', t.children[1]?.textContent ?? '']))
+      check('welcome: five cards in order, Estonian with English under', JSON.stringify(cards) === JSON.stringify([['Mikrofon', 'Microphone'], ['Kõneserver', 'The speech server'], ['Proovi', 'Try it'], ['Hääl', 'Your voice'], ['Valmis', 'Ready']]), JSON.stringify(cards))
+      const tabId = await welcomeTabId()
+      check('welcome: the strip is mounted on it once', (await page.evaluate(() => document.querySelectorAll('utle-strip').length)) === 1 && (await stripOn(tabId)) !== null)
+      const micDone = await waitUntil(async () => (await page.getAttribute('#stepMic', 'data-done')) === 'true', 5000)
+      check('welcome: step 1 ticks once the microphone is allowed', micDone, (await page.locator('#stepMicResult').textContent()) ?? '')
+      // Every head and button is a dwell target: 1 s on "Kirjuta siia" focuses the demo box.
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await page.mouse.move(0, 0)
+      await page.locator('#demoArm').hover()
+      const filling = await page.evaluate(() => document.getElementById('demoArm')?.classList.contains('dwelling') === true)
+      await page.waitForTimeout(1300)
+      check('welcome: a 1 s dwell on a button fires it (amber fill, then the action)', filling && (await page.evaluate(() => document.activeElement?.id === 'demo')))
+      await page.mouse.move(0, 0)
+      // "näita numbreid" numbers what is on screen: page commands reach this extension page as on the new-tab page.
+      r = await send(fromWords('näita numbreid').commands[0])
+      const labels = r !== 'timeout' && r.ok ? (r.hints ?? 0) : 0
+      line('showHints', 'on welcome.html numbers its cards and buttons', labels >= 4, describe(r))
+      await send({ kind: 'hideHints' })
+
+      // Step 2 against a server of its own: 401 then 200.
+      const WPORT = 5198
+      const wserver = createUtleServer({ root: repoRoot, asr: false, env: { ...process.env, UTLE_TOKEN: `ralf:${SERVE_TOKEN}`, UTLE_DATA_DIR: mkdtempSync(join(tmpdir(), 'utle-profiles-')) } })
+      await new Promise<void>((ok) => wserver.listen(WPORT, ok))
+      try {
+        const result = async (): Promise<string> => (await page.locator('#stepServerResult').textContent()) ?? ''
+        await page.mouse.move(0, 0)
+        await page.click('#serverHosted')
+        const fieldsShown = await page.evaluate(() => document.getElementById('serverFields')?.hidden === false)
+        const testWith = async (secret: string): Promise<string> => {
+          await page.fill('#asrUrl', `ws://localhost:${WPORT}/api/asr`)
+          await page.fill('#serverToken', secret)
+          await page.evaluate(() => {
+            const el = document.getElementById('stepServerResult')
+            if (el) el.textContent = ''
+          })
+          await page.mouse.move(0, 0)
+          await page.click('#serverTest')
+          await waitUntil(async () => !['', 'Proovin…'].includes(await result()), 5000)
+          return result()
+        }
+        // The dot starts from what the worker last knew; set it to connecting to see all three.
+        await sw.evaluate(async () => {
+          const now = (await chrome.storage.session.get('stripState')).stripState as Record<string, unknown> | undefined
+          await chrome.storage.session.set({ stripState: { ...now, connection: 'connecting' } })
+        })
+        await page.waitForTimeout(300)
+        const amber = await stripOn(tabId)
+        const wrong = await testWith('vale')
+        await page.waitForTimeout(400)
+        const red = await stripOn(tabId)
+        check('welcome-server: "Teises arvutis" shows the fields; a wrong token reads "Vale võti."', fieldsShown && wrong === 'Vale võti.' && (await page.getAttribute('#stepServer', 'data-done')) === 'false', JSON.stringify(wrong))
+        const right = await testWith(SERVE_TOKEN)
+        await page.waitForTimeout(400)
+        const green = await stripOn(tabId)
+        const okClass = await page.evaluate(() => document.getElementById('stepServerResult')?.classList.contains('ok') === true)
+        check('welcome-server: the right token reads "Ühendus töötab" and the profile line, green; the card ticks', right.startsWith('Ühendus töötab') && right.endsWith('Profiil: ralf, hääl õpetamata.') && okClass && (await page.getAttribute('#stepServer', 'data-done')) === 'true', JSON.stringify(right))
+        check('connection dot: data-connection connecting / down / connected, with the Estonian word', amber?.connection === 'connecting' && amber.connectionWord === 'Ühendan' && red?.connection === 'down' && red.connectionWord === 'Server ei vasta' && green?.connection === 'connected' && green.connectionWord === 'Ühendatud', JSON.stringify([amber, red, green]))
+        // Tall enough that the card sits whole above the strip along the bottom.
+        await page.setViewportSize({ width: 1280, height: 1500 })
+        await page.locator('#stepServer').evaluate((el) => el.scrollIntoView({ block: 'start' }))
+        await page.waitForTimeout(200)
+        await page.locator('#stepServer').screenshot({ path: join(repoRoot, 'docs/proof/r9-welcome-server.png') })
+        // The dot, with its word shown while the pointer is on the microphone (moved off before the 1 s dwell).
+        const m = (await sw.evaluate(async (id) => chrome.tabs.sendMessage(id, { type: 'utle-strip-measure' }), tabId)) as { mic: { left: number; top: number; width: number; height: number } }
+        await page.mouse.move(m.mic.left + m.mic.width / 2, m.mic.top + m.mic.height / 2)
+        await page.waitForTimeout(400)
+        await page.screenshot({ path: join(repoRoot, 'docs/proof/r9-strip-connection.png'), clip: { x: 0, y: Math.max(0, m.mic.top - 40), width: 900, height: m.mic.height + 56 } })
+        await page.mouse.move(640, 100)
+        await page.waitForTimeout(200)
+        // "Samas arvutis" clears the address and the token.
+        await page.click('#serverLocal')
+        await page.waitForTimeout(500)
+        const cleared = await sw.evaluate(() => chrome.storage.local.get(['asrUrl', 'serverToken']))
+        check('welcome-server: "Samas arvutis" clears the address and the token, the fields hide', cleared.asrUrl === undefined && cleared.serverToken === undefined && (await page.inputValue('#asrUrl')) === '' && (await page.evaluate(() => document.getElementById('serverFields')?.hidden === true)), JSON.stringify(cleared))
+      } finally {
+        wserver.close()
+      }
+
+      // Step 3: "tere" as the engine acts on a final: the real rules with the box the page reports, through the bridge.
+      await page.mouse.move(0, 0)
+      await page.click('#demoArm')
+      const read = await send({ kind: 'readBox' })
+      const box = read !== 'timeout' && read.ok && read.box ? (read.box as BoxState) : NOTHING
+      const step = fromWords('tere', box)
+      let typed = true
+      for (const command of step.commands) {
+        const answer = await send(command)
+        typed &&= answer !== 'timeout' && answer.ok
+      }
+      const demoText = await page.inputValue('#demo')
+      const ticked = await waitUntil(async () => (await page.getAttribute('#stepTry', 'data-done')) === 'true', 4000)
+      const works = (await page.locator('#stepTryResult').textContent()) ?? ''
+      line('setText', 'welcome: "tere" into the armed demo box, card ticks', box.armed && typed && demoText.trim().toLowerCase().replace(/[^\p{L}]/gu, '') === 'tere' && ticked && works === 'Töötab.', `box=${JSON.stringify(box)} commands=${JSON.stringify(step.commands)} demo=${JSON.stringify(demoText)} result=${JSON.stringify(works)}`)
+      // The whole page in one viewport, so the strip is at the bottom where it belongs (fullPage would draw it mid-page).
+      const tall = await page.evaluate(() => document.documentElement.scrollHeight)
+      await page.setViewportSize({ width: 1280, height: Math.min(tall, 4000) })
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await page.waitForTimeout(300)
+      await page.screenshot({ path: join(repoRoot, 'docs/proof/r9-welcome.png') })
+      await page.setViewportSize({ width: 1280, height: 800 })
+
+      // The toolbar menu's handler: Alustamine, Seaded, Abi.
+      const callMenu = async (id: string): Promise<void> => sw.evaluate(async (item) => (globalThis as unknown as { __utleMenu: (i: string) => Promise<void> }).__utleMenu(item), id)
+      const tabsNow = async (): Promise<string[]> => sw.evaluate(async () => (await chrome.tabs.query({})).map((t) => t.pendingUrl ?? t.url ?? ''))
+      await callMenu('utle-welcome')
+      const welcomeTabs = (await tabsNow()).filter((u) => u.startsWith(welcomeBase)).length
+      const activeIsWelcome = await sw.evaluate(async (id) => (await chrome.tabs.get(id)).active, tabId)
+      await callMenu('utle-options')
+      const optionsBase = await sw.evaluate(() => chrome.runtime.getURL('options.html'))
+      const optionsOpen = await waitUntil(async () => (await tabsNow()).some((u) => u.startsWith(optionsBase)), 3000)
+      const helpBase = await sw.evaluate(() => chrome.runtime.getURL('help.html'))
+      await callMenu('utle-help')
+      const helpOpen = await waitUntil(async () => (await tabsNow()).some((u) => u.startsWith(helpBase) || u.startsWith('https://github.com/marshalofthecentralaltar/utle')), 3000)
+      check('menu: Alustamine fronts the open welcome tab, Seaded opens settings, Abi opens help', welcomeTabs === 1 && activeIsWelcome && optionsOpen && helpOpen, JSON.stringify(await tabsNow()))
+      await sw.evaluate(async (bases) => {
+        for (const t of await chrome.tabs.query({})) {
+          const u = t.pendingUrl ?? t.url ?? ''
+          if (t.id !== undefined && bases.some((b) => u.startsWith(b))) await chrome.tabs.remove(t.id)
+        }
+      }, [welcomeBase, optionsBase, helpBase, 'https://github.com/'])
+      await utle.waitForTimeout(300)
     }
 
     // ---------- 6. failure paths ----------

@@ -340,6 +340,17 @@ export interface Strings {
     serverProfile(profile: { name: string; enrolled: boolean }): string
     /** The strip's standing line when the server answers 401. */
     badToken: string
+    // ---------- the first run (30.1, ONBOARD lane) ----------
+    /** The socket to a local address failed or was lost: said once per outage. */
+    serverDownLocal: string
+    /** The same for a hosted address (wss://, or any host but this computer). */
+    serverDownHosted: string
+    /** The socket is ready again after an outage: said once. */
+    serverBack: string
+    /** The connection dot's words: connected, connecting, down. */
+    connConnected: string
+    connConnecting: string
+    connDown: string
   }
 
   // Round 6 (Minu andmed, 26.5 and 26.6): the settings section and the voice entry flow.
@@ -440,6 +451,43 @@ export interface Strings {
     barOn: string
     barOff: string
     barNote: string
+  }
+
+  // ---------- the first run (30.1, ONBOARD lane): the welcome page and the toolbar menu ----------
+  welcome: {
+    title: string
+    intro: string
+    how: string
+    done: string
+    micTitle: string
+    micBody: string
+    micAsk: string
+    micGranted: string
+    micDenied: string
+    serverTitle: string
+    serverBody: string
+    choiceLocal: string
+    choiceLocalNote: string
+    choiceHosted: string
+    choiceHostedNote: string
+    /** After "Ei saa ühendust.": what to do, by where the server is. */
+    hintLocal: string
+    hintHosted: string
+    tryTitle: string
+    tryBody: string
+    tryArm: string
+    tryWaiting: string
+    tryWorks: string
+    voiceTitle: string
+    voiceBody: string
+    voiceDone: string
+    readyTitle: string
+    readyBody: string
+    readyDone: string
+    help: string
+    menuWelcome: string
+    menuSettings: string
+    menuHelp: string
   }
 }
 
@@ -670,7 +718,7 @@ const ET: Strings = {
       case 'zoom':
         return command.direction === 'in' ? 'Suurendan.' : command.direction === 'out' ? 'Vähendan.' : 'Tavaline suurus.'
       case 'openSettings':
-        return command.section === 'andmed' ? 'Avan minu andmed.' : 'Avan seaded.'
+        return command.section === 'andmed' ? 'Avan minu andmed.' : command.section === 'welcome' ? 'Avan alustamise.' : 'Avan seaded.'
       case 'savedEntry':
         return ''
       case 'format':
@@ -995,6 +1043,13 @@ const ET: Strings = {
     serverWrongToken: 'Vale võti.',
     serverProfile: (profile) => `Profiil: ${profile.name}, hääl ${profile.enrolled ? 'õpetatud' : 'õpetamata'}.`,
     badToken: 'Serveri võti on vale.',
+    // ---------- the first run (30.1, ONBOARD lane) ----------
+    serverDownLocal: 'Kõneserver ei vasta. Palu abilisel see käivitada (npm run dev).',
+    serverDownHosted: 'Kõneserver ei vasta. Kontrolli internetiühendust või palu abilisel vaadata serverit.',
+    serverBack: 'Server vastab jälle.',
+    connConnected: 'Ühendatud',
+    connConnecting: 'Ühendan',
+    connDown: 'Server ei vasta',
   },
 
   andmed: {
@@ -1078,6 +1133,41 @@ const ET: Strings = {
     barOn: 'Loe ette',
     barOff: 'Ära loe',
     barNote: "Riba uued read loetakse eesti häälega ette (Edge'is on see hääl). Kui riba räägib, mikrofon ei kuula.",
+  },
+  // ---------- the first run (30.1, ONBOARD lane) ----------
+  welcome: {
+    title: 'Alustamine',
+    intro: 'Viis sammu. Abiline teeb need üks kord, siis saab Ütlet kasutada ainult häälega.',
+    how: 'Vaata nupule üks sekund, et seda vajutada. Või ütle „näita numbreid“ ja number.',
+    done: 'Tehtud',
+    micTitle: 'Mikrofon',
+    micBody: 'Ütle kuulab mikrofoni kogu brauseris. Vajuta brauseri küsimuses „Luba“.',
+    micAsk: 'Luba mikrofon',
+    micGranted: 'Mikrofon on lubatud.',
+    micDenied: 'Mikrofon on keelatud. Luba see aadressiriba lukuikoonist ja vajuta „Proovi uuesti“.',
+    serverTitle: 'Kõneserver',
+    serverBody: 'Ütle saadab kõne serverisse, mis selle ära tunneb. Vali, kus server jookseb.',
+    choiceLocal: 'Samas arvutis',
+    choiceLocalNote: 'Server käivitatakse selles arvutis käsuga npm run dev.',
+    choiceHosted: 'Teises arvutis',
+    choiceHostedNote: 'Aadressi ja võtme annab see, kes serverit haldab.',
+    hintLocal: 'Käivita server selles arvutis käsuga npm run dev.',
+    hintHosted: 'Kontrolli internetiühendust ning aadressi ja võtit.',
+    tryTitle: 'Proovi',
+    tryBody: 'Vajuta mikrofoni ja ütle: tere',
+    tryArm: 'Kirjuta siia',
+    tryWaiting: 'Sõnad tulevad siia kasti.',
+    tryWorks: 'Töötab.',
+    voiceTitle: 'Hääl',
+    voiceBody: 'Valikuline. Kui Ütle õpib su häält, kuuletub ta ainult sulle.',
+    voiceDone: 'Hääl on õpetatud.',
+    readyTitle: 'Valmis',
+    readyBody: 'Ütle näiteks:',
+    readyDone: 'Kõik on valmis.',
+    help: 'Abi',
+    menuWelcome: 'Alustamine',
+    menuSettings: 'Seaded',
+    menuHelp: 'Abi',
   },
 }
 
@@ -1197,7 +1287,7 @@ const EN: Strings = {
       case 'zoom':
         return command.direction === 'in' ? 'Zooming in.' : command.direction === 'out' ? 'Zooming out.' : 'Normal size.'
       case 'openSettings':
-        return command.section === 'andmed' ? 'Opening my details.' : 'Opening the settings.'
+        return command.section === 'andmed' ? 'Opening my details.' : command.section === 'welcome' ? 'Opening the setup guide.' : 'Opening the settings.'
       case 'savedEntry':
         return ''
       case 'format':
@@ -1522,6 +1612,13 @@ const EN: Strings = {
     serverWrongToken: 'Wrong token.',
     serverProfile: (profile) => `Profile: ${profile.name}, voice ${profile.enrolled ? 'learnt' : 'not learnt yet'}.`,
     badToken: 'The server token is wrong.',
+    // ---------- the first run (30.1, ONBOARD lane) ----------
+    serverDownLocal: 'The speech server is not answering. Ask your helper to start it (npm run dev).',
+    serverDownHosted: 'The speech server is not answering. Check the internet connection or ask your helper to look at the server.',
+    serverBack: 'The server is answering again.',
+    connConnected: 'Connected',
+    connConnecting: 'Connecting',
+    connDown: 'The server is not answering',
   },
 
   andmed: {
@@ -1605,6 +1702,41 @@ const EN: Strings = {
     barOn: 'Read aloud',
     barOff: 'Silent',
     barNote: 'New lines of the bar are read in an Estonian voice (Edge has one). While the bar speaks, the microphone does not listen.',
+  },
+  // ---------- the first run (30.1, ONBOARD lane) ----------
+  welcome: {
+    title: 'Getting started',
+    intro: 'Five steps. A helper does them once; after that Ütle is used by voice alone.',
+    how: 'Rest your eyes on a button for one second to press it. Or say “show numbers” and a number.',
+    done: 'Done',
+    micTitle: 'Microphone',
+    micBody: 'Ütle listens to the microphone for the whole browser. Press “Allow” in the browser’s question.',
+    micAsk: 'Allow the microphone',
+    micGranted: 'The microphone is allowed.',
+    micDenied: 'The microphone is blocked. Allow it from the lock icon in the address bar, then press “Try again”.',
+    serverTitle: 'The speech server',
+    serverBody: 'Ütle sends speech to a server that recognises it. Choose where the server runs.',
+    choiceLocal: 'On this computer',
+    choiceLocalNote: 'The server is started on this computer with npm run dev.',
+    choiceHosted: 'On another computer',
+    choiceHostedNote: 'The address and the token come from whoever runs the server.',
+    hintLocal: 'Start the server on this computer with npm run dev.',
+    hintHosted: 'Check the internet connection, the address and the token.',
+    tryTitle: 'Try it',
+    tryBody: 'Press the microphone and say: tere',
+    tryArm: 'Write here',
+    tryWaiting: 'The words appear in this box.',
+    tryWorks: 'It works.',
+    voiceTitle: 'Your voice',
+    voiceBody: 'Optional. Once Ütle has learnt your voice, it obeys only you.',
+    voiceDone: 'The voice is learnt.',
+    readyTitle: 'Ready',
+    readyBody: 'Say, for example:',
+    readyDone: 'Everything is ready.',
+    help: 'Help',
+    menuWelcome: 'Getting started',
+    menuSettings: 'Settings',
+    menuHelp: 'Help',
   },
 }
 

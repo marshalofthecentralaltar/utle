@@ -4,8 +4,9 @@
 import type { BrowserCommand, BrowserFailure, BrowserResult } from '../../src/browser/protocol.ts'
 import type { TabSummary } from '../../src/core/pageIntent.ts'
 import { SAVED_KEY, savedFrom } from '../../src/core/saved.ts'
+import { STRINGS } from '../../src/core/strings.ts'
 import { ENTRY_KEY, INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
-import { CONNECTION_KEYS, connectionFrom } from './connection.ts'
+import { CONNECTION_KEYS, connectionFrom, connectionOf, serverCheck, serverUrl } from './connection.ts'
 import type { Connection } from './connection.ts'
 import type { StripState, ToBackground, ToOffscreen, ToPage } from './messages.ts'
 import type { PageCommand } from './page.ts'
@@ -225,7 +226,8 @@ const NEWTAB_TIMEOUT_MS = 6000
 function ourNewTab(url: string | undefined): boolean {
   const u = url ?? ''
   // The options page (M7) runs page commands the same way, so its buttons can be numbered by voice.
-  return url === 'chrome://newtab/' || u.startsWith(chrome.runtime.getURL('newtab.html')) || u.startsWith(chrome.runtime.getURL('options.html'))
+  // Round 9 (30.1): the welcome page too.
+  return url === 'chrome://newtab/' || u.startsWith(chrome.runtime.getURL('newtab.html')) || u.startsWith(chrome.runtime.getURL('options.html')) || u.startsWith(chrome.runtime.getURL('welcome.html'))
 }
 
 /** The worker cannot inject into an extension page: the new-tab page runs the command with its own page.js. */
@@ -244,6 +246,8 @@ async function runOnNewTab(tab: Tab, tabId: number, command: BrowserCommand): Pr
 
 /** Round 6 (26.4): the options page, or its Minu andmed section with the entry flow for a kind. */
 function optionsUrl(command: Extract<BrowserCommand, { kind: 'openSettings' }>): string {
+  // Round 9 (30.1): "ava juhend" is the welcome page.
+  if (command.section === 'welcome') return chrome.runtime.getURL('welcome.html')
   const hash = command.section === 'andmed' ? `#andmed${command.add ? `:${command.add}` : ''}` : ''
   return chrome.runtime.getURL(`options.html${hash}`)
 }
@@ -251,7 +255,7 @@ function optionsUrl(command: Extract<BrowserCommand, { kind: 'openSettings' }>):
 /** Opens the options page in the target window, or brings an open one to the front at the new address. */
 async function openSettings(tab: Tab, command: Extract<BrowserCommand, { kind: 'openSettings' }>): Promise<BrowserResult> {
   const url = optionsUrl(command)
-  const base = chrome.runtime.getURL('options.html')
+  const base = chrome.runtime.getURL(command.section === 'welcome' ? 'welcome.html' : 'options.html')
   const open = (await chrome.tabs.query({})).find((t) => (t.url ?? t.pendingUrl ?? '').startsWith(base))
   if (open?.id !== undefined) {
     const updated = await chrome.tabs.update(open.id, { url, active: true })
@@ -696,9 +700,69 @@ chrome.storage.onChanged.addListener((changes, area) => {
   chrome.runtime.sendMessage(message).catch(() => undefined)
 })
 
-chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === 'install') void openPermissionPage()
+// ---------- the first run (30.1, ONBOARD lane): the welcome page, the toolbar menu, the connection dot ----------
+const README_URL = 'https://github.com/marshalofthecentralaltar/utle/blob/main/extension/README.md'
+
+/** One of the extension's own pages: an open tab of it comes to the front, else a new tab. */
+async function openOwnPage(file: string): Promise<void> {
+  const base = chrome.runtime.getURL(file)
+  const open = (await chrome.tabs.query({})).find((t) => (t.url ?? t.pendingUrl ?? '').startsWith(base))
+  if (open?.id !== undefined) {
+    await chrome.tabs.update(open.id, { active: true })
+    if (open.windowId !== undefined) await chrome.windows.update(open.windowId, { focused: true }).catch(() => undefined)
+    return
+  }
+  await chrome.tabs.create({ url: base, active: true })
+}
+
+/** Abi: lane HELP's help.html when this build has it, else the README. */
+async function openHelp(): Promise<void> {
+  // TODO(lane HELP): once extension/help.html is merged this always finds it; the README fallback can go then.
+  const there = await fetch(chrome.runtime.getURL('help.html')).then(
+    (r) => r.ok,
+    () => false,
+  )
+  if (there) await openOwnPage('help.html')
+  else await chrome.tabs.create({ url: README_URL, active: true })
+}
+
+/** The toolbar icon's context menu. */
+async function menuClicked(id: string): Promise<void> {
+  if (id === 'utle-welcome') await openOwnPage('welcome.html')
+  else if (id === 'utle-options') await chrome.runtime.openOptionsPage()
+  else if (id === 'utle-help') await openHelp()
+}
+// For the tests: the suite calls the menu's handler (Playwright cannot open a toolbar menu).
+;(globalThis as { __utleMenu?: (id: string) => Promise<void> }).__utleMenu = menuClicked
+chrome.contextMenus.onClicked.addListener((info) => {
+  void menuClicked(String(info.menuItemId))
 })
+
+/** GET /api/status for the strip's dot while nothing is listening: at install, at browser start, when the address or token changes. */
+async function checkServer(): Promise<void> {
+  const server = await connection()
+  const check = await serverCheck(serverUrl(server.asrUrl, '/api/status'), server.token)
+  await patchState({ connection: connectionOf(check.state) })
+}
+chrome.runtime.onStartup.addListener(() => {
+  void checkServer()
+})
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && CONNECTION_KEYS.some((key) => changes[key] !== undefined)) void checkServer()
+})
+
+chrome.runtime.onInstalled.addListener((details) => {
+  // Round 9 (30.1): the welcome page instead of the bare microphone page; the microphone is its step 1.
+  if (details.reason === 'install') void openOwnPage('welcome.html')
+  const W = STRINGS.et.welcome
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: 'utle-welcome', title: W.menuWelcome, contexts: ['action'] })
+    chrome.contextMenus.create({ id: 'utle-options', title: W.menuSettings, contexts: ['action'] })
+    chrome.contextMenus.create({ id: 'utle-help', title: W.menuHelp, contexts: ['action'] })
+  })
+  void checkServer()
+})
+// ---------- end of the first run ----------
 
 chrome.action.onClicked.addListener(() => {
   void toOffscreen('toggle')
