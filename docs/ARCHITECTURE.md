@@ -2126,3 +2126,32 @@ utterances at 709 in and 62 out tokens, p50 about 1.3 s after the final. Sonnet 
 $2.3 per 1000 at about 1.4 s. Answering as ops roughly doubles the output tokens (estimated, not
 measured): Opus about $5.3 per 1000 (709 in, about 124 out). Two fixes need no model and are cheaper than any of this: type
 spoken "koma"/"punkt" as marks in a message, and stop a decoder comma from splitting a digit run.
+
+## 30. Round 9: usable by everyone (2026-10-27 night)
+
+Plan: `docs/plans/2026-10-27-usable-by-everyone.md`. One subsection per lane; a lane writes only
+its own. Written before the code, as the rule in `CLAUDE.md` asks.
+
+### 30.1 The first run (ONBOARD lane)
+
+(lane ONBOARD writes this)
+
+### 30.2 Help inside the product (HELP lane)
+
+(lane HELP writes this)
+
+### 30.3 Known faults fixed (FAULTS lane)
+
+(lane FAULTS writes this)
+
+### 30.4 Real public pages: the measurement and what changed (REALPAGES lane)
+
+(lane REALPAGES writes this)
+
+### 30.5 One door to any model, cost per completed task (MODEL lane)
+
+(lane MODEL writes this; the plan is `docs/plans/2026-10-25-round-9-model-provider.md`)
+
+### 30.6 The store (SHIP lane)
+
+(lane SHIP writes this)
