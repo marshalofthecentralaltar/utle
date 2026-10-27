@@ -471,6 +471,21 @@ this order: on any news page say "loe ette" in Edge (network voices on in Edge's
 bar must say there is no Estonian voice); on YouTube "keri edasi üks minut"; in Gmail "kirjuta meil <nimi>",
 "teema: proov", dictate, "saada".
 
+## 1k-REALPAGES. Round 9 (2026-10-27): what Ütle sees on real public pages
+
+`npx tsx scripts/real-pages.ts` opens youtube.com, a watch page, google.ee, postimees.ee, delfi.ee,
+err.ee, ilmateenistus.ee and otse.err.ee with the built extension (no login, nothing typed, only the
+consent button clicked) and writes `docs/proof/r9-real-pages.md` (ARCHITECTURE 30.4). Seen: the
+cookie banner is listed first on all seven that show one; YouTube's and Google's `SEARCH_FIELDS`
+selectors hit (marked VERIFIED in `sites.ts`); `#movie_player` holds the video; `loe ette` starts
+with the headline and no menu text on one article of each news site. Fixed, each on a trimmed copy
+of the real markup (`extension/test/fixtures/real-*.html`): a banner over the whole page no longer
+lets the items below the fold and the video through (delfi, postimees, err); postimees.ee's
+subscriber teaser is no longer read as the article; err.ee's headline is no longer read twice.
+**Not fixed, for the strip's owner:** the strip covers a page's own fixed layer at the bottom, so on
+youtube.com and ilmateenistus.ee the consent button is under the strip and a pointer or dwell cannot
+press it (voice still lists it). A postimees headline carries its comment count, read as "(11)".
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
@@ -514,7 +529,8 @@ on which to keep, per file.**
 
 - The model's answers on real pages (no key here). The server, the validation, the engine and the
   page side are each tested with fakes; the join is tested end to end only without a model.
-- His voice, a real eye tracker, real WhatsApp with the M7 build, real YouTube and Google, Messenger.
+- His voice, a real eye tracker, real WhatsApp with the M7 build, Messenger. Real YouTube and Google
+  were seen read only on 2026-10-27 (1k-REALPAGES); a voice search there was not tried.
 - Whether `requestFullscreen` works from an injected script (it may need a user gesture; then the
   command answers "See ei õnnestunud").
 - Latency of a model answer in his network. The engine waits at most 9 s for a quick ask and 14 s for

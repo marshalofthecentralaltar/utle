@@ -66,6 +66,16 @@ describe('reading aloud (29.5): the text read', () => {
     expect(read.sentences.join(' ').length).toBeLessThanOrEqual(READ_MAX_CHARS)
   })
 
+  it('a lead that opens with the headline does not say the headline twice (err.ee, 30.4)', () => {
+    const read = readingText(['Veebikasiinode maksulangetus pole seni toonud lubatud lisaraha', 'Veebikasiinode maksulangetus pole seni toonud lubatud lisaraha. Kultuurkapital hoiatab.'])
+    expect(read.sentences).toEqual(['Veebikasiinode maksulangetus pole seni toonud lubatud lisaraha', 'Kultuurkapital hoiatab.'])
+  })
+
+  it('the same sentence later in the text, not right after, is still read', () => {
+    const read = readingText(['Jah.', 'Ei.', 'Jah.'])
+    expect(read.sentences).toEqual(['Jah.', 'Ei.', 'Jah.'])
+  })
+
   it('nothing to read: empty', () => {
     expect(readingText(['', '  '])).toEqual({ text: '', sentences: [] })
   })

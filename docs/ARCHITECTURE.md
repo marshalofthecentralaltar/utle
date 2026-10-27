@@ -2146,7 +2146,73 @@ its own. Written before the code, as the rule in `CLAUDE.md` asks.
 
 ### 30.4 Real public pages: the measurement and what changed (REALPAGES lane)
 
-(lane REALPAGES writes this)
+Every page command was built against stand-ins written from memory of the real markup. This lane
+looks at the real public pages once, with the built extension loaded, and writes down what Ütle
+sees there. Read only: no login, no account, nothing typed into a real site's field, nothing
+submitted; the only click is a cookie-consent button (to measure the page behind it). A site that blocks automation is recorded as "blocked".
+
+**Method.** `scripts/real-pages.ts` launches Playwright's Chromium headed (headless cannot run the
+service worker) with `extension/` loaded the way `extension/test/run.ts` does, at 1280 x 900. For
+each page it goes to the address, waits for the load and 3 s more, and runs the product's own page
+code through the service worker exactly as `runInPage` does (`dist/page.js`, then
+`__utle.run({ kind, site })`), so what is measured is what the model and the reader get. The
+search-field check uses the selector strings imported from `extension/src/sites.ts` and only
+queries the DOM. The strip's box comes from the strip's own `utle-strip-measure` answer. The pages,
+one row each: `youtube.com`, a public watch page, `google.ee`, `postimees.ee`, `delfi.ee`, `err.ee`,
+`ilmateenistus.ee`, `otse.err.ee`. On the three news sites the article is the first article link of
+the front page, opened by its address (not clicked); `UTLE_ARTICLE_<site>=<address>` reads a given
+article instead, to see a fixed fault on the page it was seen on. Every page load has a 20 s limit.
+
+**Columns** of `docs/proof/r9-real-pages.md`:
+
+| Column | How it is measured |
+|---|---|
+| banner first | `readPage` before any click: `yes` when the page shows a consent layer and its items come first with `[dialog] `; `no` when a consent layer is on screen (any frame) and its items are not first or not listed; `none` when there is no consent layer. A layer in a cross-origin frame counts as on screen. |
+| items | the number of items `readPage` returns (after the banner is accepted, when there was one) |
+| search field | YouTube and Google: the `SEARCH_FIELDS` selector, `yes` with the part that matched a visible text field, else `no` |
+| player | the watch page: `#movie_player` present and holding the `<video>` |
+| article | news sites: `read page` on the article: sentence count and the first three sentences; `article ok` when the first sentence is the start of the page's `h1` and none of the site's nav words (a list per site: Logi sisse, Tellimus, Telli, Menüü, Otsi, …) is in the first three |
+| accept button and the pointer | the consent layer's accept button, its y, and whether Playwright's real pointer can click it ("intercepts pointer events" names what lies over it); it is then clicked by script |
+| strip covered | `elementsFromPoint` at five points along the strip's middle line: `no` when the strip is the top element at all five; `yes` with the page element otherwise. A page's own fixed bar under the strip (hidden by it) is listed separately as "under the strip" |
+| screenshot | `docs/proof/r9-real-<site>.png`, the viewport after the measurement |
+
+**Fixes.** A fault the table shows is reproduced on `extension/test/fixtures/real-<site>.html` (the
+relevant real markup, trimmed, no images or scripts), gets a failing case in
+`extension/test/run.ts`, then the fix in `extension/src/page.ts` (readPage's banner, article or search
+paths only) or the selector in `sites.ts`. The script is run again and the table gains a
+before/after line per fix.
+
+**Results** (2026-10-27, `docs/proof/r9-real-pages.md`, eight screenshots `docs/proof/r9-real-<site>.png`).
+No site blocked the automation; err.ee and ilmateenistus.ee once missed the 20 s load limit and
+loaded on a rerun. All seven pages that show a consent layer list its items first as `[dialog] …`
+(the watch page shows none, the consent having been given on youtube.com in the same profile).
+YouTube's `input[name="search_query"]` and Google's `textarea[name="q"]` are there and visible
+(google.ee redirects to google.com); `input[name="q"]` is not on the page and stays as a fallback.
+`#movie_player` holds the `<video>` and `readPage` lists it as `praegune video`. On the three news
+sites `loe ette` begins with the headline and no nav word is in the first three sentences after the
+fixes. The strip is never covered by the page (its z-index is the highest); the reverse is the fault:
+a page's own fixed layer at the bottom stays under the strip, and on youtube.com (accept at y 757 to
+797) and ilmateenistus.ee (y 806 to 850) the consent button is under the strip (y 772 to 900), so
+Playwright's pointer could not click it.
+
+**What changed.** Each test-first on a fixture copied from the real markup:
+- `collect` in `extension/src/page.ts`: when a dialog's items are on screen and nothing outside it
+  is (only the main video, which is listed even under overlays), the page is covered: the
+  `[allpool]` items and the video are dropped. Before, delfi.ee's popup on a full-screen overlay
+  and postimees.ee's Didomi layer let story links through as `[allpool] …`, err.ee's modal the video.
+  Fixture `real-delfi.html`.
+- `articleBlocks`: a list item is not read when its list's parent or grandparent holds a button
+  outside the list and under 100 characters of other text (a teaser of selling points beside a Telli
+  button, postimees.ee). An article's own list in its long text is still read. Fixture
+  `real-postimees.html`.
+- `readingText` in `src/core/reading.ts`: a sentence equal to the one before it (case and closing
+  marks aside) is not spoken again; err.ee's lead opens with the headline. Unit tests in
+  `src/core/reading.test.ts`, fixture `real-err.html`.
+- `sites.ts`: the YouTube and Google `SEARCH_FIELDS` lines are VERIFIED 2026-10-27; `m.youtube.com`
+  stays UNVERIFIED (not opened).
+
+**Not changed here.** The strip over the bottom 128 px of a page's fixed layers is the strip's
+layout (`strip.ts`, another lane). A postimees headline ends with its comment count, read as "(11)".
 
 ### 30.5 One door to any model, cost per completed task (MODEL lane)
 
