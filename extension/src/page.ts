@@ -7,7 +7,7 @@ import type { BoxState, BrowserCommand, BrowserResult, CaretTarget, MediaAction,
 import { SITES, searchFieldFor } from './sites.ts'
 import type { Site, SiteName } from './sites.ts'
 import { armElement, armedElement, boxState, disarm, elementAt, findMessageBox, focusedTextField, hitTest, isTextField, onScreenRect, readText, visible, watchTrustedClicks } from './box.ts'
-import { boxText, isDocument } from './box.ts'
+import { boxText, isDocument, sendButtonBeside } from './box.ts'
 import type { FormatStyle } from '../../src/browser/protocol.ts'
 // mail (29.3)
 import type { MailField, PageContact } from '../../src/browser/protocol.ts'
@@ -1322,7 +1322,8 @@ async function send(el: HTMLElement, text: string, site: Site | null): Promise<b
   }
   pressEnter(el)
   if (await waitFor(() => (gone() ? true : null), ENTER_GRACE_MS)) return true
-  const button = sendButton(site)
+  // F2 (30.3): on a page Ütle has no site entry for, the send, post or reply button beside the box (the one that makes it a composer).
+  const button = sendButton(site) ?? (el instanceof HTMLInputElement ? null : sendButtonBeside(el))
   if (button) activate(button)
   else if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.form) el.form.requestSubmit()
   else return false

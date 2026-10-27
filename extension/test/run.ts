@@ -908,6 +908,13 @@ async function main(): Promise<void> {
     await send({ kind: 'goTo', url: `${T}/page-one.html` })
     r = await send({ kind: 'siteSearch', query: 'kassid' })
     line('siteSearch', 'page without a search field -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
+    // F3 (30.3): a search whose Enter navigates within the 600 ms wait (here after 100 ms) answers ok, not failed.
+    await send({ kind: 'goTo', url: `${T}/search-nav.html` })
+    ;[r, ms] = await timed({ kind: 'siteSearch', query: 'kassid' })
+    {
+      const landed = ctx.pages().some((p) => p.url() === `${T}/page-two.html?q=kassid`)
+      line('siteSearch', 'search-navigates: Enter leaves the page, the answer is ok', r !== 'timeout' && r.ok && landed, `${describe(r)} (${ms} ms) landed=${landed}`)
+    }
     r = await send({ kind: 'media', action: 'pause' })
     line('media', 'page without a video -> not_found', r !== 'timeout' && !r.ok && r.code === 'not_found', describe(r))
     r = await send({ kind: 'clearField' })
@@ -1064,6 +1071,36 @@ async function main(): Promise<void> {
       await essay.evaluate(() => document.getElementById('essay-area')?.focus())
       r = await send({ kind: 'format', style: 'bold' })
       line('format', 'textarea: bold refused, the box untouched', r !== 'timeout' && !r.ok && r.code === 'failed', describe(r))
+      // F2 (30.3): the same textarea at 600 characters is a document; given a Send button beside it, it is a message box and "saada" presses Send.
+      await essay.evaluate(() => {
+        const area = document.getElementById('essay-area')
+        if (area instanceof HTMLTextAreaElement) area.value = 'Eesti suvi on lühike ja päike paistab. '.repeat(16).trim()
+      })
+      r = await send({ kind: 'arm', on: true })
+      const longChars = await essay.evaluate(() => (document.getElementById('essay-area') as HTMLTextAreaElement | null)?.value.length ?? 0)
+      check('F2: a 600-character textarea with no send button is a document', longChars >= 600 && isDocumentBox(r), `${longChars} chars ${describe(r)}`)
+      await essay.evaluate(() => {
+        const area = document.getElementById('essay-area')
+        if (!(area instanceof HTMLTextAreaElement)) return
+        const button = document.createElement('button')
+        button.id = 'f2-send'
+        button.type = 'button'
+        button.textContent = 'Send'
+        button.addEventListener('click', () => {
+          ;(window as unknown as { f2Sent?: string }).f2Sent = area.value
+          area.value = ''
+        })
+        area.after(button)
+        area.focus()
+      })
+      docSession = initialInpage('et')
+      r = await send({ kind: 'readBox' })
+      check('F2: with a Send button beside it the long textarea is not a document', r !== 'timeout' && r.ok && !isDocumentBox(r) && (r.box as { send?: boolean } | undefined)?.send === true, describe(r))
+      const f2Step = await speakTo('saada')
+      const f2Sent = await essay.evaluate(() => (window as unknown as { f2Sent?: string }).f2Sent ?? '')
+      line('pressSend', 'F2: long textarea with a Send button: "saada" sends', f2Step.commands[0]?.kind === 'pressSend' && f2Sent.length >= 600, `commands=${JSON.stringify(f2Step.commands.map((c) => c.kind))} sent=${f2Sent.length} chars line=${JSON.stringify(f2Step.line)}`)
+      await essay.evaluate(() => document.getElementById('f2-send')?.remove())
+      await send({ kind: 'arm', on: false })
       await essay.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
 
       // The Google Docs stand-in, served at docs.google.com (page.ts recognises Docs by its hostname).
@@ -1649,6 +1686,8 @@ async function main(): Promise<void> {
       }
     }, UTLE)
     await utle.waitForTimeout(500)
+    // The closed windows can take longer than 500 ms to go under load (round 9: two failures with lanes in parallel): wait until only Ütle's is left.
+    for (let i = 0; i < 30 && (await sw.evaluate(async () => (await chrome.windows.getAll({ windowTypes: ['normal'] })).length)) > 1; i++) await utle.waitForTimeout(100)
     r = await send({ kind: 'showHints' })
     line('showHints', 'with no ordinary window -> no_target', r !== 'timeout' && !r.ok && r.code === 'no_target', describe(r))
     r = await send({ kind: 'newTab', url: `${T}/page-one.html` })

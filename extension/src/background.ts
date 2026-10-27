@@ -130,8 +130,8 @@ async function tabSummaries(): Promise<TabSummary[]> {
 
 // ---------- waiting for a page ----------
 
-/** Runs action, then waits until the tab has finished loading (or the timeout). */
-async function andWaitForLoad(tabId: number, action: () => Promise<unknown>): Promise<void> {
+/** Runs action, then waits until the tab has finished loading (or the timeout). True when the tab started loading. */
+async function andWaitForLoad(tabId: number, action: () => Promise<unknown>): Promise<boolean> {
   let sawLoading = false
   let finish: () => void = () => undefined
   const done = new Promise<void>((resolve) => {
@@ -157,9 +157,30 @@ async function andWaitForLoad(tabId: number, action: () => Promise<unknown>): Pr
     await done
     clearTimeout(timer)
     clearTimeout(quiet)
+    return sawLoading
   } finally {
     chrome.tabs.onUpdated.removeListener(listener)
     chrome.tabs.onRemoved.removeListener(closed)
+  }
+}
+
+/**
+ * F3 (30.3): the page's answer, or null as soon as the tab starts loading. A page that navigates
+ * while it runs a command (a search's Enter) is gone before it can answer, and executeScript then
+ * may never settle; the load is the answer.
+ */
+async function answerUnlessLoading(tabId: number, answer: Promise<PageAnswer>): Promise<PageAnswer | null> {
+  let listener: (id: number, change: { status?: string }) => void = () => undefined
+  const loading = new Promise<null>((resolve) => {
+    listener = (id, change) => {
+      if (id === tabId && change.status === 'loading') resolve(null)
+    }
+  })
+  chrome.tabs.onUpdated.addListener(listener)
+  try {
+    return await Promise.race([answer, loading])
+  } finally {
+    chrome.tabs.onUpdated.removeListener(listener)
   }
 }
 
@@ -397,10 +418,11 @@ async function execute(command: BrowserCommand, senderWindowId: number | undefin
     case 'siteSearch': {
       // The search submits and usually loads a results page.
       let result: PageAnswer = fail('failed', 'The page did not answer.')
-      await andWaitForLoad(tabId, async () => {
-        result = await runInPage(tab, command)
+      const loaded = await andWaitForLoad(tabId, async () => {
+        result = (await answerUnlessLoading(tabId, runInPage(tab, command))) ?? ok()
       })
-      if (!result.ok) return result
+      // F3 (30.3): Enter navigated before the page could answer (its frame is gone): the search ran.
+      if (!result.ok && !(loaded && result.code === 'failed')) return result
       return freshTab(tabId)
     }
     case 'bar':

@@ -78,3 +78,30 @@ describe('asSentence', () => {
     expect(asSentence('kas sa tuled?')).toBe('Kas sa tuled?')
   })
 })
+
+describe('F1 (30.3): "kirjuta siis mulle" is dictation, a filler word is not a name', () => {
+  it.each([
+    'Kirjuta siis mulle',
+    'kirjuta ja mulle',
+    'kirjuta aga talle',
+    'kirjuta nüüd meile',
+    'kirjuta palun mulle',
+    'kirjuta kohe sulle',
+    'kirjuta ka endale',
+    'kirjuta siis tule',
+    'kirjuta siis mulle, et tulen',
+    'kirjuta siis mulle et tulen',
+    'sõnum siis mulle',
+  ])('siis mulle: "%s" is not a message command', (text) => {
+    expect(messageCommand(text)).toBeNull()
+  })
+
+  it.each<[string, MessageCommand]>([
+    ['kirjuta Mari Maasikale', { kind: 'start', to: 'Mari Maasika', text: null }],
+    ['kirjuta palun Marile', { kind: 'start', to: 'Mari', text: null }],
+    ['kirjuta siis Jaanile, et tulen', { kind: 'start', to: 'Jaani', text: 'Tulen.' }],
+    ['Kirjuta Mari Tammele, et ma jõuan', { kind: 'start', to: 'Mari Tamme', text: 'Ma jõuan.' }],
+  ])('siis mulle: a real name still opens the chat: "%s"', (text, command) => {
+    expect(messageCommand(text)).toEqual(command)
+  })
+})

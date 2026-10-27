@@ -12,7 +12,7 @@ import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
-import { documentPaused } from '../../src/core/documentMode.ts'
+import { documentPaused, inDocument } from '../../src/core/documentMode.ts'
 import { speak as synthSpeak } from '../../src/speech/synth.ts'
 // ---------- reading aloud (29.5) ----------
 import { isReadStop } from '../../src/core/reading.ts'
@@ -282,7 +282,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const wanted = (u: Live): string | null => {
     const base = u.base
     if (base === null || !base.present) return null
-    const preview = deps.logic.inpagePreview(base.document === true ? { ...session, paused: u.paused === true } : session, u.partial, base)
+    const preview = deps.logic.inpagePreview(inDocument(base) ? { ...session, paused: u.paused === true } : session, u.partial, base)
     if (preview !== null) return preview
     // The words may be a command now: take back a preview already typed.
     return u.inBox !== null ? base.text : null
@@ -879,7 +879,7 @@ export function createEngine(deps: EngineDeps): Engine {
         box = job.send ? await readBox() : (u.base ?? NO_BOX)
       }
       // Round 8 (29.2): in a document the rules hear whether the pause before this final was a long one.
-      if (box.document === true) session = { ...session, paused: job.paused === true }
+      if (inDocument(box)) session = { ...session, paused: job.paused === true }
       // ---------- wake word and places (29.4) ----------
       // Round 8 (29.4.3): "lisa koht uudised" saves the tab in front; "lisa koht" asks for the word first.
       if (await placeByVoice(job, box, u)) {
@@ -912,7 +912,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // Round 5: a single-line field (a form's name, email, code) is verified before anything is typed.
       const single = box.single === true
       // Round 8 (29.2): never in a document: there the model is asked first, and only about a command verb.
-      if (box.armed && !single && box.document !== true) {
+      if (box.armed && !single && !inDocument(box)) {
         // Type first, verify after: the words are in the box at once, and the model only takes
         // them back when it is sure they were something else. The verification does not hold the
         // queue (round 3).

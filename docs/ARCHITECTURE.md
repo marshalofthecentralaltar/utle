@@ -2206,7 +2206,53 @@ unpacked load and Playwright's fresh profile are what was run).
 
 ### 30.3 Known faults fixed (FAULTS lane)
 
-(lane FAULTS writes this)
+Five faults a day of use hits (plan §1.3, F1 to F5). Each has one rule and one test that proves it;
+F6 to F8 stay in HANDOFF 4.
+
+**F1. "Kirjuta siis mulle" is dictation, not a conversation with "Siis Mul".** The recipient of
+`kirjuta …le`, `sõnum …le` and the one-breath `kirjuta …le, et …` may be two words (a first and a
+family name). When the first of the two is a filler word (`siis`, `ja`, `aga`, `nüüd`, `palun`,
+`kohe`, `ka`), it is not part of a name: if the word after it is an allative pronoun (`mulle`,
+`sulle`, `talle`, `meile`, `teile`, `neile`, `endale`) or a verb that ends in "-le" (`tule`, `mõtle`,
+`kuule`, `vaatle`), `messageCommand` returns null and the utterance is dictation; otherwise the
+filler is dropped and the one word after it is the name ("kirjuta palun Marile" opens Mari). A real
+two-word name ("kirjuta Mari Maasikale") is unchanged. The partial rule (`pendingMessage`) skips the
+filler too, so "kirjuta siis mulle" is not held as a command still being said. Test:
+`npx vitest run src/core/message.test.ts -t "siis mulle"` and `src/core/inpage.test.ts`, the same
+title (the WhatsApp composer gets the words typed).
+
+**F2. A box with a send button is never a document.** `BoxState.send` (new, optional) is true when
+the box is a textarea or contenteditable with a send, post, comment or reply button in its form or
+within 200 px to its right or below (`sendButtonBeside` in `extension/src/box.ts`, the rule that
+already makes such a box a composer). The core reads document mode through one function,
+`inDocument(box)` in `src/core/documentMode.ts`: `box.document === true && box.send !== true`. So a
+600-character forum comment with a Post button beside it is a message box whatever its length, and
+"saada" presses the button (`send` in `extension/src/page.ts`: on a page with no site entry, when
+Enter did not send, the button `sendButtonBeside` found is clicked); a long textarea with no such button is still a document and "saada"
+there still says "Dokumendis ei saadeta." Tests: `npx vitest run src/core/inpage.test.ts -t "send
+button"`; the browser suite's case on `essay.html` (the textarea given a Send button and 600
+characters: readBox is not a document, "saada" presses Send).
+
+**F3. A site search that navigates is answered ok.** When Enter on the search field navigates within
+the 600 ms wait, the page is gone before its answer reaches the background, and `executeScript`
+rejects or answers nothing. `andWaitForLoad` in `extension/src/background.ts` now reports whether
+the tab started loading; `siteSearch` whose page answer is a `failed` (not `not_found`) while the
+tab started loading answers ok with the new tab, as a search that ran. Test: fixture
+`extension/test/fixtures/search-nav.html` (a form whose Enter navigates after 100 ms), suite case
+`search-navigates` in `npx tsx extension/test/run.ts`.
+
+**F4. `/api/interpret` no longer forces a tool.** `server/interpret.ts` sends
+`tool_choice: { type: 'auto', disable_parallel_tool_use: true }` (the current models answer 400 to
+`any` with these tools, round 9 plan §0) and the system prompt says to call exactly one tool, never
+to reply in text. A reply without a tool call is `not_understood` ("couldNotWork"), the path that
+already existed. Test: `npx vitest run server/interpret.test.ts`; `npm run smoke` once with the key.
+
+**F5. The hotwords file at server start.** `hotwordsConfig` writes `models/hotwords.txt` and
+`models/hotwords.vocab` when either is missing (28.1). The start log did not say so; it now has one
+line after the model loads, `hotwordsLine` in `server/hotwords.ts`: `[asr] hotwords on:
+models/hotwords.txt, <n> phrases, score 1` or `[asr] hotwords off (<why>)`. Observed once with the
+real server (HANDOFF 1i): the two files moved aside, `npm run dev`, the files back with a fresh time.
+Test: `npx vitest run server/hotwords.test.ts`.
 
 ### 30.4 Real public pages: the measurement and what changed (REALPAGES lane)
 
