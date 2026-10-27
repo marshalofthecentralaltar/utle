@@ -1433,6 +1433,35 @@ async function main(): Promise<void> {
       await cdp.detach().catch(() => undefined)
     }
 
+    // ---------- real pages (round 9, 30.4): faults the measurement on the real sites showed, on their trimmed markup ----------
+    {
+      /** The page's own `read page` answer (the sentences the reader would speak), run as background.ts runInPage does. */
+      const readSentences = async (url: string): Promise<string[]> =>
+        (await sw.evaluate(`(async () => {
+          const tab = (await chrome.tabs.query({})).find((t) => t.url === ${JSON.stringify(url)})
+          if (!tab || tab.id === undefined) return []
+          await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['dist/page.js'] })
+          const [frame] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: (c) => globalThis.__utle.run(c), args: [{ kind: 'read', what: 'page', site: null }] })
+          return (frame && frame.result && frame.result.reading && frame.result.reading.sentences) || []
+        })()`)) as string[]
+
+      await send({ kind: 'goTo', url: `${T}/real-err.html` })
+      const errSaid = await readSentences(`${T}/real-err.html`)
+      line('read', 'err.ee: the lead opening with the headline is not read twice', errSaid[0] === 'Veebikasiinode maksulangetus pole seni toonud lubatud lisaraha' && errSaid[1]?.startsWith('Kultuurkapital hoiatab') === true, JSON.stringify(errSaid.slice(0, 3)))
+
+      await send({ kind: 'goTo', url: `${T}/real-postimees.html` })
+      const pmSaid = await readSentences(`${T}/real-postimees.html`)
+      const teaser = pmSaid.filter((s) => /Tellijana|lugemisõigus|Digiajakirjad|Digipakett/.test(s))
+      line('read', 'postimees.ee: the subscriber teaser is not read', teaser.length === 0 && pmSaid[2]?.startsWith('Venemaa presidendi') === true, `first three ${JSON.stringify(pmSaid.slice(0, 3))} teaser=${JSON.stringify(teaser)}`)
+      check('read: postimees.ee: the article\'s own list next to a Jaga button is still read', pmSaid.some((s) => s.startsWith('Esimene tähelepanek')) && pmSaid.some((s) => s.startsWith('Teine tähelepanek')), JSON.stringify(pmSaid.slice(-3)))
+
+      await send({ kind: 'goTo', url: `${T}/real-delfi.html` })
+      r = await send({ kind: 'readPage' })
+      const delfiItems = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+      const delfiDialog = delfiItems.filter((i) => i.text.startsWith('[dialog] '))
+      line('readPage', 'delfi.ee: a page-covering banner lists only its own items', delfiDialog.length === 3 && delfiItems.filter((i) => i.role !== 'text').length === 3 && delfiDialog.some((i) => i.text === '[dialog] Nõustun kõigiga'), `items=${JSON.stringify(delfiItems.map((i) => i.text))}`)
+    }
+
     // ---------- 6. failure paths ----------
     await send({ kind: 'goTo', url: `${T}/attacker.html` })
     const attacker = pageAt(`${T}/attacker.html`)

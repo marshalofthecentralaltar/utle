@@ -475,8 +475,12 @@ function collect(site: Site | null): { visible: Candidate[]; near: Candidate[] }
     visible = [...dialogs, ...rest.slice(0, Math.max(MAX_ITEMS - dialogs.length, 0))]
   }
   visible.sort((a, b) => Number(b.dialog) - Number(a.dialog) || byPosition(a, b))
+  // A banner over the whole page (delfi.ee's popup on a full-screen overlay, err.ee's modal, 30.4):
+  // nothing outside it can be reached, so neither the items below the fold nor the main video are listed.
+  const covered = visible.some((c) => c.dialog) && visible.every((c) => c.dialog || c.el === video)
+  if (covered) visible = visible.filter((c) => c.dialog)
   const near = merged
-    .filter((c) => c.near)
+    .filter((c) => c.near && !covered)
     .sort(byPosition)
     .slice(0, Math.max(Math.min(NEAR_MAX, MAX_ITEMS - visible.length), 0))
   return { visible, near }
@@ -2827,10 +2831,35 @@ function inFixedLayer(el: HTMLElement, root: HTMLElement, seen: Map<Element, boo
   return found
 }
 
+/** Text beside a list in its wrapper, below which a list next to a button is a teaser, not the article. */
+const TEASER_TEXT = 100
+
+/**
+ * A list of selling points beside a call to action (postimees.ee's subscriber teaser, 30.4): the
+ * list's parent or grandparent holds a button outside the list and under TEASER_TEXT characters of
+ * text besides it. An article's own list sits in the article's long text and is still read.
+ */
+function inTeaserList(el: HTMLElement, memo: Map<Element, boolean>): boolean {
+  const list = el.closest('ul, ol')
+  if (list === null) return false
+  const known = memo.get(list)
+  if (known !== undefined) return known
+  const own = clean(list.textContent).length
+  let result = false
+  let wrap = list.parentElement
+  for (let level = 0; level < 2 && wrap !== null && !result; level++, wrap = wrap.parentElement) {
+    const button = [...wrap.querySelectorAll('button, [role="button"]')].some((b) => !list.contains(b))
+    result = button && clean(wrap.textContent).length - own < TEASER_TEXT
+  }
+  memo.set(list, result)
+  return result
+}
+
 /** The article's headings and paragraphs, in order, as plain text. */
 function articleBlocks(): string[] {
   const root = readRoot()
   const fixed = new Map<Element, boolean>()
+  const teasers = new Map<Element, boolean>()
   const seen = new Set<string>()
   const blocks: string[] = []
   for (const el of root.querySelectorAll<HTMLElement>(READ_BLOCKS)) {
@@ -2840,6 +2869,7 @@ function articleBlocks(): string[] {
     if (header !== null && header.closest('article, main, [role="main"]') === null) continue
     if (typeof el.checkVisibility === 'function' && !el.checkVisibility({ checkVisibilityCSS: true })) continue
     if (inFixedLayer(el, root, fixed)) continue
+    if (el.localName === 'li' && inTeaserList(el, teasers)) continue
     const text = clean(el.innerText || el.textContent)
     const heading = /^h[1-6]$/.test(el.localName)
     if (heading ? text.length < 2 : text.length < READ_MIN && !/[.!?…]["'”»)\]]*$/u.test(text)) continue

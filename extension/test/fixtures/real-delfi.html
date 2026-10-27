@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="et">
+  <!-- Trimmed from https://www.delfi.ee on 2026-10-27 (ARCHITECTURE 30.4): the CookieYes popup
+       (role=dialog, aria-modal, 440 px wide) over a full-screen .cky-overlay, and front-page story links
+       on and below the fold. Markup and text only, no images, no scripts; the style block stands in
+       for the site's CSS (positions only). -->
+  <head>
+    <meta charset="utf-8" />
+    <title>Delfi</title>
+    <style>
+      body { margin: 0; font: 16px sans-serif; }
+      .story { display: block; height: 120px; margin: 8px 16px; }
+      .cky-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); z-index: 9999999; }
+      .cky-consent-container { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 440px; background: #fff; z-index: 99999999; padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <header><a href="/">Delfi</a> <a href="/ilm">Ilmateade</a> <button>Sisene</button></header>
+    <main>
+      <a class="story" href="/artikkel/1/juhtkiri">JUHTKIRI | Eestit ründasid sabotöörid</a>
+      <a class="story" href="/artikkel/2/ekspert">EKSPERT VASTAB | Kas telefoni sülearvutist laadimine võib seda kahjustada</a>
+      <a class="story" href="/artikkel/3/monaco">Monaco kuningliku pere liige leiti surnuna</a>
+      <a class="story" href="/artikkel/4/sojaraport">SÕJARAPORT | Ukraina armee leidis uue sihtmärgi</a>
+      <a class="story" href="/artikkel/5/ilm">Nädalavahetusel tuleb esimene lumi</a>
+      <a class="story" href="/artikkel/6/sport">Eesti jalgpallikoondis võitis</a>
+      <a class="story" href="/artikkel/7/kultuur">Teatrisügis algas</a>
+      <a class="story" href="/artikkel/8/majandus">Kütusehinnad langesid</a>
+      <a class="story" href="/artikkel/9/tehnika">Uus telefon jõudis poodi</a>
+      <a class="story" href="/artikkel/10/arvamus">Arvamus: miks me ei loe</a>
+      <a class="story" href="/artikkel/11/kool">Koolid lähevad vaheajale</a>
+      <a class="story" href="/artikkel/12/tervis">Gripihooaeg algas varakult</a>
+    </main>
+    <div class="cky-overlay"></div>
+    <div class="cky-consent-container cky-popup-center" tabindex="-1" aria-labelledby="ckyBannerTitle" aria-modal="true" role="dialog">
+      <div class="cky-consent-bar" data-cky-tag="notice">
+        <div class="cky-notice">
+          <p class="cky-title" aria-level="2" id="ckyBannerTitle" role="heading">Hindame teie privaatsust</p>
+          <div class="cky-notice-group">
+            <div class="cky-notice-des"><p>Meie ja <button class="cky-iab-dec-btn" aria-label="meie 1037 partnerit">meie 1037 partnerit</button> kasutame küpsiseid ja muid jälgimistehnoloogiaid parandamaks teie kasutuskogemust meie veebisaidil.</p></div>
+            <div class="cky-notice-btn-wrapper" role="group">
+              <button class="cky-btn cky-btn-customize" aria-label="Kohanda">Kohanda</button>
+              <button class="cky-btn cky-btn-accept" aria-label="Nõustun kõigiga">Nõustun kõigiga</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

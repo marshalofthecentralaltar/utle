@@ -172,10 +172,10 @@ export function siteOf(url: string | undefined, settings: SiteSettings): SiteNam
  * missing here is searched through the generic selectors in page.ts; none at all means Google.
  */
 export const SEARCH_FIELDS: Record<string, string> = {
-  'youtube.com': 'input[name="search_query"]', // UNVERIFIED: read from the public page, not logged in
-  'm.youtube.com': 'input[name="search_query"]', // UNVERIFIED
-  'google.com': 'textarea[name="q"], input[name="q"]', // UNVERIFIED
-  'google.ee': 'textarea[name="q"], input[name="q"]', // UNVERIFIED
+  'youtube.com': 'input[name="search_query"]', // VERIFIED 2026-10-27: seen visible on youtube.com and a watch page, not logged in (scripts/real-pages.ts)
+  'm.youtube.com': 'input[name="search_query"]', // UNVERIFIED: the mobile site was not opened (30.4)
+  'google.com': 'textarea[name="q"], input[name="q"]', // VERIFIED 2026-10-27: textarea[name="q"] seen (google.ee redirects here); input[name="q"] is the old fallback
+  'google.ee': 'textarea[name="q"], input[name="q"]', // VERIFIED 2026-10-27: textarea[name="q"] seen; input[name="q"] is the old fallback
   'web.whatsapp.com': SITES.whatsapp.searchField ?? '',
 }
 
