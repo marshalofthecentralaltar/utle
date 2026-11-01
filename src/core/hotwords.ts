@@ -7,6 +7,7 @@
  */
 import { SITES } from './browserIntent.ts'
 import { COMMAND_PHRASES, COMMAND_WORDS } from './inpage.ts'
+import { DEFAULT_WAKE_WORD } from './wake.ts'
 
 /**
  * Words that only the English command phrases use. A phrase made of nothing else is English and
@@ -47,7 +48,8 @@ const PLAIN = /^[\p{L}\p{N}]+(?: [\p{L}\p{N}]+)*$/u
  * stable order: the lines of the hotwords file.
  */
 export function hotwordPhrases(): string[] {
-  const all = [...COMMAND_PHRASES, ...COMMAND_WORDS, ...siteNames()].map((phrase) => phrase.toLowerCase().trim())
+  // Round 10 (#2, 32.1): the default wake word, so "Ütle, mine …" is less often heard as "Ütlemine …".
+  const all = [...COMMAND_PHRASES, ...COMMAND_WORDS, ...siteNames(), DEFAULT_WAKE_WORD].map((phrase) => phrase.toLowerCase().trim())
   return [...new Set(all)].filter((phrase) => PLAIN.test(phrase) && !isEnglishPhrase(phrase)).sort()
 }
 

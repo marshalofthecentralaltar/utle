@@ -122,6 +122,8 @@ button { font-family: ${FONT}; }
 /* Round 4: someone else's utterance was skipped (only-owner mode). */
 .foreign { display: none; font-size: var(--notice); line-height: 1.25; color: var(--dim); border-top: 1px solid var(--edge); padding-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .foreign.on { display: block; }
+.ignored { display: none; font-size: var(--notice); line-height: 1.25; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ignored.on { display: block; }
 /* Gaze mode (round 3): the target listens while the pointer rests on it. A quick amber fill says the rest was
    seen (arming); a green inner outline says it listens; the fill growing again over the grace says it is about to stop. */
 .bar > * { position: relative; z-index: 1; }
@@ -344,7 +346,10 @@ export function mountStrip(): void {
   lag.className = 'lag'
   const foreign = document.createElement('div')
   foreign.className = 'foreign'
-  words.append(heard, row, notice, lag, foreign)
+  // Round 10 (32.1, 32.3): the quiet counter of what was not said to Ütle, never its words.
+  const ignored = document.createElement('div')
+  ignored.className = 'ignored'
+  words.append(heard, row, notice, lag, foreign, ignored)
   const ctls = document.createElement('div')
   ctls.className = 'ctls'
   const hide = control('hide', text.hide)
@@ -508,6 +513,8 @@ export function mountStrip(): void {
     chainEl.classList.toggle('on', state.chain !== '')
     foreign.textContent = state.foreign
     foreign.classList.toggle('on', state.foreign !== '')
+    ignored.textContent = state.ignored ?? ''
+    ignored.classList.toggle('on', (state.ignored ?? '') !== '')
     // ---------- wake word and places (29.4) ----------
     // Round 8: a small amber disc on the microphone while the dictation window is open; made here so the edit stays in render.
     for (const m of [mic, pillMic]) {

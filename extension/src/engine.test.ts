@@ -10,6 +10,7 @@ import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COM
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
 import type { StripState } from './messages.ts'
+import type { AddresseeAnswer, AddresseeRequest } from '../../src/core/addressee.ts'
 import { SPEAKER_REASONS, verdictFor } from '../../src/speech/asrProtocol.ts'
 import type { SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
 
@@ -85,6 +86,10 @@ interface Options {
   hosted?: boolean
   /** Issue #3 (B): Kuula ainult mind is on: nothing speech-driven runs without a verified owner decision. */
   onlyOwner?: boolean
+  /** Round 10 (#6): the addressee check of always-on mode. Absent: no check. */
+  addressee?: (request: AddresseeRequest, signal: AbortSignal) => Promise<AddresseeAnswer | AskFailure>
+  /** Round 10 (#2): the recogniser sends audio off this computer (Soniox). */
+  uploads?: boolean
 }
 
 const ITEMS = [
@@ -185,6 +190,8 @@ function setup(options: Options = {}) {
     ...(options.wakeWord === undefined ? {} : { wakeWord: options.wakeWord }),
     ...(options.hosted === undefined ? {} : { hosted: options.hosted }),
     ...(options.onlyOwner === undefined ? {} : { onlyOwner: options.onlyOwner }),
+    ...(options.addressee === undefined ? {} : { addressee: options.addressee }),
+    ...(options.uploads === undefined ? {} : { uploads: options.uploads }),
     spend: (record) => spends.push(record),
   })
   const say = (text: string): void => handlers?.onUtterance(text)
@@ -2199,7 +2206,7 @@ const recording = (seen: string[], base: InpageLogic = logic): InpageLogic => ({
   },
 })
 
-describe('wake mode (29.4.1)', () => {
+describe('wake mode (29.4.1; round 10: PASSIVE, ACTIVE, HARD_OFF)', () => {
   const DROPPED = [
     'keri alla', 'saada', 'tere Mari', 'ma tahtsin ütelda et tulen', 'ütlesin talle', 'ütles et tuleb', 'ütleb ta', 'mine', 'kas sa kuuled', 'kell on viis',
     'jah', 'ei', 'aitäh', 'kaks', 'see on hea', 'ma ütlen sulle', 'okei', 'vaikus', 'kuule', 'tule siia',
@@ -2217,9 +2224,8 @@ describe('wake mode (29.4.1)', () => {
     ['ütle kaks', 'kaks'],
   ]
 
-  it('wake: 20 finals without the word go nowhere and 10 with it are acted on, the word stripped', async () => {
+  it('PASSIVE: 20 finals without the word reach nothing (no rules, no page, no strip words); 10 with it are acted on, the word stripped', async () => {
     const seen: string[] = []
-    // No armed box: no dictation window opens, so every final needs the word.
     const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
     t.engine.start()
     expect(t.state.line).toBe(STRINGS.et.wake.prompt('Ütle'))
@@ -2227,22 +2233,156 @@ describe('wake mode (29.4.1)', () => {
     await t.engine.idle()
     expect(seen).toEqual([])
     expect(t.ran.filter((c) => c.kind !== 'readBox')).toEqual([])
-    // The strip still shows what was heard.
-    expect(t.heard.at(-1)).toBe('tule siia')
+    expect(t.heard).toEqual([])
+    expect(t.state.ignored).toBe(STRINGS.et.wake.notForMe(20))
     for (const [final] of WOKEN) t.say(final)
     await t.engine.idle()
     expect(seen).toEqual(WOKEN.map(([, want]) => want))
+    // The strip shows only what was said to Ütle, the word stripped.
+    expect(t.heard).toEqual(WOKEN.map(([, want]) => want))
+    expect(t.state.wakeOpen).toBe(true)
+    expect(t.state.ignored).toBe('')
+  })
+
+  it('PASSIVE: nothing of the room reaches the bar, the box, the model or the queue; the strip counts it quietly', async () => {
+    const t = setup({ logic: { ...asking, inpagePreview: previewing.inpagePreview }, box: { present: true, text: 'Tere.', armed: true }, wakeWord: 'Ütle', ask: () => Promise.resolve(answer({ kind: 'dictate', text: 'x' })) })
+    t.engine.start()
+    t.partial('kas sa')
+    t.partial('kas sa tuled ka')
+    t.say('kas sa tuled ka poodi')
+    t.partial('ma ei')
+    t.say('ma ei tea veel')
+    t.say('Ma ütlen sulle homme.')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    expect(t.asked).toEqual([])
+    expect(t.heard).toEqual([])
+    expect(t.spends).toEqual([])
+    expect(t.instant('saada')).toBe(false)
+    expect(t.state.ignored).toBe(STRINGS.et.wake.notForMe(3))
+    expect(STRINGS.et.wake.notForMe(3)).toBe('3 lauset ei olnud mulle')
     expect(t.state.wakeOpen ?? false).toBe(false)
   })
 
-  it('wake: a partial is shown but never previewed while the window is closed, and no quick reply skips the gate', async () => {
-    const t = setup({ logic: previewing, box: { present: true, text: 'Tere.', armed: true }, wakeWord: 'Ütle' })
+  it('PASSIVE: "No nii, Ütle, keri alla" mid-sentence wakes, the lead-in never reaches the rules or the strip', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
     t.engine.start()
-    t.partial('ma jõuan')
+    t.partial('No nii')
+    t.partial('No nii, Ütle, keri')
+    t.say('No nii, Ütle, keri alla')
     await t.engine.idle()
-    expect(t.heard.at(-1)).toBe('ma jõuan')
-    expect(t.ran).toEqual([])
-    expect(t.instant('saada')).toBe(false)
+    expect(seen).toEqual(['keri alla'])
+    expect(t.heard.some((h) => h.includes('No nii'))).toBe(false)
+    expect(t.heard.at(-1)).toBe('keri alla')
+  })
+
+  it("PASSIVE: \"ütlemine youtube'i\" (the recogniser's glued form) wakes and runs \"mine youtube'i\" once", async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say("ütlemine youtube'i")
+    await t.engine.idle()
+    expect(seen).toEqual(["mine youtube'i"])
+  })
+
+  it('the bare word toggles: PASSIVE to ACTIVE and back, nothing typed either way; a woken command stays ACTIVE', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: true }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('Ütle.')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(true)
+    expect(t.state.line).toBe(STRINGS.et.wake.active)
+    t.say('tere Mari')
+    await t.engine.idle()
+    t.say('Ütle')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(false)
+    expect(t.state.line).toBe(STRINGS.et.wake.passive('Ütle'))
+    t.say('see on room talk')
+    await t.engine.idle()
+    t.say('ütle mine')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(true)
+    expect(seen).toEqual(['tere Mari', 'mine'])
+  })
+
+  it('ACTIVE ends after 20 s of silence, never while a task runs; "aitab" and a sent message end it at once', async () => {
+    vi.useFakeTimers()
+    const seen: string[] = []
+    const goTo = (url: string): IntentAnswer['intent'] => ({ kind: 'command', command: { kind: 'goTo', url } })
+    // A chain of two page loads of 15 s each: 30 s of work, longer than the idle time.
+    const t = setup({
+      logic: recording(seen, asking),
+      box: { present: false, text: '', armed: false },
+      wakeWord: 'Ütle',
+      goToMs: 15_000,
+      ask: (request) =>
+        request.chain !== undefined
+          ? Promise.resolve(answer(goTo('https://b.ee/'), 'b', true))
+          : request.utterance.startsWith('mine a.ee')
+            ? Promise.resolve({ intent: goTo('https://a.ee/'), say: 'a', done: true, plan: ['mine b.ee'] })
+            : Promise.resolve({ error: 'unreachable' }),
+    })
+    t.engine.start()
+    t.say('Ütle, mine a.ee ja siis b.ee')
+    await vi.advanceTimersByTimeAsync(25_000)
+    expect(t.state.wakeOpen).toBe(true)
+    await vi.advanceTimersByTimeAsync(6_000)
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'goTo')).toHaveLength(2)
+    // The idle time runs from the end of the task.
+    await vi.advanceTimersByTimeAsync(18_000)
+    expect(t.state.wakeOpen).toBe(true)
+    t.partial('ja')
+    await vi.advanceTimersByTimeAsync(19_000)
+    expect(t.state.wakeOpen).toBe(true)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(t.state.wakeOpen).toBe(false)
+    expect(t.state.line).toBe(STRINGS.et.wake.passive('Ütle'))
+    t.say('ütle tere')
+    await t.engine.idle()
+    t.say('aitab')
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(false)
+    t.say('ütle kaks')
+    await t.engine.idle()
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.ran.some((c) => c.kind === 'pressSend')).toBe(true)
+    expect(t.state.wakeOpen).toBe(false)
+    t.say('tere jälle')
+    await t.engine.idle()
+    expect(seen).toEqual(['mine a.ee ja siis b.ee', 'tere', 'kaks', 'saada'])
+  })
+
+  it('HARD_OFF: stopping by hand ends everything; the next start is PASSIVE and needs the word again', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: true }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('ütle tere')
+    await t.engine.idle()
+    t.engine.stop()
+    expect(t.state.wakeOpen).toBe(false)
+    t.say('ütle veel')
+    await t.engine.idle()
+    t.engine.start()
+    t.say('veel')
+    await t.engine.idle()
+    expect(seen).toEqual(['tere'])
+  })
+
+  it('ACTIVE: a partial is previewed again; a continuation of a woken final passes, one of a dropped final is gated on its own', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.say('tere')
+    t.continued('tere siis vaikus', 'siis vaikus')
+    t.say('ütle mine')
+    t.continued('ütle mine siis kaks', 'siis kaks')
+    await t.engine.idle()
+    expect(seen).toEqual(['mine', 'siis kaks'])
   })
 
   it('wake: the voice entry flow of Minu andmed is not gated', async () => {
@@ -2254,104 +2394,7 @@ describe('wake mode (29.4.1)', () => {
     expect(t.ran).toEqual([{ kind: 'savedEntry', utterance: 'r' }])
   })
 
-  it('wake: a continuation of a woken final passes; one of a dropped final is gated on its own', async () => {
-    const seen: string[] = []
-    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
-    t.engine.start()
-    t.say('ütle mine')
-    t.continued('ütle mine siis kaks', 'siis kaks')
-    t.say('tere')
-    t.continued('tere siis vaikus', 'siis vaikus')
-    await t.engine.idle()
-    expect(seen).toEqual(['mine', 'siis kaks'])
-  })
-})
-
-describe('the dictation window (29.4.1)', () => {
-  const ARMED: BoxState = { present: true, text: '', armed: true }
-
-  it('window: opens on the first woken final into an armed box, stays open for finals without the word, closes after 20 s of silence', async () => {
-    vi.useFakeTimers()
-    const seen: string[] = []
-    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
-    t.engine.start()
-    t.say('tere')
-    await t.engine.idle()
-    expect(seen).toEqual([])
-    t.say('Ütle, tere Mari')
-    await t.engine.idle()
-    expect(t.state.wakeOpen).toBe(true)
-    t.say('jõuan kell viis')
-    await t.engine.idle()
-    await vi.advanceTimersByTimeAsync(19_000)
-    expect(t.state.wakeOpen).toBe(true)
-    // A partial is speech: the window stays open 20 s from it.
-    t.partial('ja')
-    await vi.advanceTimersByTimeAsync(19_000)
-    expect(t.state.wakeOpen).toBe(true)
-    t.say('ja siis koju')
-    await t.engine.idle()
-    await vi.advanceTimersByTimeAsync(20_000)
-    expect(t.state.wakeOpen).toBe(false)
-    expect(t.state.line).toBe(STRINGS.et.wake.closed)
-    t.say('see läheb kuhugi')
-    await t.engine.idle()
-    expect(seen).toEqual(['tere Mari', 'jõuan kell viis', 'ja siis koju'])
-  })
-
-  it('window: "aitab" closes it and types nothing', async () => {
-    vi.useFakeTimers()
-    const seen: string[] = []
-    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
-    t.engine.start()
-    t.say('ütle tere')
-    await t.engine.idle()
-    expect(t.state.wakeOpen).toBe(true)
-    t.say('aitab')
-    await t.engine.idle()
-    expect(t.state.wakeOpen).toBe(false)
-    expect(t.state.line).toBe(STRINGS.et.wake.closed)
-    t.say('veel midagi')
-    await t.engine.idle()
-    expect(seen).toEqual(['tere'])
-  })
-
-  it('window: a plain send is acted on and closes it; a woken command into an armed box does not open it', async () => {
-    vi.useFakeTimers()
-    const seen: string[] = []
-    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
-    t.engine.start()
-    t.say('ütle mine')
-    await t.engine.idle()
-    expect(t.state.wakeOpen ?? false).toBe(false)
-    t.say('ütle tere')
-    await t.engine.idle()
-    expect(t.state.wakeOpen).toBe(true)
-    t.say('saada')
-    await t.engine.idle()
-    expect(t.ran.some((c) => c.kind === 'pressSend')).toBe(true)
-    expect(t.state.wakeOpen).toBe(false)
-    t.say('tere jälle')
-    await t.engine.idle()
-    expect(seen).toEqual(['mine', 'tere', 'saada'])
-  })
-
-  it('window: stopping closes it; the next start needs the word again', async () => {
-    vi.useFakeTimers()
-    const seen: string[] = []
-    const t = setup({ logic: recording(seen), box: ARMED, wakeWord: 'Ütle' })
-    t.engine.start()
-    t.say('ütle tere')
-    await t.engine.idle()
-    t.engine.stop()
-    expect(t.state.wakeOpen).toBe(false)
-    t.engine.start()
-    t.say('veel')
-    await t.engine.idle()
-    expect(seen).toEqual(['tere'])
-  })
-
-  it('window: without wake mode nothing is gated and wakeOpen is never published', async () => {
+  it('without wake mode nothing is gated and wakeOpen is never published', async () => {
     const seen: string[] = []
     const t = setup({ logic: recording(seen) })
     t.engine.start()
@@ -2359,6 +2402,124 @@ describe('the dictation window (29.4.1)', () => {
     await t.engine.idle()
     expect(seen).toEqual(['tere'])
     expect(t.state.wakeOpen).toBeUndefined()
+  })
+
+  it('#2 privacy: with a hosted server or Soniox, wake mode does not start the microphone and says why (0 frames in PASSIVE)', async () => {
+    for (const option of [{ hosted: true }, { uploads: true }]) {
+      const t = setup({ wakeWord: 'Ütle', ...option })
+      t.engine.start()
+      t.engine.toggle()
+      t.engine.toggle()
+      await t.engine.idle()
+      expect(t.starts(), JSON.stringify(option)).toBe(0)
+      expect(t.state.problem).toBe(STRINGS.et.wake.uploadsOff)
+      expect(t.state.listening ?? false).toBe(false)
+    }
+    // Always-on with a hosted server starts as before: there every word is meant to be heard.
+    const always = setup({ hosted: true })
+    always.engine.start()
+    expect(always.starts()).toBe(1)
+  })
+})
+
+describe('round 10 (#6): always-on mode keeps room speech out of the bar and out of running tasks', () => {
+  const ARMED: BoxState = { present: true, text: 'Tere.', armed: true }
+  const ROOM = ['kas sa tuled ka poodi', 'ma ei tea veel', 'pane see sinna lauale']
+  const roomAware = (request: AddresseeRequest): Promise<AddresseeAnswer | AskFailure> =>
+    Promise.resolve({ verdict: request.utterance.startsWith('kirjuta') || request.utterance.startsWith('ava') || request.utterance.startsWith('mine') ? 'command' : ROOM.includes(request.utterance) ? 'ignore' : 'dictation' })
+
+  it('a final no rule knows goes to the addressee check with the last three finals and the page; "ignore" never reaches the bar, the box or the model', async () => {
+    const checked: AddresseeRequest[] = []
+    const t = setup({
+      logic: { ...asking, inpagePreview: previewing.inpagePreview },
+      box: ARMED,
+      ask: () => Promise.resolve(answer({ kind: 'dictate', text: 'x' })),
+      addressee: (request) => {
+        checked.push(request)
+        return roomAware(request)
+      },
+    })
+    t.engine.start()
+    t.say('saada')
+    for (const room of ROOM) {
+      t.partial(room.split(' ')[0] ?? '')
+      t.say(room)
+    }
+    await t.engine.idle()
+    // A rule's command ("saada") is never checked.
+    expect(checked.map((c) => c.utterance)).toEqual(ROOM)
+    expect(checked[2]?.finals).toEqual(['saada', 'kas sa tuled ka poodi', 'ma ei tea veel'])
+    expect(checked[0]?.page.url).toBe('https://www.youtube.com/')
+    expect(checked[0]?.page.box).toEqual({ present: true, armed: true })
+    // Nothing of the room: no final on the strip, no intent ask, the previews taken back.
+    for (const room of ROOM) expect(t.heard).not.toContain(room)
+    expect(t.heard.at(-1)).toBe('')
+    expect(t.asked).toEqual([])
+    expect(t.page().text).toBe('Tere.')
+    expect(t.state.ignored).toBe(STRINGS.et.wake.notForMe(3))
+  })
+
+  it('"dictation" and "command" go on as before; a failed check goes on as before too (the rules and the model still judge)', async () => {
+    const seen: string[] = []
+    let fail = false
+    const t = setup({ logic: recording(seen, asking), box: ARMED, addressee: (request) => (fail ? Promise.resolve({ error: 'unreachable' }) : roomAware(request)) })
+    t.engine.start()
+    t.say('jõuan kell viis')
+    t.say('kirjuta Marile tere')
+    await t.engine.idle()
+    fail = true
+    t.say('kas sa tuled ka poodi')
+    await t.engine.idle()
+    expect(seen).toEqual(['jõuan kell viis', 'kirjuta Marile tere', 'kas sa tuled ka poodi'])
+    expect(t.heard).toContain('jõuan kell viis')
+  })
+
+  it('wake mode never asks the addressee check (the word is the address)', async () => {
+    const checked: string[] = []
+    const t = setup({ wakeWord: 'Ütle', addressee: (request) => {
+      checked.push(request.utterance)
+      return roomAware(request)
+    } })
+    t.engine.start()
+    t.say('kas sa tuled ka poodi')
+    t.say('ütle tere')
+    await t.engine.idle()
+    expect(checked).toEqual([])
+  })
+
+  it("a running chain (\"mine youtube'i ja ava video\") is never appended to or interrupted by room speech: addressee ignore, or the gate's reject", async () => {
+    const unarmed: BoxState = { present: false, text: '', armed: false }
+    const hold: { release: ((a: IntentAnswer) => void) | null } = { release: null }
+    const t = setup({
+      logic: asking,
+      box: unarmed,
+      onlyOwner: true,
+      addressee: roomAware,
+      ask: (request) =>
+        request.chain === undefined
+          ? Promise.resolve({ intent: { kind: 'command', command: { kind: 'goTo', url: 'https://www.youtube.com/' } }, say: 'lähen youtube', done: true, plan: ['ava video'] })
+          : new Promise<IntentAnswer>((resolve) => {
+              hold.release = resolve
+            }),
+    })
+    const owner: SpeakerDecision = { segmentId: 1, sessionId: 's', profileVersion: 'v1-x', verdict: verdictFor('verified_owner'), reason: 'verified_owner', timings: { judgeMs: 10 } }
+    const other: SpeakerDecision = { ...owner, verdict: verdictFor('rejected_other'), reason: 'rejected_other' }
+    t.engine.start()
+    t.handlers()?.onUtterance("mine youtube'i ja ava video", owner)
+    await vi.waitFor(() => expect(hold.release).not.toBeNull())
+    // The second goal is being asked. The room speaks: his own side talk (addressee ignore), then another voice (gate reject).
+    t.handlers()?.onUtterance('kas sa tuled ka poodi', owner)
+    t.handlers()?.onUtteranceContinued("mine youtube'i ja ava video ma ei tea veel", 'ma ei tea veel', owner)
+    t.handlers()?.onUtterance('pane see sinna lauale', other)
+    t.handlers()?.onUtteranceContinued("mine youtube'i ja ava video ja siis kustuta kõik", 'ja siis kustuta kõik', other)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(t.signals.every((s) => !s.aborted)).toBe(true)
+    hold.release?.({ intent: { kind: 'command', command: { kind: 'clickItem', id: 3 } }, say: 'avan', done: true })
+    await t.engine.idle()
+    expect(t.asked.map((a) => a.utterance)).toEqual(["mine youtube'i ja ava video", 'ava video'])
+    expect(t.asked.every((a) => a.chain === undefined || (a.chain.remaining.length === 0 && !JSON.stringify(a.chain).includes('poodi')))).toBe(true)
+    expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox' && k !== 'readPage')).toEqual(['goTo', 'clickItem'])
+    for (const room of [...ROOM, 'ja siis kustuta kõik']) expect(t.heard.join(' | ')).not.toContain(room)
   })
 })
 

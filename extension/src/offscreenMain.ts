@@ -21,6 +21,8 @@ import { DEFAULT_ASR_URL, authHeaders, isHostedAddress, serverStatus, serverUrl,
 // ---------- wake word and places (29.4) ----------
 import { placesFrom } from '../../src/core/places.ts'
 import { wakeWordFrom } from '../../src/core/wake.ts'
+import { verdictFrom } from '../../src/core/addressee.ts'
+import type { AddresseeAnswer, AddresseeRequest } from '../../src/core/addressee.ts'
 
 /**
  * Round 8 (29.4.1): the wake word when the service worker made this document for wake mode
@@ -94,6 +96,19 @@ export async function askIntent(intentUrl: string, request: IntentRequest, signa
   if (!response.ok) return response.status === 503 || response.status === 401 || errorMessage(body) === 'no_key' ? { error: 'no_model' } : { error: 'bad' }
   const parsed = IntentAnswerSchema.safeParse(body)
   return parsed.success ? parsed.data : { error: 'bad' }
+}
+
+/** Round 10 (#6, 32.3): POST /api/addressee. Any failure is a failure (the engine then goes on as before). */
+export async function askAddressee(url: string, request: AddresseeRequest, signal: AbortSignal, token = ''): Promise<AddresseeAnswer | AskFailure> {
+  try {
+    const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(token) }, body: JSON.stringify(request), signal })
+    if (!response.ok) return { error: 'bad' }
+    const body: unknown = await response.json()
+    const verdict = typeof body === 'object' && body !== null ? verdictFrom((body as Record<string, unknown>).verdict) : null
+    return verdict === null ? { error: 'bad' } : { verdict }
+  } catch {
+    return { error: 'unreachable' }
+  }
 }
 
 /**
@@ -273,6 +288,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
   const token = params.get('token') ?? ''
   const address = socketAddress(asrAddress(params.get('asr') ?? DEFAULT_ASR_URL, params.get('engine')), token)
   const intentUrl = serverUrl(address, '/api/intent')
+  const addresseeUrl = serverUrl(address, '/api/addressee')
   const statusUrl = serverUrl(address, '/api/status')
   let connects = 0
   let micOpens = 0
@@ -421,6 +437,10 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     // Round 10 (31.4): the engine's own wall behind the recogniser's.
     onlyOwner,
     ...(wakeWord === undefined ? {} : { wakeWord }),
+    // Round 10 (#2, 32.2): Soniox sends the audio off this computer; with it (or a hosted server) wake mode does not start.
+    uploads: params.get('engine') === 'soniox',
+    // Round 10 (#6, 32.3): always-on and the toggle ask whether a final no rule knows was said to Ütle. Wake mode never does.
+    ...(wakeWord === undefined ? { addressee: (request: AddresseeRequest, signal: AbortSignal) => askAddressee(addresseeUrl, request, signal, token) } : {}),
   })
 
   // Round 6 (26.1, 26.5): his saved values and whether the entry flow runs, once at start; changes arrive as messages.

@@ -414,8 +414,14 @@ export interface Strings {
   wake: {
     /** The strip's line when listening starts in wake mode. */
     prompt(word: string): string
-    /** The dictation window closed ("aitab", or 20 s of silence). */
-    closed: string
+    /** Round 10 (32.1): ACTIVE ended ("aitab", the bare word, or 20 s of silence): back to waiting for the word. */
+    passive(word: string): string
+    /** Round 10 (32.1): the bare word woke it: ACTIVE, every final is his. */
+    active: string
+    /** Round 10 (32.1, 32.3): finals not meant for Ütle (PASSIVE, or the addressee check said ignore), counted quietly. */
+    notForMe(count: number): string
+    /** Round 10 (32.2): wake mode with a hosted server or Soniox would send the room's audio away: it does not start. */
+    uploadsOff: string
     /** The settings page: the mode's choice and the word's field. */
     listenWake: string
     listenWakeEn: string
@@ -1115,7 +1121,10 @@ const ET: Strings = {
   // ---------- wake word and places (29.4) ----------
   wake: {
     prompt: (word) => `Kuulan. Alusta sõnaga „${word}“.`,
-    closed: 'Dikteerimine lõpetatud.',
+    passive: (word) => `Ootan sõna „${word}“.`,
+    active: 'Kuulan sind.',
+    notForMe: (count) => (count === 1 ? '1 lause ei olnud mulle' : `${count} lauset ei olnud mulle`),
+    uploadsOff: 'Ütle-sõna töötab ainult selle arvuti kõneserveriga: muidu läheks kogu toa heli välja. Vali seadetes kuulamine „Lülitiga“ või kasuta selle arvuti serverit.',
     listenWake: 'Äratussõnaga',
     listenWakeEn: 'Wake word: always listening, acts on what starts with the word',
     wordLabel: 'Äratussõna · Wake word',
@@ -1694,7 +1703,10 @@ const EN: Strings = {
   // ---------- wake word and places (29.4) ----------
   wake: {
     prompt: (word) => `Listening. Start with "${word}".`,
-    closed: 'Dictation ended.',
+    passive: (word) => `Waiting for "${word}".`,
+    active: 'Listening to you.',
+    notForMe: (count) => (count === 1 ? '1 sentence was not for me' : `${count} sentences were not for me`),
+    uploadsOff: 'The wake word works only with the speech server on this computer: otherwise all the sound in the room would leave it. Choose the toggle in the settings, or use this computer’s server.',
     listenWake: 'Wake word',
     listenWakeEn: 'Always listening, acts on what starts with the word',
     wordLabel: 'Wake word',
