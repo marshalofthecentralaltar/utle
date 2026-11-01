@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROMPTS, checkLabels, operatingPoint, otherTrialsNeeded, splitTrials, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
+import { FAKE_MIC_MARKER, PROMPTS, checkLabels, recordingSource, operatingPoint, otherTrialsNeeded, splitTrials, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
 import type { LabelRow } from './measure.ts'
 
 describe('normaliseEt', () => {
@@ -209,5 +209,15 @@ describe('labels --check (round 10, lane VOICE): record.ts -> label.ts -> speake
     const report = checkLabels([row('a/1.wav', '', 'command'), row('a/2.wav', 'ralf', 'short')], 'ralf', 'l.tsv')
     expect(report.ready).toBe(false)
     expect(report.problems).toEqual(['1 clip without a speaker (label.ts --edit l.tsv)', 'no enrol clips for ralf (record.ts --set enrol)', 'no clips of anyone but ralf (record a partner)'])
+  })
+})
+
+describe('recordingSource (round 10, C8): the sweep banner never says real for a fake microphone', () => {
+  const repo = 'C:/repo'
+  it('fixture clips are synthetic, a folder record.ts filled from a fake microphone is fake-mic, anything else real', () => {
+    expect(recordingSource(['C:/repo/scripts/fixtures/speaker-set/a.wav'], repo, () => false)).toBe('synthetic')
+    expect(recordingSource(['C:/temp/rec/mari/enrol-01.wav', 'C:/temp/rec/vesta/enrol-01.wav'], repo, (dir) => dir.endsWith('vesta'))).toBe('fake-mic')
+    expect(recordingSource(['C:/temp/rec/mari/enrol-01.wav'], repo, () => false)).toBe('real')
+    expect(FAKE_MIC_MARKER).toBe('FAKE-MIC.txt')
   })
 })

@@ -422,3 +422,17 @@ export function checkLabels(rows: readonly LabelRow[], owner: string, labelsPath
     next: `npx tsx scripts/speaker-calibrate.ts --labels ${labelsPath} --owner-speaker ${owner} --models all`,
   }
 }
+
+/**
+ * Round 10 (C8): the file record.ts leaves in <out>/<person>/ when Chromium's fake microphone played
+ * fixture audio instead of a person speaking. The sweep then says SYNTHETIC, never "REAL recordings".
+ */
+export const FAKE_MIC_MARKER = 'FAKE-MIC.txt'
+
+/** Where a set of clips came from: fixture files, a fake-microphone recording, or people. */
+export function recordingSource(paths: readonly string[], repoRoot: string, hasMarker: (dir: string) => boolean): 'synthetic' | 'fake-mic' | 'real' {
+  const dirOf = (p: string): string => p.replace(/\\/g, '/').replace(/\/[^/]*$/, '')
+  if (paths.some((p) => insideRepo(p, `${repoRoot.replace(/\\/g, '/').replace(/\/+$/, '')}/scripts/fixtures`))) return 'synthetic'
+  if (paths.some((p) => hasMarker(dirOf(p)))) return 'fake-mic'
+  return 'real'
+}
