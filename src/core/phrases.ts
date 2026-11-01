@@ -299,7 +299,7 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
     say: ['hääl', 'kuulamine', 'kuula', 'listening'],
     intro: 'Millal Ütle kuulab ja kuidas teda peatada.',
     noteEn:
-      '`katkesta` drops everything in flight at once (the chain, the question to the model, the queued words) with "Katkestatud."; it works while resting too and is never typed. With the wake word (settings, **Kuulamine: Äratussõnaga**) only what starts with the word is acted on; "Ütle" alone opens a 20 s window in which sentences need no word, closed by `aitab`, `see on kõik` or `saada`. The word is matched by sound and must be first. Push-to-talk by looking needs nothing said: look at the microphone (or the whole bar) and speak.',
+      '`katkesta` drops everything in flight at once (the chain, the question to the model, the queued words) with "Katkestatud."; it works while resting too and is never typed. With the wake word (settings, **Kuulamine: Äratussõnaga**) nothing reaches the bar until the word is heard, anywhere in a sentence ("No nii, ütle, mine youtube’i" runs "mine youtube’i"); then sentences need no word until 20 s of quiet with no task running, `aitab`, `lõpeta kuulamine`, `saada`, or "Ütle" alone again. `kirjuta ütle` types the word. Push-to-talk by looking needs nothing said: look at the microphone (or the whole bar) and speak.',
     phrases: [
       { et: ['puhka', 'ära kuula'], en: 'sleep, stop listening', does: 'Ütle ei kirjuta midagi, kuni äratad.', doesEn: 'Stops typing what it hears, until woken.', rule: 'inpage', expect: 'sleep' },
       { et: ['ärka üles'], en: 'wake up', does: 'Ütle kuulab jälle.', doesEn: 'Starts again.', rule: 'inpage', expect: 'wake', context: 'asleep' },

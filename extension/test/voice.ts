@@ -8,6 +8,7 @@
 //   npx tsx extension/test/voice.ts baseline  the dictation timings as main b901d29 behaved (no previews, 700 ms hold)
 //   npx tsx extension/test/voice.ts down      start with the dev server STOPPED; start it when told
 //   UTLE_ONLY=onlyowner                        only section 7: only the owner with the real models (a server of its own)
+//   UTLE_ONLY=listen                           only section 8: addressed speech, two synthetic voices, the real models, no browser
 
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
@@ -668,6 +669,123 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
   }
 }
 
+// ---------- round 10 (ARCHITECTURE 32.4): addressed speech, two voices through the real models ----------
+// SYNTHETIC voices (scripts/listen-set.ts, TartuNLP). The real server of this process (TalTech's
+// recogniser, TitaNet, Silero), the real recogniser client (src/speech/local.ts) over a Node
+// WebSocket, the real engine and the real src/core/inpage.ts, in wake mode with only the owner on:
+// microphone, speaker gate, wake word, engine. No browser: the page is a stand-in that records commands.
+
+const LISTEN_SET = join(repoRoot, 'scripts/fixtures/listen-set')
+
+async function listenReal(): Promise<void> {
+  console.log('\n== 8. addressed speech with the real models (SYNTHETIC voices): the room never reaches the bar, the owner’s mid-sentence "Ütle, mine youtube’i" runs once ==')
+  const { createServer } = await import('node:http')
+  const { attachAsr } = await import('../../server/asr.ts')
+  const { createSpeakerGate, profilePath } = await import('../../server/speaker.ts')
+  const { loadSpeakerModel } = await import('../../server/speakerModel.ts')
+  const { createLocalRecognizer } = await import('../../src/speech/local.ts')
+  const { createEngine, SEND_PROBE_BOX } = await import('../src/engine.ts')
+  const core = await import('../../src/core/inpage.ts')
+  const { pageIntentFrom } = await import('../../src/core/pageIntent.ts')
+  const dataDir = await mkdtemp(join(tmpdir(), 'utle-listen-'))
+  const profile = profilePath(repoRoot, { UTLE_DATA_DIR: dataDir }, '')
+  const server = createServer((_req, res) => {
+    res.statusCode = 404
+    res.end()
+  })
+  try {
+    const model = loadSpeakerModel(repoRoot)
+    if (!model.ok) throw new Error(`speaker model: ${model.reason}`)
+    const maker = createSpeakerGate(model.extractor, { profilePath: profile })
+    const phrases = ENROL_CLIPS.map((name) => maker.phrase(wavFrames(join(SPEAKER_SET, `${name}.wav`)))).filter((p) => p !== null)
+    check('8. the stand-in owner’s profile is made (the clips under test are not in it)', maker.enrolPhrases(phrases))
+    attachAsr(server, repoRoot, { profileFor: () => profile })
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    const address = server.address()
+    const asr = `ws://localhost:${typeof address === 'object' && address !== null ? address.port : 0}/api/asr`
+
+    // The microphone: room voice, owner, room voice saying the wake word to someone else; 2.5 s of quiet after each.
+    const quiet = (n: number): Float32Array[] => Array.from({ length: n }, () => new Float32Array(1600))
+    const clips = ['room-shop', 'owner-wake', 'room-wake']
+    const frames = clips.flatMap((name) => [...wavFrames(join(LISTEN_SET, `${name}.wav`)), ...quiet(25)])
+    let fed = false
+    const audio = {
+      async start(onFrame: (samples: Float32Array<ArrayBuffer>) => void): Promise<void> {
+        void (async () => {
+          await sleep(1500)
+          for (const frame of frames) {
+            onFrame(new Float32Array(frame))
+            await sleep(100)
+          }
+          fed = true
+        })()
+      },
+      stop(): void {},
+    }
+    const heard: string[] = []
+    const seen: string[] = []
+    const ran: string[] = []
+    let woke = false
+    const engine = createEngine({
+      logic: {
+        ...core,
+        pageIntentFrom,
+        inpageStep: (session, utterance, box) => {
+          // The engine probes the rules with SEND_PROBE_BOX to tell a send; only real steps count.
+          if (box !== SEND_PROBE_BOX) seen.push(utterance)
+          return core.inpageStep(session, utterance, box)
+        },
+      },
+      lang: 'et',
+      run: async (command) => {
+        if (command.kind === 'readBox') return { ok: true, box: { present: false, text: '', armed: false } }
+        if (command.kind === 'readPage') return { ok: true, page: { url: 'chrome://newtab/', title: 'Uus vaheleht', box: { present: false, text: '', armed: false }, items: [], media: null, hints: false } }
+        ran.push(command.kind === 'goTo' ? `goTo ${command.url}` : command.kind)
+        return { ok: true }
+      },
+      publish: (patch) => {
+        if (patch.heard !== undefined && patch.heard !== '') heard.push(patch.heard)
+        if (patch.wakeOpen === true) woke = true
+      },
+      recognizer: (handlers, isInstant, onUnavailable) =>
+        createLocalRecognizer(handlers, isInstant, {
+          onUnavailable,
+          address: asr,
+          onlyOwner: true,
+          audio: () => audio,
+          connect: (events) => {
+            const ws = new WebSocket(asr)
+            ws.binaryType = 'arraybuffer'
+            ws.onmessage = (event) => events.message(event.data)
+            ws.onclose = () => events.close()
+            return ws
+          },
+        }),
+      micBlocked: () => undefined,
+      ask: () => Promise.resolve({ error: 'unreachable' }),
+      tabs: () => Promise.resolve([]),
+      status: () => Promise.resolve('no_key'),
+      wakeWord: 'Ütle',
+      onlyOwner: true,
+    })
+    engine.start()
+    await waitUntil(async () => fed, 60_000)
+    await sleep(3000)
+    await engine.idle()
+    engine.stop()
+    console.log(`      strip heard ${JSON.stringify(heard)}; rules got ${JSON.stringify(seen)}; page commands ${JSON.stringify(ran)}`)
+    const room = /poodi|tulen homme|talle/i
+    check('8. the second voice’s sentences never reach the bar (no strip words from them)', !heard.some((h) => room.test(h)), JSON.stringify(heard))
+    check('8. the owner’s mid-sentence wake word woke ACTIVE', woke)
+    check('8. exactly one utterance reached the rules: the words after the word ("mine …"), the lead-in "No nii" dropped', seen.length === 1 && /^mine\b/i.test(seen[0] ?? '') && !/nii/i.test(seen[0] ?? ''), JSON.stringify(seen))
+    check('8. the page got one command, once: goTo youtube.com', ran.length === 1 && /youtube\.com/.test(ran[0] ?? ''), JSON.stringify(ran))
+    check('8. the other voice’s "Ütle talle, …" ran nothing (the gate rejects before the wake word is looked for)', !seen.some((s) => room.test(s)))
+  } finally {
+    server.close()
+    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function main(): Promise<void> {
   await mkdir(join(repoRoot, 'docs/proof'), { recursive: true })
   const mode = process.argv[2]
@@ -693,6 +811,8 @@ async function main(): Promise<void> {
     if (!only || only === 'newtab') await newTabPage(extensionDir)
     // Round 10: only the owner, with a server of this process over the real models.
     if (!only || only === 'onlyowner') await onlyOwnerReal(extensionDir)
+    // Round 10 (32.4): addressed speech, two synthetic voices through the real models, no browser.
+    if (!only || only === 'listen') await listenReal()
   }
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
   process.exitCode = failures === 0 ? 0 : 1

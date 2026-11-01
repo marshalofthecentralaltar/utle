@@ -22,7 +22,7 @@ const RATE = 16000
 const root = fileURLToPath(new URL('..', import.meta.url))
 const out = join(root, 'scripts', 'fixtures', 'listen-set')
 
-export const LISTEN_SET = [
+const LISTEN_SET = [
   { name: 'owner-wake', speaker: 'mari', text: "No nii. Ütle, mine youtube'i." },
   { name: 'room-shop', speaker: 'kalev', text: 'Kas sa tuled ka poodi?' },
   { name: 'room-wake', speaker: 'vesta', text: 'Ütle talle, et ma tulen homme.' },

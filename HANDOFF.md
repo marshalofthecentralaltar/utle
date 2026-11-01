@@ -609,6 +609,16 @@ Ralf's key); the `thinking: { type: 'disabled' }` field is from third-party docs
 the DeepSeek peak hours in `scripts/prices.ts`; the `utle-spend` ring in a real Chrome (the ring
 logic is tested, the service-worker write is not).
 
+## 1m. Round 10, LISTEN lane (2026-11-01): the bar shows only speech meant for Ütle
+
+Branch `r10-listen` (on `r10-gate`). ARCHITECTURE 32, LIMITED (text, not acoustic; #2 stays open for a
+keyword spotter). Wake mode: PASSIVE / ACTIVE / HARD_OFF, the word anywhere in a sentence, glued
+"ütlemine youtube'i" split, nothing of the room on the strip (a count instead); not started with a
+hosted server or Soniox. Always-on: a sentence no rule knows goes to /api/addressee; "ignore" is never
+shown or typed and never touches a running chain. Verified with tests, 16 eval cases (16/16, p50 1.3 s)
+and synthetic voices through the real models (voice.ts section 8). Not verified: real voices, a real
+room, a TV; the false-wake rate on room speech that contains "ütle" (only the owner's gate guards it).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
