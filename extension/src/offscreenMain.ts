@@ -8,7 +8,7 @@ import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pag
 import { STRINGS } from '../../src/core/strings.ts'
 import { browserSocket, createLocalRecognizer, retrainDue } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
-import type { Recognizer } from '../../src/speech/recognizer.ts'
+import type { EnrolDetail, Recognizer } from '../../src/speech/recognizer.ts'
 import type { SpeakerReason } from '../../src/speech/asrProtocol.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { askTimeoutMs, createEngine } from './engine.ts'
@@ -138,9 +138,14 @@ export function foreignNotice(streak: number, text: ForeignText, reason?: Speake
   return retrainDue(streak) ? { foreign, line: text.foreignRetrain } : { foreign }
 }
 
-/** Round 7: the strip's line when enrolment ends: phrases is set after scripted enrolment. */
-export function enrolledLine(ok: boolean, phrases: number | undefined, text: { enrolDone: string; enrolFailed: string; enrolPhrasesDone(n: number): string; enrolFew(n: number, enough: number): string }): string {
-  if (!ok) return text.enrolFailed
+import type { VoiceText } from './voiceLines.ts'
+export { phraseLine, readinessLine, voiceTestLine } from './voiceLines.ts'
+import { phraseLine, readinessLine, voiceTestLine } from './voiceLines.ts'
+
+/** Round 7: the strip's line when enrolment ends: phrases is set after scripted enrolment. Round 10 (31.7): detail says why it failed, or that it was verified on held-out phrases. */
+export function enrolledLine(ok: boolean, phrases: number | undefined, text: { enrolDone: string; enrolFailed: string; enrolPhrasesDone(n: number): string; enrolFew(n: number, enough: number): string } & Partial<VoiceText>, detail?: EnrolDetail): string {
+  if (!ok) return detail?.reason !== undefined && text.enrolFailedWhy !== undefined ? text.enrolFailedWhy[detail.reason] : text.enrolFailed
+  if (detail?.heldOut !== undefined && text.enrolVerified !== undefined) return text.enrolVerified(phrases ?? 0, detail.heldOut.count)
   if (phrases === undefined) return text.enrolDone
   return phrases < ENOUGH_PHRASES ? text.enrolFew(phrases, ENOUGH_PHRASES) : text.enrolPhrasesDone(phrases)
 }
@@ -333,9 +338,12 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
       publish({ foreign: '' })
     }, FOREIGN_SHOWN_MS)
   }
-  const onEnrolled = (ok: boolean, phrases: number | undefined): void => {
-    publish({ line: enrolledLine(ok, phrases, stripText), enrolPhrases: -1 })
+  const onEnrolled = (ok: boolean, phrases: number | undefined, detail?: EnrolDetail): void => {
+    publish({ line: enrolledLine(ok, phrases, stripText, detail), enrolPhrases: -1, enrolProblem: '', enrolOutcome: ok ? 'ok' : (detail?.reason ?? 'failed') })
+    // Round 10 (31.7): a new profile is a new readiness.
+    if (ok) recognizer?.speakerStatus?.()
   }
+  let voiceTests = 0
   /**
    * Round 7: scripted enrolment rides on the engine's enrolment (listening starts, what he reads is
    * neither typed nor run, onEnrolled ends it). While `scripted` is set, the engine's call to the
@@ -369,11 +377,19 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
             handlers.onForeign(reason)
             onForeign(streak, reason)
           },
-          onEnrolled: (ok, seconds, phrases) => {
+          onEnrolled: (ok, seconds, phrases, detail) => {
             handlers.onEnrolled(ok, seconds)
-            onEnrolled(ok, phrases)
+            onEnrolled(ok, phrases, detail)
           },
-          onEnrolPhrase: (count) => publish({ enrolPhrases: count }),
+          // Round 10 (31.7): a phrase not counted keeps the count and says why; the page shows it under the phrase.
+          onEnrolPhrase: (count, problem) => publish(problem === undefined ? { enrolPhrases: count, enrolProblem: '' } : { enrolPhrases: count, enrolProblem: problem, line: phraseLine(problem, stripText) }),
+          // Round 10 (31.7): at every connection with only the owner on; the strip says so whenever it does not protect.
+          onSpeakerStatus: (readiness) => publish(onlyOwner && !readiness.protected ? { voiceReady: readiness.state, line: readinessLine(readiness.state, stripText) } : { voiceReady: readiness.state }),
+          onSpeakerTested: (result) => {
+            voiceTests += 1
+            publish({ voiceTest: result, voiceTests, line: voiceTestLine(result, stripText) })
+          },
+          onProfileDeleted: (ok) => publish({ line: ok ? stripText.voiceDeleted : stripText.voiceDeleteFailed }),
         },
         isInstant,
         {
@@ -484,6 +500,18 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
         break
       case 'enrolFinish':
         recognizer?.enrolFinish?.()
+        break
+      case 'voiceTest':
+      case 'voiceDelete':
+      case 'voiceStatus':
+        // Round 10 (31.7): listening starts when it was off (the request waits for the connection).
+        cancelStop()
+        if (!engine.listening) engine.start()
+        if (message.type === 'voiceTest') {
+          recognizer?.speakerTest?.()
+          publish({ line: stripText.voiceTestSay })
+        } else if (message.type === 'voiceDelete') recognizer?.deleteProfile?.()
+        else recognizer?.speakerStatus?.()
         break
       case 'stop':
         cancelStop()

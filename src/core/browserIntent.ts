@@ -278,6 +278,8 @@ phrases({ kind: 'zoom', direction: 'reset' }, 'tavaline suurus', 'algne suurus',
 phrases({ kind: 'openSettings' }, 'ava seaded', 'seaded', 'ava sätted', 'sätted', 'open settings', 'open the settings', 'settings')
 // Round 9 (30.1): the first-run page, again by voice.
 phrases({ kind: 'openSettings', section: 'welcome' }, 'ava juhend', 'juhend', 'ava alustamine', 'alustamine', 'setup', 'open setup', 'open the guide', 'open the setup guide')
+// Round 10 (31.7): teaching the voice again, by voice (with only the owner on, said by the owner).
+phrases({ kind: 'openSettings', section: 'voice' }, 'õpi mu hääl uuesti', 'õpi mu häält uuesti', 'õpeta mu hääl uuesti', 'õpi minu hääl uuesti', 'õpeta minu hääl uuesti', 'relearn my voice', 'learn my voice again', 'teach my voice again')
 phrases({ kind: 'openSettings', section: 'andmed' }, 'ava minu andmed', 'minu andmed', 'mu andmed', 'ava mu andmed', 'my details', 'open my details', 'my data')
 phrases(
   { kind: 'openSettings', section: 'andmed', add: 'email' },
