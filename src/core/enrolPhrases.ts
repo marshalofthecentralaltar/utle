@@ -52,3 +52,10 @@ export function phraseWords(phrase: string): string[] {
     .split(/\s+/)
     .filter((word) => word !== '')
 }
+
+/**
+ * Round 10 (31.7): what "Proovi minu häält" asks him to say: sentences that are not among the
+ * enrolment phrases, so the test is on speech the profile was not made from. A short one and a longer
+ * one: the short one shows honestly that a few words may be too little to tell a voice.
+ */
+export const VERIFY_PHRASES: readonly string[] = ['Ava uudiste leht.', 'Kirjuta emale, et jõuan täna õhtul natuke hiljem koju.']

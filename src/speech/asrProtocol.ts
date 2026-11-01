@@ -36,12 +36,71 @@ export type AsrServerMessage =
   | { type: 'activity' }
   /** Round 10 (31.2): the session and profile version every decision on this socket must carry (sent while onlyOwner is on). */
   | { type: 'speakerSession'; sessionId: string; profileVersion: string }
-  /** Round 4: the voice profile was learnt (or not). Round 7: phrases is how many read phrases made it (scripted enrolment). */
-  | { type: 'enrolled'; ok: boolean; seconds: number; phrases?: number }
-  /** Round 7: scripted enrolment heard one more phrase; count is how many so far. */
-  | { type: 'enrolPhrase'; count: number }
+  /**
+   * Round 4: the voice profile was learnt (or not). Round 7: phrases is how many read phrases made it (scripted enrolment).
+   * Round 10 (31.7): reason when nothing was replaced; heldOut, the candidate's scores on the phrases it was not made from.
+   */
+  | { type: 'enrolled'; ok: boolean; seconds: number; phrases?: number; reason?: EnrolFailure; heldOut?: HeldOutResult }
+  /** Round 7: scripted enrolment heard one more phrase; count is how many so far. Round 10 (31.7): problem: the phrase was not counted, read it again. */
+  | { type: 'enrolPhrase'; count: number; problem?: PhraseProblem }
+  /** Round 10 (31.7): whether only-owner can protect right now (asked with speakerStatus at every connection). */
+  | { type: 'speakerStatus'; readiness: SpeakerReadiness }
+  /** Round 10 (31.7): "Proovi minu häält": the answer for the utterance after speakerTest. Nothing of it was run. */
+  | { type: 'speakerTested'; result: SpeakerTestResult; score?: number; seconds?: number }
+  /** Round 10 (31.7): the profile was deleted (or could not be). */
+  | { type: 'profileDeleted'; ok: boolean }
   /** The server is this many ms behind the audio it has received (it drops audio to catch up). 0 when caught up. */
   | { type: 'lag'; ms: number }
+
+// ---------- onboarding and readiness (round 10, lane VOICE, ARCHITECTURE 31.7) ----------
+
+/** Why a read phrase is asked again. */
+export type PhraseProblem = 'too_short' | 'too_quiet' | 'clipped' | 'model_error'
+export const PHRASE_PROBLEMS: readonly PhraseProblem[] = ['too_short', 'too_quiet', 'clipped', 'model_error']
+/** Why an enrolment replaced nothing (the old profile stays). */
+export type EnrolFailure = 'too_few_phrases' | 'too_little_speech' | 'held_out_failed' | 'write_failed' | 'model_unavailable'
+export const ENROL_FAILURES: readonly EnrolFailure[] = ['too_few_phrases', 'too_little_speech', 'held_out_failed', 'write_failed', 'model_unavailable']
+export interface HeldOutResult {
+  count: number
+  scores: number[]
+  passed: boolean
+  threshold: number
+}
+/** Whether only-owner can protect: only `ready` may be shown as protected. */
+export type ReadinessState = 'ready' | 'no_profile' | 'needs_retraining' | 'model_unavailable' | 'model_mismatch'
+export const READINESS_STATES: readonly ReadinessState[] = ['ready', 'no_profile', 'needs_retraining', 'model_unavailable', 'model_mismatch']
+export interface SpeakerReadiness {
+  state: ReadinessState
+  protected: boolean
+  extractor: boolean
+  profileMatchesModel: boolean
+  verifiable: boolean
+  phrases?: number
+  heldOut?: { count: number; passed: boolean }
+  /** The line in force; `stored` is the line the profile was made with, when today's factory line differs (31.7). */
+  threshold?: { value: number; source: 'factory' | 'per_profile'; stored?: number }
+}
+export type SpeakerTestResult = 'recognised' | 'not_recognised' | 'too_short' | 'noisy' | 'unavailable'
+export const SPEAKER_TEST_RESULTS: readonly SpeakerTestResult[] = ['recognised', 'not_recognised', 'too_short', 'noisy', 'unavailable']
+
+const oneOf = <T extends string>(list: readonly T[], value: unknown): T | undefined => list.find((x) => x === value)
+
+/** A readiness from the wire; `protected` is true only when the state is `ready` and the server said so. */
+export function parseReadiness(value: unknown): SpeakerReadiness | null {
+  if (typeof value !== 'object' || value === null) return null
+  const r = value as Record<string, unknown>
+  const state = oneOf(READINESS_STATES, r.state)
+  if (state === undefined) return null
+  return { state, protected: state === 'ready' && r.protected === true, extractor: r.extractor === true, profileMatchesModel: r.profileMatchesModel === true, verifiable: r.verifiable === true }
+}
+
+function parseHeldOut(value: unknown): HeldOutResult | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const r = value as Record<string, unknown>
+  if (typeof r.count !== 'number' || !Array.isArray(r.scores) || typeof r.passed !== 'boolean' || typeof r.threshold !== 'number') return undefined
+  return { count: r.count, scores: r.scores.filter((x): x is number => typeof x === 'number'), passed: r.passed, threshold: r.threshold }
+}
+// ---------- end of onboarding ----------
 
 /** Who spoke an utterance, when the server has a voice profile: the owner, someone else, or it cannot tell. */
 export type Speaker = 'owner' | 'other' | 'unknown'
@@ -154,6 +213,12 @@ export type AsrClientMessage =
   | { type: 'enrolScript'; phrases: number }
   /** Round 7: end scripted enrolment now with the phrases heard so far. */
   | { type: 'enrolFinish' }
+  /** Round 10 (31.7): the readiness of the voice check, answered with speakerStatus. */
+  | { type: 'speakerStatus' }
+  /** Round 10 (31.7): the next utterance is a voice test: verified, answered with speakerTested, never delivered. */
+  | { type: 'speakerTest' }
+  /** Round 10 (31.7): delete the voice profile. */
+  | { type: 'profileDelete' }
 
 /** Reads one text frame from the server; null for anything that is not a known message. */
 export function parseAsrMessage(raw: string): AsrServerMessage | null {
@@ -197,10 +262,27 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
     case 'enrolled': {
       if (typeof record.ok !== 'boolean') return null
       const seconds = typeof record.seconds === 'number' ? record.seconds : 0
-      return typeof record.phrases === 'number' ? { type: 'enrolled', ok: record.ok, seconds, phrases: record.phrases } : { type: 'enrolled', ok: record.ok, seconds }
+      const enrolled: AsrServerMessage = typeof record.phrases === 'number' ? { type: 'enrolled', ok: record.ok, seconds, phrases: record.phrases } : { type: 'enrolled', ok: record.ok, seconds }
+      const reason = oneOf(ENROL_FAILURES, record.reason)
+      const heldOut = parseHeldOut(record.heldOut)
+      return { ...enrolled, ...(reason === undefined ? {} : { reason }), ...(heldOut === undefined ? {} : { heldOut }) }
     }
-    case 'enrolPhrase':
-      return typeof record.count === 'number' && record.count >= 0 ? { type: 'enrolPhrase', count: record.count } : null
+    case 'enrolPhrase': {
+      if (typeof record.count !== 'number' || record.count < 0) return null
+      const problem = oneOf(PHRASE_PROBLEMS, record.problem)
+      return problem === undefined ? { type: 'enrolPhrase', count: record.count } : { type: 'enrolPhrase', count: record.count, problem }
+    }
+    case 'speakerStatus': {
+      const readiness = parseReadiness(record.readiness)
+      return readiness === null ? null : { type: 'speakerStatus', readiness }
+    }
+    case 'speakerTested': {
+      const result = oneOf(SPEAKER_TEST_RESULTS, record.result)
+      if (result === undefined) return null
+      return { type: 'speakerTested', result, ...(typeof record.score === 'number' ? { score: record.score } : {}), ...(typeof record.seconds === 'number' ? { seconds: record.seconds } : {}) }
+    }
+    case 'profileDeleted':
+      return typeof record.ok === 'boolean' ? { type: 'profileDeleted', ok: record.ok } : null
     default:
       return null
   }

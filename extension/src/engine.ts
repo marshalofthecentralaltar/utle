@@ -14,7 +14,7 @@ import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import { verifiedOwner } from '../../src/speech/asrProtocol.ts'
-import type { SpeakerDecision } from '../../src/speech/asrProtocol.ts'
+import type { SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
 import { documentPaused, inDocument } from '../../src/core/documentMode.ts'
 import { speak as synthSpeak } from '../../src/speech/synth.ts'
 // ---------- reading aloud (29.5) ----------
@@ -55,8 +55,8 @@ export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' | 'aborted'
 export type EngineHandlers = RecognizerHandlers & {
   onLag(ms: number): void
   onUtteranceContinued(text: string, added: string, decision?: SpeakerDecision): void
-  /** Round 4 (review): a foreign final takes back the preview its partials typed. */
-  onForeign(): void
+  /** Round 4 (review): a foreign final takes back the preview its partials typed. Round 10 (31.7): reason, when the recogniser knows it. */
+  onForeign(reason?: SpeakerReason): void
   /** Round 4 (review): enrolment is over; utterances are handled again. */
   onEnrolled(ok: boolean, seconds: number): void
 }
@@ -1265,10 +1265,13 @@ export function createEngine(deps: EngineDeps): Engine {
     onNotice() {
       // The local recogniser has no fallback here; nothing to show.
     },
-    onForeign() {
+    onForeign(reason) {
       // Round 4 (review): someone else's final was dropped; the preview its partials typed must not
       // sit in his box until he next speaks (he may not). Taken back like a stopped utterance.
       dropLive()
+      // Round 10 (31.7, issue #3 C): a short word without enough owner audio ran nothing; the strip
+      // asks for the longer form. Nothing else: no recency, no exception for send.
+      if (reason === 'insufficient_audio') deps.publish({ line: text.voiceTooShort })
     },
     onEnrolled() {
       endEnrolment()

@@ -185,6 +185,7 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
       { et: ['tavaline suurus', 'algne suurus', 'suumi tagasi'], en: 'normal size, reset zoom', does: 'Lehe tavaline suurus.', doesEn: 'Back to 100 %.', rule: 'browserIntent', expect: 'zoom' },
       { et: ['peida riba', 'näita riba'], en: 'hide the bar, show the bar', does: 'Teeb riba väikeseks nupuks ja tagasi.', doesEn: 'Folds the bar to a small pill, and back.', rule: 'browserIntent', expect: 'bar', example: true },
       { et: ['ava seaded', 'seaded'], en: 'open settings', does: 'Avab seadete lehe.', doesEn: 'Opens the settings page.', rule: 'browserIntent', expect: 'openSettings' },
+      { et: ['õpi mu hääl uuesti', 'õpeta mu hääl uuesti'], en: 'relearn my voice', does: 'Avab alustamise lehe hääle kaardil ja alustab lausete lugemist.', doesEn: 'Opens the setup guide at the voice card and starts the sentences.', rule: 'browserIntent', expect: 'openSettings' },
     ],
   },
   {

@@ -9,6 +9,7 @@ import type { SavedItem, SavedKind } from '../../src/core/saved.ts'
 import { entryChips, entryStep, startEntry } from '../../src/core/savedEntry.ts'
 import type { EntryResult, EntryState } from '../../src/core/savedEntry.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
+import { phraseLine } from './voiceLines.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
 import { CONNECTION_KEYS, connectionFrom, connectionOf, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
@@ -156,6 +157,26 @@ const GROUPS: Group[] = [
           say(text.enrolStart(ENROL_SECONDS))
         },
       },
+      // Round 10 (31.7): the voice test and deleting the voice; turning it off is the "Kuula kõiki" choice below.
+      {
+        id: 'testVoice',
+        label: text.testVoice,
+        sub: text.testVoiceEn,
+        run: () => {
+          const message: ToBackground = { type: 'utle-voice-test' }
+          chrome.runtime.sendMessage(message).catch(() => undefined)
+          say(text.voiceTestSay)
+        },
+      },
+      {
+        id: 'deleteVoice',
+        label: text.deleteVoice,
+        sub: text.deleteVoiceEn,
+        run: () => {
+          const message: ToBackground = { type: 'utle-voice-delete' }
+          chrome.runtime.sendMessage(message).catch(() => undefined)
+        },
+      },
     ],
     choices: [
       { value: true, label: text.onlyOwner, sub: text.onlyOwnerEn },
@@ -185,7 +206,7 @@ export const SCRIPT_PHRASES = ENROL_PHRASES.length
 let scriptOn = false
 /** The count was seen at 0 or more since the start: a later -1 means the enrolment is over. */
 let scriptSeen = false
-const scriptEls = { panel: null as HTMLElement | null, step: null as HTMLElement | null, phrase: null as HTMLElement | null }
+const scriptEls = { panel: null as HTMLElement | null, step: null as HTMLElement | null, phrase: null as HTMLElement | null, help: null as HTMLElement | null }
 
 function scriptPanel(): HTMLElement {
   const panel = document.createElement('div')
@@ -221,6 +242,7 @@ function scriptPanel(): HTMLElement {
   scriptEls.panel = panel
   scriptEls.step = step
   scriptEls.phrase = phrase
+  scriptEls.help = help
   return panel
 }
 
@@ -247,6 +269,8 @@ function followScript(state: StripState | undefined): void {
   if (count >= 0) {
     scriptSeen = true
     showPhrase(count)
+    // Round 10 (31.7): a phrase that was not counted says why, under the same phrase.
+    if (scriptEls.help) scriptEls.help.textContent = state.enrolProblem !== '' ? phraseLine(state.enrolProblem, text) : text.scriptStart
     return
   }
   if (!scriptSeen) return

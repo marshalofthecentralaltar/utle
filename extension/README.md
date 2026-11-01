@@ -101,6 +101,27 @@ folder and the others' in another and run
 `npx tsx scripts/speaker-calibrate.ts --owner <your folder> --other <their folder>`: it prints every
 score and the best threshold. HANDOFF 1g has a ten-minute script.
 
+### Recording people for the speaker model and threshold (round 10, three commands)
+
+Nobody is recorded until the consent text that `record.ts` prints is approved (issue #9). The folder
+must be outside the repository (the script refuses one inside it). One `record.ts` run per person,
+the owner first; each run appends to the same `labels.tsv`:
+
+    npx tsx scripts/record.ts --person ralf --out C:/temp/utle-voice --consent
+    npx tsx scripts/record.ts --person anna --out C:/temp/utle-voice --consent
+    npx tsx scripts/record.ts --person mart --out C:/temp/utle-voice --consent
+    npx tsx scripts/label.ts --check C:/temp/utle-voice/labels.tsv --owner ralf
+    npx tsx scripts/speaker-calibrate.ts --labels C:/temp/utle-voice/labels.tsv --owner-speaker ralf --models all
+
+In the recording window Space starts and stops a phrase, Backspace records the last one again,
+Escape ends (43 phrases, about 8 minutes a person). `label.ts --check` exits 0 and prints the next
+command when the set is usable. `speaker-calibrate.ts` prints, per model and seconds-of-speech
+bucket, EER, FAR and FRR at the current line and the lowest threshold with FAR at most 1 %. Its
+banner says REAL recordings only when no clip is a fixture and no speaker folder holds
+`FAKE-MIC.txt` (left by `--fake-mic` runs). The dry run of the same commands with Chromium's fake
+microphone playing the SYNTHETIC TartuNLP fixtures is in HANDOFF 1m. Delete the folder when the
+table exists.
+
 ## Hosted server (round 6)
 
 For a computer where nothing may be installed, the server runs on a hosted machine and the extension

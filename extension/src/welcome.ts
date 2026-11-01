@@ -1,4 +1,4 @@
-// The welcome page (docs/ARCHITECTURE.md 30.1): the first run, in five cards, for a helper who is
+// The welcome page (docs/ARCHITECTURE.md 30.1, 31.7): the first run, in seven cards (round 10: the voice, its test and the choice after the server), for a helper who is
 // not a developer. Opened on install instead of the bare microphone page, and again by "ava juhend"
 // or the toolbar menu's "Alustamine". Like newtab.html, dist/page.js is loaded first, so page
 // commands (utle-page-run) number its buttons and type into its demo box; the strip is mounted here.
@@ -7,7 +7,10 @@ import { STRINGS } from '../../src/core/strings.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
 import { armElement } from './box.ts'
 import { CONNECTION_KEYS, connectionFrom, connectionOf, isHostedAddress, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
-import type { ToBackground, ToPage } from './messages.ts'
+import { ENROL_PHRASES, VERIFY_PHRASES } from '../../src/core/enrolPhrases.ts'
+import type { StripState, ToBackground, ToPage } from './messages.ts'
+import { STATE_KEY } from './messages.ts'
+import { phraseLine, voiceTestLine } from './voiceLines.ts'
 import { mountStrip } from './strip.ts'
 
 const W = STRINGS.et.welcome
@@ -104,7 +107,9 @@ function card(n: number, id: string, title: string, titleEn: string, body: strin
   return { section, result }
 }
 
-const done = { mic: false, server: false, demo: false, voice: false }
+const done = { mic: false, server: false, demo: false, voice: false, check: false, guard: false }
+/** Round 10 (31.7): what he chose on card 5. */
+let guardChoice: 'owner' | 'all' | '' = ''
 /** Card 5, once it is made: the cards above it tick it. */
 let readyCard: Card | null = null
 
@@ -291,9 +296,136 @@ void chrome.storage.local.get([...CONNECTION_KEYS]).then((stored) => {
   pressWhere(a.trim() !== '')
 })
 
-// ---------- 3. Proovi ----------
+// ---------- 3. Õpeta mu hääl (round 10, 31.7: the voice first) ----------
+// The phrases one at a time, read aloud; after each the server says whether it counted it (enough
+// clean speech) or why to read it again. The last two are held out: the server checks the candidate
+// on them and keeps the old voice when it fails. The page follows the strip's state (enrolPhrases,
+// enrolProblem, enrolOutcome), which the offscreen document publishes.
 
-const demoCard = card(3, 'stepTry', W.tryTitle, WE.tryTitle, W.tryBody, WE.tryBody, () => armDemo())
+const voice = card(3, 'stepVoice', W.voiceTitle, WE.voiceTitle, W.voiceBody, WE.voiceBody, () => startVoice())
+const voiceStep = document.createElement('p')
+voiceStep.id = 'voiceStep'
+voiceStep.className = 'note'
+const voicePhrase = document.createElement('p')
+voicePhrase.id = 'voicePhrase'
+voicePhrase.className = 'phrase'
+const voiceFeedback = document.createElement('p')
+voiceFeedback.id = 'voiceFeedback'
+voiceFeedback.className = 'note'
+voiceFeedback.setAttribute('role', 'status')
+const voiceRow = document.createElement('div')
+voiceRow.className = 'choices'
+voiceRow.append(
+  choice('voiceStart', W.voiceStart, WE.voiceStart, () => startVoice()),
+  choice('voiceFinish', W.voiceFinish, WE.voiceFinish, () => send({ type: 'utle-enrol-finish' })),
+)
+voice.section.append(voiceStep, voicePhrase, voiceFeedback, voiceRow, voice.result)
+
+let reading = false
+let readingSeen = false
+function showVoicePhrase(at: number): void {
+  const index = Math.min(at, ENROL_PHRASES.length - 1)
+  voiceStep.textContent = W.voiceStep(index + 1, ENROL_PHRASES.length)
+  voicePhrase.textContent = ENROL_PHRASES[index] ?? ''
+}
+function startVoice(): void {
+  reading = true
+  readingSeen = false
+  show(voice, '')
+  voiceFeedback.textContent = text.scriptStart
+  showVoicePhrase(0)
+  send({ type: 'utle-enrol-script', phrases: ENROL_PHRASES.length })
+}
+
+// ---------- 4. Proovi minu häält ----------
+
+const check = card(4, 'stepCheck', W.testTitle, WE.testTitle, W.testBody, WE.testBody, () => startCheck())
+const checkSay = document.createElement('p')
+checkSay.id = 'checkSay'
+checkSay.className = 'phrase'
+checkSay.textContent = `${text.voiceTestSay} „${VERIFY_PHRASES[1] ?? ''}“`
+const checkRow = document.createElement('div')
+checkRow.className = 'choices'
+checkRow.append(choice('checkStart', W.testStart, WE.testStart, () => startCheck()))
+check.section.append(checkSay, checkRow, check.result)
+
+let testsSeen = -1
+function startCheck(): void {
+  show(check, text.voiceTestSay)
+  send({ type: 'utle-voice-test' })
+}
+
+// ---------- 5. Kuula ainult mind ----------
+
+const guard = card(5, 'stepGuard', W.guardTitle, WE.guardTitle, W.guardBody, WE.guardBody, () => void guardOn())
+const guardOnButton = choice('guardOn', W.guardOn, W.guardOnSub, () => void guardOn())
+const guardAllButton = choice('guardAll', W.guardAll, W.guardAllSub, () => void guardAll())
+const guardRow = document.createElement('div')
+guardRow.className = 'choices'
+guardRow.append(guardOnButton, guardAllButton)
+guard.section.append(guardRow, guard.result)
+
+/** Only after the voice test knew him: only-owner on is never offered as protection it is not. */
+async function guardOn(): Promise<void> {
+  if (!done.check) {
+    show(guard, W.guardNeedsTest)
+    return
+  }
+  await chrome.storage.local.set({ onlyOwner: true }).catch(() => undefined)
+  guardChoice = 'owner'
+  guardOnButton.setAttribute('aria-pressed', 'true')
+  guardAllButton.setAttribute('aria-pressed', 'false')
+  show(guard, W.guardOnDone, true)
+  mark(guard, true)
+}
+
+/** All voices: allowed at any time, and said plainly to be without protection. */
+async function guardAll(): Promise<void> {
+  await chrome.storage.local.set({ onlyOwner: false }).catch(() => undefined)
+  guardChoice = 'all'
+  guardOnButton.setAttribute('aria-pressed', 'false')
+  guardAllButton.setAttribute('aria-pressed', 'true')
+  show(guard, W.guardAllDone)
+  mark(guard, true)
+}
+
+/** The strip's state, published by the offscreen document: the phrases, their problems, the outcome, the voice test. */
+function followVoice(state: StripState | undefined): void {
+  if (!state) return
+  if (reading) {
+    if (state.enrolPhrases >= 0) {
+      readingSeen = true
+      showVoicePhrase(state.enrolPhrases)
+      voiceFeedback.textContent = state.enrolProblem !== '' ? phraseLine(state.enrolProblem, text) : text.scriptStart
+    } else if (readingSeen) {
+      reading = false
+      voiceFeedback.textContent = ''
+      done.voice = state.enrolOutcome === 'ok'
+      show(voice, state.line, done.voice)
+      mark(voice, done.voice)
+    }
+  }
+  if (testsSeen < 0) testsSeen = state.voiceTests
+  else if (state.voiceTests > testsSeen) {
+    testsSeen = state.voiceTests
+    const result = state.voiceTest
+    if (result === 'recognised' || result === 'not_recognised' || result === 'too_short' || result === 'noisy' || result === 'unavailable') {
+      done.check = result === 'recognised'
+      show(check, voiceTestLine(result, text), done.check)
+      mark(check, done.check)
+    }
+  }
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'session' || !changes[STATE_KEY]) return
+  followVoice(changes[STATE_KEY].newValue as StripState | undefined)
+})
+void chrome.storage.session.get(STATE_KEY).then((stored) => followVoice(stored[STATE_KEY] as StripState | undefined))
+
+// ---------- 6. Proovi ----------
+
+const demoCard = card(6, 'stepTry', W.tryTitle, WE.tryTitle, W.tryBody, WE.tryBody, () => armDemo())
 const demo = document.createElement('textarea')
 demo.id = 'demo'
 demo.rows = 2
@@ -326,21 +458,9 @@ setInterval(() => {
   mark(demoCard, true)
 }, 200)
 
-// ---------- 4. Hääl ----------
-
-const voice = card(4, 'stepVoice', W.voiceTitle, WE.voiceTitle, W.voiceBody, WE.voiceBody, () => openVoice())
-const voiceRow = document.createElement('div')
-voiceRow.className = 'choices'
-voiceRow.append(choice('voiceOpen', text.teachScript, text.teachScriptEn, () => openVoice()))
-voice.section.append(voiceRow, voice.result)
-
-function openVoice(): void {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('options.html#onlyOwner'), active: true })
-}
-
 // ---------- 5. Valmis ----------
 
-const ready = card(5, 'stepReady', W.readyTitle, WE.readyTitle, W.readyBody, WE.readyBody, () => void openHelp())
+const ready = card(7, 'stepReady', W.readyTitle, WE.readyTitle, W.readyBody, WE.readyBody, () => void openHelp())
 const list = document.createElement('ul')
 list.className = 'examples'
 for (const example of text.examples.slice(0, 3)) {
@@ -366,7 +486,9 @@ function readyCheck(): void {
   if (readyCard === null) return
   const all = done.mic && done.server && done.demo
   readyCard.section.dataset.done = String(all)
-  show(readyCard, all ? W.readyDone : '', all)
+  // Round 10 (31.7): the last card says how the voice is set: protected only when he turned it on after the test knew him.
+  const voiceLine = guardChoice === 'owner' ? ` ${W.guardOnDone}` : guardChoice === 'all' ? ` ${W.guardAllDone}` : ''
+  show(readyCard, all ? `${W.readyDone}${voiceLine}` : '', all)
 }
 
 // ---------- start ----------
@@ -374,6 +496,11 @@ function readyCheck(): void {
 readyCheck()
 armDemo()
 void micOnLoad()
+// Round 10 (31.7): "õpi mu hääl uuesti" opens welcome.html#voice: the phrases start at once.
+if (window.location.hash === '#voice') {
+  voice.section.scrollIntoView({ block: 'start' })
+  startVoice()
+}
 // The server as stored is tried at once, so the card says where things stand.
 void testServer()
 

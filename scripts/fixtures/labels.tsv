@@ -1,0 +1,30 @@
+file	speaker	reference	addressee	kind	duration_s
+speaker-set/other-albert-1.wav	albert	Saada.	not	short	1.36
+speaker-set/other-albert-2.wav	albert	Keri natuke alla.	not	command	1.82
+speaker-set/other-albert-3.wav	albert	Tere, kas sa jõuad täna õhtul kell seitse koju?	not	dictation	3.55
+speaker-set/other-kalev-1.wav	kalev	Saada.	not	short	1.35
+speaker-set/other-kalev-2.wav	kalev	Keri natuke alla.	not	command	1.82
+speaker-set/other-kalev-3.wav	kalev	Tere, kas sa jõuad täna õhtul kell seitse koju?	not	dictation	3.52
+speaker-set/other-kylli-1.wav	kylli	Saada.	not	short	1.47
+speaker-set/other-kylli-2.wav	kylli	Keri natuke alla.	not	command	1.88
+speaker-set/other-kylli-3.wav	kylli	Tere, kas sa jõuad täna õhtul kell seitse koju?	not	dictation	4.20
+speaker-set/other-liivika-1.wav	liivika	Saada.	not	short	1.41
+speaker-set/other-liivika-2.wav	liivika	Keri natuke alla.	not	command	1.91
+speaker-set/other-liivika-3.wav	liivika	Tere, kas sa jõuad täna õhtul kell seitse koju?	not	dictation	3.80
+speaker-set/other-meelis-1.wav	meelis	Saada.	not	short	1.45
+speaker-set/other-meelis-2.wav	meelis	Keri natuke alla.	not	command	1.86
+speaker-set/other-meelis-3.wav	meelis	Tere, kas sa jõuad täna õhtul kell seitse koju?	not	dictation	4.10
+speaker-set/other-vesta-1.wav	vesta	Saada.	not	short	1.40
+speaker-set/other-vesta-2.wav	vesta	Keri natuke alla.	not	command	1.98
+speaker-set/other-vesta-3.wav	vesta	Tere, kas sa jõuad täna õhtul kell seitse koju?	not	dictation	3.65
+speaker-set/other-mari-pitch20-1.wav	mari-pitch20	Ava uus vaheleht ja kirjuta Marile, et ma jõuan homme kell kolm.	not	dictation	3.46
+speaker-set/other-mari-pitch20-2.wav	mari-pitch20	Tere, Mari. Ma jõuan homme kell kolm.	not	dictation	2.29
+speaker-set/owner-dictate-send-1.wav	mari	Tere, Mari. Ma jõuan homme kell kolm.	ütle	dictation	2.75
+speaker-set/owner-dictate-send-2.wav	mari	Saada.	ütle	short	1.25
+speaker-set/owner-jah-1.wav	mari	Jah.	ütle	short	1.15
+speaker-set/owner-numbers-one-1.wav	mari	Näita numbreid.	ütle	command	1.85
+speaker-set/owner-numbers-one-2.wav	mari	Üks.	ütle	short	1.25
+speaker-set/owner-scroll-tab-1.wav	mari	Keri alla.	ütle	command	1.45
+speaker-set/owner-scroll-tab-2.wav	mari	Järgmine vaheleht.	ütle	command	1.75
+speaker-set/owner-sentence-1.wav	mari	Tere!	ütle	dictation	1.15
+speaker-set/owner-sentence-2.wav	mari	Ava uus vaheleht ja kirjuta Marile, et ma jõuan homme kell kolm.	ütle	dictation	4.15

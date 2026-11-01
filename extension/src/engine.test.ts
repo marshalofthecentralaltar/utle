@@ -6,6 +6,8 @@ import { applyIntent, initialInpage, inpageInstant, inpagePreview, inpageResult,
 import type { SavedItem } from '../../src/core/saved.ts'
 import type { SpendRecord } from '../../src/core/spend.ts'
 import { STRINGS } from '../../src/core/strings.ts'
+import { quickReply } from '../../src/core/quickReply.ts'
+import { messageCommand } from '../../src/core/message.ts'
 import { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, PLACE_ASK_MS, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs, createEngine } from './engine.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import type { AskFailure, EngineHandlers, InpageLogic } from './engine.ts'
@@ -2873,5 +2875,38 @@ describe('only the owner, the engine wall (round 10, ARCHITECTURE 31.4): zero si
     say(t, 'tere')
     await t.engine.idle()
     expect(t.ran.map((c) => c.kind)).toContain('setText')
+  })
+})
+
+describe('criterion 6 (round 10, 31.7): a short word without enough owner audio asks for the longer form', () => {
+  it('insufficient_audio runs nothing, asks nothing and puts the longer form on the strip; no recency, no exception for send', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    const owner: SpeakerDecision = { segmentId: 1, sessionId: 's', profileVersion: 'v1-x', verdict: 'owner', reason: 'verified_owner', timings: { judgeMs: 10 } }
+    t.handlers()?.onUtterance('tere', owner)
+    await t.engine.idle()
+    const before = t.ran.length
+    // Right after the owner, "saada" with 0.4 s of speech: the recogniser drops it with insufficient_audio.
+    t.handlers()?.onForeign('insufficient_audio')
+    await t.engine.idle()
+    expect(t.ran.length).toBe(before)
+    expect(t.asked).toEqual([])
+    expect(t.lines.at(-1)).toBe(STRINGS.et.strip.voiceTooShort)
+    expect(STRINGS.et.strip.voiceTooShort).toContain('saada sõnum')
+    expect(STRINGS.et.strip.voiceTooShort).toContain('jah, kinnitan')
+  })
+
+  it('another reason (someone else) does not ask for the longer form', async () => {
+    const t = setup({ onlyOwner: true })
+    t.engine.start()
+    t.handlers()?.onForeign('rejected_other')
+    await t.engine.idle()
+    expect(t.lines).not.toContain(STRINGS.et.strip.voiceTooShort)
+  })
+
+  it('the longer forms the strip asks for are understood: "jah, kinnitan" is yes, "saada sõnum" sends', () => {
+    expect(quickReply('jah, kinnitan')).toEqual({ kind: 'yes' })
+    expect(quickReply('kinnitan')).toEqual({ kind: 'yes' })
+    expect(messageCommand('saada sõnum')?.kind).toBe('send')
   })
 })

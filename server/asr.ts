@@ -59,6 +59,10 @@ export function parseClientFrame(data: RawData | string): AsrClientMessage | nul
       return typeof record.phrases === 'number' && record.phrases >= 1 && record.phrases <= MAX_ENROL_PHRASES ? { type: 'enrolScript', phrases: Math.round(record.phrases) } : null
     case 'enrolFinish':
       return { type: 'enrolFinish' }
+    case 'speakerStatus':
+    case 'speakerTest':
+    case 'profileDelete':
+      return { type: record.type }
     default:
       return null
   }
@@ -201,6 +205,9 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             else if (frame?.type === 'onlyOwner') session.onlyOwner(frame.on)
             else if (frame?.type === 'enrolScript') session.enrolScript(frame.phrases)
             else if (frame?.type === 'enrolFinish') session.enrolFinish()
+            else if (frame?.type === 'speakerStatus') session.speakerStatus()
+            else if (frame?.type === 'speakerTest') session.speakerTest()
+            else if (frame?.type === 'profileDelete') session.profileDelete()
             return
           }
           if (!Buffer.isBuffer(data)) return

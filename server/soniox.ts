@@ -326,6 +326,12 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
       onlyOwner = onlyOwnerFrame
       return
     }
+    // Round 10 (31.7): no speaker gate on this path (E): every speaker request is answered as unavailable.
+    const answer = sonioxSpeakerAnswer(raw)
+    if (answer !== null) {
+      send(answer)
+      return
+    }
     if (raw.includes('"flush"') && upstreamReady && upstream.readyState === OPEN) upstream.send(SONIOX_FINALIZE)
   })
 
@@ -338,6 +344,30 @@ export function attachSonioxSession(ws: SocketLike, options: SonioxOptions): voi
       upstream.close()
     }
   })
+}
+
+/** Round 10 (31.7): Soniox's answer to a speaker request of the browser (no gate here until work package E), or null for any other frame. */
+export function sonioxSpeakerAnswer(raw: string): AsrServerMessage | null {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (typeof value !== 'object' || value === null) return null
+  switch ((value as Record<string, unknown>).type) {
+    case 'speakerStatus':
+      return { type: 'speakerStatus', readiness: { state: 'model_unavailable', protected: false, extractor: false, profileMatchesModel: false, verifiable: false } }
+    case 'speakerTest':
+      return { type: 'speakerTested', result: 'unavailable' }
+    case 'profileDelete':
+      return { type: 'profileDeleted', ok: false }
+    case 'enrol':
+    case 'enrolScript':
+      return { type: 'enrolled', ok: false, seconds: 0, phrases: 0, reason: 'model_unavailable' }
+    default:
+      return null
+  }
 }
 
 /** Round 10: the `on` of an onlyOwner text frame, or null for any other frame. */

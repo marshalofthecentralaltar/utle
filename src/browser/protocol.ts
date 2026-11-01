@@ -88,7 +88,7 @@ export type BrowserCommand =
    * Opens the options page (or brings it to the front), at the Minu andmed section; add starts the voice entry flow for that kind.
    * Round 9 (30.1): section welcome is the first-run page, welcome.html, instead.
    */
-  | { kind: 'openSettings'; section?: 'andmed' | 'welcome'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
+  | { kind: 'openSettings'; section?: 'andmed' | 'welcome' | 'voice'; add?: 'email' | 'tel' | 'code' | 'number' | 'text' }
   /** One utterance for the entry flow on the options page; only that page answers it. */
   | { kind: 'savedEntry'; utterance: string }
   // Round 9 (30.2): the help page, at one group (a PHRASE_GROUPS id) or the first. Rules only, never the model.

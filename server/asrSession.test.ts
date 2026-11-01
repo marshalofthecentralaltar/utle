@@ -7,7 +7,7 @@ import { SPEAKER_REASONS } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
-import type { EnrolPhrase, Judgement, SpeakerGate, SpeakerVerification } from './speaker.ts'
+import type { EnrolFailure, EnrolOutcome, EnrolPhrase, Judgement, PhraseProblem, PhraseResult, Readiness, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import { CAPTURE_LOG, captureFromEnv, createCapture } from './capture.ts'
 import type { Capture } from './capture.ts'
 import type { VadLike } from './vad.ts'
@@ -361,8 +361,44 @@ class FakeGate implements SpeakerGate {
     return frames.length === 0 ? null : { embedding: [1, 0], rms: 0.1, seconds: frames.length / 10 }
   }
   enrolPhrases(phrases: EnrolPhrase[]): boolean {
+    return this.enrolScripted(phrases).ok
+  }
+  /** Round 10 (31.7): the problem the next phrases are refused for (null: accepted). */
+  problem: PhraseProblem | null = null
+  /** Round 10 (31.7): what enrolScripted answers when enrolOk is false. */
+  failure: EnrolFailure = 'held_out_failed'
+  assessPhrase(frames: Float32Array[]): PhraseResult {
+    const quality = { seconds: frames.length / 10, rms: 0.1, clipped: 0 }
+    if (this.problem !== null) {
+      this.phrased.push(frames)
+      return { problem: this.problem, phrase: null, quality }
+    }
+    const phrase = this.phrase(frames)
+    return phrase === null ? { problem: 'too_short', phrase: null, quality } : { problem: null, phrase, quality }
+  }
+  enrolScripted(phrases: EnrolPhrase[]): EnrolOutcome {
     this.learnt.push(phrases)
-    return this.enrolOk
+    const heldOut = { count: 2, scores: [0.81, 0.77], passed: this.enrolOk, threshold: 0.54 }
+    return this.enrolOk ? { ok: true, phrases: Math.max(0, phrases.length - 2), seconds: 1, heldOut } : { ok: false, reason: this.failure, heldOut }
+  }
+  enrolSpeech(frames: Float32Array[]): EnrolOutcome {
+    return this.enrol(frames) ? { ok: true, phrases: 0, seconds: 1, heldOut: { count: 2, scores: [1, 1], passed: true, threshold: 0.54 } } : { ok: false, reason: 'too_little_speech' }
+  }
+  ready: Readiness = { state: 'ready', protected: true, extractor: true, profileMatchesModel: true, verifiable: true }
+  readiness(): Readiness {
+    return this.ready
+  }
+  tested: Float32Array[][] = []
+  testAnswer: SpeakerTest = { result: 'recognised', score: 0.8, seconds: 0.4 }
+  test(frames: Float32Array[]): SpeakerTest {
+    this.tested.push(frames)
+    return this.testAnswer
+  }
+  deleted = 0
+  deleteProfile(): boolean {
+    this.deleted += 1
+    this.answer = null
+    return true
   }
 }
 
@@ -884,7 +920,7 @@ describe('scripted enrolment (round 7)', () => {
       { type: 'enrolPhrase', count: 1 },
       { type: 'enrolPhrase', count: 2 },
     ])
-    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: true, seconds: 0.3, phrases: 2 }])
+    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: true, seconds: 1, phrases: 0, heldOut: { count: 2, scores: [0.81, 0.77], passed: true, threshold: 0.54 } }])
     expect(gate.learnt).toHaveLength(1)
     expect(gate.learnt[0]).toHaveLength(2)
   })
@@ -899,8 +935,31 @@ describe('scripted enrolment (round 7)', () => {
     session.enrolFinish()
     await microtasks()
     expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([{ type: 'enrolPhrase', count: 1 }])
-    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: true, seconds: 0.2, phrases: 1 }])
+    // Round 10 (31.7): one phrase is too few; the gate (here the fake) says why.
+    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: true, seconds: 1, phrases: 0, heldOut: { count: 2, scores: [0.81, 0.77], passed: true, threshold: 0.54 } }])
     expect(gate.learnt[0]).toHaveLength(1)
+  })
+
+  it('round 10 (31.7): frames a flush ends with no recognised words are no phrase attempt (no spurious too_short after an accepted phrase)', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrolScript(12)
+    feed(session, loop, [1, 2, 0])
+    // A breath after the phrase: loud enough to be kept, but the recogniser makes no word of it (-1 decodes to '').
+    session.audio(frame(-1))
+    session.flush()
+    loop.settle()
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([{ type: 'enrolPhrase', count: 1 }])
+    expect(gate.phrased).toHaveLength(1)
+    // A flush that ends words is still a phrase.
+    session.audio(frame(3))
+    session.flush()
+    loop.settle()
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([
+      { type: 'enrolPhrase', count: 1 },
+      { type: 'enrolPhrase', count: 2 },
+    ])
   })
 
   it('answers ok: false when nothing was read, and without a gate', async () => {
@@ -908,7 +967,7 @@ describe('scripted enrolment (round 7)', () => {
     session.enrolScript(12)
     session.enrolFinish()
     await microtasks()
-    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: false, seconds: 0, phrases: 0 }])
+    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: false, seconds: 0, phrases: 0, reason: 'too_few_phrases' }])
     expect(gate.learnt).toEqual([])
 
     const plain = setup()
@@ -1013,5 +1072,96 @@ describe('issue #3: only the owner, fail closed on the server', () => {
     await Promise.resolve()
     loop.settle()
     expect(texts(sent)).toEqual([])
+  })
+})
+
+// ---------- round 10, lane VOICE (31.7): onboarding on the wire ----------
+
+describe('enrolment with quality, held-out verification and readiness (round 10, 31.7)', () => {
+  it('a phrase refused for its quality is asked again: the count stays, the reason goes with it', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrolScript(12)
+    gate.problem = 'too_quiet'
+    feed(session, loop, [1, 2, 0])
+    gate.problem = null
+    feed(session, loop, [3, 0])
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([
+      { type: 'enrolPhrase', count: 0, problem: 'too_quiet' },
+      { type: 'enrolPhrase', count: 1 },
+    ])
+  })
+
+  it('a candidate that fails held-out verification answers ok: false with the reason and the scores', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    gate.enrolOk = false
+    session.enrolScript(2)
+    feed(session, loop, [1, 0])
+    feed(session, loop, [2, 0])
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolled')).toEqual([{ type: 'enrolled', ok: false, seconds: 0, phrases: 0, reason: 'held_out_failed', heldOut: { count: 2, scores: [0.81, 0.77], passed: false, threshold: 0.54 } }])
+  })
+
+  it('an enrolment the session closes half way commits nothing', async () => {
+    const { gate, loop, session } = setupWithGate()
+    session.enrolScript(12)
+    feed(session, loop, [1, 0])
+    session.close()
+    await microtasks()
+    expect(gate.learnt).toEqual([])
+  })
+
+  it('speakerStatus answers the gate readiness, with the mode on or off', () => {
+    const { gate, sent, session } = setupWithGate()
+    session.speakerStatus()
+    gate.ready = { state: 'needs_retraining', protected: false, extractor: true, profileMatchesModel: false, verifiable: false }
+    session.speakerStatus()
+    expect(sent).toEqual([
+      { type: 'speakerStatus', readiness: { state: 'ready', protected: true, extractor: true, profileMatchesModel: true, verifiable: true } },
+      { type: 'speakerStatus', readiness: { state: 'needs_retraining', protected: false, extractor: true, profileMatchesModel: false, verifiable: false } },
+    ])
+  })
+
+  it('without a gate, speakerStatus says the model is unavailable: never protected', () => {
+    const { sent, session } = setup()
+    session.speakerStatus()
+    expect(sent).toEqual([{ type: 'speakerStatus', readiness: { state: 'model_unavailable', protected: false, extractor: false, profileMatchesModel: false, verifiable: false } }])
+  })
+
+  it('the voice test takes the next utterance, sends only speakerTested: no final, no partial words, nothing for the engine', () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.speakerTest()
+    feed(session, loop, [1, 2, 0])
+    expect(sent).toEqual([{ type: 'speakerTested', result: 'recognised', score: 0.8, seconds: 0.4 }])
+    expect(gate.tested).toHaveLength(1)
+    // The next utterance is an ordinary one again.
+    feed(session, loop, [1, 0])
+    expect(sent.at(-1)).toEqual({ type: 'final', text: 'ava', speaker: 'owner' })
+  })
+
+  it('the voice test with only the owner on sends no final either, and without a gate answers unavailable', () => {
+    const { sent, loop, session } = setupWithGate()
+    session.onlyOwner(true)
+    session.speakerTest()
+    feed(session, loop, [1, 0])
+    expect(sent.filter((m) => m.type === 'final' || m.type === 'rejected' || m.type === 'partial')).toEqual([])
+    expect(sent.filter((m) => m.type === 'speakerTested')).toHaveLength(1)
+    const plain = setup()
+    plain.session.speakerTest()
+    feed(plain.session, plain.loop, [1, 0])
+    expect(plain.sent.filter((m) => m.type === 'speakerTested')).toEqual([{ type: 'speakerTested', result: 'unavailable' }])
+  })
+
+  it('profileDelete removes the profile, answers profileDeleted, then the new status and (mode on) the empty version', () => {
+    const { gate, sent, session } = setupWithGate()
+    session.onlyOwner(true)
+    gate.ready = { state: 'no_profile', protected: false, extractor: true, profileMatchesModel: false, verifiable: false }
+    session.profileDelete()
+    expect(gate.deleted).toBe(1)
+    expect(sent.slice(1)).toEqual([
+      { type: 'profileDeleted', ok: true },
+      { type: 'speakerSession', sessionId: expect.any(String), profileVersion: '' },
+      { type: 'speakerStatus', readiness: gate.ready },
+    ])
   })
 })

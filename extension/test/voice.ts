@@ -10,7 +10,7 @@
 //   UTLE_ONLY=onlyowner                        only section 7: only the owner with the real models (a server of its own)
 
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -483,12 +483,14 @@ async function serverDown(extensionDir: string): Promise<void> {
 // ---------- only the owner, with the real models (round 10, ARCHITECTURE 31; issue #3 review 1) ----------
 // A server of its own in this process (the same attachAsr as the dev server, the decode worker, the
 // real recogniser, TitaNet and Silero), whose one profile is made here from the stand-in owner's
-// clips of scripts/fixtures/speaker-set in a temporary UTLE_DATA_DIR. models/speaker/owner.json is
-// never read or written. The clips under test are held out of the profile.
+// reading of the real enrolment phrases (scripts/fixtures/enrol-set, SYNTHETIC "mari", made by
+// scripts/enrol-set.ts) in a temporary UTLE_DATA_DIR. models/speaker/owner.json is never read or
+// written. The clips under test (scripts/fixtures/speaker-set, the same voice) are not in the profile.
 
 const SPEAKER_SET = join(repoRoot, 'scripts/fixtures/speaker-set')
-/** The owner clips the profile is made of; owner-sentence-2 and owner-jah-1 are held out. */
-const ENROL_CLIPS = ['owner-dictate-send-1', 'owner-dictate-send-2', 'owner-numbers-one-1', 'owner-numbers-one-2', 'owner-scroll-tab-1', 'owner-scroll-tab-2', 'owner-sentence-1']
+const ENROL_SET = join(repoRoot, 'scripts/fixtures/enrol-set')
+/** The twelve enrolment phrases of src/core/enrolPhrases.ts as the stand-in owner reads them. */
+const ENROL_CLIPS = Array.from({ length: 12 }, (_, i) => `enrol-${String(i + 1).padStart(2, '0')}`)
 
 /** A 16-bit PCM WAV as 100 ms float frames at 16 kHz. */
 function wavFrames(path: string): Float32Array[] {
@@ -521,12 +523,11 @@ interface Heard {
 }
 
 async function onlyOwnerReal(extensionDir: string): Promise<void> {
-  console.log('\n== 7. only the owner with the real models: a profile from the stand-in owner, held-out clips, other voices ==')
+  console.log('\n== 7. only the owner with the real models (SYNTHETIC voices): enrolment over the wire with held-out verification, then held-out clips, other voices ==')
   const { createServer } = await import('node:http')
   const { WebSocket } = await import('ws')
   const { attachAsr } = await import('../../server/asr.ts')
-  const { createSpeakerGate, profilePath } = await import('../../server/speaker.ts')
-  const { loadSpeakerModel } = await import('../../server/speakerModel.ts')
+  const { profilePath } = await import('../../server/speaker.ts')
   const dataDir = await mkdtemp(join(tmpdir(), 'utle-onlyowner-'))
   const profile = profilePath(repoRoot, { UTLE_DATA_DIR: dataDir }, '')
   const server = createServer((req, res) => {
@@ -541,15 +542,6 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
     res.end()
   })
   try {
-    // The profile: one read phrase per enrolment clip, through the real gate and TitaNet.
-    const model = loadSpeakerModel(repoRoot)
-    if (!model.ok) throw new Error(`speaker model: ${model.reason}`)
-    const maker = createSpeakerGate(model.extractor, { profilePath: profile })
-    const phrases = ENROL_CLIPS.map((name) => maker.phrase(wavFrames(join(SPEAKER_SET, `${name}.wav`)))).filter((p) => p !== null)
-    const enrolled = maker.enrolPhrases(phrases)
-    console.log(`      profile ${profile} (UTLE_DATA_DIR=${dataDir}): ${phrases.length} phrases, version ${maker.profileVersion()}`)
-    check('7. the profile is written under UTLE_DATA_DIR (profilePath), never models/speaker', enrolled && profile.startsWith(dataDir) && profile.endsWith('owner.json'), profile)
-
     attachAsr(server, repoRoot, { profileFor: () => profile })
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
     const address = server.address()
@@ -562,10 +554,50 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
     ws.on('message', (data) => heard.push(JSON.parse(String(data)) as Heard))
     const ready = await waitUntil(async () => heard.some((m) => m.type === 'ready'), 60_000)
     check('7. the server with the real models is ready', ready)
+
+    // ---- round 10 (31.7): enrolment through the new flow, over the wire: each clip one read phrase ----
+    const streamClip = async (name: string, dir = ENROL_SET): Promise<void> => {
+      for (const frame of wavFrames(join(dir, `${name}.wav`))) {
+        ws.send(frame.buffer)
+        await sleep(100)
+      }
+      for (let i = 0; i < 12; i += 1) {
+        ws.send(new Float32Array(1600).buffer)
+        await sleep(100)
+      }
+      ws.send(JSON.stringify({ type: 'flush' }))
+      await sleep(600)
+    }
+    type Wire = Heard & { count?: number; problem?: string; ok?: boolean; phrases?: number; reason?: string; heldOut?: { count: number; scores: number[]; passed: boolean; threshold: number }; readiness?: { state: string; protected: boolean }; result?: string; score?: number; profileVersion?: string }
+    ws.send(JSON.stringify({ type: 'speakerStatus' }))
+    await waitUntil(async () => heard.some((m) => m.type === 'speakerStatus'), 5000)
+    const before = (heard.filter((m) => m.type === 'speakerStatus').at(-1) as Wire | undefined)?.readiness
+    check('7. before enrolment the readiness is no_profile, not protected', before?.state === 'no_profile' && before.protected === false, JSON.stringify(before))
+    ws.send(JSON.stringify({ type: 'enrolScript', phrases: ENROL_CLIPS.length }))
+    for (const name of ENROL_CLIPS) await streamClip(name)
+    ws.send(JSON.stringify({ type: 'enrolFinish' }))
+    await waitUntil(async () => heard.some((m) => m.type === 'enrolled'), 10_000)
+    const perPhrase = (heard as Wire[]).filter((m) => m.type === 'enrolPhrase').map((m) => (m.problem ? `${m.count}:${m.problem}` : String(m.count)))
+    const enrolled = heard.find((m) => m.type === 'enrolled') as Wire | undefined
+    console.log(`      enrolment (SYNTHETIC owner "mari", ${ENROL_CLIPS.length} clips): per phrase ${JSON.stringify(perPhrase)}; enrolled ${JSON.stringify(enrolled)}`)
+    check('7. enrolment over the wire: a profile from N-2 phrases, verified on the 2 held out', enrolled?.ok === true && enrolled.heldOut?.count === 2 && enrolled.heldOut.passed === true, JSON.stringify(enrolled))
+    check('7. the profile is written under UTLE_DATA_DIR (profilePath), never models/speaker, format 2 with no audio', existsSync(profile) && profile.startsWith(dataDir) && (JSON.parse(readFileSync(profile, 'utf8')) as { format?: number }).format === 2 && readFileSync(profile).length < 8000, profile)
+    await waitUntil(async () => heard.filter((m) => m.type === 'speakerStatus').length >= 2, 5000)
+    const after = (heard.filter((m) => m.type === 'speakerStatus').at(-1) as Wire | undefined)?.readiness
+    check('7. after enrolment the readiness is ready and protected', after?.state === 'ready' && after.protected === true, JSON.stringify(after))
+    // "Proovi minu häält" on its own longer sentence (VERIFY_PHRASES[1], not in the profile): recognised, and no final for it.
+    const testFrom = heard.length
+    ws.send(JSON.stringify({ type: 'speakerTest' }))
+    await streamClip('verify-2')
+    await waitUntil(async () => heard.slice(testFrom).some((m) => m.type === 'speakerTested'), 8000)
+    const tested = heard.slice(testFrom).find((m) => m.type === 'speakerTested') as Wire | undefined
+    console.log(`      voice test verify-2 (SYNTHETIC): ${JSON.stringify(tested)}`)
+    check('7. the voice test on the longer verify sentence says recognised, and sends no final', tested?.result === 'recognised' && !heard.slice(testFrom).some((m) => m.type === 'final' || m.type === 'partial'), JSON.stringify(tested))
+
     ws.send(JSON.stringify({ type: 'onlyOwner', on: true }))
     const announced = await waitUntil(async () => heard.some((m) => m.type === 'speakerSession'), 5000)
-    const session = heard.find((m) => m.type === 'speakerSession') as (Heard & { sessionId?: string; profileVersion?: string }) | undefined
-    check('7. onlyOwner is answered with the session and the profile version made here', announced && session?.profileVersion === maker.profileVersion(), JSON.stringify(session))
+    const session = heard.find((m) => m.type === 'speakerSession') as Wire | undefined
+    check('7. onlyOwner is answered with the session and the version of the profile enrolled here', announced && /^v1-[0-9a-f]{8}$/.test(session?.profileVersion ?? ''), JSON.stringify(session))
 
     const play = async (name: string): Promise<Heard[]> => {
       const from = heard.length
@@ -615,6 +647,7 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
 
     // The next owner long clip in the same session: verified and delivered, alone.
     ownerLong(', next in the same session', await play('owner-sentence-2'))
+    check('7c. the short word is insufficient_audio, which makes the strip ask for the longer form', shortOutcome?.decision?.reason === 'insufficient_audio', shortOutcome?.decision?.reason ?? '')
     const segments = heard.flatMap((m) => (m.decision ? [m.decision.segmentId] : []))
     check('7. segments count up one per utterance, none skipped or repeated', segments.every((id, i) => id === i + 1), JSON.stringify(segments))
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BROWSER_PHRASES } from './browserIntent.ts'
-import { ENROL_COMMAND_WORDS, ENROL_PHRASES, ENROL_VOWEL_LENGTHS, phraseWords } from './enrolPhrases.ts'
+import { ENROL_COMMAND_WORDS, ENROL_PHRASES, ENROL_VOWEL_LENGTHS, VERIFY_PHRASES, phraseWords } from './enrolPhrases.ts'
 
 const words = new Set(ENROL_PHRASES.flatMap(phraseWords))
 const text = ENROL_PHRASES.join(' ').toLowerCase()
@@ -45,5 +45,21 @@ describe('scripted enrolment phrases (round 7)', () => {
       expect(BROWSER_PHRASES.some((p) => p.startsWith(`${head} `) || p === head), head).toBe(true)
       expect(words.has(head), head).toBe(true)
     }
+  })
+})
+
+describe('the voice test phrases (round 10, 31.7)', () => {
+  it('are new sentences, not enrolment phrases: the test is on speech the profile was not made from', () => {
+    for (const phrase of VERIFY_PHRASES) expect(ENROL_PHRASES).not.toContain(phrase)
+  })
+
+  it('are one short and one longer, the longer with at least six words', () => {
+    expect(VERIFY_PHRASES).toHaveLength(2)
+    expect(phraseWords(VERIFY_PHRASES[0] ?? '').length).toBeLessThanOrEqual(4)
+    expect(phraseWords(VERIFY_PHRASES[1] ?? '').length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('give at least six phrases to learn from after the two held out, at the default twelve', () => {
+    expect(ENROL_PHRASES.length - 2).toBeGreaterThanOrEqual(6)
   })
 })
