@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import { OWNER_THRESHOLD, SPEAKER_MODEL_FILE, cosine, embeddedSamples, meanEmbedding, normalised } from '../server/speaker.ts'
 import { loadSpeakerModel } from '../server/speakerModel.ts'
-import { BUCKETS, FAKE_MIC_MARKER, bucketOf, eer, operatingPoint, recordingSource, otherTrialsNeeded, parseLabels, ratesAt, splitTrials } from './measure.ts'
+import { BUCKETS, FAKE_MIC_MARKER, bucketOf, eer, insideRepo, operatingPoint, recordingSource, otherTrialsNeeded, parseLabels, ratesAt, splitTrials } from './measure.ts'
 import type { Bucket, Kind, OperatingPoint, Rates } from './measure.ts'
 import { sweepModels } from './speaker-models.ts'
 import { readAnyWav } from './wav.ts'
@@ -126,13 +126,14 @@ export async function runSweep(argv: string[]): Promise<void> {
   if (!(farTarget > 0 && farTarget < 1)) throw new Error('--far-target must be between 0 and 1, e.g. 0.01')
   const models = sweepModels(value('--models') ?? SPEAKER_MODEL_FILE)
   // Round 10 (C8): a folder record.ts filled from Chromium's fake microphone is synthetic too.
-  const source = recordingSource(clips.map((c) => c.path), repoRoot, (dir) => existsSync(join(dir, FAKE_MIC_MARKER)))
+  const origin = recordingSource(clips.map((c) => c.path), repoRoot, (dir) => existsSync(join(dir, FAKE_MIC_MARKER)))
   const banner =
-    source === 'synthetic'
+    origin === 'synthetic'
       ? 'SYNTHETIC: TartuNLP text-to-speech voices from scripts/fixtures, not people. No model or threshold is picked from this.'
-      : source === 'fake-mic'
+      : origin === 'fake-mic'
         ? `SYNTHETIC (fake microphone): record.ts played fixture audio into Chromium (${FAKE_MIC_MARKER} in the speaker folders), not people. No model or threshold is picked from this.`
         : 'REAL recordings'
+  const synthetic = origin !== 'real'
 
   const loaded = clips.map((c) => {
     const wav = readAnyWav(c.path)

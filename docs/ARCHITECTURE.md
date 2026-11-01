@@ -2728,3 +2728,68 @@ words per deny case, the wake word and reading aloud). Not done here: short-comm
 evidence and mixed-speaker detection (C: the server never produces `mixed_speakers` yet, the
 client denies it), onboarding and the versioned profile file (D), Soniox verdicts and upload
 privacy (E), real-voice evaluation (F). Nothing here is verified with a real voice.
+
+### 31.7 Onboarding and the format-2 profile (VOICE lane, issue #3 work package D and the safe-retry half of C)
+
+**Order.** The pipeline stays microphone → speaker gate → wake / addressee → engine. Nothing here
+changes the gate's decision (31.1); it changes how the profile it judges against is made, stored and
+reported.
+
+**Enrolment phrases** (`server/speaker.ts` `assessPhrase`, `server/asrSession.ts` `takePhrase`). The
+welcome page reads the twelve phrases of `src/core/enrolPhrases.ts`. Each utterance with recognised
+words is one phrase attempt, measured on the speech frames the detector kept: fewer than
+`MIN_PHRASE_SECONDS` 0.8 s of speech is `too_short`, a speech RMS below `MIN_PHRASE_RMS` 0.02 is
+`too_quiet`, more than `MAX_CLIPPED_SHARE` 0.5 % of samples at or above `CLIP_LEVEL` 0.98 is
+`clipped`, an embedding that fails is `model_error`. A refused phrase keeps the count and the page
+asks for it again with the reason (`enrolPhrase {count, problem}`). Frames a flush ends without any
+recognised word (a breath after an endpoint) are no phrase attempt and answer nothing.
+
+**Held out, atomic** (`enrolScripted`, `commit`). From N accepted phrases the candidate is the mean
+embedding of the first N − 2 (`HELD_OUT_PHRASES` 2); it must be at least `MIN_TRAIN_PHRASES` 4, so
+fewer than 6 phrases is `too_few_phrases`. The candidate is scored against the last two; both must
+reach the threshold of its policy or the result is `held_out_failed`. Only a passing candidate is
+written, to `owner.json.part` and renamed over the old file; a failed write, a failed check, too few
+phrases or a closed session leave the old profile in force. Free-speech enrolment (`enrol`) holds out
+its last 2 s and needs `MIN_ENROL_SECONDS` 4 s of speech before that.
+
+**The file** (format 2, `profilePath`: `UTLE_DATA_DIR` or `models/speaker/`, one per hosted token under
+`profiles/`). Stored: `format`, `model {id, hash}` (the speaker model's file name and SHA-256),
+`embedding` (192 numbers for TitaNet-small), `rms` and `seconds` of the enrolment speech, `phrases`,
+`quality {phrases, minSeconds, meanSeconds, meanRms, maxClipped}`, `threshold {value, source,
+provenance, negatives}`, `heldOut {count, scores, passed, threshold}`, `createdAt`, `updatedAt`. Not
+stored: audio, text, per-phrase embeddings. A file of an earlier round (no `format: 2`, or the hosted
+per-token file of round 7) is `needs_retraining` and never protects.
+
+**Threshold policy.** `source: 'factory'` unless at least `MIN_NEGATIVES` 30 consenting other-speaker
+scores exist (none in the product today), then `per_profile` at the highest negative + 0.05, never
+below 0.40. The factory line is `FACTORY_THRESHOLD` = `OWNER_THRESHOLD` 0.54, picked on SYNTHETIC
+TartuNLP voices; its provenance string says so. A factory-sourced profile is judged at the factory
+line in force when it judges, not at the value stored with it (the stored value is the one it was
+made with), so recalibrating `FACTORY_THRESHOLD` from Ralf's recordings reaches every existing
+profile without re-enrolment; a per-profile line keeps its stored value. Readiness reports the line
+in force and, when it differs, the stored one (`threshold {value, source, stored?}`).
+
+**Readiness** (`readiness()`, `speakerStatus` on every connection and after enrol and delete; the
+same object in `/api/status`). `ready` (extractor loaded, profile of this model and hash, held-out
+passed), `no_profile`, `needs_retraining`, `model_unavailable` (no extractor, and Soniox, which has no
+verdicts yet), `model_mismatch`. `protected` is true only for `ready`; the strip and the settings
+line never say protected otherwise.
+
+**Voice test** ("Proovi minu häält", `speakerTest` → `speakerTested`). The next utterance is verified
+and answered `recognised`, `not_recognised`, `too_short`, `noisy` or `unavailable` with its score; it
+sends no partial and no final, so nothing of it reaches a page. `VERIFY_PHRASES` are not among the
+enrolment phrases. Deleting (`profileDelete`) removes the file; readiness becomes `no_profile`.
+
+**Welcome and settings** (`extension/src/welcome.ts`, `options.ts`). The first run starts with the
+voice: microphone, the phrases one at a time with the per-phrase line, "Proovi minu häält", then the
+guard card ("Lülita sisse" / "Kuula kõiki"). Settings keep the test, "Kustuta mu hääl", re-enrolment
+and the off choice; "õpi mu hääl uuesti" by voice opens `welcome.html#voice`. With only-owner on, an
+`insufficient_audio` drop asks for the longer form ("ütle pikemalt: „saada sõnum“ või „jah,
+kinnitan“"); "jah kinnitan" and "kinnitan" are yes.
+
+**Proof and limits.** `server/speaker.test.ts`, `server/asrSession.test.ts`, `src/speech/local.test.ts`,
+`extension/src/engine.test.ts`, the suite's welcome steps (`docs/proof/r10-voice-1..6.png`) and
+`UTLE_ONLY=onlyowner UTLE_REAL=1 npx tsx extension/test/voice.ts`, which enrols over the wire from
+`scripts/fixtures/enrol-set` (the twelve phrases and two verify phrases in TartuNLP's "mari", made by
+`scripts/enrol-set.ts`). Every score from it is SYNTHETIC. Not done: acoustic turn accumulation for
+0.3 to 1 s words (C's second half), a model swap, Soniox verdicts (E), any real voice.
