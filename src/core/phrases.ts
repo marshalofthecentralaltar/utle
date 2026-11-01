@@ -304,9 +304,9 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
       { et: ['puhka', 'ära kuula'], en: 'sleep, stop listening', does: 'Ütle ei kirjuta midagi, kuni äratad.', doesEn: 'Stops typing what it hears, until woken.', rule: 'inpage', expect: 'sleep' },
       { et: ['ärka üles'], en: 'wake up', does: 'Ütle kuulab jälle.', doesEn: 'Starts again.', rule: 'inpage', expect: 'wake', context: 'asleep' },
       { et: ['katkesta', 'tühista kõik', 'lõpeta kõik', 'stopp kõik'], en: 'cancel', does: 'Peatab kõik, mis pooleli on.', doesEn: 'Stops everything in flight at once.', rule: 'inpage', expect: 'cancel' },
-      { et: ['Ütle, keri alla'], en: 'Ütle, scroll down', does: 'Äratussõnaga: käsk algab sõnaga „Ütle“.', doesEn: 'With the wake word: the command starts with the word.', rule: 'wake', expect: 'pass', context: 'wakeShut' },
-      { et: ['Ütle'], en: 'Ütle', does: 'Äratussõna üksi: 20 sekundit võib rääkida ilma selleta.', doesEn: 'The word alone opens a 20 s window.', rule: 'wake', expect: 'open', context: 'wakeShut' },
-      { et: ['aitab', 'see on kõik'], en: "that's all", does: 'Sulgeb äratussõna akna.', doesEn: 'Closes the window.', rule: 'wake', expect: 'close', context: 'wakeOpen' },
+      { et: ['Ütle, keri alla'], en: 'Ütle, scroll down', does: 'Äratussõnaga: „Ütle“ võib olla ka lause keskel, käsk on sellele järgnev.', doesEn: 'With the wake word, anywhere in the sentence: the command is what follows it.', rule: 'wake', expect: 'pass', context: 'wakeShut' },
+      { et: ['Ütle'], en: 'Ütle', does: 'Äratussõna üksi: kuulab (ACTIVE), lauseid võib öelda ilma selleta; uuesti öeldes jääb ootele.', doesEn: 'The word alone wakes it (ACTIVE): sentences need no word; said again, it goes back to PASSIVE.', rule: 'wake', expect: 'open', context: 'wakeShut' },
+      { et: ['aitab', 'see on kõik'], en: "that's all", does: 'Lõpetab kuulamise (PASSIVE).', doesEn: 'Back to PASSIVE: nothing reaches the bar until the word.', rule: 'wake', expect: 'close', context: 'wakeOpen' },
     ],
   },
   {

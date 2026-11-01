@@ -2605,54 +2605,6 @@ Load unpacked, on any Chrome or Edge. (B) Once Ralf uploads: the unlisted store 
 mode. `extension/README.md` "Install on a locked computer" and the landing page's "Paigaldamine"
 section say both.
 
-## 32. Round 10: addressed speech (LISTEN lane, issues #2 and #6), LIMITED
-
-LIMITED: everything here works on the recogniser's text. There is no acoustic keyword spotter; #2
-stays open for one (a local Estonian KWS model, PASSIVE without any recognition). Pipeline order,
-binding: microphone, speaker gate (31, only-owner), wake word or addressee check, engine. A wake word
-never authorises a speaker; neither check ever sees words the gate rejected.
-
-### 32.1 Wake mode: PASSIVE, ACTIVE, HARD_OFF (`src/core/listen.ts`, `src/core/wake.ts`)
-
-- `wakeFind(state, final, anywhere)`: the first wake word in a final. PASSIVE looks anywhere (the
-  lead-in is dropped, never sent to the rules, the model or the strip); ACTIVE only at the start or
-  after a full stop (a word inside his sentence is his text). Matched by sound (29.4.1). A glued form
-  splits when the rest is a command verb ("ütlemine youtube'i" is "mine youtube'i"; "ütlemine on",
-  "ütlemine" at the end are the noun). Literal: after kirjuta, trüki, sõna, ütles, ... or in quotes.
-  The word twice is one wake.
-- The machine, pure, clock injected: `off` (HARD_OFF, by hand), `passive`, `active`. PASSIVE + word:
-  ACTIVE, the words after it run once. ACTIVE + bare word: PASSIVE (unless within WAKE_REPEAT_MS 1.5 s
-  of the wake with no final between: the same wake, an endpoint split). ACTIVE + aitab / see on kõik /
-  lõpeta kuulamine (with or without the word): PASSIVE. ACTIVE ends ACTIVE_IDLE_MS (20 s) after the
-  last speech, and never while a job is queued or running (the engine reports work: `listenBusy`).
-  A sent message ends it. A partial never changes the state.
-- In PASSIVE the engine publishes no `heard`, types no preview, asks nothing, queues nothing; the
-  strip shows `ignored` ("3 lauset ei olnud mulle"). Only the words after a wake word heard in a
-  partial are shown.
-
-### 32.2 No silent upload
-
-In PASSIVE the recogniser still runs. With the local server that stays on this computer. With a
-hosted server (`hosted`) or Soniox (`uploads`) wake mode does not start: the strip says
-`wake.uploadsOff`, no frame is sent. Lifting this needs the acoustic detector of 32 (LIMITED).
-
-### 32.3 The addressee check of always-on mode (#6)
-
-Always-on and the toggle (not wake mode): a final the rules do not know (`step.ask`) is asked once,
-POST /api/addressee through server/model/ (quick, effort low, 5 s), with the three finals before it
-and the page in short (url, title, box present and armed). Verdict command or dictation: on as before.
-ignore: the preview is taken back, the bar shows the count and never the words, no intent ask, no
-barge-in, so a running chain is neither appended to nor interrupted. A failed check goes on as before
-(fail open: the rules and the intent ask still judge, and the gate of 31 stands in front). Finals wait
-for a pending check in order. Partials are still shown and previewed while he speaks (the live words
-are his only feedback); an ignored final clears them. Eval: 16 cases in `scripts/intent-eval.ts`.
-
-### 32.4 Proof
-
-`src/core/wake.test.ts`, `src/core/listen.test.ts`, engine tests "wake mode" and "always-on mode",
-`server/addressee.test.ts`, `voice.ts` section 8 (SYNTHETIC two voices, `scripts/listen-set.ts`,
-through TalTech's model, TitaNet and the real engine), the "ütle" hotword in `asr-hotwords-eval.ts`.
-
 ## 31. Round 10: only the owner, fail closed (GATE lane, issue #3 work packages A and B)
 
 Issue #3's invariant: with **Kuula ainult mind** on, no speech-driven side effect happens until the
@@ -2776,3 +2728,54 @@ words per deny case, the wake word and reading aloud). Not done here: short-comm
 evidence and mixed-speaker detection (C: the server never produces `mixed_speakers` yet, the
 client denies it), onboarding and the versioned profile file (D), Soniox verdicts and upload
 privacy (E), real-voice evaluation (F). Nothing here is verified with a real voice.
+
+## 32. Round 10: addressed speech (LISTEN lane, issues #2 and #6), LIMITED
+
+LIMITED: everything here works on the recogniser's text. There is no acoustic keyword spotter; #2
+stays open for one (a local Estonian KWS model, PASSIVE without any recognition). Pipeline order,
+binding: microphone, speaker gate (31, only-owner), wake word or addressee check, engine. A wake word
+never authorises a speaker; neither check ever sees words the gate rejected.
+
+### 32.1 Wake mode: PASSIVE, ACTIVE, HARD_OFF (`src/core/listen.ts`, `src/core/wake.ts`)
+
+- `wakeFind(state, final, anywhere)`: the first wake word in a final. PASSIVE looks anywhere (the
+  lead-in is dropped, never sent to the rules, the model or the strip); ACTIVE only at the start or
+  after a full stop (a word inside his sentence is his text). Matched by sound (29.4.1). A glued form
+  splits when the rest is a command verb ("ütlemine youtube'i" is "mine youtube'i"; "ütlemine on",
+  "ütlemine" at the end are the noun). Literal: after kirjuta, trüki, sõna, ütles, ... or in quotes.
+  The word twice is one wake.
+- The machine, pure, clock injected: `off` (HARD_OFF, by hand), `passive`, `active`. PASSIVE + word:
+  ACTIVE, the words after it run once. ACTIVE + bare word: PASSIVE (unless within WAKE_REPEAT_MS 1.5 s
+  of the wake with no final between: the same wake, an endpoint split). ACTIVE + aitab / see on kõik /
+  lõpeta kuulamine (with or without the word): PASSIVE. ACTIVE ends ACTIVE_IDLE_MS (20 s) after the
+  last speech, and never while a job is queued or running (the engine reports work: `listenBusy`).
+  A sent message ends it. A partial never changes the state.
+- In PASSIVE the engine publishes no `heard`, types no preview, asks nothing, queues nothing; the
+  strip shows `ignored` ("3 lauset ei olnud mulle"). Only the words after a wake word heard in a
+  partial are shown.
+
+### 32.2 No silent upload
+
+In PASSIVE the recogniser still runs. With the local server that stays on this computer. With a
+hosted server (`hosted`) or Soniox (`uploads`) wake mode does not start: the strip says
+`wake.uploadsOff`, no frame is sent. Lifting this needs the acoustic detector of 32 (LIMITED).
+
+### 32.3 The addressee check of always-on mode (#6)
+
+Always-on and the toggle (not wake mode): a final the rules do not know (`step.ask`) is asked once,
+POST /api/addressee through server/model/ (quick, effort low, 5 s), with the three finals before it
+and the page in short (url, title, box present and armed). Verdict command or dictation: on as before.
+ignore: the bar shows the count and never the words, no intent ask, no barge-in, so a running
+chain is neither appended to nor interrupted. A failed check goes on as before
+(fail open: the rules and the intent ask still judge, and the gate of 31 stands in front). Finals wait
+for a pending check in order; a continuation is joined to the final before it only once that final's
+verdict is in (an ignored final's words never reach a chain). Partials are shown on the strip (his
+only live feedback) and never previewed into the box: dictation lands with the final and its verdict,
+not live, and an ignored final clears the strip line. `katkesta` never waits behind a check: it runs at
+once and drops the checks still pending. Eval: 16 cases in `scripts/intent-eval.ts`.
+
+### 32.4 Proof
+
+`src/core/wake.test.ts`, `src/core/listen.test.ts`, engine tests "wake mode" and "always-on mode",
+`server/addressee.test.ts`, `voice.ts` section 8 (SYNTHETIC two voices, `scripts/listen-set.ts`,
+through TalTech's model, TitaNet and the real engine), the "ütle" hotword in `asr-hotwords-eval.ts`.

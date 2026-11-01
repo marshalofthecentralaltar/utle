@@ -2521,6 +2521,69 @@ describe('round 10 (#6): always-on mode keeps room speech out of the bar and out
     expect(t.ran.map((c) => c.kind).filter((k) => k !== 'readBox' && k !== 'readPage')).toEqual(['goTo', 'clickItem'])
     for (const room of [...ROOM, 'ja siis kustuta kõik']) expect(t.heard.join(' | ')).not.toContain(room)
   })
+
+  it('review 1 (race): a continuation that arrives while the last final is still being judged waits for that verdict; an ignored final’s words never reach the strip or a chain', async () => {
+    const pending: { release: ((a: AddresseeAnswer) => void) | null } = { release: null }
+    const t = setup({
+      logic: asking,
+      box: ARMED,
+      ask: () => Promise.resolve(answer({ kind: 'dictate', text: 'x' })),
+      addressee: (request) =>
+        request.utterance === 'kas sa tuled ka poodi'
+          ? new Promise<AddresseeAnswer>((resolve) => {
+              pending.release = resolve
+            })
+          : Promise.resolve({ verdict: 'dictation' }),
+    })
+    t.engine.start()
+    t.say('kas sa tuled ka poodi')
+    await vi.waitFor(() => expect(pending.release).not.toBeNull())
+    // The same voice goes on before the first verdict is in.
+    t.handlers()?.onUtteranceContinued('kas sa tuled ka poodi siis homme', 'siis homme')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    pending.release?.({ verdict: 'ignore' })
+    await t.engine.idle()
+    for (const h of t.heard) expect(h).not.toContain('poodi')
+    expect(t.asked.every((a) => !JSON.stringify(a).includes('poodi'))).toBe(true)
+    expect(t.heard).toContain('siis homme')
+  })
+
+  it('review 1 (box): no partial is previewed into the box while its final is being judged; an ignored one never touches the box', async () => {
+    const pending: { release: ((a: AddresseeAnswer) => void) | null } = { release: null }
+    const t = setup({
+      logic: { ...asking, inpagePreview: previewing.inpagePreview },
+      box: ARMED,
+      addressee: () =>
+        new Promise<AddresseeAnswer>((resolve) => {
+          pending.release = resolve
+        }),
+    })
+    t.engine.start()
+    t.partial('kas sa')
+    t.partial('kas sa tuled ka')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // The strip may show his live words; the box gets nothing.
+    expect(t.heard).toContain('kas sa tuled ka')
+    t.say('kas sa tuled ka poodi')
+    await vi.waitFor(() => expect(pending.release).not.toBeNull())
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    pending.release?.({ verdict: 'ignore' })
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    expect(t.page().text).toBe('Tere.')
+    expect(t.heard.at(-1)).toBe('')
+  })
+
+  it('review 1 (cancel): "katkesta" does not wait behind a pending check, and the pending sentence is dropped with everything else', async () => {
+    const t = setup({ logic: asking, box: ARMED, addressee: () => new Promise<AddresseeAnswer>(() => undefined) })
+    t.engine.start()
+    t.say('kas sa tuled ka poodi')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    t.say('katkesta')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+    expect(t.heard).toContain('katkesta')
+  })
 })
 
 describe('Minu kohad in the engine (29.4.2)', () => {

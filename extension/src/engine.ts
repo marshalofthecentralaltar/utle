@@ -1407,9 +1407,11 @@ export function createEngine(deps: EngineDeps): Engine {
   let lastIgnored = false
   /** The checks in order: a final waits for the one before it, so nothing overtakes a pending check. */
   let checks: Promise<void> = Promise.resolve()
+  /** Review 1: "katkesta" drops the checks still pending too; each check remembers the epoch it began in. */
+  let checkEpoch = 0
   if (wake === null && deps.addressee !== undefined) {
     const check = deps.addressee
-    const inner = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued }
+    const inner = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
     const judged = (): boolean => !entry && !enrolling && deps.reading?.() !== true
     /** The page in front, in short. */
     const pageNow = async (): Promise<AddresseeRequest['page']> => {
@@ -1431,14 +1433,25 @@ export function createEngine(deps: EngineDeps): Engine {
         clearTimeout(timer)
       }
     }
-    /** One final (or continuation) through the check, in order; take runs it when it was for Ütle. */
-    const judge = (words: string, take: (u: Live | null) => void): void => {
+    /**
+     * One final (or continuation) through the check, in order; take runs it when it was for Ütle,
+     * with whether the final before it was judged not for Ütle (read only once that verdict is in).
+     */
+    const judge = (words: string, take: (u: Live | null, priorIgnored: boolean) => void): void => {
       const u = detachLive()
       const before = recentFinals(finals)
       finals = recentFinals([...finals, words])
+      const epoch = checkEpoch
       checks = checks
         .then(async () => {
-          const verdict = await verdictOf(words, before)
+          // Review 1: the verdict before this one has settled here, not when these words arrived.
+          const priorIgnored = lastIgnored
+          const verdict = epoch === checkEpoch ? await verdictOf(words, before) : 'ignore'
+          if (epoch !== checkEpoch) {
+            // Cancelled while it waited: dropped like everything else in flight, nothing counted.
+            if (u !== null) queue = queue.then(() => takeBack(u))
+            return
+          }
           if (verdict === 'ignore') {
             lastIgnored = true
             ignoredCount += 1
@@ -1450,19 +1463,32 @@ export function createEngine(deps: EngineDeps): Engine {
           if (lastIgnored || ignoredCount > 0) deps.publish({ ignored: '' })
           lastIgnored = false
           ignoredCount = 0
-          take(u)
+          take(u, priorIgnored)
         })
         .catch(() => undefined)
     }
+    /** Review 1: "katkesta" never waits behind a check (round 5: instant) and drops the pending ones. */
+    const cancelNow = (utterance: string): void => {
+      checkEpoch += 1
+      lastIgnored = false
+      inner.onUtterance(utterance)
+    }
     handlers.onUtterance = (utterance) => {
       if (!judged()) return inner.onUtterance(utterance)
+      if (isCancelAll(utterance)) return cancelNow(utterance)
       judge(utterance, (u) => takeFinal(utterance, u))
     }
     handlers.onUtteranceContinued = (text, added) => {
       if (!judged()) return inner.onUtteranceContinued(text, added)
+      if (isCancelAll(added)) return cancelNow(added)
       // What it continues was not for Ütle: these words are judged and taken on their own.
-      const alone = lastIgnored
-      judge(added, (u) => (alone ? takeFinal(added, u) : takeContinued(text, added, u)))
+      judge(added, (u, priorIgnored) => (priorIgnored ? takeFinal(added, u) : takeContinued(text, added, u)))
+    }
+    handlers.onInterim = (interim) => {
+      if (!judged()) return inner.onInterim(interim)
+      // Review 1: the strip shows his live words; nothing is previewed into the box before a verdict
+      // says command or dictation (dictation lands with the final).
+      if (interim !== '') deps.publish({ heard: interim })
     }
   }
   // ---------- end of the addressee check ----------
