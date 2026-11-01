@@ -13,7 +13,8 @@ export type Quick =
   | { kind: 'number'; n: number }
 
 const PHRASES: Record<Exclude<Quick['kind'], 'number'>, readonly string[]> = {
-  yes: ['yes', 'yeah', 'yep', 'ok', 'okay', 'correct', 'do it', 'confirm', 'accept', 'jah', 'jaa', 'just nii'],
+  // Round 10 (31.7): "jah, kinnitan" is the longer yes the strip asks for when a lone "jah" is too short to check the voice.
+  yes: ['yes', 'yeah', 'yep', 'ok', 'okay', 'correct', 'do it', 'confirm', 'accept', 'jah', 'jaa', 'just nii', 'jah kinnitan', 'kinnitan'],
   no: ['no', 'nope', 'cancel', 'discard', 'reject', 'ei', 'tühista'],
   undo: ['undo', 'undo that', 'võta tagasi'],
   sleep: ['stop listening', 'go to sleep', 'sleep', 'ära kuula', 'maga', 'puhka'],

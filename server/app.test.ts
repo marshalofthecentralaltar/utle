@@ -105,8 +105,17 @@ describe('profiles per token (round 7, HOST lane)', () => {
 
   const writeProfile = (id: string): void => {
     mkdirSync(join(dir, 'profiles'), { recursive: true })
-    writeFileSync(join(dir, 'profiles', `${id}.json`), JSON.stringify({ version: 1, model: 'm', embedding: [1, 0], rms: 0.1, seconds: 8 }))
+    // Round 10 (31.7): format 2, verified on held-out phrases.
+    writeFileSync(join(dir, 'profiles', `${id}.json`), JSON.stringify({ format: 2, model: { id: 'm', hash: 'h' }, embedding: [1, 0], rms: 0.1, seconds: 8, phrases: 10, heldOut: { count: 2, scores: [0.8, 0.7], passed: true, threshold: 0.54 } }))
   }
+
+  it('round 10 (31.7): a token profile of round 7 is reported as needs_retraining and not enrolled', async () => {
+    mkdirSync(join(dir, 'profiles'), { recursive: true })
+    writeFileSync(join(dir, 'profiles', `${profileId('tb')}.json`), JSON.stringify({ version: 1, model: 'm', embedding: [1, 0], rms: 0.1, seconds: 8 }))
+    const host = await serve({ UTLE_TOKEN: 'ralf:ta,mari:tb', UTLE_DATA_DIR: dir })
+    const body = (await (await fetch(`http://${host}/api/status`, { headers: { authorization: 'Bearer tb' } })).json()) as unknown
+    expect(body).toMatchObject({ profile: { name: 'mari', enrolled: false, format: 'needs_retraining' } })
+  })
 
   it('says in /api/status which profile the token is, and whether its voice is learnt', async () => {
     writeProfile(profileId('tb'))

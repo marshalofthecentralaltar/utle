@@ -334,7 +334,11 @@ export function createLocalRecognizer(
   }
   /** Right after ready: the server knows the mode, and any enrolment that waited for the connection goes. */
   const afterReady = (): void => {
-    if (options.onlyOwner === true) send({ type: 'onlyOwner', on: true })
+    // Round 10 (31.7): with only the owner on, every connection (start, reconnect, a new server or engine) asks the readiness.
+    if (options.onlyOwner === true) {
+      send({ type: 'onlyOwner', on: true })
+      send({ type: 'speakerStatus' })
+    }
     if (enrolWanted !== null) sendEnrol(enrolWanted)
     if (scriptWanted !== null) sendScript(scriptWanted)
   }
@@ -435,11 +439,24 @@ export function createLocalRecognizer(
         case 'lag':
           handlers.onLag?.(message.ms)
           return
-        case 'enrolled':
-          handlers.onEnrolled?.(message.ok, message.seconds, message.phrases)
+        case 'enrolled': {
+          const detail = { ...(message.reason === undefined ? {} : { reason: message.reason }), ...(message.heldOut === undefined ? {} : { heldOut: message.heldOut }) }
+          if (Object.keys(detail).length > 0) handlers.onEnrolled?.(message.ok, message.seconds, message.phrases, detail)
+          else handlers.onEnrolled?.(message.ok, message.seconds, message.phrases)
           return
+        }
         case 'enrolPhrase':
-          handlers.onEnrolPhrase?.(message.count)
+          if (message.problem === undefined) handlers.onEnrolPhrase?.(message.count)
+          else handlers.onEnrolPhrase?.(message.count, message.problem)
+          return
+        case 'speakerStatus':
+          handlers.onSpeakerStatus?.(message.readiness)
+          return
+        case 'speakerTested':
+          handlers.onSpeakerTested?.(message.result, message.score)
+          return
+        case 'profileDeleted':
+          handlers.onProfileDeleted?.(message.ok)
           return
       }
     }
@@ -554,6 +571,15 @@ export function createLocalRecognizer(
       if (!running) return
       scriptWanted = null
       send({ type: 'enrolFinish' })
+    },
+    speakerStatus() {
+      if (running) send({ type: 'speakerStatus' })
+    },
+    speakerTest() {
+      if (running) send({ type: 'speakerTest' })
+    },
+    deleteProfile() {
+      if (running) send({ type: 'profileDelete' })
     },
   }
 }

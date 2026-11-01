@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS, SPEAKER_REASONS, verdictFor } from './asrProtocol.ts'
-import type { SpeakerDecision, SpeakerReason } from './asrProtocol.ts'
+import type { PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason, SpeakerTestResult } from './asrProtocol.ts'
 import { MAX_BUFFERED_BYTES, RECONNECT_MS, RETRAIN_AFTER_DROPS, STRICT_FLUSH_WAIT_MS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
 import type { AudioSource, SocketEvents, SocketLike } from './local.ts'
+import type { EnrolDetail } from './recognizer.ts'
 
 /** Stands in for the browser's WebSocket: records what is sent and lets the test play the server. */
 class FakeSocket implements SocketLike {
@@ -586,7 +587,8 @@ describe('local recogniser (browser side)', () => {
       const r = makeOwner(true)
       r.start()
       socket().says({ type: 'ready' })
-      expect(texts()).toEqual([{ type: 'onlyOwner', on: true }])
+      // Round 10 (31.7): and asks whether the voice check can protect.
+      expect(texts()).toEqual([{ type: 'onlyOwner', on: true }, { type: 'speakerStatus' }])
       r.stop()
       const off = makeOwner(false)
       off.start()
@@ -756,6 +758,77 @@ describe('local recogniser (browser side)', () => {
       // A flush does not release it either.
       r.flush?.()
       expect(utterances).toEqual([])
+    })
+
+    describe('onboarding and readiness on the wire (round 10, 31.7)', () => {
+      const onboardingSpies = () => ({
+        ...handlers,
+        onForeign: vi.fn<(streak: number, reason?: SpeakerReason) => void>(),
+        onUtterance: vi.fn<(text: string, d?: SpeakerDecision) => void>(),
+        onEnrolPhrase: vi.fn<(count: number, problem?: PhraseProblem) => void>(),
+        onEnrolled: vi.fn<(ok: boolean, seconds: number, phrases?: number, detail?: EnrolDetail) => void>(),
+        onSpeakerStatus: vi.fn<(readiness: SpeakerReadiness) => void>(),
+        onSpeakerTested: vi.fn<(result: SpeakerTestResult, score?: number) => void>(),
+        onProfileDeleted: vi.fn<(ok: boolean) => void>(),
+      })
+      const make = (h: ReturnType<typeof onboardingSpies>, onlyOwner: boolean) =>
+        createLocalRecognizer(h, isInstant, { onUnavailable: () => undefined, connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), onlyOwner, holdMs: 150 })
+
+      it('asks the readiness at every connection with only the owner on (start, reconnect): one speakerStatus per socket', () => {
+        const h = onboardingSpies()
+        const r = make(h, true)
+        r.start()
+        socket().says({ type: 'ready' })
+        expect(texts()).toEqual([{ type: 'onlyOwner', on: true }, { type: 'speakerStatus' }])
+        socket().says({ type: 'speakerStatus', readiness: { state: 'needs_retraining', protected: false, extractor: true, profileMatchesModel: false, verifiable: false } })
+        expect(h.onSpeakerStatus).toHaveBeenLastCalledWith({ state: 'needs_retraining', protected: false, extractor: true, profileMatchesModel: false, verifiable: false })
+        // A server that says protected for a state that is not ready is not believed.
+        socket().says({ type: 'speakerStatus', readiness: { state: 'model_mismatch', protected: true, extractor: true, profileMatchesModel: false, verifiable: false } })
+        expect(h.onSpeakerStatus.mock.calls.at(-1)?.[0].protected).toBe(false)
+      })
+
+      it('reports a refused phrase with its reason, the enrolment result with its reason and held-out scores', () => {
+        const h = onboardingSpies()
+        const r = make(h, false)
+        r.start()
+        socket().says({ type: 'ready' })
+        socket().says({ type: 'enrolPhrase', count: 3, problem: 'clipped' })
+        expect(h.onEnrolPhrase).toHaveBeenLastCalledWith(3, 'clipped')
+        socket().says({ type: 'enrolled', ok: false, seconds: 0, phrases: 0, reason: 'held_out_failed', heldOut: { count: 2, scores: [0.4, 0.5], passed: false, threshold: 0.54 } })
+        expect(h.onEnrolled).toHaveBeenLastCalledWith(false, 0, 0, { reason: 'held_out_failed', heldOut: { count: 2, scores: [0.4, 0.5], passed: false, threshold: 0.54 } })
+      })
+
+      it('the voice test and delete go out as asked and come back to their handlers', () => {
+        const h = onboardingSpies()
+        const r = make(h, false)
+        r.start()
+        socket().says({ type: 'ready' })
+        r.speakerTest?.()
+        r.deleteProfile?.()
+        r.speakerStatus?.()
+        expect(texts()).toEqual([{ type: 'speakerTest' }, { type: 'profileDelete' }, { type: 'speakerStatus' }])
+        socket().says({ type: 'speakerTested', result: 'too_short', seconds: 0.3 })
+        socket().says({ type: 'profileDeleted', ok: true })
+        expect(h.onSpeakerTested).toHaveBeenCalledWith('too_short', undefined)
+        expect(h.onProfileDeleted).toHaveBeenCalledWith(true)
+        expect(h.onUtterance).not.toHaveBeenCalled()
+      })
+
+      it('criterion 6: a standalone short word without enough owner audio (insufficient_audio) runs nothing and says why, even right after the owner', () => {
+        const h = onboardingSpies()
+        const r = make(h, true)
+        r.start()
+        socket().says({ type: 'ready' })
+        announce()
+        const d = decision('verified_owner')
+        socket().says({ type: 'final', text: 'ava uus vaheleht', speaker: 'owner', segment: d.segmentId, decision: d })
+        vi.advanceTimersByTime(200)
+        expect(h.onUtterance).toHaveBeenCalledTimes(1)
+        rejected('insufficient_audio')
+        vi.advanceTimersByTime(2000)
+        expect(h.onUtterance).toHaveBeenCalledTimes(1)
+        expect(h.onForeign).toHaveBeenLastCalledWith(1, 'insufficient_audio')
+      })
     })
 
     describe('the fail-closed barrier (round 10, 31.3): zero side effects per deny case', () => {

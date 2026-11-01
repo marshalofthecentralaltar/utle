@@ -400,3 +400,19 @@ describe('issue #3: Soniox with only the owner on', () => {
     expect(browser.json.at(-1)).toEqual({ type: 'final', text: 'jah' })
   })
 })
+
+describe('round 10 (31.7): Soniox cannot check the voice, and says so to every speaker request', () => {
+  it('speakerStatus is model_unavailable (never protected); the voice test is unavailable; enrolment and delete do nothing', () => {
+    const { browser, upstream } = session()
+    upstream.open()
+    for (const type of ['speakerStatus', 'speakerTest', 'profileDelete']) browser.text(JSON.stringify({ type }))
+    browser.text(JSON.stringify({ type: 'enrolScript', phrases: 12 }))
+    const after = browser.json.slice(1)
+    expect(after).toEqual([
+      { type: 'speakerStatus', readiness: { state: 'model_unavailable', protected: false, extractor: false, profileMatchesModel: false, verifiable: false } },
+      { type: 'speakerTested', result: 'unavailable' },
+      { type: 'profileDeleted', ok: false },
+      { type: 'enrolled', ok: false, seconds: 0, phrases: 0, reason: 'model_unavailable' },
+    ])
+  })
+})

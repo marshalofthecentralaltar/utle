@@ -366,7 +366,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
         {
           ...handlers,
           onForeign: (streak, reason) => {
-            handlers.onForeign()
+            handlers.onForeign(reason)
             onForeign(streak, reason)
           },
           onEnrolled: (ok, seconds, phrases) => {
