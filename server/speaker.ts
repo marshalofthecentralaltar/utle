@@ -262,6 +262,12 @@ export interface SpeakerGateOptions {
   writeFile?: (path: string, data: string) => void
   /** Round 10 (31.7): the clock for the profile's timestamps. */
   now?: () => string
+  /**
+   * Round 10 (31.7): the factory line in force (FACTORY_THRESHOLD; tests move it). A factory-sourced
+   * profile is judged at this line, not at the value stored with it, so a recalibrated factory line
+   * reaches every existing profile; a per-profile line keeps its stored value.
+   */
+  factoryThreshold?: number
 }
 
 const concat = (frames: Float32Array[]): Float32Array => {
@@ -434,9 +440,9 @@ export function clippedShare(frames: Float32Array[]): number {
  * stranger passes, so without at least MIN_NEGATIVES consenting other-speaker scores it is the
  * factory line. With them: the highest negative plus NEGATIVE_MARGIN, never below PER_PROFILE_FLOOR.
  */
-export function thresholdPolicy(negativeScores: number[]): ThresholdPolicy {
+export function thresholdPolicy(negativeScores: number[], factory = FACTORY_THRESHOLD): ThresholdPolicy {
   const scores = negativeScores.filter((x) => Number.isFinite(x))
-  if (scores.length < MIN_NEGATIVES) return { value: FACTORY_THRESHOLD, source: 'factory', provenance: FACTORY_PROVENANCE, negatives: 0 }
+  if (scores.length < MIN_NEGATIVES) return { value: factory, source: 'factory', provenance: FACTORY_PROVENANCE, negatives: 0 }
   const value = Math.round(Math.max(PER_PROFILE_FLOOR, Math.max(...scores) + NEGATIVE_MARGIN) * 1000) / 1000
   return { value, source: 'per_profile', provenance: `per_profile: highest of ${scores.length} consenting other-speaker scores + ${NEGATIVE_MARGIN}, floor ${PER_PROFILE_FLOOR}`, negatives: scores.length }
 }
@@ -469,7 +475,9 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
   const clock = options.now ?? (() => new Date().toISOString())
   // A profile made with another model (or another file of the same name) cannot be compared.
   const comparable = (p: SpeakerProfile): boolean => extractor !== null && p.embedding.length > 0 && p.model.id === modelName && p.model.hash === modelHash
-  const thresholdOf = (p: SpeakerProfile): number => p.threshold.value
+  const factory = options.factoryThreshold ?? FACTORY_THRESHOLD
+  // Round 10 (31.7): the stored value of a factory line is the one it was made with; today's line judges.
+  const thresholdOf = (p: SpeakerProfile): number => (p.threshold.source === 'factory' ? factory : p.threshold.value)
   const embed = (frames: Float32Array[]): number[] | null => {
     if (extractor === null) return null
     try {
@@ -483,7 +491,7 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
   /** Verifies a candidate on held-out embeddings and, when it passes, writes it over the old profile. */
   const commit = (candidate: Omit<SpeakerProfile, 'threshold' | 'heldOut' | 'createdAt' | 'updatedAt'>, heldOutEmbeddings: number[][]): EnrolOutcome => {
     const negatives = (options.negatives ?? []).map((n) => cosine(normalised(n), candidate.embedding))
-    const threshold = thresholdPolicy(negatives)
+    const threshold = thresholdPolicy(negatives, factory)
     const scores = heldOutEmbeddings.map((e) => round3(cosine(e, candidate.embedding)))
     const heldOut: HeldOut = { count: scores.length, scores, passed: scores.length === HELD_OUT_PHRASES && scores.every((x) => Number.isFinite(x) && x >= threshold.value), threshold: threshold.value }
     if (!heldOut.passed) return { ok: false, reason: 'held_out_failed', heldOut }
@@ -601,7 +609,7 @@ export function createSpeakerGate(extractor: EmbeddingExtractor | null, options:
         verifiable,
         phrases: profile.phrases,
         heldOut: { count: profile.heldOut.count, passed: profile.heldOut.passed },
-        threshold: { value: profile.threshold.value, source: profile.threshold.source },
+        threshold: { value: thresholdOf(profile), source: profile.threshold.source, ...(thresholdOf(profile) === profile.threshold.value ? {} : { stored: profile.threshold.value }) },
       }
     },
     test(frames) {

@@ -652,6 +652,34 @@ describe('the threshold policy (round 10, 31.7)', () => {
       expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ threshold: { source: 'per_profile', value: PER_PROFILE_FLOOR, negatives: MIN_NEGATIVES } })
       // cos(58.5 degrees) = 0.52: below the factory line, above this profile's.
       expect(gate.verify(speech(0.65, 3)).reason).toBe('verified_owner')
+      // A later factory line does not move a per-profile one.
+      const later = createSpeakerGate(fakeExtractor, { profilePath: path, factoryThreshold: 0.6 })
+      expect(later.verify(speech(0.65, 3)).reason).toBe('verified_owner')
+      expect(later.readiness().threshold).toEqual({ value: PER_PROFILE_FLOOR, source: 'per_profile' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('a factory-sourced profile is judged at the factory line of today, not the one it was made with (the stored value is history)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'utle-policy-'))
+    try {
+      const path = join(dir, 'owner.json')
+      const made = createSpeakerGate(fakeExtractor, { profilePath: path })
+      expect(made.enrol(speech(0, 8))).toBe(true)
+      expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ threshold: { source: 'factory', value: FACTORY_THRESHOLD } })
+      // cos(55.8 degrees) = 0.562: above the line it was made with, below a factory line moved to 0.6.
+      expect(made.verify(speech(0.62, 3)).reason).toBe('verified_owner')
+      const moved = createSpeakerGate(fakeExtractor, { profilePath: path, factoryThreshold: 0.6 })
+      expect(moved.verify(speech(0.62, 3)).reason).toBe('rejected_other')
+      expect(moved.judge(speech(0.62, 3))?.speaker).toBe('other')
+      // Readiness reports the line in force and, when it differs, the one the profile was made with.
+      expect(moved.readiness().threshold).toEqual({ value: 0.6, source: 'factory', stored: FACTORY_THRESHOLD })
+      expect(made.readiness().threshold).toEqual({ value: FACTORY_THRESHOLD, source: 'factory' })
+      // A new enrolment under the moved line records it, with its held-out check at that line.
+      const again = createSpeakerGate(fakeExtractor, { profilePath: path, factoryThreshold: 0.6 })
+      expect(again.enrol(speech(0, 8))).toBe(true)
+      expect(JSON.parse(readFileSync(path, 'utf8'))).toMatchObject({ threshold: { source: 'factory', value: 0.6 }, heldOut: { threshold: 0.6 } })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

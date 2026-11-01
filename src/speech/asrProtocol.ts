@@ -77,7 +77,8 @@ export interface SpeakerReadiness {
   verifiable: boolean
   phrases?: number
   heldOut?: { count: number; passed: boolean }
-  threshold?: { value: number; source: 'factory' | 'per_profile' }
+  /** The line in force; `stored` is the line the profile was made with, when today's factory line differs (31.7). */
+  threshold?: { value: number; source: 'factory' | 'per_profile'; stored?: number }
 }
 export type SpeakerTestResult = 'recognised' | 'not_recognised' | 'too_short' | 'noisy' | 'unavailable'
 export const SPEAKER_TEST_RESULTS: readonly SpeakerTestResult[] = ['recognised', 'not_recognised', 'too_short', 'noisy', 'unavailable']
