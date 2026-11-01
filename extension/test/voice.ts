@@ -483,12 +483,14 @@ async function serverDown(extensionDir: string): Promise<void> {
 // ---------- only the owner, with the real models (round 10, ARCHITECTURE 31; issue #3 review 1) ----------
 // A server of its own in this process (the same attachAsr as the dev server, the decode worker, the
 // real recogniser, TitaNet and Silero), whose one profile is made here from the stand-in owner's
-// clips of scripts/fixtures/speaker-set in a temporary UTLE_DATA_DIR. models/speaker/owner.json is
-// never read or written. The clips under test are held out of the profile.
+// reading of the real enrolment phrases (scripts/fixtures/enrol-set, SYNTHETIC "mari", made by
+// scripts/enrol-set.ts) in a temporary UTLE_DATA_DIR. models/speaker/owner.json is never read or
+// written. The clips under test (scripts/fixtures/speaker-set, the same voice) are not in the profile.
 
 const SPEAKER_SET = join(repoRoot, 'scripts/fixtures/speaker-set')
-/** The owner clips the profile is made of; owner-sentence-2 and owner-jah-1 are held out. */
-const ENROL_CLIPS = ['owner-dictate-send-1', 'owner-dictate-send-2', 'owner-numbers-one-1', 'owner-numbers-one-2', 'owner-scroll-tab-1', 'owner-scroll-tab-2', 'owner-sentence-1']
+const ENROL_SET = join(repoRoot, 'scripts/fixtures/enrol-set')
+/** The twelve enrolment phrases of src/core/enrolPhrases.ts as the stand-in owner reads them. */
+const ENROL_CLIPS = Array.from({ length: 12 }, (_, i) => `enrol-${String(i + 1).padStart(2, '0')}`)
 
 /** A 16-bit PCM WAV as 100 ms float frames at 16 kHz. */
 function wavFrames(path: string): Float32Array[] {
@@ -554,8 +556,8 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
     check('7. the server with the real models is ready', ready)
 
     // ---- round 10 (31.7): enrolment through the new flow, over the wire: each clip one read phrase ----
-    const streamClip = async (name: string): Promise<void> => {
-      for (const frame of wavFrames(join(SPEAKER_SET, `${name}.wav`))) {
+    const streamClip = async (name: string, dir = ENROL_SET): Promise<void> => {
+      for (const frame of wavFrames(join(dir, `${name}.wav`))) {
         ws.send(frame.buffer)
         await sleep(100)
       }
@@ -583,14 +585,14 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
     await waitUntil(async () => heard.filter((m) => m.type === 'speakerStatus').length >= 2, 5000)
     const after = (heard.filter((m) => m.type === 'speakerStatus').at(-1) as Wire | undefined)?.readiness
     check('7. after enrolment the readiness is ready and protected', after?.state === 'ready' && after.protected === true, JSON.stringify(after))
-    // "Proovi minu häält" on a held-out owner sentence: recognised, and no final for it.
+    // "Proovi minu häält" on its own longer sentence (VERIFY_PHRASES[1], not in the profile): recognised, and no final for it.
     const testFrom = heard.length
     ws.send(JSON.stringify({ type: 'speakerTest' }))
-    await streamClip('owner-sentence-2')
+    await streamClip('verify-2')
     await waitUntil(async () => heard.slice(testFrom).some((m) => m.type === 'speakerTested'), 8000)
     const tested = heard.slice(testFrom).find((m) => m.type === 'speakerTested') as Wire | undefined
-    console.log(`      voice test owner-sentence-2: ${JSON.stringify(tested)}`)
-    check('7. the voice test on a held-out owner sentence says recognised, and sends no final', tested?.result === 'recognised' && !heard.slice(testFrom).some((m) => m.type === 'final' || m.type === 'partial'), JSON.stringify(tested))
+    console.log(`      voice test verify-2 (SYNTHETIC): ${JSON.stringify(tested)}`)
+    check('7. the voice test on the longer verify sentence says recognised, and sends no final', tested?.result === 'recognised' && !heard.slice(testFrom).some((m) => m.type === 'final' || m.type === 'partial'), JSON.stringify(tested))
 
     ws.send(JSON.stringify({ type: 'onlyOwner', on: true }))
     const announced = await waitUntil(async () => heard.some((m) => m.type === 'speakerSession'), 5000)
