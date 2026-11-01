@@ -729,8 +729,8 @@ async function listenReal(): Promise<void> {
   try {
     const model = loadSpeakerModel(repoRoot)
     if (!model.ok) throw new Error(`speaker model: ${model.reason}`)
-    const maker = createSpeakerGate(model.extractor, { profilePath: profile })
-    const phrases = ENROL_CLIPS.map((name) => maker.phrase(wavFrames(join(SPEAKER_SET, `${name}.wav`)))).filter((p) => p !== null)
+    const maker = createSpeakerGate(model.extractor, { profilePath: profile, modelHash: model.hash })
+    const phrases = ENROL_CLIPS.map((name) => maker.phrase(wavFrames(join(ENROL_SET, `${name}.wav`)))).filter((p) => p !== null)
     check('8. the stand-in owner’s profile is made (the clips under test are not in it)', maker.enrolPhrases(phrases))
     attachAsr(server, repoRoot, { profileFor: () => profile })
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
