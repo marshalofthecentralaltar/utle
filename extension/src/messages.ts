@@ -33,7 +33,7 @@ export interface StripState {
   foreign: string
   /** Round 7: scripted enrolment: phrases heard so far (0 at its start), or -1 when none is running. The settings page follows it. */
   enrolPhrases: number
-  /** Round 8 (29.4.1): the wake mode's dictation window is open: the strip shows an amber disc. */
+  /** Round 8 (29.4.1): the wake mode's dictation window is open: the strip shows an amber disc. Round 10 (32.1): ACTIVE. */
   wakeOpen: boolean
   // ---------- the voice (round 10, 31.7) ----------
   /** The last read phrase was not counted: its PhraseProblem, or ''. Cleared by the next counted phrase. */
@@ -45,6 +45,8 @@ export interface StripState {
   /** The last voice test's SpeakerTestResult, or '', and how many tests have answered (to see a new one). */
   voiceTest: string
   voiceTests: number
+  /** Round 10 (32.1, 32.3): the quiet counter of finals not meant for Ütle ("3 lauset ei olnud mulle"), or ''. Never their words. */
+  ignored: string
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -66,7 +68,7 @@ export type ConnectionState = 'connected' | 'connecting' | 'down'
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, wakeOpen: false, enrolProblem: '', enrolOutcome: '', voiceReady: '', voiceTest: '', voiceTests: 0, connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false, connection: 'connecting' }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, wakeOpen: false, enrolProblem: '', enrolOutcome: '', voiceReady: '', voiceTest: '', voiceTests: 0, ignored: '', connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false, connection: 'connecting' }
 
 /** To the service worker. */
 export type ToBackground =

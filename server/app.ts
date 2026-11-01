@@ -9,6 +9,7 @@ import type { AttachOptions } from './asr.ts'
 import { LOCAL_USER, authState, httpUser, tokenUsers, upgradeUser } from './auth.ts'
 import type { TokenUser } from './auth.ts'
 import { pageIntent } from './intent.ts'
+import { addresseeAnswer } from './addressee.ts'
 import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode } from './interpret.ts'
 import { modelFromEnv, modelStatus } from './model/index.ts'
@@ -98,6 +99,7 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
  * The API of ARCHITECTURE 27.1, on any http server (Vite's in development, server/serve.ts in production).
  *   GET  /api/status     which interpreter answers, which model (primary, fallback, last), whether /api/intent has a key, which speech engines can run, whether a token is needed
  *   POST /api/intent     one unrecognised utterance with the page in, one IntentAnswer out (M7)
+ *   POST /api/addressee  round 10 (32.3): one always-on final, the three before it and the page in short; command, dictation or ignore out
  *   POST /api/interpret  one utterance in, one Intent out
  *   WS   /api/asr        the local recogniser (20.1), or Soniox (23.4); attached when httpServer is given
  * UTLE_TOKEN set: every /api request needs the bearer header and the websocket ?token= (27.2).
@@ -169,6 +171,24 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
         const input = await jsonBody(req)
         if (!configured.ready) throw new InterpretError('upstream_rejected', 'no_key')
         send(res, 200, await pageIntent(input, { model: configured.model }))
+      } catch (error) {
+        const known = toKnownError(error)
+        send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })
+      }
+    })()
+  })
+
+  mount('/api/addressee', (req, res, next) => {
+    if (preflight(req, res)) return
+    if (req.method !== 'POST') {
+      next()
+      return
+    }
+    void (async () => {
+      try {
+        const input = await jsonBody(req)
+        if (!configured.ready) throw new InterpretError('upstream_rejected', 'no_key')
+        send(res, 200, await addresseeAnswer(input, { model: configured.model }))
       } catch (error) {
         const known = toKnownError(error)
         send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })

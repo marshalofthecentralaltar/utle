@@ -11,7 +11,8 @@ import type { SavedItem } from './saved.ts'
 import { entryStep } from './savedEntry.ts'
 import type { EntryState } from './savedEntry.ts'
 import { STRINGS } from './strings.ts'
-import { createWake, wakeGate, wakeOpen, wakeOpenWindow } from './wake.ts'
+import { createListen, listenFinal, listenOn } from './listen.ts'
+import { createWake } from './wake.ts'
 
 // Every Estonian form of every entry of src/core/phrases.ts, through the rule the entry names, with
 // what the entry says is in front. A phrase that drifts from the rules fails here (ARCHITECTURE 30.2.1).
@@ -105,15 +106,17 @@ function ruled(phrase: Phrase, form: string): string {
     case 'readStop':
       return isReadStop(form) ? 'stop' : 'none'
     case 'wake': {
-      const shut = createWake('Ütle')
+      // Round 10 (32.1): PASSIVE and ACTIVE of src/core/listen.ts.
+      const word = createWake('Ütle')
+      const passive = listenOn(createListen(), 0)
       if (context === 'wakeOpen') {
-        const open = wakeOpenWindow(shut, 1000)
-        const gated = wakeGate(open, form, 2000)
-        return gated.utterance === null && !wakeOpen(gated.state, 2000) ? 'close' : 'none'
+        const active = listenFinal(passive, word, 'Ütle', 0).state
+        const r = listenFinal(active, word, form, 5000)
+        return r.utterance === null && r.state.mode === 'passive' ? 'close' : 'none'
       }
-      const gated = wakeGate(shut, form, 1000)
-      if (gated.utterance !== null) return 'pass'
-      return wakeOpen(gated.state, 1000) ? 'open' : 'none'
+      const r = listenFinal(passive, word, form, 1000)
+      if (r.utterance !== null) return 'pass'
+      return r.state.mode === 'active' ? 'open' : 'none'
     }
   }
 }

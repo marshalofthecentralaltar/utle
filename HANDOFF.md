@@ -656,6 +656,15 @@ Branch `r10-voice` (stacked on `r10-gate`), not merged. Spec ARCHITECTURE 31.7.
   `speaker-set`, `--auto 4`): 75 clips, `label.ts --check` ready (owner enrol 12, owner trials 13, other trials 50),
   calibrate banner SYNTHETIC (fake microphone), all buckets: titanet-small EER 0.0 % at 0.545, eres2net 0.0 % at 0.543,
   campplus 46.1 %, resnet34 38.2 % (n = 13 owner / 50 other: ranks nothing, verifies nothing).
+## 1n. Round 10, prompt 2, lane LISTEN (2026-11-01): the bar shows only speech meant for Ütle
+
+Branch `r10-listen` (on `r10-gate`). ARCHITECTURE 32, LIMITED (text, not acoustic; #2 stays open for a
+keyword spotter). Wake mode: PASSIVE / ACTIVE / HARD_OFF, the word anywhere in a sentence, glued
+"ütlemine youtube'i" split, nothing of the room on the strip (a count instead); not started with a
+hosted server or Soniox. Always-on: a sentence no rule knows goes to /api/addressee; "ignore" is never
+shown or typed and never touches a running chain. Verified with tests, 16 eval cases (16/16, p50 1.3 s)
+and synthetic voices through the real models (voice.ts section 8). Not verified: real voices, a real
+room, a TV; the false-wake rate on room speech that contains "ütle" (only the owner's gate guards it).
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
