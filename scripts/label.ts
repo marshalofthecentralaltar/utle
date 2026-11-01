@@ -20,13 +20,14 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
-import { KINDS, LABEL_COLUMNS, formatLabels, insideRepo, parseLabels, rowsFromCaptureLog } from './measure.ts'
+import { KINDS, LABEL_COLUMNS, checkLabels, formatLabels, insideRepo, parseLabels, rowsFromCaptureLog } from './measure.ts'
 import type { Addressee, Kind, LabelRow } from './measure.ts'
 import { readAnyWav } from './wav.ts'
 
 const HELP = `usage:
   npx tsx scripts/label.ts --import <folder> --out <folder outside the repo> [--speaker <name>] [--kind <kind>]
-  npx tsx scripts/label.ts --edit <labels.tsv> [--all]`
+  npx tsx scripts/label.ts --edit <labels.tsv> [--all]
+  npx tsx scripts/label.ts --check <labels.tsv> --owner <name>      (round 10: ready for speaker-calibrate.ts? exit 0 when it is)`
 
 const argv = process.argv.slice(2)
 const has = (name: string): boolean => argv.includes(name)
@@ -150,6 +151,15 @@ async function edit(labelsArg: string): Promise<void> {
 if (has('--help') || has('-h')) console.log(`${HELP}\n\ncolumns: ${LABEL_COLUMNS.join(', ')}`)
 else if (value('--import') !== undefined && value('--out') !== undefined) importFolder(value('--import') ?? '', value('--out') ?? '')
 else if (value('--edit') !== undefined) await edit(value('--edit') ?? '')
+else if (value('--check') !== undefined && value('--owner') !== undefined) {
+  // Round 10 (lane VOICE): no prompt, nothing written: whether the file is ready, and the next command.
+  const file = resolve(value('--check') ?? '')
+  const report = checkLabels(parseLabels(readFileSync(file, 'utf8')), value('--owner') ?? '', file.split('\\').join('/'))
+  console.log(`${file}: speakers ${report.speakers.join(', ') || '(none)'}; owner enrol clips ${report.ownerEnrol}, owner trials ${report.ownerTrials}, other trials ${report.otherTrials}`)
+  for (const problem of report.problems) console.log(`  missing: ${problem}`)
+  console.log(report.ready ? `ready. next:\n  ${report.next}` : 'not ready.')
+  process.exit(report.ready ? 0 : 1)
+}
 else {
   console.error(HELP)
   process.exit(2)

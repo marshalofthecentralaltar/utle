@@ -17,6 +17,7 @@ import { chromium } from 'playwright'
 import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
+import { STRINGS } from '../../src/core/strings.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
 import { inpageResult } from '../../src/core/inpage.ts'
 import type { BoxState, BrowserResult } from '../../src/browser/protocol.ts'
@@ -1644,13 +1645,96 @@ async function main(): Promise<void> {
       const page = await welcomePage()
       if (!page) throw new Error('the welcome page did not open')
       await page.waitForSelector('#stepReady', { timeout: 5000 })
-      line('openSettings', '"ava juhend" -> welcome.html, five cards', r !== 'timeout' && r.ok && JSON.stringify(open) === '{"kind":"openSettings","section":"welcome"}' && (await page.locator('section.step').count()) === 5, `${describe(r)} command=${JSON.stringify(open)}`)
+      line('openSettings', '"ava juhend" -> welcome.html, seven cards', r !== 'timeout' && r.ok && JSON.stringify(open) === '{"kind":"openSettings","section":"welcome"}' && (await page.locator('section.step').count()) === 7, `${describe(r)} command=${JSON.stringify(open)}`)
       const cards = await page.evaluate(() => [...document.querySelectorAll('section.step .head .titles')].map((t) => [t.children[0]?.textContent ?? '', t.children[1]?.textContent ?? '']))
-      check('welcome: five cards in order, Estonian with English under', JSON.stringify(cards) === JSON.stringify([['Mikrofon', 'Microphone'], ['Kõneserver', 'The speech server'], ['Proovi', 'Try it'], ['Hääl', 'Your voice'], ['Valmis', 'Ready']]), JSON.stringify(cards))
+      // Round 10 (31.7): the voice first: after the microphone and the server, the phrases, the voice test and the choice.
+      check('welcome: seven cards in order, the voice before the demo, Estonian with English under', JSON.stringify(cards) === JSON.stringify([['Mikrofon', 'Microphone'], ['Kõneserver', 'The speech server'], ['Õpeta mu hääl', 'Teach it my voice'], ['Proovi minu häält', 'Check my voice'], ['Kuula ainult mind', 'Listen only to me'], ['Proovi', 'Try it'], ['Valmis', 'Ready']]), JSON.stringify(cards))
       const tabId = await welcomeTabId()
       check('welcome: the strip is mounted on it once', (await page.evaluate(() => document.querySelectorAll('utle-strip').length)) === 1 && (await stripOn(tabId)) !== null)
       const micDone = await waitUntil(async () => (await page.getAttribute('#stepMic', 'data-done')) === 'true', 5000)
       check('welcome: step 1 ticks once the microphone is allowed', micDone, (await page.locator('#stepMicResult').textContent()) ?? '')
+
+      // ---------- round 10 (31.7, VOICE lane): the voice first, step by step ----------
+      // The offscreen document publishes what the server says (enrolPhrases, enrolProblem, enrolOutcome,
+      // voiceTest) into the strip's state; here the state is set as the server would, and each card is read.
+      {
+        const W10 = STRINGS.et.welcome
+        const S10 = STRINGS.et.strip
+        const setState = async (patch: Record<string, unknown>): Promise<void> => {
+          await sw.evaluate(async (p) => {
+            const now = (await chrome.storage.session.get('stripState')).stripState as Record<string, unknown> | undefined
+            await chrome.storage.session.set({ stripState: { ...now, ...p } })
+          }, patch)
+          await page.waitForTimeout(250)
+        }
+        const text = async (id: string): Promise<string> => (await page.locator(`#${id}`).textContent()) ?? ''
+        const doneOf = async (id: string): Promise<string> => (await page.getAttribute(`#${id}`, 'data-done')) ?? ''
+        const shot = async (id: string, name: string): Promise<void> => {
+          await page.locator(`#${id}`).scrollIntoViewIfNeeded()
+          await page.locator(`#${id}`).screenshot({ path: join(repoRoot, `docs/proof/r10-voice-${name}.png`) })
+        }
+        await shot('stepMic', '1-microphone')
+        // The server's side is played through the state: the page's voice requests stop here, so the
+        // offscreen document starts no real enrolment or test (it has no speech server in this suite).
+        await page.evaluate(() => {
+          const w = window as unknown as { __realSend?: typeof chrome.runtime.sendMessage }
+          w.__realSend = chrome.runtime.sendMessage.bind(chrome.runtime)
+          const drop = new Set(['utle-enrol-script', 'utle-enrol-finish', 'utle-voice-test'])
+          chrome.runtime.sendMessage = ((message: { type?: string }, ...rest: unknown[]) => (drop.has(message?.type ?? '') ? Promise.resolve(undefined) : (w.__realSend as (...a: unknown[]) => Promise<unknown>)(message, ...rest))) as typeof chrome.runtime.sendMessage
+        })
+        await page.mouse.move(0, 0)
+        await page.click('#voiceStart')
+        await page.waitForTimeout(400)
+        await setState({ enrolPhrases: 0, enrolProblem: '' })
+        const first = { step: await text('voiceStep'), phrase: await text('voicePhrase') }
+        check('welcome-voice: "Alusta lugemist" shows phrase 1 / 12', first.step === 'Lause 1 / 12' && first.phrase === ENROL_PHRASES[0], JSON.stringify(first))
+        await setState({ enrolPhrases: 2, enrolProblem: 'too_quiet' })
+        const refused = { phrase: await text('voicePhrase'), feedback: await text('voiceFeedback') }
+        check('welcome-voice: a phrase refused as too quiet stays, with the reason and "loe see uuesti"', refused.phrase === ENROL_PHRASES[2] && refused.feedback === S10.phraseProblem.too_quiet, JSON.stringify(refused))
+        await shot('stepVoice', '2-phrases')
+        await setState({ enrolPhrases: -1, enrolProblem: '', enrolOutcome: 'held_out_failed', line: S10.enrolFailedWhy.held_out_failed })
+        const failed = { done: await doneOf('stepVoice'), result: await text('stepVoiceResult') }
+        check('welcome-voice: a candidate that fails the held-out check does not tick; the old voice is kept', failed.done === 'false' && failed.result.includes('Senine hääl jäi alles'), JSON.stringify(failed))
+        await page.mouse.move(0, 0)
+        await page.click('#voiceStart')
+        await page.waitForTimeout(400)
+        await setState({ enrolPhrases: 11, enrolProblem: '' })
+        await setState({ enrolPhrases: -1, enrolOutcome: 'ok', line: S10.enrolVerified(10, 2) })
+        const learnt = { done: await doneOf('stepVoice'), result: await text('stepVoiceResult') }
+        check('welcome-voice: a verified enrolment ticks: "õpitud 10 lausest ja kontrollitud 2 uuel lausel"', learnt.done === 'true' && learnt.result === S10.enrolVerified(10, 2), JSON.stringify(learnt))
+        await shot('stepVoice', '3-voice-learnt')
+        await page.mouse.move(0, 0)
+        await page.click('#guardOn')
+        await page.waitForTimeout(300)
+        const early = { result: await text('stepGuardResult'), stored: await sw.evaluate(async () => (await chrome.storage.local.get('onlyOwner')).onlyOwner) }
+        check('welcome-guard: "Lülita sisse" before the voice test refuses and stores nothing', early.result === W10.guardNeedsTest && early.stored !== true, JSON.stringify(early))
+        const tests = (await sw.evaluate(async () => ((await chrome.storage.session.get('stripState')).stripState as { voiceTests?: number } | undefined)?.voiceTests ?? 0)) as number
+        await page.mouse.move(0, 0)
+        await page.click('#checkStart')
+        await page.waitForTimeout(300)
+        await setState({ voiceTest: 'too_short', voiceTests: tests + 1 })
+        const short = { done: await doneOf('stepCheck'), result: await text('stepCheckResult') }
+        check('welcome-check: "Proovi minu häält" too short says so and does not tick', short.done === 'false' && short.result === S10.voiceTest.too_short, JSON.stringify(short))
+        await setState({ voiceTest: 'recognised', voiceTests: tests + 2 })
+        const known = { done: await doneOf('stepCheck'), result: await text('stepCheckResult') }
+        check('welcome-check: recognised ticks "Tundsin su ära."', known.done === 'true' && known.result === S10.voiceTest.recognised, JSON.stringify(known))
+        await shot('stepCheck', '4-check')
+        await page.mouse.move(0, 0)
+        await page.click('#guardOn')
+        await page.waitForTimeout(400)
+        const on = { result: await text('stepGuardResult'), done: await doneOf('stepGuard'), stored: await sw.evaluate(async () => (await chrome.storage.local.get('onlyOwner')).onlyOwner) }
+        check('welcome-guard: after the test knew him, "Lülita sisse" stores onlyOwner and says so', on.result === W10.guardOnDone && on.done === 'true' && on.stored === true, JSON.stringify(on))
+        await shot('stepGuard', '5-guard')
+        // The rest of the suite runs with every voice, as before; the enrolment "Alusta lugemist" really started is ended.
+        await sw.evaluate(async () => chrome.storage.local.remove('onlyOwner'))
+        await page.evaluate(() => {
+          const w = window as unknown as { __realSend?: typeof chrome.runtime.sendMessage }
+          if (w.__realSend) chrome.runtime.sendMessage = w.__realSend
+        })
+        const relearn = fromWords('õpi mu hääl uuesti').commands[0]
+        check('welcome-voice: "õpi mu hääl uuesti" is the voice card of the welcome page', JSON.stringify(relearn) === '{"kind":"openSettings","section":"voice"}', JSON.stringify(relearn))
+        await page.evaluate(() => window.scrollTo(0, 0))
+      }
       // Every head and button is a dwell target: 1 s on "Kirjuta siia" focuses the demo box.
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
       await page.mouse.move(0, 0)
@@ -1745,6 +1829,10 @@ async function main(): Promise<void> {
       await page.evaluate(() => window.scrollTo(0, 0))
       await page.waitForTimeout(300)
       await page.screenshot({ path: join(repoRoot, 'docs/proof/r9-welcome.png') })
+      // Round 10 (31.7): the last card says how the voice is set.
+      const readyLine = (await page.locator('#stepReadyResult').textContent()) ?? ''
+      check('welcome-ready: the last card says only-owner is on after he chose it', readyLine.endsWith(STRINGS.et.welcome.guardOnDone), JSON.stringify(readyLine))
+      await page.locator('#stepReady').screenshot({ path: join(repoRoot, 'docs/proof/r10-voice-6-ready.png') })
       await page.setViewportSize({ width: 1280, height: 800 })
 
       // The toolbar menu's handler: Alustamine, Seaded, Abi.

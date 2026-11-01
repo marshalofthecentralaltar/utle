@@ -140,7 +140,18 @@ export async function runSweep(argv: string[]): Promise<void> {
   for (const m of models) {
     const model = loadSpeakerModel(repoRoot, m.file)
     if (!model.ok) throw new Error(`${m.file}: ${model.reason} (npx tsx scripts/speaker-models.ts)`)
-    const embedded = loaded.map((c) => ({ ...c, embedding: normalised(model.extractor.embed(embeddedSamples(framesOf(c.samples)))) }))
+    // Round 10 (lane VOICE): a clip with too little speech for an embedding (a near-silent take) is
+    // listed and left out, as the gate leaves it out (insufficient_audio), never a crash of the whole run.
+    const unembedded: string[] = []
+    const embedded = loaded.flatMap((c) => {
+      try {
+        return [{ ...c, embedding: normalised(model.extractor.embed(embeddedSamples(framesOf(c.samples)))) }]
+      } catch {
+        unembedded.push(c.file)
+        return []
+      }
+    })
+    if (unembedded.length > 0) console.log(`${m.name}: ${unembedded.length} clip(s) with too little speech for an embedding, left out: ${unembedded.join(', ')}`)
     const owners = embedded.filter((c) => c.label === 'owner')
     const profile = split.method === 'enrol' ? meanEmbedding(owners.filter((o) => enrolSet.has(o.file)).map((o) => o.embedding)) : meanEmbedding(owners.map((o) => o.embedding))
     const scored = embedded
