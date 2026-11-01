@@ -940,6 +940,28 @@ describe('scripted enrolment (round 7)', () => {
     expect(gate.learnt[0]).toHaveLength(1)
   })
 
+  it('round 10 (31.7): frames a flush ends with no recognised words are no phrase attempt (no spurious too_short after an accepted phrase)', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrolScript(12)
+    feed(session, loop, [1, 2, 0])
+    // A breath after the phrase: loud enough to be kept, but the recogniser makes no word of it (-1 decodes to '').
+    session.audio(frame(-1))
+    session.flush()
+    loop.settle()
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([{ type: 'enrolPhrase', count: 1 }])
+    expect(gate.phrased).toHaveLength(1)
+    // A flush that ends words is still a phrase.
+    session.audio(frame(3))
+    session.flush()
+    loop.settle()
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolPhrase')).toEqual([
+      { type: 'enrolPhrase', count: 1 },
+      { type: 'enrolPhrase', count: 2 },
+    ])
+  })
+
   it('answers ok: false when nothing was read, and without a gate', async () => {
     const { gate, sent, session } = setupWithGate()
     session.enrolScript(12)

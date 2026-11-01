@@ -229,9 +229,12 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       return { text, endpoint }
     },
     reset() {
+      // Round 10 (31.7): only frames the recogniser made words of are a phrase attempt; the residue
+      // after an endpoint (a breath, a tail) would otherwise answer a spurious too_short.
+      const words = /[\p{L}\p{N}]/u.test(recognizer.getResult(stream).text)
       recognizer.reset(stream)
       // A flush ends the utterance: while reading phrases, what was said up to it is one.
-      if (scripting && kept.length > 0) takePhrase(kept)
+      if (scripting && words && kept.length > 0) takePhrase(kept)
       kept = []
       keptMs = 0
       ended = null
