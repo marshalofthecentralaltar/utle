@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE, ENDPOINT_TRAILING_MS, verdictFor } from '../src/speech/asrProtocol.ts'
+import { ASR_FRAME_SAMPLES, ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE, ENDPOINT_TRAILING_MS, verdictFor } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage, EndCause, EndpointMode, EnrolFailure, FinalWhy, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import type { Capture } from './capture.ts'
 import type { EnrolPhrase, Judgement, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
@@ -40,7 +40,15 @@ export interface DecodeWhy {
   speechEndMs: number | null
   lastTokenMs: number | null
   extraMs: number
+  paddedMs?: number
 }
+
+/**
+ * Round 10 (#7, lane LATE, ARCHITECTURE 33.2): the most hiss handed to the recogniser ahead of time in one utterance.
+ * Measured on the 18 clips: its rule needs at most about 1.1 s of it; noise the detector took for speech, with no
+ * words, costs at most this much decoding once.
+ */
+export const MAX_PAD_MS = 2000
 
 /** Round 10 (#7, lane LATE): rule 3 of the recogniser (asrModel.ts rule3MinUtteranceLength), for naming the cause. */
 export const RULE3_MS = 30_000
@@ -226,11 +234,38 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
   let fedMs = 0
   let utteranceMs = 0
   let cause: EndCause = 'rule2'
+  /** Round 10 (#7, lane LATE): hiss handed ahead of time in this utterance, and where in the session's audio it began. */
+  let paddedMs = 0
+  let utteranceStartMs = 0
   const forgetUtterance = (): void => {
     pastRuleMs = null
     wordsBefore = ''
     quietMs = 0
     utteranceMs = 0
+    paddedMs = 0
+    utteranceStartMs = inputMs
+  }
+  /**
+   * Round 10 (#7, lane LATE, ARCHITECTURE 33.2). The speech detector has heard the mode's silence (command 0.6 s,
+   * dictation 1.0 s) since speech in this utterance ended. The recogniser learns it only later: it decodes 640 ms
+   * chunks, needs about 200 ms of audio past each, puts the last token up to half a second after the speech, and
+   * counts its rule from that token (measured 2026-11-02: the final came 1.6 to 1.9 s after a command's speech end).
+   * What it would hear meanwhile is known: the detector hands it hiss for all that is not speech. So it gets that hiss
+   * now, as fast as it decodes, until its own rule ends the utterance (the words are its own, from the same input),
+   * at most MAX_PAD_MS. Never before the mode's silence, and not at all without a detector.
+   */
+  const endOnSilence = (f: SpeechFilter): boolean => {
+    const end = f.speechEndMs()
+    if (end === null || end <= utteranceStartMs || paddedMs >= MAX_PAD_MS || f.silenceMs() < ENDPOINT_TRAILING_MS[mode]) return false
+    while (paddedMs < MAX_PAD_MS) {
+      const samples = f.hiss(ASR_FRAME_SAMPLES)
+      paddedMs += frameMs(samples)
+      if (decodeOne({ samples, speech: false }, true)) {
+        if (cause !== 'rule1') cause = 'detector'
+        return true
+      }
+    }
+    return false
   }
   /**
    * Whether the utterance ends with this frame. Rule 1 (nothing heard) ends as the recogniser says.
@@ -257,12 +292,13 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
   }
   // ---------- end of endpointing per mode ----------
 
-  /** One frame into the recogniser; true when it ended the utterance. */
-  const decodeOne = (part: FilteredFrame): boolean => {
+  /** One frame into the recogniser; true when it ended the utterance. Hiss handed ahead of time (ahead) is no one's audio. */
+  const decodeOne = (part: FilteredFrame, ahead = false): boolean => {
     stream.acceptWaveform({ samples: part.samples, sampleRate: ASR_SAMPLE_RATE })
     fedMs += frameMs(part.samples)
     utteranceMs += frameMs(part.samples)
     while (recognizer.isReady(stream)) recognizer.decode(stream)
+    if (ahead) return ends(frameMs(part.samples))
     if (gate) {
       // Without a detector every frame is kept, as before; with one, only speech.
       if (!filter || part.speech) keep(part.samples)
@@ -287,14 +323,15 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
           break
         }
       }
+      if (!endpoint && filter) endpoint = endOnSilence(filter)
       const result = recognizer.getResult(stream)
       const text = result.text.trim()
       const quiet = quietMs
       // Round 10 (#7, lane LATE): the recogniser's clock runs ahead of the session's by the replayed pre-roll.
       const stamps = result.timestamps ?? []
       const lastStamp = stamps.length > 0 ? ((result.start_time ?? 0) + (stamps[stamps.length - 1] ?? 0)) * 1000 : null
-      const extraMs = fedMs - inputMs
-      const why: DecodeWhy = { speechEndMs: filter?.speechEndMs() ?? null, lastTokenMs: lastStamp === null ? null : lastStamp - extraMs, extraMs, ...(endpoint ? { cause } : {}) }
+      const extraMs = fedMs - inputMs - paddedMs
+      const why: DecodeWhy = { speechEndMs: filter?.speechEndMs() ?? null, lastTokenMs: lastStamp === null ? null : lastStamp - extraMs, extraMs, ...(endpoint ? { cause } : {}), ...(paddedMs > 0 ? { paddedMs } : {}) }
       if (endpoint) {
         recognizer.reset(stream)
         forgetUtterance()
@@ -531,6 +568,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       lastChangeMs,
       extraMs: decoderWhy.extraMs,
       droppedMs: droppedMs - droppedBefore,
+      ...(decoderWhy.paddedMs === undefined ? {} : { paddedMs: decoderWhy.paddedMs }),
     }
     forgetWords()
     return why

@@ -79,6 +79,8 @@ describe("a final's why (round 10, #7, lane LATE)", () => {
     expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why }))).toEqual({ type: 'final', text: 'keri alla', why })
     expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, speechEndMs: null, lastTokenMs: null, cause: 'flush' } }))).toEqual({ type: 'final', text: 'keri alla', why: { ...why, speechEndMs: null, lastTokenMs: null, cause: 'flush' } })
     expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, cause: 'guess' } }))).toEqual({ type: 'final', text: 'keri alla' })
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, cause: 'detector', paddedMs: 400 } }))).toEqual({ type: 'final', text: 'keri alla', why: { ...why, cause: 'detector', paddedMs: 400 } })
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, paddedMs: 'some' } }))).toEqual({ type: 'final', text: 'keri alla' })
     expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, audioMs: 'late' } }))).toEqual({ type: 'final', text: 'keri alla' })
   })
 })

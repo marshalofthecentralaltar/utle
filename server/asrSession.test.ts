@@ -1453,3 +1453,145 @@ describe('what ended each utterance (round 10, #7, lane LATE)', () => {
     expect(why?.lastTokenMs).toBe(100)
   })
 })
+
+// ---------- round 10 (#7, lane LATE): ending on the speech detector's silence ----------
+
+/**
+ * A recogniser shaped like the real one (measured 2026-11-02, artifacts/late): it decodes only whole chunks (here 4
+ * frames, the real one 640 ms), puts each word's token DELAY frames after the word (the real one 0.3 to 0.5 s after
+ * the speech end for a last subword), and rule 2 counts 6 blank frames (600 ms) after the last token.
+ */
+class ChunkStream implements OnlineStreamLike {
+  pending: number[] = []
+  decoded = 0
+  heard: Array<{ word: string; at: number }> = []
+  lastToken = -1
+  base = 0
+  acceptWaveform(input: { samples: Float32Array; sampleRate: number }): void {
+    this.pending.push(input.samples[0] ?? 0)
+  }
+}
+class ChunkRecognizer implements OnlineRecognizerLike<ChunkStream> {
+  chunk = 4
+  delay = 2
+  createStream(): ChunkStream {
+    return new ChunkStream()
+  }
+  isReady(stream: ChunkStream): boolean {
+    return stream.pending.length >= this.chunk
+  }
+  decode(stream: ChunkStream): void {
+    for (const value of stream.pending.splice(0, this.chunk)) {
+      if (Math.abs(value) >= 0.5) stream.heard.push({ word: WORDS[(value - 1) % WORDS.length] ?? '', at: stream.decoded + this.delay })
+      stream.decoded += 1
+    }
+    const shown = stream.heard.filter((h) => h.at < stream.decoded)
+    stream.lastToken = shown.at(-1)?.at ?? -1
+  }
+  getResult(stream: ChunkStream): { text: string } {
+    return { text: stream.heard.filter((h) => h.at < stream.decoded).map((h) => h.word).join(' ') }
+  }
+  isEndpoint(stream: ChunkStream): boolean {
+    const since = stream.lastToken >= 0 ? stream.lastToken + 1 : stream.base
+    const trailing = stream.decoded - since
+    return stream.lastToken >= 0 ? trailing >= 6 : trailing >= 24
+  }
+  reset(stream: ChunkStream): void {
+    stream.heard = stream.heard.filter((h) => h.at >= stream.decoded)
+    stream.lastToken = -1
+    stream.base = stream.decoded
+  }
+}
+
+const detectorSetup = (mode: 'command' | 'dictation', vad: () => VadLike = () => new FakeVad(1), recognizer = new ChunkRecognizer()) => {
+  const sent: AsrServerMessage[] = []
+  const loop = new Loop()
+  const session = createAsrSession(decoderInThread(recognizer, null, { vad }), (message) => sent.push(message), { schedule: loop.schedule, now: () => 0 })
+  session.endpointMode(mode)
+  session.trace(true)
+  /** Feeds frames one at a time; the index (0-based) of the frame after which the first final went. */
+  const feed = (values: number[]): number => {
+    let at = -1
+    values.forEach((value, i) => {
+      session.audio(frame(value))
+      loop.settle()
+      if (at < 0 && sent.some((m) => m.type === 'final')) at = i
+    })
+    return at
+  }
+  return { sent, session, feed }
+}
+
+describe("ending on the speech detector's silence (round 10, #7, lane LATE)", () => {
+  it('without a detector the late recogniser ends a command only a chunk after its own rule: frame 11 for speech that ended at frame 1', () => {
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    const session = createAsrSession(decoderInThread(new ChunkRecognizer()), (message) => sent.push(message), { schedule: loop.schedule, now: () => 0 })
+    session.endpointMode('command')
+    let at = -1
+    ;[1, 2, ...silence(16)].forEach((value, i) => {
+      session.audio(frame(value))
+      loop.settle()
+      if (at < 0 && sent.some((m) => m.type === 'final')) at = i
+    })
+    expect(at).toBe(11)
+    expect(finals(sent)).toEqual(['ava uus'])
+  })
+
+  it('command: 600 ms of silence by the detector ends the utterance at once (frame 7), the recogniser deciding the words on the hiss it would have got; no word cut', () => {
+    const { sent, feed } = detectorSetup('command')
+    expect(feed([1, 2, ...silence(16)])).toBe(1 + 6)
+    expect(finals(sent)).toEqual(['ava uus'])
+    expect(whyOf(sent).map((w) => w?.cause)).toEqual(['detector'])
+  })
+
+  it("a last word the recogniser has not shown yet when the silence is reached still makes the final (its token comes from the hiss)", () => {
+    const late = new ChunkRecognizer()
+    late.delay = 7
+    const { sent, feed } = detectorSetup('command', () => new FakeVad(1), late)
+    expect(feed([1, 2, ...silence(20)])).toBe(1 + 6)
+    expect(finals(sent)).toEqual(['ava uus'])
+  })
+
+  it("dictation never ends before 1.0 s of the detector's silence: nothing at 0.9 s, the final at 1.0 s", () => {
+    const { sent, feed } = detectorSetup('dictation')
+    const at = feed([1, 2, ...silence(20)])
+    expect(at).toBe(1 + 10)
+    expect(finals(sent)).toEqual(['ava uus'])
+  })
+
+  it('words after a pause shorter than the mode continue the same utterance', () => {
+    const { sent, feed } = detectorSetup('command')
+    feed([1, ...silence(4), 3, ...silence(16)])
+    expect(finals(sent)).toEqual(['ava vaheleht'])
+  })
+
+  it("counts the silence from Silero's own end of the segment when the detector gives one", () => {
+    // SegmentVad says speech ended at 156.25 ms: 600 ms later is inside frame 7, the same frame.
+    const { sent, feed } = detectorSetup('command', () => new SegmentVad(1))
+    expect(feed([1, 2, ...silence(16)])).toBe(7)
+    expect(finals(sent)).toEqual(['ava uus'])
+  })
+
+  it('noise the detector took for speech, with no words, gives the hiss at most MAX_PAD_MS once and ends nothing', () => {
+    const { sent, feed } = detectorSetup('command', () => new FakeVad(1), new ChunkRecognizer())
+    // Value 8 is "speech" to the FakeVad but the recogniser hears no word in a hiss-level... use a quiet word-less frame:
+    feed([0.3, 0.3, ...silence(10)])
+    expect(finals(sent)).toEqual([])
+  })
+
+  it('with only the owner on, the detector-ended final is still verified on its own frames before its words leave', () => {
+    const gate = new FakeGate()
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    const session = createAsrSession(decoderInThread(new ChunkRecognizer(), gate, { vad: () => new FakeVad(1) }), (message) => sent.push(message), { schedule: loop.schedule, now: () => 0 })
+    session.endpointMode('command')
+    session.onlyOwner(true)
+    for (const value of [1, 2, ...silence(16)]) {
+      session.audio(frame(value))
+      loop.settle()
+    }
+    expect(sent.some((m) => m.type === 'partial' || m.type === 'pause')).toBe(false)
+    expect(sent.filter((m) => m.type === 'final' || m.type === 'rejected').length).toBe(1)
+  })
+})

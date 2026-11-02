@@ -121,6 +121,10 @@ export interface SpeechFilter {
    * the last frame it heard as speech.
    */
   speechEndMs(): number | null
+  /** Round 10 (#7, lane LATE): ms of audio pushed since the last speech ended; 0 while speech is detected or before any. */
+  silenceMs(): number
+  /** Round 10 (#7, lane LATE): the next `length` samples of the faint hiss the decoder hears for what is not speech. */
+  hiss(length: number): Float32Array
 }
 
 const ms = (samples: Float32Array): number => (samples.length * 1000) / ASR_SAMPLE_RATE
@@ -177,6 +181,12 @@ export function createSpeechFilter(vad: VadLike, preRollMs = PRE_ROLL_MS): Speec
     },
     speechEndMs() {
       return endMs
+    },
+    silenceMs() {
+      return detected || endMs === null ? 0 : heardMs - endMs
+    },
+    hiss(length) {
+      return quiet(length)
     },
   }
 }

@@ -31,10 +31,11 @@ export const ENDPOINT_TRAILING_MS: Readonly<Record<EndpointMode, number>> = { co
 
 /**
  * Round 10 (#7, lane LATE): what ended an utterance. rule1, rule2, rule3: the recogniser's own endpoint rules
- * (rule 1: nothing heard for 2.4 s; rule 2: trailing silence after the last word; rule 3: 30 s long); flush: the
- * client asked.
+ * (rule 1: nothing heard for 2.4 s; rule 2: trailing silence after the last word; rule 3: 30 s long); detector: the
+ * speech detector heard the mode's silence and the recogniser's rule 2 then held on the hiss it was handed at once
+ * (ARCHITECTURE 33.2); flush: the client asked.
  */
-export type EndCause = 'rule1' | 'rule2' | 'rule3' | 'flush'
+export type EndCause = 'rule1' | 'rule2' | 'rule3' | 'detector' | 'flush'
 /**
  * Round 10 (#7, lane LATE): when and why a final was made, in numbers only (never words or audio). Audio times are
  * ms of the session's audio as the client sent it (dropped audio not counted); wall times are ms since the session's
@@ -58,6 +59,8 @@ export interface FinalWhy {
   extraMs: number
   /** Audio dropped by the backlog while this utterance was in progress. */
   droppedMs: number
+  /** The hiss handed to the recogniser ahead of time to end this utterance (cause detector). */
+  paddedMs?: number
 }
 
 /** The lines the page shows when the local recogniser cannot run (src/speech/pick.ts). */
@@ -272,7 +275,7 @@ export type AsrClientMessage =
   /** Round 10 (#7, lane LATE): attach each final's why (timings and a cause, no words) from now on; for measuring. */
   | { type: 'trace'; on: boolean }
 
-const END_CAUSES: readonly EndCause[] = ['rule1', 'rule2', 'rule3', 'flush']
+const END_CAUSES: readonly EndCause[] = ['rule1', 'rule2', 'rule3', 'detector', 'flush']
 const msOrNull = (value: unknown): number | null | undefined => (value === null ? null : typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 
 /** Round 10 (#7, lane LATE): a final's why, or null when anything in it is not a number or a known cause. */
@@ -287,7 +290,9 @@ export function parseWhy(value: unknown): FinalWhy | null {
   const lastWordMs = msOrNull(r.lastWordMs)
   const lastChangeMs = msOrNull(r.lastChangeMs)
   if (speechEndMs === undefined || lastTokenMs === undefined || lastWordMs === undefined || lastChangeMs === undefined) return null
-  return { cause, audioMs: r.audioMs as number, wallMs: r.wallMs as number, speechEndMs, lastTokenMs, lastWordMs, lastChangeMs, extraMs: r.extraMs as number, droppedMs: r.droppedMs as number }
+  if (r.paddedMs !== undefined && !(typeof r.paddedMs === 'number' && Number.isFinite(r.paddedMs))) return null
+  const why: FinalWhy = { cause, audioMs: r.audioMs as number, wallMs: r.wallMs as number, speechEndMs, lastTokenMs, lastWordMs, lastChangeMs, extraMs: r.extraMs as number, droppedMs: r.droppedMs as number }
+  return typeof r.paddedMs === 'number' ? { ...why, paddedMs: r.paddedMs } : why
 }
 
 /** Reads one text frame from the server; null for anything that is not a known message. */
