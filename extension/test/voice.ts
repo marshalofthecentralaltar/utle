@@ -324,6 +324,12 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
       // its verdict. Until round 9 (7a5ce7c) the box showed the words as he spoke them.
       check('1. no words previewed into the box: its first text is the whole sentence (32.3)', Number.isFinite(finalAt) && valuesBefore.length === 0, `${valuesBefore.length}: ${JSON.stringify(valuesBefore)}`)
       check('5. first words on the strip while speech is still playing (32.3)', firstHeardAt < sentenceEnd, `${firstHeardAt - sentenceEnd} ms`)
+      // README promises the sentence in the box about 3 s after his last word. Five runs on main
+      // (2026-11-02, HANDOFF 1s): 2729 to 3348 ms, the addressee verdict 1.4 to 1.8 s of it. 4500 ms
+      // leaves about 1.2 s for a loaded machine and stays under the server's ADDRESSEE_TIMEOUT_MS (5000),
+      // so a verdict that only comes at the timeout fails here instead of passing silently.
+      const LANDS_WITHIN_MS = 4500
+      check(`5. the sentence lands in the box within ${LANDS_WITHIN_MS} ms of its end (32.3)`, finalAt - sentenceEnd <= LANDS_WITHIN_MS, `${finalAt - sentenceEnd} ms`)
       check('8. heard line font size >= 24 px', (late?.heardPx ?? 0) >= 24, `${late?.heardPx} px`)
       check('8. strip heard text changed at least 3 times during the sentence', heardDuring.size >= 3, `${heardDuring.size}: ${JSON.stringify([...heardDuring])}`)
       check('8. 5 s after speech ends the strip still shows the last words', (late?.heard ?? '') !== '', `${Math.round(Date.now() - saadaEnd)} ms after: ${JSON.stringify(late?.heard)}`)

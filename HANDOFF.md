@@ -939,10 +939,13 @@ green on main). README's WhatsApp line said the words appear in the box as he sp
 the strip live, the sentence in the box about three seconds after his last word (wake mode ACTIVE still types
 live; only-owner shows nothing until his voice is confirmed). Header of voice.ts names `UTLE_ONLY=dictate`.
 
-What it costs him, measured: the box gets his words 2.8 to 4.0 s after he stops (the addressee check, 1.4 to
-1.8 s, then the tidy), where round 9 typed them while he spoke. Every dictated sentence in a chat box is asked
-(`probe` uses `SEND_PROBE_BOX`, never a document, so `documentAsks` is true). That is 32.3's trade, not a fault
-here; if testers find it slow, the place to change is 32.3, not the test.
+What it costs him, measured: the box gets his words 2.7 to 3.3 s after he stops on main over five runs (2729,
+3332, 3161, 3348, 2909 ms; one run on b052456: 4.0 s), the addressee check 1.4 to 1.8 s of it, where round 9
+typed them while he spoke. Every dictated sentence in a chat box is asked (`probe` uses `SEND_PROBE_BOX`, never
+a document, so `documentAsks` is true). Section 1 now bounds it: "5. the sentence lands in the box within
+4500 ms of its end (32.3)", N = 4500 for about 1.2 s of headroom under load and below the server's
+`ADDRESSEE_TIMEOUT_MS` (5000), so a verdict that only comes at the timeout fails the check. That is 32.3's
+trade, not a fault here; if testers find it slow, the place to change is 32.3, not the test.
 
 The hover check ("4. hovering the microphone 1.3 s turns listening on") that fails in some runs: the first hover
 of a session makes the offscreen document (count 0 before, 1 after, in every run), and that has to fit in the
