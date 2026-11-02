@@ -944,6 +944,15 @@ What it costs him, measured: the box gets his words 2.8 to 4.0 s after he stops 
 (`probe` uses `SEND_PROBE_BOX`, never a document, so `documentAsks` is true). That is 32.3's trade, not a fault
 here; if testers find it slow, the place to change is 32.3, not the test.
 
+The hover check ("4. hovering the microphone 1.3 s turns listening on") that fails in some runs: the first hover
+of a session makes the offscreen document (count 0 before, 1 after, in every run), and that has to fit in the
+300 ms the check leaves after the 1000 ms dwell. Five runs of section 1, CPU before each (the other lane's
+work loaded the machine): listening came on 1240, 1115, 1267, **1685** and 1157 ms after the pointer reached the
+microphone, at CPU 57-90, 28, 77-96, **88-99** and 80-99 %. Only the run at 88-99 % missed. Not a product fault
+in the hover (the dwell fires at 1000 ms); a margin the machine's load eats. Section 1 now logs the `HOVER:`
+line, so a miss says by how much. After the fix: full `UTLE_REAL=1 voice.ts` 55 PASS, ALL PASS (sections 1, 2,
+6, 7, 8); `npm run check` 60 files, 4238 tests; `run.ts` 330 PASS, ALL PASS.
+
 Logs: `artifacts/live/` in the worktree (good-7a5ce7c, main-8c7b705, bisect-*, bisect-firstparent.log,
 bisect-inner.log, hover-1..5, full-voice, suite).
 
