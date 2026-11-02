@@ -981,6 +981,11 @@ fresh decode worker (`artifacts/startup.ts`, the machine was NOT idle: 29 to 58 
 | 2 | 32 % / 32 % | 11764 ms, 615 MB | 5929 ms, 423 MB |
 | 3 | 29 % / 56 % | 12872 ms, 617 MB | 7639 ms, 423 MB |
 
+Ruling (review round 2): the spotter keeps loading at start, for everyone (+~6 s, +~193 MB); a load at the first ask
+stalls decoding mid-use, and a second worker is not worth it now. `UTLE_SPOTTER=off` leaves it out. Rebased on main
+8133773 (LATE merged): the spotter hears the parts the recogniser decodes, not the not-speech LATE skips after a
+detector-ended final (`aheadMs`); it restarts at every endpoint, so nothing it needs is in them.
+
 Not verified: a real voice (every number above is SYNTHETIC), a real room or microphone, false wakes per hour (4.5
 minutes of negative audio is far from the hours a 0.1 per hour claim needs), the extension in Chrome end to end with
 the spotter (section 9 has no browser), the confirmation time target (p95 1.1 s from the speech end against the issue's

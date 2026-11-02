@@ -3112,7 +3112,11 @@ server feeds one connection (HANDOFF 1r has the tables).
 - Cost: about 13 % of one core (CPU time over audio time, one thread); about 200 MB more resident
   memory at load (a second copy of the 155 MB int8 encoder) and about 250 MB after ten minutes of
   audio on one stream. Loaded with the recogniser at the server's start (35.2); `UTLE_SPOTTER=off`
-  leaves it out.
+  leaves it out. Start-up, a fresh decode worker, three runs each on a busy machine (29 to 58 % CPU):
+  to loaded 11.7, 11.8, 12.9 s and 615 to 617 MB with the spotter; 5.9, 5.9, 7.6 s and 423 MB without
+  (about +6 s, +193 MB). Ruled 2026-11-02 (review round 2): it keeps loading at start, for everyone,
+  because a load at the first wake-mode ask stalls decoding mid-use (20.8 s measured) and a second
+  worker for it is not worth it now.
 - Time: the spotter confirms the bare word about 1.0 s after the speech ends (p50 967 ms, p95
   1114 ms, in 100 ms frames). That misses the issue's trial target (p95 800 ms from the keyword's
   end); it costs the user nothing today, because the wake is taken with the final, which comes later
