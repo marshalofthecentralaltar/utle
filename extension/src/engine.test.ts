@@ -2639,6 +2639,88 @@ describe('round 10 (#6): always-on mode keeps room speech out of the bar and out
     expect(t.page().text).toContain('jõuan kell viis')
   })
 
+  it('round 10 prompt 6 (QUICK): the check is asked on the stable words before the hold releases the final; the final takes that verdict without a second ask, and nothing is typed before the final (32.3)', async () => {
+    const checked: AddresseeRequest[] = []
+    const pending: { release: ((a: AddresseeAnswer) => void) | null } = { release: null }
+    const t = setup({
+      logic: { ...asking, inpagePreview: previewing.inpagePreview },
+      box: ARMED,
+      ask: (request) => Promise.resolve(answer({ kind: 'dictate', text: request.utterance })),
+      addressee: (request) => {
+        checked.push(request)
+        return new Promise<AddresseeAnswer>((resolve) => {
+          pending.release = resolve
+        })
+      },
+    })
+    t.engine.start()
+    t.say('saada')
+    t.partial('jõuan kell viis')
+    // The final arrived at the client: its words are stable, the client still holds it (LOCAL_HOLD_MS).
+    t.handlers()?.onStable?.('jõuan kell viis')
+    await vi.waitFor(() => expect(checked.map((c) => c.utterance)).toEqual(['jõuan kell viis']))
+    expect(checked[0]?.finals).toEqual(['saada'])
+    pending.release?.({ verdict: 'dictation' })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // The verdict is in, the final is not: nothing typed yet.
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    // The pause names the same words again: no second ask.
+    t.handlers()?.onStable?.('jõuan kell viis')
+    t.say('jõuan kell viis')
+    await t.engine.idle()
+    expect(checked.map((c) => c.utterance)).toEqual(['jõuan kell viis'])
+    const typed = t.ran.flatMap((c) => (c.kind === 'setText' ? [c.text] : []))
+    expect(typed.length).toBeGreaterThan(0)
+    expect(typed.every((x) => x.includes('jõuan kell viis'))).toBe(true)
+  })
+
+  it('round 10 prompt 6 (QUICK): a final whose words or finals differ from the stable words is asked again, the early verdict dropped unread; "katkesta" drops it too; only the owner: no ask without a verified decision', async () => {
+    const checked: string[] = []
+    const t = setup({
+      logic: { ...asking, inpagePreview: previewing.inpagePreview },
+      box: ARMED,
+      ask: (request) => Promise.resolve(answer({ kind: 'dictate', text: request.utterance })),
+      addressee: (request) => {
+        checked.push(request.utterance)
+        // The fragment reads as dictation; the whole sentence is room talk.
+        return request.utterance === 'kas sa tuled' ? Promise.resolve({ verdict: 'dictation' }) : roomAware(request)
+      },
+    })
+    t.engine.start()
+    t.handlers()?.onStable?.('kas sa tuled')
+    await vi.waitFor(() => expect(checked).toEqual(['kas sa tuled']))
+    // The final kept more words than the stable ones (the hold joined the next final): asked again.
+    t.say('kas sa tuled ka poodi')
+    await t.engine.idle()
+    expect(checked).toEqual(['kas sa tuled', 'kas sa tuled ka poodi'])
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    expect(t.page().text).toBe('Tere.')
+    // Stable words, then "katkesta", then the same words as a final: asked again after the cancel.
+    t.handlers()?.onStable?.('jõuan kell viis')
+    await vi.waitFor(() => expect(checked.at(-1)).toBe('jõuan kell viis'))
+    t.say('katkesta')
+    t.say('jõuan kell viis')
+    await t.engine.idle()
+    expect(checked.filter((x) => x === 'jõuan kell viis')).toHaveLength(2)
+
+    // Only the owner: stable words without a verified owner decision ask nothing.
+    const owned: string[] = []
+    const o = setup({
+      logic: asking,
+      box: ARMED,
+      onlyOwner: true,
+      addressee: (request) => {
+        owned.push(request.utterance)
+        return roomAware(request)
+      },
+    })
+    o.engine.start()
+    o.handlers()?.onStable?.('jõuan kell viis')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await o.engine.idle()
+    expect(owned).toEqual([])
+  })
+
   it('review 1 (cancel): "katkesta" does not wait behind a pending check, and the pending sentence is dropped with everything else', async () => {
     const t = setup({ logic: asking, box: ARMED, addressee: () => new Promise<AddresseeAnswer>(() => undefined) })
     t.engine.start()
