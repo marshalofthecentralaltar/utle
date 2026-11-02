@@ -309,6 +309,8 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
     const finalAt = samples.find((x) => x.box.trim() === final && final !== '')?.t ?? NaN
     const firstHeardAt = samples.find((x) => x.t >= speechStart && x.heard.trim() !== '')?.t ?? NaN
     console.log(`      TIMING${baseline ? ' (baseline)' : ''}: end of the sentence at ${sentenceEnd - speechStart} ms; first words on the strip ${firstHeardAt - sentenceEnd} ms after it; first words in the box ${firstAt - sentenceEnd} ms after it; final text in the box ${finalAt - sentenceEnd} ms after it (negative: while still speaking)`)
+    // Round 10 prompt 6 (QUICK): epoch ms, to set beside the server's at= stamps ([asr] final, [addressee]).
+    console.log(`      STAGES: sentenceEndAt=${sentenceEnd} landedAt=${finalAt}`)
 
     const valuesBefore: string[] = []
     for (const x of samples) {

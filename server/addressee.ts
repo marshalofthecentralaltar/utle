@@ -79,12 +79,12 @@ export async function addresseeAnswer(input: unknown, deps: { model: Model }): P
     reply = await deps.model.ask(addresseeAsk(parsed.data))
   } catch (error) {
     const mapped = toError(error)
-    console.info(`[addressee] error=${mapped.code} ms=${Date.now() - started}`)
+    console.info(`[addressee] error=${mapped.code} at=${started} ms=${Date.now() - started}`)
     throw mapped
   }
   const verdict = verdictOf(reply)
   const { usage } = reply
-  console.info(`[addressee] verdict=${verdict ?? 'bad'} ms=${Date.now() - started} in=${usage.input + usage.cacheWrite} out=${usage.output} provider=${reply.provider}`)
+  console.info(`[addressee] verdict=${verdict ?? 'bad'} at=${started} ms=${Date.now() - started} in=${usage.input + usage.cacheWrite} out=${usage.output} provider=${reply.provider}`)
   if (verdict === null) throw new InterpretError('upstream_unavailable', 'The assistant gave no verdict.')
   return { verdict, usage: { ...usage, provider: reply.provider, model: reply.model } }
 }

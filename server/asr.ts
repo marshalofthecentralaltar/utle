@@ -205,7 +205,8 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             ws.close(1011)
           },
           onJudged: (judgement, onlyOwner) => console.info(judgedLine(judgement, onlyOwner)),
-          onEnded: (why) => console.info(endedLine(why)),
+          // Round 10 prompt 6 (QUICK): at= the wall clock (epoch ms) the final left, to time the stages after it.
+          onEnded: (why) => console.info(`${endedLine(why)} at=${Date.now()}`),
         })
         send(ws, { type: 'ready' })
         ws.on('message', (data: RawData, isBinary: boolean) => {
