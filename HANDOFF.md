@@ -807,6 +807,25 @@ questions instead of one rule action. "järgmine" alone is instant in both codes
 "Järgmine | vaheleht" too once the recogniser does. Not fixed in this round; a fix is proposed to the planner. Output:
 `artifacts/late/splice-main.txt`, `splice-branch.txt`, `pieces.txt` (not committed).
 
+**Review round 2: both proposals built** (f7680f8, 0753ded). (A) After a detector-ended final the recogniser skips as
+much arriving not-speech as it decoded ahead, so nothing is decoded twice; speech is never skipped. (B) The server
+sends the wordless `{ type: 'activity', onset: true }` when the detector hears speech start, in both modes. The client
+holds a held final `ONSET_HOLD_MS` (1.2 s) from it, once per final. A 700 ms restart was tried first and still split
+0.7 and 0.9 s pauses, because the resumed words come up to about a second after the onset. The tests were red first
+(`artifacts/late/red-review2.txt`).
+
+- Pauses (`artifacts/late/splice2-main.txt`, `splice2-branch.txt`, same clips and cuts as above): at 0.7, 0.9 and
+  1.2 s every spliced command now arrives as ONE utterance on the branch, as on main.
+- Hold bound: a partial with words restarts the hold with no cap on both codes. An onset without words holds a final
+  at most 1.9 s after it on the branch, against 0.7 s on main (test "bounded" in `src/speech/local.test.ts`).
+- Latency, one more interleaved round at 31 to 34 % CPU (`artifacts/late/round-r2-command.md`): base 1401 / 1914,
+  branch 864 / 937. The paired p50 is 502 ms (min -51, max 1179), words were identical on all 18 clips, and WER was
+  1/33 in both.
+- voice.ts on the branch at 24 % CPU (`artifacts/late/voice-r2.log`): 53 PASS / 2 FAIL. Sections 6, 7 and 8 passed
+  26 of 26 with 0 s dropped. The 2 FAILs ("box texts", "first words") are among base's 3 section 1 FAILs; the hover
+  check passed this time.
+- `npm run check`: 59 files, 4231 tests. Browser suite: 330 PASS, ALL PASS.
+
 **voice.ts on base and branch (review round 1).** Run back to back under the lock on vite 5194 (5193 was held by another lane's vite): base 2edb8b5 gave 52 PASS / 3 FAIL, the branch 51 PASS / 4 FAIL. The three section 1 FAILs ("hovering the microphone 1.3 s turns listening on", "at least 3 distinct box texts", "first words visible while speech is still playing") fail on base too: they predate this lane. Sections 7 and 8 passed 18 of 18 on both. The branch's fourth FAIL, section 6 "üks opens the first tile", came with the CPU at 100 % (model load 25.7 s). The server's backlog dropped 5 s of that session's audio, "üks" among it. Base, at 76 %, dropped 1 s and lost nothing; the branch's earlier run (18:07) dropped nothing and passed section 6. The hiss handed ahead is decoding on top of the real-time frames (up to 1.3 s of audio per utterance), so on a starved machine it can add to the backlog. Not fixed here; a fix is proposed to the planner. Logs: `artifacts/late/voice-base.log`, `voice-branch.log`, `voice.log`; the server's lines in `artifacts/late/vite-5193-base.log` and `vite-5193-branch.log` (not committed).
 
 ## 1p. Round 10, prompt 3, lane AMBIGUITY (2026-11-02): what he meant, on the page he is on (#5)

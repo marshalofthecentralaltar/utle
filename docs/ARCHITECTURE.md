@@ -2916,7 +2916,11 @@ utterance; the detector's pre-roll replays its onset, as at any onset. On the au
 to 880 ms after the speech end (main: 780 to 1940), dictation finals 1040 to 1280 (main: 1180 to 2340). They are never
 less than the mode's silence after the detector's end. The hiss handed ahead costs one or two chunk decodes at the end
 of an utterance: 57 ms p50 in one probe run, about 300 ms in another while another process loaded the CPU (an idle
-machine was not measured). It also shortens how long a command may pause inside itself: HANDOFF 1q. Wall time, three runs each: HANDOFF 1q.
+machine was not measured). Review 2: the hiss is not decoded twice. After a final ended this way, the decoder skips
+as much arriving not-speech as it handed ahead. The skip sits in `accept`, beside `decodeOne`. Speech is never skipped
+and ends the skip, so an onset decodes as always, its pre-roll included. Before this, voice.ts at 100 % CPU had the
+extra decoding feed a backlog that dropped 5 s of audio, "üks" among it. A pause inside a command is held by the
+detector's onset (33.3). Wall time, three runs each: HANDOFF 1q.
 
 ### 33.3 Acting on a partial (`server/asrSession.ts` `PAUSE_MS`, `src/speech/local.ts` `onPause`)
 
@@ -2926,6 +2930,16 @@ comes about 0.8 s after Silero's end of speech, about 1 s after the -40 dBFS end
 detector's 0.6 s (33.2), usually before its pause; the pause still comes before a dictation final.) A partial the rules know (`inpageInstant`, the same test as the
 quick-reply release of round 3) that is settling on exactly those words is released at once instead of after
 `INSTANT_SETTLE_MS`; its final is swallowed as for any released reply, so the command runs once.
+
+**The detector's onset (lane LATE review 2, `server/asrSession.ts`, `src/speech/local.ts`, `ONSET_HOLD_MS`).** When
+the speech detector hears speech start, the server sends the wordless `{ type: 'activity', onset: true }`. It goes in
+both modes, and it signals no utterance, so nothing is closed or rejected for it and no word leaves (31.2 unchanged).
+The client holds a held final `ONSET_HOLD_MS` (1.2 s) from it, once per final, because the first words of the resumed
+speech arrive up to about a second after the onset (33.2). Without this, ending on the detector's 0.6 s split a
+command with a 0.7 to 1.2 s pause inside it into two utterances; main had joined them, because its late final left
+the second piece inside the 700 ms hold. With it they join again (HANDOFF 1q). Bound: a partial with words restarts
+the hold with no cap, on main as here. An onset without words holds a final at most `LOCAL_HOLD_MS` +
+`ONSET_HOLD_MS` (1.9 s) after it; main held it 0.7 s.
 
 A command that a longer command starts with is never released from a partial, neither on the pause nor on the
 settle (`src/core/commandPrefix.ts` `extendsCommand`, used in `src/speech/local.ts` beside `isInstant`): "keri" and a
