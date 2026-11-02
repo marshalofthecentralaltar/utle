@@ -2,7 +2,7 @@ import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { COMMAND_FORMS, extendsCommand } from '../core/commandPrefix.ts'
 import { createAssembler } from './assembler.ts'
 import type { AssemblerOptions } from './assembler.ts'
-import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, authorizes, parseAsrMessage } from './asrProtocol.ts'
+import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, ONSET_HOLD_MS, authorizes, parseAsrMessage } from './asrProtocol.ts'
 import type { AsrClientMessage, AsrServerMessage, EndpointMode, SpeakerDecision, SpeakerReason, SpeakerSessionInfo } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
 
@@ -475,7 +475,7 @@ export function createLocalRecognizer(
           if (message.onset === true) {
             if (!assembler.idle() && !onsetHeld) {
               onsetHeld = true
-              assembler.activity()
+              assembler.activity(ONSET_HOLD_MS)
             }
             return
           }

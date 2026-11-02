@@ -1190,7 +1190,10 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
     socket().says({ type: 'activity', onset: true })
     vi.advanceTimersByTime(600)
     socket().says({ type: 'activity', onset: true })
-    vi.advanceTimersByTime(150)
+    // The first onset held it ONSET_HOLD_MS from 600 ms; the second one adds nothing: released by 1800 ms.
+    vi.advanceTimersByTime(550)
+    expect(utterances).toEqual([])
+    vi.advanceTimersByTime(100)
     expect(utterances).toEqual([['keri natuke', undefined]])
   })
   const setup = (options: { onlyOwner?: boolean; longerCommands?: readonly string[] } = {}) => {

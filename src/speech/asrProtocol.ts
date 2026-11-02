@@ -14,6 +14,12 @@ export const ASR_MAX_FRAME_BYTES = ASR_SAMPLE_RATE * 4
  */
 export const LOCAL_HOLD_MS = 700
 /**
+ * Round 10 (#7, lane LATE review 2): how long a held final waits after the speech detector heard speech start (the
+ * activity with onset), once per final. The first words of that speech reach the client up to about a second after
+ * it starts (the recogniser's 640 ms chunk and its token delay, ARCHITECTURE 33.2), so a pause inside a command joins.
+ */
+export const ONSET_HOLD_MS = 1200
+/**
  * How long a partial that is a quick reply must stay unchanged before it is released. Longer than
  * the gap between the model's partials (about 620 ms), so "ei, mitte kolm" is never cut at "ei".
  */
