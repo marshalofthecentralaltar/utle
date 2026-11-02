@@ -910,6 +910,55 @@ says the same. Eval on r10-ambig, Sonnet, 106 cases: 105/106 ($0.00538 per compl
 run 1 only: "recovery: not on the page, scroll once, then search [2/2]" on YouTube answered scroll down
 where siteSearch was wanted (2 of 7 runs since the round 10 prompt). Logs: `artifacts/eval-round2-*.txt`.
 
+## 1s. Round 10, prompt 5, lane LIVE (2026-11-02): why voice.ts section 1 was red; the test, not the product
+
+`UTLE_REAL=1 UTLE_ONLY=dictate voice.ts` (section 1, real model, the chat fixture in the toggle mode) failed
+"1. at least 3 distinct box texts before the final one" (`0: []`) and "5. first words visible while speech is
+still playing" on main since round 10 prompt 2. Reproduced: 7a5ce7c ALL PASS (box previews at -711 ms, final
+in the box 1021 ms after the sentence), 8c7b705 the same 2 FAILs (box empty until the whole sentence, 2793 ms
+after it; the strip changed 4 times during the sentence).
+
+Bisect (section 1 per step, under the suite lock; a hover miss would have been a skip, none happened):
+first-parent 7a5ce7c..8133773 named the merge f9c8c69 (round 10 prompt 2, VOICE and LISTEN); inside it,
+bf70016..3c31dbc named **b052456** `fix(#6, review 1): ... no box preview before a verdict ...` (85b6148 good:
+three box previews, then the final 1640 ms after the sentence; b052456 bad: the box's first text is the whole
+sentence 3981 ms after it; both runs `[addressee] verdict=dictation` 1441 / 1849 ms).
+
+Cause, one sentence: lane LISTEN's review 1 made the toggle and always-on modes stop typing partials into the
+box on purpose, so a voice in the room is never typed into his message before the addressee check answers
+(engine.ts: the addressee wrapper's `onInterim` publishes `heard` and no longer calls the inner `onInterim`;
+ARCHITECTURE 32.3: "Partials are shown on the strip (his only live feedback) and never previewed into the box:
+dictation lands with the final and its verdict, not live"). Class: **test**. Section 1 still checked the round 3
+contract. The product does what 32.3 says; 31.2 (only-owner, no unverified word anywhere) is untouched.
+
+Fixed: section 1 now checks "1. no words previewed into the box: its first text is the whole sentence (32.3)"
+and "5. first words on the strip while speech is still playing (32.3)"; `inpage-live.png` is taken when the
+strip's words change, not the box's. New engine test "round 10 prompt 5 (LIVE): his own dictation in the toggle
+mode is live on the strip only; ..." (red with the pre-b052456 `onInterim`, `artifacts/live/unit-red.log`;
+green on main). README's WhatsApp line said the words appear in the box as he speaks; it now says what he sees:
+the strip live, the sentence in the box about three seconds after his last word (wake mode ACTIVE still types
+live; only-owner shows nothing until his voice is confirmed). Header of voice.ts names `UTLE_ONLY=dictate`.
+
+What it costs him, measured: the box gets his words 2.7 to 3.3 s after he stops on main over five runs (2729,
+3332, 3161, 3348, 2909 ms; one run on b052456: 4.0 s), the addressee check 1.4 to 1.8 s of it, where round 9
+typed them while he spoke. Every dictated sentence in a chat box is asked (`probe` uses `SEND_PROBE_BOX`, never
+a document, so `documentAsks` is true). Section 1 now bounds it: "5. the sentence lands in the box within
+4500 ms of its end (32.3)", N = 4500 for about 1.2 s of headroom under load and below the server's
+`ADDRESSEE_TIMEOUT_MS` (5000), so a verdict that only comes at the timeout fails the check. That is 32.3's
+trade, not a fault here; if testers find it slow, the place to change is 32.3, not the test.
+
+The hover check ("4. hovering the microphone 1.3 s turns listening on") that fails in some runs: the first hover
+of a session makes the offscreen document (count 0 before, 1 after, in every run), and that has to fit in the
+300 ms the check leaves after the 1000 ms dwell. Five runs of section 1, CPU before each (the other lane's
+work loaded the machine): listening came on 1240, 1115, 1267, **1685** and 1157 ms after the pointer reached the
+microphone, at CPU 57-90, 28, 77-96, **88-99** and 80-99 %. Only the run at 88-99 % missed. Not a product fault
+in the hover (the dwell fires at 1000 ms); a margin the machine's load eats. Section 1 now logs the `HOVER:`
+line, so a miss says by how much. After the fix: full `UTLE_REAL=1 voice.ts` 55 PASS, ALL PASS (sections 1, 2,
+6, 7, 8); `npm run check` 60 files, 4238 tests; `run.ts` 330 PASS, ALL PASS.
+
+Logs: `artifacts/live/` in the worktree (good-7a5ce7c, main-8c7b705, bisect-*, bisect-firstparent.log,
+bisect-inner.log, hover-1..5, full-voice, suite).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

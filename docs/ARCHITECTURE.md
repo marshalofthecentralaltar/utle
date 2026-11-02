@@ -2843,6 +2843,10 @@ once and drops the checks still pending. Eval: 16 cases in `scripts/intent-eval.
 `src/core/wake.test.ts`, `src/core/listen.test.ts`, engine tests "wake mode" and "always-on mode",
 `server/addressee.test.ts`, `voice.ts` section 8 (SYNTHETIC two voices, `scripts/listen-set.ts`,
 through TalTech's model, TitaNet and the real engine), the "ütle" hotword in `asr-hotwords-eval.ts`.
+The box half of 32.3 in the browser (round 10 prompt 5, lane LIVE): `voice.ts` section 1 dictates into the
+chat fixture in the toggle mode with the real model; the box's first text is the whole sentence, the
+strip shows his words while he speaks. Until b052456 (LISTEN review 1) section 1 checked the round 3
+contract (at least three box previews before the final) and has been red since that commit.
 
 ## 33. Round 10: speed (FAST lane, issue #7)
 

@@ -2608,6 +2608,37 @@ describe('round 10 (#6): always-on mode keeps room speech out of the bar and out
     expect(t.heard.at(-1)).toBe('')
   })
 
+  it('round 10 prompt 5 (LIVE): his own dictation in the toggle mode is live on the strip only; the box gets the whole sentence with its verdict (32.3)', async () => {
+    const pending: { release: ((a: AddresseeAnswer) => void) | null } = { release: null }
+    const t = setup({
+      logic: { ...asking, inpagePreview: previewing.inpagePreview },
+      box: ARMED,
+      ask: (request) => Promise.resolve(answer({ kind: 'dictate', text: request.utterance })),
+      addressee: () =>
+        new Promise<AddresseeAnswer>((resolve) => {
+          pending.release = resolve
+        }),
+    })
+    t.engine.start()
+    t.partial('jõuan')
+    t.partial('jõuan kell')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    // While he speaks: every partial on the strip, nothing typed.
+    expect(t.heard).toEqual(expect.arrayContaining(['jõuan', 'jõuan kell']))
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    t.say('jõuan kell viis')
+    await vi.waitFor(() => expect(pending.release).not.toBeNull())
+    expect(t.ran.filter((c) => c.kind === 'setText')).toEqual([])
+    expect(t.page().text).toBe('Tere.')
+    pending.release?.({ verdict: 'dictation' })
+    await t.engine.idle()
+    // The verdict is in: the sentence lands whole, never a piece of it.
+    const typed = t.ran.flatMap((c) => (c.kind === 'setText' ? [c.text] : []))
+    expect(typed.length).toBeGreaterThan(0)
+    expect(typed.every((x) => x.includes('jõuan kell viis'))).toBe(true)
+    expect(t.page().text).toContain('jõuan kell viis')
+  })
+
   it('review 1 (cancel): "katkesta" does not wait behind a pending check, and the pending sentence is dropped with everything else', async () => {
     const t = setup({ logic: asking, box: ARMED, addressee: () => new Promise<AddresseeAnswer>(() => undefined) })
     t.engine.start()
