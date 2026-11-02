@@ -10,6 +10,13 @@ describe('client text frames (round 4)', () => {
     expect(parseClientFrame('{"type":"onlyOwner","on":false}')).toEqual({ type: 'onlyOwner', on: false })
   })
 
+  it('round 10 (#7, 33.2): reads the endpoint mode, command or dictation only', () => {
+    expect(parseClientFrame('{"type":"endpoint","mode":"command"}')).toEqual({ type: 'endpoint', mode: 'command' })
+    expect(parseClientFrame('{"type":"endpoint","mode":"dictation"}')).toEqual({ type: 'endpoint', mode: 'dictation' })
+    expect(parseClientFrame('{"type":"endpoint","mode":"fast"}')).toBeNull()
+    expect(parseClientFrame('{"type":"endpoint"}')).toBeNull()
+  })
+
   it('refuses an enrolment of no, negative or absurd length, and malformed frames', () => {
     expect(parseClientFrame('{"type":"enrol"}')).toBeNull()
     expect(parseClientFrame('{"type":"enrol","seconds":0}')).toBeNull()

@@ -6,7 +6,7 @@
  */
 import { join } from 'node:path'
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads'
-import type { AsrUnavailableReason, PhraseProblem, SpeakerReadiness } from '../src/speech/asrProtocol.ts'
+import type { AsrUnavailableReason, EndpointMode, PhraseProblem, SpeakerReadiness } from '../src/speech/asrProtocol.ts'
 import { loadModel } from './asrModel.ts'
 import { captureFromEnv } from './capture.ts'
 import type { DecodeResult, Decoder, DecoderExtras, OnlineRecognizerLike, OnlineStreamLike, ScriptResult } from './asrSession.ts'
@@ -21,6 +21,8 @@ export type ToWorker =
   | { type: 'open'; id: number; profile?: string }
   | { type: 'accept'; id: number; seq: number; samples: Float32Array }
   | { type: 'reset'; id: number }
+  /** Round 10 (#7, 33.2): the stream's endpoint mode from the next frame on. */
+  | { type: 'endpoint'; id: number; mode: EndpointMode }
   | { type: 'close'; id: number }
   | { type: 'judge'; id: number; seq: number }
   /** Round 10 (31.2): the fail-closed check with only the owner on, and the profile's version. */
@@ -127,6 +129,9 @@ function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognize
       }
       case 'reset':
         streams.get(message.id)?.reset()
+        return
+      case 'endpoint':
+        streams.get(message.id)?.endpointMode?.(message.mode)
         return
       case 'close':
         streams.get(message.id)?.close()
@@ -312,6 +317,9 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           },
           reset() {
             worker.postMessage({ type: 'reset', id } satisfies ToWorker)
+          },
+          endpointMode(mode) {
+            worker.postMessage({ type: 'endpoint', id, mode } satisfies ToWorker)
           },
           close() {
             worker.postMessage({ type: 'close', id } satisfies ToWorker)

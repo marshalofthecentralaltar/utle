@@ -2,7 +2,7 @@ import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
 import { createAssembler } from './assembler.ts'
 import type { AssemblerOptions } from './assembler.ts'
 import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, authorizes, parseAsrMessage } from './asrProtocol.ts'
-import type { AsrClientMessage, AsrServerMessage, SpeakerDecision, SpeakerReason, SpeakerSessionInfo } from './asrProtocol.ts'
+import type { AsrClientMessage, AsrServerMessage, EndpointMode, SpeakerDecision, SpeakerReason, SpeakerSessionInfo } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
 
 /** The parts of the browser's WebSocket this recogniser uses. */
@@ -243,6 +243,17 @@ export function createLocalRecognizer(
     }, INSTANT_SETTLE_MS)
   }
 
+  /**
+   * Round 10 (#7, 33.3): the server heard PAUSE_MS of silence after these words. A quick reply
+   * settling on exactly these words goes now instead of after INSTANT_SETTLE_MS; its final is then
+   * swallowed as for any released reply. Never with only the owner on (onPartial never settles there).
+   */
+  const onPause = (text: string): void => {
+    if (strict || settling === '' || text !== settling) return
+    cancelSettle()
+    if (assembler.idle()) releaseInstant(text)
+  }
+
   const onFinal = (text: string): void => {
     clearFlushWait()
     cancelSettle()
@@ -337,8 +348,17 @@ export function createLocalRecognizer(
   const sendSpeaker = (type: 'speakerStatus' | 'speakerTest' | 'profileDelete'): void => {
     if (!send({ type })) speakerWanted.push(type)
   }
+  /** Round 10 (#7, 33.2): the endpoint mode the engine wants, and the one this socket was told. */
+  let endpointWanted: EndpointMode | null = null
+  let endpointTold: EndpointMode | null = null
+  const tellEndpoint = (): void => {
+    if (endpointWanted === null || endpointWanted === endpointTold) return
+    if (send({ type: 'endpoint', mode: endpointWanted })) endpointTold = endpointWanted
+  }
   /** Right after ready: the server knows the mode, and any enrolment that waited for the connection goes. */
   const afterReady = (): void => {
+    endpointTold = null
+    tellEndpoint()
     // Round 10 (31.7): with only the owner on, every connection (start, reconnect, a new server or engine) asks the readiness.
     if (options.onlyOwner === true) {
       send({ type: 'onlyOwner', on: true })
@@ -423,6 +443,9 @@ export function createLocalRecognizer(
           return
         case 'partial':
           onPartial(message.text)
+          return
+        case 'pause':
+          onPause(message.text)
           return
         case 'final':
           if (strict) strictFinal(message)
@@ -539,6 +562,10 @@ export function createLocalRecognizer(
     },
     setLang() {
       // One model hears Estonian and English.
+    },
+    setEndpointMode(mode) {
+      endpointWanted = mode
+      tellEndpoint()
     },
     flush() {
       if (!running) return

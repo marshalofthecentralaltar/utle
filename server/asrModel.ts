@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
+import { ENDPOINT_TRAILING_MS } from '../src/speech/asrProtocol.ts'
 import type { AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
 import type { OnlineRecognizerLike } from './asrSession.ts'
 import { hotwordsConfig } from './hotwords.ts'
@@ -52,7 +53,8 @@ export function loadModel(root: string): ModelLoad {
       ...hotwords.recognizer,
       enableEndpoint: true,
       rule1MinTrailingSilence: 2.4,
-      rule2MinTrailingSilence: 1.0,
+      // Round 10 (#7, 33.2): the command silence; dictation waits the rest in the decoder (asrSession).
+      rule2MinTrailingSilence: ENDPOINT_TRAILING_MS.command / 1000,
       rule3MinUtteranceLength: 30,
     })
     return { ok: true, recognizer, ms: Date.now() - started }

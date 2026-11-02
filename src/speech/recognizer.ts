@@ -1,4 +1,4 @@
-import type { EnrolFailure, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason, SpeakerTestResult } from './asrProtocol.ts'
+import type { EndpointMode, EnrolFailure, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason, SpeakerTestResult } from './asrProtocol.ts'
 
 /** Round 10 (31.7): why an enrolment replaced nothing, and the candidate's held-out scores. */
 export interface EnrolDetail {
@@ -14,6 +14,11 @@ export interface Recognizer {
   setLang(lang: string): void
   /** False when the browser has no speech recognition. The typed box still works. */
   readonly supported: boolean
+  /**
+   * Round 10 (#7, 33.2): how long a silence ends an utterance: command 0.6 s, dictation 1.0 s. Told to
+   * the server now and after every reconnect. Optional: Chrome's recogniser has its own.
+   */
+  setEndpointMode?(mode: EndpointMode): void
   /** Ends the utterance being spoken now and delivers its words at once (push-to-talk released). Optional. */
   flush?(): void
   /** Round 4: learns the owner's voice from the next `seconds` of speech; answered through onEnrolled. Optional. */

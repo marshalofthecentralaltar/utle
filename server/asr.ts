@@ -51,6 +51,8 @@ export function parseClientFrame(data: RawData | string): AsrClientMessage | nul
   switch (record.type) {
     case 'flush':
       return { type: 'flush' }
+    case 'endpoint':
+      return record.mode === 'command' || record.mode === 'dictation' ? { type: 'endpoint', mode: record.mode } : null
     case 'enrol':
       return typeof record.seconds === 'number' && record.seconds >= 1 && record.seconds <= MAX_ENROL_SECONDS ? { type: 'enrol', seconds: Math.round(record.seconds) } : null
     case 'onlyOwner':
@@ -201,6 +203,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
           if (!isBinary) {
             const frame = parseClientFrame(data)
             if (frame?.type === 'flush') session.flush()
+            else if (frame?.type === 'endpoint') session.endpointMode(frame.mode)
             else if (frame?.type === 'enrol') session.enrol(frame.seconds)
             else if (frame?.type === 'onlyOwner') session.onlyOwner(frame.on)
             else if (frame?.type === 'enrolScript') session.enrolScript(frame.phrases)

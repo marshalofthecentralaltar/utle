@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE, verdictFor } from '../src/speech/asrProtocol.ts'
-import type { AsrServerMessage, EnrolFailure, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason } from '../src/speech/asrProtocol.ts'
+import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE, ENDPOINT_TRAILING_MS, verdictFor } from '../src/speech/asrProtocol.ts'
+import type { AsrServerMessage, EndpointMode, EnrolFailure, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import type { Capture } from './capture.ts'
 import type { EnrolPhrase, Judgement, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import type { FilteredFrame, SpeechFilter, VadFactory } from './vad.ts'
@@ -27,6 +27,8 @@ const frameMs = (samples: Float32Array): number => (samples.length * 1000) / ASR
 export interface DecodeResult {
   text: string
   endpoint: boolean
+  /** Round 10 (#7, 33.3): ms of audio since the speech detector last heard speech in this utterance. */
+  quietMs?: number
 }
 
 /**
@@ -38,6 +40,8 @@ export interface Decoder {
   /** Forgets the utterance in progress. */
   reset(): void
   close(): void
+  /** Round 10 (#7, 33.2): the trailing silence that ends an utterance from the next frame on. */
+  endpointMode?(mode: EndpointMode): void
   /**
    * Round 4: who spoke the utterance that has just ended (the accept that returned the endpoint)
    * or the one in progress (before a flush's reset). Null when the server has no voice profile.
@@ -190,6 +194,44 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
     if (sc.phrases.length >= sc.wanted) finishScript()
   }
 
+  // ---------- round 10 (#7, ARCHITECTURE 33.2 and 33.3): endpointing per mode, the quiet after words ----------
+  /** The mode the client last asked for. The recogniser's own rule 2 is the command one (asrModel). */
+  let mode: EndpointMode = 'command'
+  /** Audio decoded since the recogniser's rule first said the utterance ended; null while it has not. */
+  let pastRuleMs: number | null = null
+  /** The words after the frame before. */
+  let wordsBefore = ''
+  /** Audio since the speech detector last heard speech in this utterance. */
+  let quietMs = 0
+  const forgetUtterance = (): void => {
+    pastRuleMs = null
+    wordsBefore = ''
+    quietMs = 0
+  }
+  /**
+   * Whether the utterance ends with this frame. Rule 1 (nothing heard) ends as the recogniser says.
+   * Rule 2 ends a command at once; dictation waits the difference to its longer silence. The words
+   * must not have changed in the frame the rule fired on: an endpoint never cuts inside a word the
+   * recogniser is still deciding (a beam search changing its mind); that frame waits for the next.
+   */
+  const ends = (ms: number): boolean => {
+    const words = recognizer.getResult(stream).text.trim()
+    const changed = words !== wordsBefore
+    wordsBefore = words
+    if (!recognizer.isEndpoint(stream)) {
+      pastRuleMs = null
+      return false
+    }
+    if (words === '') return true
+    if (changed) {
+      pastRuleMs = null
+      return false
+    }
+    pastRuleMs = pastRuleMs === null ? 0 : pastRuleMs + ms
+    return pastRuleMs >= ENDPOINT_TRAILING_MS[mode] - ENDPOINT_TRAILING_MS.command
+  }
+  // ---------- end of endpointing per mode ----------
+
   /** One frame into the recogniser; true when it ended the utterance. */
   const decodeOne = (part: FilteredFrame): boolean => {
     stream.acceptWaveform({ samples: part.samples, sampleRate: ASR_SAMPLE_RATE })
@@ -199,7 +241,8 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       if (!filter || part.speech) keep(part.samples)
       feedEnrolment(part.samples, part.speech, gate)
     }
-    return recognizer.isEndpoint(stream)
+    quietMs = part.speech ? 0 : quietMs + frameMs(part.samples)
+    return ends(frameMs(part.samples))
   }
 
   return {
@@ -217,7 +260,11 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
         }
       }
       const text = recognizer.getResult(stream).text.trim()
-      if (endpoint) recognizer.reset(stream)
+      const quiet = quietMs
+      if (endpoint) {
+        recognizer.reset(stream)
+        forgetUtterance()
+      }
       if (gate) {
         if (endpoint) {
           ended = kept
@@ -226,9 +273,13 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
           if (text !== '') takePhrase(ended)
         } else if (parts.length > 0) ended = null
       }
-      return { text, endpoint }
+      return { text, endpoint, quietMs: quiet }
+    },
+    endpointMode(next) {
+      mode = next
     },
     reset() {
+      forgetUtterance()
       // Round 10 (31.7): only frames the recogniser made words of are a phrase attempt; the residue
       // after an endpoint (a breath, a tail) would otherwise answer a spurious too_short.
       const words = /[\p{L}\p{N}]/u.test(recognizer.getResult(stream).text)
@@ -308,10 +359,14 @@ export const LAG_REPORT_MS = 500
 export const SILENCE_RMS = 0.01
 /** How much further than KEEP_MS a drop may go to end at a quiet frame. */
 export const CUT_SEARCH_MS = 300
+/** Round 10 (#7, 33.3): silence after words, by the speech detector, that sends a pause before the final. */
+export const PAUSE_MS = 300
 
 export interface AsrSession {
   /** Queues one frame. Never blocks: frames are decoded from the queue, one per turn of the event loop. */
   audio(samples: Float32Array): void
+  /** Round 10 (#7, 33.2): the trailing silence that ends an utterance from now on (command 0.6 s, dictation 1.0 s). */
+  endpointMode(mode: EndpointMode): void
   /** Decodes what is queued, sends the utterance so far as a final, and starts the next utterance. */
   flush(): void
   close(): void
@@ -405,6 +460,8 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   let signalled = false
   /** Round 10 (31.7): the next utterance with words is a voice test. */
   let testing = false
+  /** Round 10 (#7, 33.3): the words of the utterance in progress a pause was sent for. */
+  let paused = ''
 
   /** Round 10 (31.7): sends speakerStatus; a decoder without readiness (no gate) is never protected. */
   const tellStatus = (): void => {
@@ -623,10 +680,17 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     }
     last = text
     if (!result.endpoint) {
+      // Round 10 (#7, 33.3): the words, once the detector has heard PAUSE_MS of silence after them.
+      // Never with only the owner on: unverified words do not leave the server.
+      if (text !== '' && !onlyOwner && !testing && (result.quietMs ?? 0) >= PAUSE_MS && paused !== text) {
+        paused = text
+        send({ type: 'pause', text })
+      }
       then()
       return
     }
     last = ''
+    paused = ''
     if (text === '') {
       closeEmpty()
       then()
@@ -650,6 +714,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     if (item === 'flush') {
       const text = last
       last = ''
+      paused = ''
       const next = (): void => {
         decoder.reset()
         schedule(step)
@@ -699,6 +764,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       if (closed) return
       queue.push('flush')
       drain()
+    },
+    endpointMode(mode) {
+      if (!closed) decoder.endpointMode?.(mode)
     },
     close() {
       closed = true

@@ -19,6 +19,15 @@ export const LOCAL_HOLD_MS = 700
  */
 export const INSTANT_SETTLE_MS = 650
 
+/**
+ * Round 10 (#7, ARCHITECTURE 33.2): how long the recogniser waits after the last word before it ends
+ * the utterance. A command ends at 0.6 s; dictation (a box armed, or the entry flow) keeps 1.0 s, so a
+ * thinking pause in a sentence does not cut it. The client says which; a client that never says gets
+ * command.
+ */
+export type EndpointMode = 'command' | 'dictation'
+export const ENDPOINT_TRAILING_MS: Readonly<Record<EndpointMode, number>> = { command: 600, dictation: 1000 }
+
 /** The lines the page shows when the local recogniser cannot run (src/speech/pick.ts). */
 export const FELL_BACK = "The speech model on this computer is not running, so Chrome's recognition is listening instead."
 export const NOTHING_LEFT = 'The speech model on this computer is not running and this browser has no speech recognition. Type instead.'
@@ -29,6 +38,12 @@ export type AsrServerMessage =
   | { type: 'ready' }
   | { type: 'unavailable'; reason: AsrUnavailableReason }
   | { type: 'partial'; text: string }
+  /**
+   * Round 10 (#7, 33.3): the speech detector has heard PAUSE_MS of silence after these words, before
+   * the final. Never sent while only the owner is obeyed. The client may act on a partial that a
+   * local rule knows; the final for the same words is then not run again.
+   */
+  | { type: 'pause'; text: string }
   | { type: 'final'; text: string; speaker?: Speaker; segment?: number; decision?: SpeakerDecision }
   /** Round 10 (31.2): only the owner is obeyed and this utterance was not verified as his: no words, only why. */
   | { type: 'rejected'; decision: SpeakerDecision }
@@ -205,6 +220,8 @@ export function verifiedOwner(decision: SpeakerDecision | undefined): boolean {
 /** Text frames the browser sends. flush: end the utterance now and send its final (push-to-talk released). */
 export type AsrClientMessage =
   | { type: 'flush' }
+  /** Round 10 (#7, 33.2): the trailing silence that ends an utterance from now on (ENDPOINT_TRAILING_MS). */
+  | { type: 'endpoint'; mode: EndpointMode }
   /** Round 4: learn the owner's voice from the next `seconds` of speech (the server stores an embedding, never audio). */
   | { type: 'enrol'; seconds: number }
   /** Round 4: only the owner's utterances are delivered; others are dropped (finals still carry speaker). */
@@ -242,6 +259,8 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
     }
     case 'partial':
       return typeof record.text === 'string' ? { type: 'partial', text: record.text } : null
+    case 'pause':
+      return typeof record.text === 'string' ? { type: 'pause', text: record.text } : null
     case 'final': {
       if (typeof record.text !== 'string') return null
       const speaker = record.speaker === 'owner' || record.speaker === 'other' || record.speaker === 'unknown' ? record.speaker : undefined

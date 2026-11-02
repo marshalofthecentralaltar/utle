@@ -1155,3 +1155,87 @@ describe('the connection while listening (30.1)', () => {
     expect(states.at(-1)).toBe('down')
   })
 })
+
+// ---------- round 10 (#7, ARCHITECTURE 33.2 and 33.3): the endpoint mode on the wire, acting on a pause ----------
+describe('the endpoint mode and the pause (round 10, #7)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    FakeSocket.made = []
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  const setup = (options: { onlyOwner?: boolean } = {}) => {
+    const utterances: Array<[string, SpeakerDecision | undefined]> = []
+    const r = createLocalRecognizer(
+      { onUtterance: (text, decision) => utterances.push([text, decision]), onInterim: () => undefined, onError: () => undefined },
+      (text) => text === 'keri alla' || text === 'saada',
+      { onUnavailable: () => undefined, connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), keepTrying: true, ...(options.onlyOwner === true ? { onlyOwner: true } : {}) },
+    )
+    const socket = (): FakeSocket => {
+      const s = FakeSocket.made.at(-1)
+      if (!s) throw new Error('no socket')
+      return s
+    }
+    const endpoints = (s: FakeSocket): unknown[] => s.sent.filter((d): d is string => typeof d === 'string').map((d) => JSON.parse(d) as { type: string }).filter((m) => m.type === 'endpoint')
+    return { r, utterances, socket, endpoints }
+  }
+
+  it('tells the server the mode: at once on an open socket, the newest one again after every ready', () => {
+    const { r, socket, endpoints } = setup()
+    r.setEndpointMode?.('dictation')
+    r.start()
+    expect(endpoints(socket())).toEqual([])
+    socket().says({ type: 'ready' })
+    expect(endpoints(socket())).toEqual([{ type: 'endpoint', mode: 'dictation' }])
+    r.setEndpointMode?.('command')
+    r.setEndpointMode?.('command')
+    expect(endpoints(socket())).toEqual([{ type: 'endpoint', mode: 'dictation' }, { type: 'endpoint', mode: 'command' }])
+    // A reconnect: the new socket is told the mode right after its ready.
+    socket().drops()
+    vi.advanceTimersByTime(RECONNECT_MS[0])
+    socket().says({ type: 'ready' })
+    expect(endpoints(socket())).toEqual([{ type: 'endpoint', mode: 'command' }])
+  })
+
+  it('a partial a rule knows, then the pause for the same words: run at once, and its final is not run again', () => {
+    const { r, socket, utterances } = setup()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'keri alla' })
+    socket().says({ type: 'pause', text: 'keri alla' })
+    expect(utterances).toEqual([['keri alla', undefined]])
+    socket().says({ type: 'final', text: 'keri alla' })
+    vi.advanceTimersByTime(5000)
+    expect(utterances).toEqual([['keri alla', undefined]])
+  })
+
+  it('a pause for words no rule knows, or for words that are no longer the partial, runs nothing early', () => {
+    const { r, socket, utterances } = setup()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'tere Karin' })
+    socket().says({ type: 'pause', text: 'tere Karin' })
+    expect(utterances).toEqual([])
+    socket().says({ type: 'partial', text: 'saada' })
+    socket().says({ type: 'pause', text: 'saad' })
+    expect(utterances).toEqual([])
+  })
+
+  it('only the owner on: a rule-matching partial and a pause run nothing before the verified final (0 commands)', () => {
+    const { r, socket, utterances } = setup({ onlyOwner: true })
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'speakerSession', sessionId: 's1', profileVersion: 'v1' })
+    // A server that should not send these: the client still runs nothing on them.
+    socket().says({ type: 'partial', text: 'keri alla' })
+    socket().says({ type: 'activity' })
+    socket().says({ type: 'pause', text: 'keri alla' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS * 3)
+    expect(utterances).toEqual([])
+    const d: SpeakerDecision = { segmentId: 1, sessionId: 's1', profileVersion: 'v1', verdict: verdictFor('verified_owner'), reason: 'verified_owner', timings: { judgeMs: 1 } }
+    socket().says({ type: 'final', text: 'keri alla', speaker: 'owner', segment: 1, decision: d })
+    vi.advanceTimersByTime(5000)
+    expect(utterances.map(([text]) => text)).toEqual(['keri alla'])
+  })
+})

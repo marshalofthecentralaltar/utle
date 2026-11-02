@@ -133,6 +133,7 @@ function setup(options: Options = {}) {
   const lines: string[] = []
   const connections: string[] = []
   const spends: SpendRecord[] = []
+  const endpointModes: string[] = []
   const used = options.logic ?? logic
   const engine = createEngine({
     logic: {
@@ -179,7 +180,7 @@ function setup(options: Options = {}) {
       handlers = h
       instant = isInstant
       unavailable = onUnavailable
-      return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined, enrol: (seconds) => enrols.push(seconds) }
+      return { supported: true, start: () => starts++, stop: () => undefined, setLang: () => undefined, enrol: (seconds) => enrols.push(seconds), setEndpointMode: (mode) => endpointModes.push(mode) }
     },
     micBlocked: () => blocked++,
     ask: (request, signal) => {
@@ -211,6 +212,7 @@ function setup(options: Options = {}) {
   return {
     engine,
     ran,
+    endpointModes,
     state,
     heard,
     boxes,
@@ -3132,5 +3134,53 @@ describe('criterion 6 (round 10, 31.7): a short word without enough owner audio 
     expect(quickReply('jah, kinnitan')).toEqual({ kind: 'yes' })
     expect(quickReply('kinnitan')).toEqual({ kind: 'yes' })
     expect(messageCommand('saada sõnum')?.kind).toBe('send')
+  })
+})
+
+// ---------- round 10 (#7, ARCHITECTURE 33.2 and 33.3): the endpoint mode, acting on a partial ----------
+describe('speed (round 10, #7)', () => {
+  const NONE: BoxState = { present: false, text: '', armed: false }
+  const ARMED: BoxState = { present: true, text: '', armed: true }
+
+  it('tells the recogniser command at start, then the mode of each box read: armed is dictation, none is command', async () => {
+    const t = setup({ box: NONE })
+    expect(t.endpointModes).toEqual(['command'])
+    t.engine.start()
+    t.partial('keri')
+    await t.engine.idle()
+    expect(t.endpointModes.at(-1)).toBe('command')
+
+    const armed = setup({ box: ARMED })
+    armed.engine.start()
+    armed.partial('tere')
+    await armed.engine.idle()
+    expect(armed.endpointModes.at(-1)).toBe('dictation')
+  })
+
+  it('the entry flow is dictation, whatever the box', async () => {
+    const t = setup({ box: NONE })
+    t.engine.start()
+    t.engine.setEntry(true)
+    expect(t.endpointModes.at(-1)).toBe('dictation')
+    t.engine.setEntry(false)
+    expect(t.endpointModes.at(-1)).toBe('command')
+  })
+
+  it('only-owner off: a rule-matched partial released early (an utterance without a decision) runs at once', async () => {
+    const t = setup({ box: NONE })
+    t.engine.start()
+    expect(t.instant('saada')).toBe(true)
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'pressSend')).toHaveLength(1)
+  })
+
+  it('only-owner on: the same early release runs nothing (0 commands before a verified final)', async () => {
+    const t = setup({ box: NONE, onlyOwner: true })
+    t.engine.start()
+    t.partial('saada')
+    t.say('saada')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind !== 'readBox')).toEqual([])
   })
 })

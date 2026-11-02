@@ -2,10 +2,10 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
+import { ASR_FRAME_SAMPLES, ENDPOINT_TRAILING_MS } from '../src/speech/asrProtocol.ts'
 import { SPEAKER_REASONS } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage, SpeakerReason } from '../src/speech/asrProtocol.ts'
-import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
+import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, PAUSE_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
 import type { EnrolFailure, EnrolOutcome, EnrolPhrase, Judgement, PhraseProblem, PhraseResult, Readiness, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import { CAPTURE_LOG, captureFromEnv, createCapture } from './capture.ts'
@@ -1163,5 +1163,167 @@ describe('enrolment with quality, held-out verification and readiness (round 10,
       { type: 'speakerSession', sessionId: expect.any(String), profileVersion: '' },
       { type: 'speakerStatus', readiness: gate.ready },
     ])
+  })
+})
+
+// ---------- round 10 (#7, ARCHITECTURE 33.2 and 33.3): endpointing per mode, the pause ----------
+/**
+ * A recogniser with sherpa's rule 2 as asrModel configures it (ENDPOINT_TRAILING_MS.command): the
+ * utterance ends once words were heard and 600 ms of frames after them added none. Frame values as
+ * in `frame`: 0 is silence, n > 0 a word. A value in `rerank` rewrites the last word without a new
+ * one (a beam search changing its mind), so the rule may fire on a frame whose words just changed.
+ */
+class RuleStream implements OnlineStreamLike {
+  words: string[] = []
+  pending: number[] = []
+  trailingMs = 0
+  acceptWaveform(input: { samples: Float32Array; sampleRate: number }): void {
+    this.pending.push(input.samples[0] ?? 0)
+  }
+}
+class RuleRecognizer implements OnlineRecognizerLike {
+  rerank = new Map<number, string>()
+  createStream(): RuleStream {
+    return new RuleStream()
+  }
+  isReady(stream: RuleStream): boolean {
+    return stream.pending.length > 0
+  }
+  decode(stream: RuleStream): void {
+    const value = stream.pending.shift() ?? 0
+    const rewrite = this.rerank.get(value)
+    if (rewrite !== undefined) {
+      stream.words = [...stream.words.slice(0, -1), rewrite]
+      stream.trailingMs += 100
+    } else if (Math.abs(value) < 0.5) stream.trailingMs += 100
+    else {
+      stream.words.push(WORDS[(value - 1) % WORDS.length] ?? '')
+      stream.trailingMs = 0
+    }
+  }
+  getResult(stream: RuleStream): { text: string } {
+    return { text: stream.words.join(' ') }
+  }
+  isEndpoint(stream: RuleStream): boolean {
+    return stream.words.length > 0 ? stream.trailingMs >= ENDPOINT_TRAILING_MS.command : stream.trailingMs >= 2400
+  }
+  reset(stream: RuleStream): void {
+    stream.words = []
+    stream.trailingMs = 0
+  }
+}
+
+const ruleSetup = (recognizer = new RuleRecognizer()) => {
+  const sent: AsrServerMessage[] = []
+  const loop = new Loop()
+  const session = createAsrSession(decoderInThread(recognizer), (message) => sent.push(message), { schedule: loop.schedule, now: () => 0 })
+  /** Feeds frames one at a time; returns the index (0-based) of the frame after which its first final went. */
+  const feed = (values: number[]): number => {
+    let at = -1
+    const before = sent.filter((m) => m.type === 'final').length
+    values.forEach((value, i) => {
+      session.audio(frame(value))
+      loop.settle()
+      if (at < 0 && sent.filter((m) => m.type === 'final').length > before) at = i
+    })
+    return at
+  }
+  return { recognizer, sent, loop, session, feed }
+}
+const silence = (n: number): number[] => Array.from({ length: n }, () => 0)
+const finals = (sent: AsrServerMessage[]): string[] => sent.flatMap((m) => (m.type === 'final' ? [m.text] : []))
+
+describe('endpointing per mode (round 10, #7, 33.2)', () => {
+  it('the trailing silence of each mode: command 0.6 s, dictation 1.0 s', () => {
+    expect(ENDPOINT_TRAILING_MS).toEqual({ command: 600, dictation: 1000 })
+  })
+
+  it('command mode (the default, and when the client says so) ends the utterance at the recogniser rule: 0.6 s of silence', () => {
+    for (const told of [false, true]) {
+      const { session, sent, feed } = ruleSetup()
+      if (told) session.endpointMode('command')
+      // Two words, then silence: the 6th silent frame is 600 ms after the last word.
+      expect(feed([1, 2, ...silence(12)])).toBe(1 + 6)
+      expect(finals(sent)).toEqual(['ava uus'])
+    }
+  })
+
+  it('dictation keeps 1.0 s: the final comes 400 ms later, and words in between continue the same utterance', () => {
+    const { session, sent, feed } = ruleSetup()
+    session.endpointMode('dictation')
+    expect(feed([1, 2, ...silence(12)])).toBe(1 + 10)
+    expect(finals(sent)).toEqual(['ava uus'])
+
+    const again = ruleSetup()
+    again.session.endpointMode('dictation')
+    // 0.8 s of silence, more than the command rule, then a word: still one utterance.
+    again.feed([1, ...silence(8), 3, ...silence(12)])
+    expect(finals(again.sent)).toEqual(['ava vaheleht'])
+  })
+
+  it('the mode applies to the frames after it: dictation, then command', () => {
+    const { session, sent, feed } = ruleSetup()
+    session.endpointMode('dictation')
+    feed([1, ...silence(12)])
+    session.endpointMode('command')
+    expect(feed([2, ...silence(12)])).toBe(6)
+    expect(finals(sent)).toEqual(['ava', 'uus'])
+  })
+
+  it('never cuts inside a word still being decoded: when the words changed in the frame the rule fired on, it waits for a frame that changes nothing', () => {
+    const recognizer = new RuleRecognizer()
+    recognizer.rerank.set(9, 'uusi')
+    const { sent, feed } = ruleSetup(recognizer)
+    // "ava uus", five silent frames, then a frame that rewrites "uus" to "uusi" as the rule fires.
+    expect(feed([1, 2, ...silence(5), 9, ...silence(6)])).toBe(1 + 5 + 1 + 1)
+    expect(finals(sent)).toEqual(['ava uusi'])
+  })
+
+  it('nothing heard (rule 1) ends with no final in either mode', () => {
+    const { session, sent, feed } = ruleSetup()
+    session.endpointMode('dictation')
+    feed(silence(30))
+    expect(sent).toEqual([])
+  })
+})
+
+describe('the pause before the final (round 10, #7, 33.3)', () => {
+  it('300 ms of silence after words sends one pause with the words, before the final', () => {
+    const { sent, feed } = ruleSetup()
+    feed([1, 2, ...silence(12)])
+    expect(PAUSE_MS).toBe(300)
+    expect(sent).toEqual([
+      { type: 'partial', text: 'ava' },
+      { type: 'partial', text: 'ava uus' },
+      { type: 'pause', text: 'ava uus' },
+      { type: 'final', text: 'ava uus' },
+    ])
+  })
+
+  it('the pause comes with the third silent frame, three frames before the command endpoint', () => {
+    const { sent, session, loop } = ruleSetup()
+    for (const value of [1, 0, 0]) session.audio(frame(value))
+    loop.settle()
+    expect(sent.some((m) => m.type === 'pause')).toBe(false)
+    session.audio(frame(0))
+    loop.settle()
+    expect(sent.at(-1)).toEqual({ type: 'pause', text: 'ava' })
+  })
+
+  it('speech after a pause, then a new pause, sends the new words', () => {
+    const { sent, session, feed } = ruleSetup()
+    session.endpointMode('dictation')
+    feed([1, ...silence(4), 2, ...silence(12)])
+    expect(sent.filter((m) => m.type === 'pause')).toEqual([
+      { type: 'pause', text: 'ava' },
+      { type: 'pause', text: 'ava uus' },
+    ])
+  })
+
+  it('with only the owner on, no pause is ever sent (unverified words never leave the server)', () => {
+    const { sent, session, feed } = ruleSetup()
+    session.onlyOwner(true)
+    feed([1, 2, ...silence(12)])
+    expect(sent.some((m) => m.type === 'pause' || m.type === 'partial')).toBe(false)
   })
 })

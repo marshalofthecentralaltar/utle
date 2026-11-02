@@ -14,7 +14,7 @@ import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import { verifiedOwner } from '../../src/speech/asrProtocol.ts'
-import type { SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
+import type { EndpointMode, SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
 import { documentPaused, inDocument } from '../../src/core/documentMode.ts'
 import { speak as synthSpeak } from '../../src/speech/synth.ts'
 // ---------- reading aloud (29.5) ----------
@@ -299,9 +299,20 @@ export function createEngine(deps: EngineDeps): Engine {
     }
   }
 
+  // ---------- round 10 (#7, ARCHITECTURE 33.2): the endpoint mode ----------
+  /** The last box read, and where the mode goes once the recogniser is made. */
+  let lastBox: BoxState = NO_BOX
+  let endpointTo: ((mode: EndpointMode) => void) | null = null
+  /** Dictation (a box armed, or the entry flow) ends an utterance at 1.0 s of silence; a command at 0.6 s. */
+  const tellEndpoint = (): void => endpointTo?.(entry || lastBox.armed ? 'dictation' : 'command')
+  // ---------- end of the endpoint mode ----------
+
   const readBox = async (): Promise<BoxState> => {
     const read = await runSafe({ kind: 'readBox' })
-    return read.ok && read.box ? read.box : NO_BOX
+    const box = read.ok && read.box ? read.box : NO_BOX
+    lastBox = box
+    tellEndpoint()
+    return box
   }
 
   /** What this utterance wants in the box now, or null to leave the box alone. */
@@ -1529,6 +1540,10 @@ export function createEngine(deps: EngineDeps): Engine {
     },
   )
 
+  // Round 10 (#7, 33.2): the recogniser hears every mode from now on, command until a box says otherwise.
+  endpointTo = (mode) => recognizer.setEndpointMode?.(mode)
+  tellEndpoint()
+
   // Once: the strip tells him before he speaks when the server has no model.
   queue = queue.then(async () => {
     const status = await deps.status().catch((): 'unreachable' => 'unreachable')
@@ -1598,6 +1613,7 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     setEntry(on) {
       entry = on
+      tellEndpoint()
       if (on) dropLive()
     },
     setPlaces(list) {
