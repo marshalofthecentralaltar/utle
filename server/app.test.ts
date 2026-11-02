@@ -10,6 +10,7 @@ import { createUtleServer } from './app.ts'
 import { attachAsr } from './asr.ts'
 import type { DecoderHost } from './asrWorker.ts'
 import { LOCAL_USER, profileId, upgradeAuthorized } from './auth.ts'
+import { DEFAULT_CAREFUL_MODEL, DEFAULT_MODEL } from './model/config.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -200,5 +201,19 @@ describe('the model in /api/status (round 9, 30.5.2)', () => {
   it('model: a DeepSeek primary without DEEPSEEK_API_KEY stops the server at start, naming the variable', () => {
     expect(() => createUtleServer({ root: '.', env: { UTLE_MODEL: 'deepseek:deepseek-flash' }, asr: false })).toThrow('UTLE_MODEL=deepseek:deepseek-flash needs DEEPSEEK_API_KEY')
     expect(() => createUtleServer({ root: '.', env: { UTLE_MODEL: 'gemini:x' }, asr: false })).toThrow('unknown provider "gemini"')
+  })
+
+  it('round 10 (#7, 33.1): /api/status names the careful model: the default pair when both are unset, the quick model when only UTLE_MODEL is set, its own when set', async () => {
+    const unset = await serve({ ANTHROPIC_API_KEY: 'k' })
+    expect(await (await fetch(`http://${unset}/api/status`)).json()).toMatchObject({ model: { primary: `anthropic:${DEFAULT_MODEL}`, careful: `anthropic:${DEFAULT_CAREFUL_MODEL}`, lastCareful: null } })
+    const quickOnly = await serve({ ANTHROPIC_API_KEY: 'k', UTLE_MODEL: 'claude-sonnet-5-5' })
+    expect(await (await fetch(`http://${quickOnly}/api/status`)).json()).toMatchObject({ model: { primary: 'anthropic:claude-sonnet-5-5', careful: 'anthropic:claude-sonnet-5-5' } })
+    const both = await serve({ ANTHROPIC_API_KEY: 'k', UTLE_MODEL: 'anthropic:claude-haiku-5-5', UTLE_MODEL_CAREFUL: 'anthropic:claude-opus-5-5' })
+    expect(await (await fetch(`http://${both}/api/status`)).json()).toMatchObject({ model: { primary: 'anthropic:claude-haiku-5-5', careful: 'anthropic:claude-opus-5-5', fallback: null } })
+  })
+
+  it('round 10 (#7): a careful slot with an unknown provider or without its key stops the server at start, naming UTLE_MODEL_CAREFUL', () => {
+    expect(() => createUtleServer({ root: '.', env: { ANTHROPIC_API_KEY: 'k', UTLE_MODEL_CAREFUL: 'deepseek:deepseek-flash' }, asr: false })).toThrow('UTLE_MODEL_CAREFUL=deepseek:deepseek-flash needs DEEPSEEK_API_KEY')
+    expect(() => createUtleServer({ root: '.', env: { ANTHROPIC_API_KEY: 'k', UTLE_MODEL_CAREFUL: 'gemini:x' }, asr: false })).toThrow('UTLE_MODEL_CAREFUL=gemini:x: unknown provider "gemini"')
   })
 })

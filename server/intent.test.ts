@@ -317,6 +317,17 @@ describe('pageIntent', () => {
       expect(careSettings('careful')).toEqual({ effort: 'high', maxTokens: 2000, timeoutMs: 12_000 })
     })
 
+    it('round 10 (#7, 33.1): a quick ask goes to the quick model, a careful one to the careful model; without one, careful asks the quick model', async () => {
+      const quick = fakeClient(CLICK_LATER, CLICK_LATER)
+      const careful = fakeClient(CLICK_LATER)
+      await pageIntent(request({ care: 'quick' }), { model: quick.client, careful: careful.client })
+      await pageIntent(request({ care: 'careful', utterance: 'mine youtube ja otsi kassivideod ja mängi esimene' }), { model: quick.client, careful: careful.client })
+      expect(quick.calls.map((c) => c.effort)).toEqual(['low'])
+      expect(careful.calls.map((c) => c.effort)).toEqual(['high'])
+      await pageIntent(request({ care: 'careful', utterance: 'mine youtube ja otsi kassivideod ja mängi esimene' }), { model: quick.client })
+      expect(quick.calls.map((c) => c.effort)).toEqual(['low', 'high'])
+    })
+
     it('logs the care, never the words', async () => {
       const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}))
       const { client } = fakeClient(CLICK_LATER)

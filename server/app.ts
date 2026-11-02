@@ -114,7 +114,7 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
   // Round 9 (30.5.2): the model behind both routes, from UTLE_MODEL and UTLE_FALLBACK. A slot that
   // names an unknown provider or lacks its key throws here, so the server does not start with it.
   const configured = modelFromEnv(env)
-  if (httpServer) console.info(`[model] primary=${configured.primary} fallback=${configured.fallback ?? 'none'}${configured.ready ? '' : ' (no key: rules only)'}`)
+  if (httpServer) console.info(`[model] primary=${configured.primary} careful=${configured.carefulLabel} fallback=${configured.fallback ?? 'none'}${configured.ready ? '' : ' (no key: rules only)'}`)
 
   const answer = async (input: unknown) => {
     if (!rehearsal) return interpret(input, { model: configured.model })
@@ -170,7 +170,7 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
       try {
         const input = await jsonBody(req)
         if (!configured.ready) throw new InterpretError('upstream_rejected', 'no_key')
-        send(res, 200, await pageIntent(input, { model: configured.model }))
+        send(res, 200, await pageIntent(input, { model: configured.model, careful: configured.careful }))
       } catch (error) {
         const known = toKnownError(error)
         send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })

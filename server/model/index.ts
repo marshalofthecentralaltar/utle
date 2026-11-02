@@ -12,11 +12,15 @@ import type { Model } from './types.ts'
  */
 
 export interface ConfiguredModel {
+  /** The quick asks and the addressee check (UTLE_MODEL). */
   model: FallbackModel
+  /** Round 10 (#7, 33.1): the careful asks (UTLE_MODEL_CAREFUL), with the same fallback. */
+  careful: FallbackModel
   /** `provider:model` of each slot. */
   primary: string
+  carefulLabel: string
   fallback: string | null
-  /** Whether some slot has a key, so an ask can be answered at all. */
+  /** Whether the quick slot or the fallback has a key, so an ask can be answered at all. */
   ready: boolean
 }
 
@@ -29,20 +33,24 @@ export function modelFromSpec(spec: ModelSpec, options: { fetch?: typeof fetch }
 const hasKey = (spec: ModelSpec): boolean => (spec.kind === 'anthropic' ? Boolean(spec.apiKey) : true)
 
 export function modelFromEnv(env: NodeJS.ProcessEnv, options: { fetch?: typeof fetch } = {}): ConfiguredModel {
-  const { primary, fallback } = modelConfig(env)
+  const { primary, careful, fallback } = modelConfig(env)
+  // Each slot gets its own instance of the fallback, so each reports its own last.
+  const behind = (): Model | null => (fallback ? modelFromSpec(fallback, options) : null)
   return {
-    model: withFallback(modelFromSpec(primary, options), fallback ? modelFromSpec(fallback, options) : null),
+    model: withFallback(modelFromSpec(primary, options), behind()),
+    careful: withFallback(modelFromSpec(careful, options), behind()),
     primary: specLabel(primary),
+    carefulLabel: specLabel(careful),
     fallback: fallback ? specLabel(fallback) : null,
     ready: hasKey(primary) || (fallback !== null && hasKey(fallback)),
   }
 }
 
-/** What /api/status says about the model. */
-export function modelStatus(configured: ConfiguredModel): { primary: string; fallback: string | null; last: Answered | null } {
-  return { primary: configured.primary, fallback: configured.fallback, last: configured.model.last() }
+/** What /api/status says about the models. Round 10 (33.1): careful and its own last. */
+export function modelStatus(configured: ConfiguredModel): { primary: string; careful: string; fallback: string | null; last: Answered | null; lastCareful: Answered | null } {
+  return { primary: configured.primary, careful: configured.carefulLabel, fallback: configured.fallback, last: configured.model.last(), lastCareful: configured.careful.last() }
 }
 
-export { DEFAULT_MODEL, ModelConfigError } from './config.ts'
+export { DEFAULT_CAREFUL_MODEL, DEFAULT_MODEL, ModelConfigError } from './config.ts'
 export { ModelError, NO_USAGE, modelTool } from './types.ts'
 export type { Model, ModelAsk, ModelReplyNeutral, ModelTool, ModelToolCall, ModelUsage } from './types.ts'

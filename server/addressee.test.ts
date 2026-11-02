@@ -24,6 +24,10 @@ describe('POST /api/addressee (round 10, 32.3)', () => {
     expect(addresseeAsk(REQUEST as Parameters<typeof addresseeAsk>[0]).effort).toBe('low')
   })
 
+  it('round 10 (#7): the answer budget leaves room for a model that thinks before the call (Haiku 5.5 cut off at 60)', () => {
+    expect(addresseeAsk(REQUEST as Parameters<typeof addresseeAsk>[0]).maxTokens).toBe(400)
+  })
+
   it('a reply of the wrong shape is an error, never a guess; a malformed request is a 400', async () => {
     await expect(addresseeAnswer(REQUEST, { model: replying({ verdict: 'maybe' }) })).rejects.toBeInstanceOf(InterpretError)
     await expect(addresseeAnswer({ ...REQUEST, finals: ['a', 'b', 'c', 'd'] }, { model: replying({ verdict: 'ignore' }) })).rejects.toMatchObject({ code: 'bad_request' })

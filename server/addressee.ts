@@ -12,7 +12,13 @@ import type { Model, ModelAsk, ModelReplyNeutral, ModelTool } from './model/type
  */
 
 export const ADDRESSEE_TIMEOUT_MS = 5000
-const MAX_TOKENS = 60
+/**
+ * Round 10 (#7, 33.1): 400, as a quick intent ask. Haiku 5.5 thinks before the call even at effort
+ * low; 60 cut its answer off (stop max_tokens, verdict bad) on the dictation cases. The timeout still
+ * bounds the wait.
+ */
+export const ADDRESSEE_MAX_TOKENS = 400
+const MAX_TOKENS = ADDRESSEE_MAX_TOKENS
 
 export const ADDRESSEE_SYSTEM_PROMPT = `You are the addressee check of Ütle, a voice assistant for a person who cannot use his hands. The microphone is always on and hears the whole room: him, other people, a television. You see one sentence the speech recogniser just heard (its words may be misrecognised), the three sentences heard before it, and the web page in front of him.
 

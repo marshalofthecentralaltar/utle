@@ -8,9 +8,10 @@
  * (total spend over the cases passed, so failures pay in the denominator). Spends a few cents.
  *
  *   npx tsx scripts/intent-eval.ts
- *     UTLE_MODEL=<provider:model>    the model, as the server reads it (default the server's,
- *                                    anthropic:claude-sonnet-5-5); its key in the environment
- *                                    (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, ...)
+ *     UTLE_MODEL=<provider:model>    the quick asks' model, as the server reads it (default the
+ *                                    server's); its key in the environment (ANTHROPIC_API_KEY, ...)
+ *     UTLE_MODEL_CAREFUL=<provider:model>  round 10 (33.1): the careful asks' model, as the server
+ *                                    reads it (unset: the quick model when UTLE_MODEL is set)
  *     UTLE_FALLBACK=<provider:model> optional, as the server reads it
  *     UTLE_EVAL_ONLY=<text>          only cases whose name, utterance or site contains the text
  *     UTLE_EVAL_JSON=<path>          also write every ask's result and every task's record to this JSON file
@@ -48,18 +49,24 @@ function configuredModel(): ReturnType<typeof modelFromEnv> {
   }
 }
 const CONFIGURED = configuredModel()
+/** Round 10 (33.1): each case runs on the model its care selects, as the server routes it. */
 const MODEL = CONFIGURED.primary
+const CAREFUL = CONFIGURED.carefulLabel
+const slotOf = (care: 'quick' | 'careful'): string => (care === 'careful' ? CAREFUL : MODEL)
 /** UTLE_EVAL_RAW=1: print the model's raw tool input on every ask, for triage (synthetic pages only). */
 const RAW = process.env.UTLE_EVAL_RAW === '1'
-const EVAL_MODEL: Model = RAW
-  ? {
-      ask: async (ask) => {
-        const reply = await CONFIGURED.model.ask(ask)
-        console.log(`  raw stop=${reply.stop} ${JSON.stringify(reply.call?.input ?? null)}`)
-        return reply
-      },
-    }
-  : CONFIGURED.model
+const raw = (model: Model): Model =>
+  RAW
+    ? {
+        ask: async (ask) => {
+          const reply = await model.ask(ask)
+          console.log(`  raw stop=${reply.stop} ${JSON.stringify(reply.call?.input ?? null)}`)
+          return reply
+        },
+      }
+    : model
+const EVAL_MODEL: Model = raw(CONFIGURED.model)
+const EVAL_CAREFUL: Model = raw(CONFIGURED.careful)
 const ONLY = (process.env.UTLE_EVAL_ONLY ?? '').toLowerCase()
 const JSON_PATH = process.env.UTLE_EVAL_JSON
 
@@ -754,6 +761,8 @@ interface AskResult {
   problem: string | null
   error?: string
   care: 'quick' | 'careful'
+  /** Round 10 (33.1): the slot's `provider:model` its care selected. */
+  model: string
   /** Round 9: the ask's tokens (zero when it failed) and their price, and who answered. */
   usage: ModelUsage
   usd: number
@@ -763,6 +772,8 @@ interface AskResult {
 /** Round 9 (30.5.5): one case as one task, for the table and UTLE_EVAL_JSON. Counts only. */
 interface TaskRecord {
   name: string
+  /** Round 10 (33.1): the model the case ran on. */
+  model: string
   passed: boolean
   asks: number
   input: number
@@ -789,7 +800,7 @@ function siteOf(page: PageContext): string {
   return page.url.startsWith('chrome://') ? page.url : new URL(page.url).hostname
 }
 
-async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: AskResult[] }> {
+async function runCase(c: Case, model: Model, careful: Model): Promise<{ passed: boolean; asks: AskResult[] }> {
   const asks: AskResult[] = []
   const steps: IntentStep[] = []
   let passed = true
@@ -821,7 +832,7 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
     let answer: IntentAnswer | null = null
     let error: string | undefined
     try {
-      answer = await pageIntent(request, { model })
+      answer = await pageIntent(request, { model, careful })
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
     }
@@ -851,6 +862,7 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
       problem,
       ...(error ? { error } : {}),
       care,
+      model: slotOf(care),
       usage: answer?.usage ? { input: answer.usage.input, output: answer.usage.output, cacheRead: answer.usage.cacheRead, cacheWrite: answer.usage.cacheWrite } : NO_USAGE,
       usd: answer?.usage ? costOf(answer.usage.model, answer.usage, new Date(started)) : 0,
       provider: answer?.usage?.provider ?? '',
@@ -860,7 +872,7 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
     const tail = problem ? ` (wanted ${JSON.stringify(step.expect)}, got ${problem})` : ''
     const plan = answer?.plan && answer.plan.length > 0 ? ` plan=${JSON.stringify(answer.plan)}` : ''
     console.log(
-      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms ${care.padEnd(7)} ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${plan}${tail} [in=${fresh(result.usage)} cached=${result.usage.cacheRead} out=${result.usage.output} ${dollars(result.usd)}${result.provider !== '' && result.provider !== MODEL.split(':')[0] ? ` via ${result.provider}` : ''}]`,
+      `${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms ${care.padEnd(7)} ${site.padEnd(18)} ${label} -> ${result.got} say=${JSON.stringify(result.say)} done=${result.done}${plan}${tail} [in=${fresh(result.usage)} cached=${result.usage.cacheRead} out=${result.usage.output} ${dollars(result.usd)}${result.provider !== '' && result.provider !== result.model.split(':')[0] ? ` via ${result.provider}` : ''}]`,
     )
     if (!ok || !answer) {
       passed = false
@@ -950,7 +962,7 @@ async function runAddressee(c: AddresseeCase, model: Model): Promise<AskResult> 
   const ok = verdict === c.want
   const problem = error ? `error ${error}` : ok ? null : `verdict ${verdict ?? 'none'}`
   console.log(`${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms quick   ${siteOf(c.page).padEnd(18)} "${c.utterance}" -> ${verdict ?? 'error'}${problem ? ` (wanted ${c.want})` : ''} [in=${fresh(usage)} out=${usage.output} ${dollars(usd)}]`)
-  return { name: c.name, utterance: c.utterance, step: 1, site: siteOf(c.page), ms, ok, got: verdict ?? 'error', say: '', done: true, wanted: c.want, problem, ...(error ? { error } : {}), care: 'quick', usage, usd, provider }
+  return { name: c.name, utterance: c.utterance, step: 1, site: siteOf(c.page), ms, ok, got: verdict ?? 'error', say: '', done: true, wanted: c.want, problem, ...(error ? { error } : {}), care: 'quick', model: MODEL, usage, usd, provider }
 }
 // ---------- end of the addressee check ----------
 
@@ -965,19 +977,19 @@ async function main(): Promise<void> {
     return `${c.name} ${c.utterance} ${sites}`.toLowerCase().includes(ONLY)
   })
   const at = new Date()
-  console.log(`model ${MODEL}${CONFIGURED.fallback ? `, fallback ${CONFIGURED.fallback}` : ''}, ${selected.length} cases${ONLY ? ` (UTLE_EVAL_ONLY=${ONLY})` : ''}, ${at.toISOString()}`)
+  console.log(`model ${MODEL}, careful ${CAREFUL}${CONFIGURED.fallback ? `, fallback ${CONFIGURED.fallback}` : ''}, ${selected.length} cases${ONLY ? ` (UTLE_EVAL_ONLY=${ONLY})` : ''}, ${at.toISOString()}`)
 
   let passed = 0
   const all: AskResult[] = []
   const tasks: TaskRecord[] = []
   for (const c of selected) {
-    const result = await runCase(c, EVAL_MODEL)
+    const result = await runCase(c, EVAL_MODEL, EVAL_CAREFUL)
     if (result.passed) passed += 1
     all.push(...result.asks)
     const usage = sumUsage(result.asks)
     const usd = sumUsd(result.asks)
     const ms = result.asks.reduce((t, a) => t + a.ms, 0)
-    tasks.push({ name: c.name, passed: result.passed, asks: result.asks.length, input: fresh(usage), cacheRead: usage.cacheRead, output: usage.output, usd, ms })
+    tasks.push({ name: c.name, model: result.asks[0]?.model ?? MODEL, passed: result.passed, asks: result.asks.length, input: fresh(usage), cacheRead: usage.cacheRead, output: usage.output, usd, ms })
     console.log(`  task ${result.passed ? 'done  ' : 'failed'} ${c.name}: ${result.asks.length} asks, tokens in=${fresh(usage)} cached=${usage.cacheRead} out=${usage.output}, ${dollars(usd)}`)
   }
   // Round 10 (32.3): the addressee cases, one ask each, counted in the same table.
@@ -990,7 +1002,7 @@ async function main(): Promise<void> {
       passed += 1
       addresseePassed += 1
     }
-    tasks.push({ name: c.name, passed: result.ok, asks: 1, input: fresh(result.usage), cacheRead: result.usage.cacheRead, output: result.usage.output, usd: result.usd, ms: result.ms })
+    tasks.push({ name: c.name, model: MODEL, passed: result.ok, asks: 1, input: fresh(result.usage), cacheRead: result.usage.cacheRead, output: result.usage.output, usd: result.usd, ms: result.ms })
   }
   if (addressees.length > 0) console.log(`addressee: ${addresseePassed}/${addressees.length} verdicts right`)
   selected.push(...addressees.map((c): Case => ({ name: c.name, utterance: c.utterance, steps: [] })))
@@ -1004,29 +1016,44 @@ async function main(): Promise<void> {
   console.log(`${passed}/${selected.length} cases passed (${rate}%), ${all.length} asks, latency p50 ${p50} ms, p95 ${p95} ms; p50 quick ${byCare('quick')} ms, careful ${byCare('careful')} ms`)
 
   // Round 9 (30.5.5): the table. "Per completed task" is the total over every case divided by the cases passed.
-  const total = sumUsage(all)
-  const totalUsd = sumUsd(all)
-  const wasted = tasks.filter((t) => !t.passed).reduce((t, task) => t + task.usd, 0)
-  const per = (n: number): string => (passed > 0 ? (n / passed).toFixed(0) : '-')
-  const table = {
-    model: MODEL,
-    pass: `${passed}/${selected.length}`,
-    asksPerTask: selected.length > 0 ? all.length / selected.length : 0,
-    tokensPerCompletedTask: passed > 0 ? { input: fresh(total) / passed, cacheRead: total.cacheRead / passed, output: total.output / passed } : null,
-    usdPerCompletedTask: passed > 0 ? totalUsd / passed : null,
-    usdWastedOnFailedTasks: wasted,
-    usdTotal: totalUsd,
-    p50,
-    p95,
+  // Round 10 (33.1): one row per model, its cases and asks only (addressee cases are quick), then the total.
+  const rowOf = (label: string, rowTasks: readonly TaskRecord[], rowAsks: readonly AskResult[]) => {
+    const done = rowTasks.filter((t) => t.passed).length
+    const usage = sumUsage(rowAsks)
+    const usd = sumUsd(rowAsks)
+    const sorted = rowAsks.map((a) => a.ms).sort((a, b) => a - b)
+    return {
+      model: label,
+      pass: `${done}/${rowTasks.length}`,
+      rate: rowTasks.length > 0 ? Math.round((100 * done) / rowTasks.length) : 0,
+      asksPerTask: rowTasks.length > 0 ? rowAsks.length / rowTasks.length : 0,
+      tokensPerCompletedTask: done > 0 ? { input: fresh(usage) / done, cacheRead: usage.cacheRead / done, output: usage.output / done } : null,
+      usdPerCompletedTask: done > 0 ? usd / done : null,
+      usdWastedOnFailedTasks: rowTasks.filter((t) => !t.passed).reduce((t, task) => t + task.usd, 0),
+      usdTotal: usd,
+      p50: percentile(sorted, 50),
+      p95: percentile(sorted, 95),
+    }
+  }
+  const models = [...new Set([MODEL, CAREFUL])].filter((m) => tasks.some((t) => t.model === m))
+  const rows = models.map((m) => rowOf(m, tasks.filter((t) => t.model === m), all.filter((a) => a.model === m)))
+  const table = rowOf(models.length > 1 ? 'all' : MODEL, tasks, all)
+  const totalUsd = table.usdTotal
+  const line = (row: ReturnType<typeof rowOf>): string => {
+    const t = row.tokensPerCompletedTask
+    const tokens = t === null ? '- / - / -' : `${t.input.toFixed(0)} / ${t.cacheRead.toFixed(0)} / ${t.output.toFixed(0)}`
+    return `| ${row.model} | ${row.pass} (${row.rate} %) | ${row.asksPerTask.toFixed(2)} | ${tokens} | ${row.usdPerCompletedTask === null ? '-' : dollars(row.usdPerCompletedTask)} | ${dollars(row.usdWastedOnFailedTasks)} | ${row.p50} / ${row.p95} |`
   }
   console.log('')
   console.log('| model | pass | asks per task | tokens per completed task (in / cached / out) | $ per completed task | $ wasted on failed tasks | p50 / p95 ms |')
   console.log('|---|---|---|---|---|---|---|')
-  console.log(`| ${MODEL} | ${table.pass} (${rate} %) | ${table.asksPerTask.toFixed(2)} | ${per(fresh(total))} / ${per(total.cacheRead)} / ${per(total.output)} | ${table.usdPerCompletedTask === null ? '-' : dollars(table.usdPerCompletedTask)} | ${dollars(wasted)} | ${p50} / ${p95} |`)
-  console.log(`total spend ${dollars(totalUsd)}${MODEL.startsWith('deepseek:') ? `; DeepSeek ${deepseekPeak(at) ? 'peak' : 'off-peak'} prices (unverified hours)` : ''}`)
+  for (const row of rows) console.log(line(row))
+  if (rows.length > 1) console.log(line(table))
+  const deepseek = [MODEL, CAREFUL].some((m) => m.startsWith('deepseek:'))
+  console.log(`total spend ${dollars(totalUsd)}${deepseek ? `; DeepSeek ${deepseekPeak(at) ? 'peak' : 'off-peak'} prices (unverified hours)` : ''}`)
 
   if (JSON_PATH) {
-    const report = { model: MODEL, fallback: CONFIGURED.fallback, at: at.toISOString(), hourUtc: at.getUTCHours(), deepseekPeak: deepseekPeak(at), cases: selected.length, passed, asks: all.length, p50, p95, p50Quick: byCare('quick'), p50Careful: byCare('careful'), table, tasks, results: all }
+    const report = { model: MODEL, careful: CAREFUL, rows, fallback: CONFIGURED.fallback, at: at.toISOString(), hourUtc: at.getUTCHours(), deepseekPeak: deepseekPeak(at), cases: selected.length, passed, asks: all.length, p50, p95, p50Quick: byCare('quick'), p50Careful: byCare('careful'), table, tasks, results: all }
     writeFileSync(JSON_PATH, JSON.stringify(report, null, 2))
     console.log(`wrote ${JSON_PATH}`)
   }

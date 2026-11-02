@@ -155,7 +155,8 @@ export function intentAsk(request: IntentRequest): ModelAsk {
   }
 }
 
-export async function pageIntent(input: unknown, deps: { model: Model }): Promise<IntentAnswer> {
+/** Round 10 (#7, 33.1): model serves the quick asks, careful the careful ones; without careful, model serves both. */
+export async function pageIntent(input: unknown, deps: { model: Model; careful?: Model }): Promise<IntentAnswer> {
   const parsed = IntentRequestSchema.safeParse(input)
   if (!parsed.success || parsed.data.utterance.trim() === '') {
     throw new InterpretError('bad_request', 'The request is malformed.')
@@ -166,7 +167,7 @@ export async function pageIntent(input: unknown, deps: { model: Model }): Promis
 
   let reply: ModelReplyNeutral
   try {
-    reply = await deps.model.ask(intentAsk(request))
+    reply = await (care === 'careful' ? (deps.careful ?? deps.model) : deps.model).ask(intentAsk(request))
   } catch (error) {
     const mapped = toIntentError(error)
     const provider = error instanceof ModelError ? ` provider=${error.provider}` : ''
