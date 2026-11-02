@@ -749,6 +749,9 @@ rule 2 alone. What does make it (the speech detector's end, the flush, the decod
 
 ## 1q. Round 10, prompt 4, lane LATE (2026-11-02): why the final came late, and a command final about 0.5 s sooner (#7)
 
+Merged in 8133773; #7 closed. The lane's `artifacts/` (not committed; every `artifacts/late/...` path below) moved
+with its worktree's removal to `C:\Users\ralfs\utle-artifacts\2026-11-02-r10-late\`.
+
 ARCHITECTURE 33.2 and 33.3. Branch `r10-late`: 8ceced7 (each final's why, no behaviour change: main 6ccff92 plus the
 measurement) and 381ce67 (the fix). SYNTHETIC: the 18 clips of `scripts/fixtures/labels.tsv`, TartuNLP voices.
 
