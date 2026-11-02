@@ -5,7 +5,7 @@ import type { Duplex } from 'node:stream'
 import { WebSocketServer } from 'ws'
 import type { RawData, WebSocket } from 'ws'
 import { ASR_PATH } from '../src/speech/asrProtocol.ts'
-import type { AsrClientMessage, AsrServerMessage, AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
+import type { AsrClientMessage, AsrServerMessage, AsrUnavailableReason, FinalWhy } from '../src/speech/asrProtocol.ts'
 import type { Judgement } from './speaker.ts'
 import { loadModel } from './asrModel.ts'
 import { hotwordsLine } from './hotwords.ts'
@@ -65,9 +65,17 @@ export function parseClientFrame(data: RawData | string): AsrClientMessage | nul
     case 'speakerTest':
     case 'profileDelete':
       return { type: record.type }
+    case 'trace':
+      return typeof record.on === 'boolean' ? { type: 'trace', on: record.on } : null
     default:
       return null
   }
+}
+
+/** Round 10 (#7, lane LATE): the log line for what ended each utterance: the cause and timings, never the words. */
+export function endedLine(why: FinalWhy): string {
+  const at = (ms: number | null): string => (ms === null ? '-' : String(Math.round(ms)))
+  return `[asr] final cause=${why.cause} audio=${at(why.audioMs)} wall=${at(why.wallMs)} speechEnd=${at(why.speechEndMs)} lastToken=${at(why.lastTokenMs)} lastWord=${at(why.lastWordMs)} lastChange=${at(why.lastChangeMs)} extra=${at(why.extraMs)} dropped=${at(why.droppedMs)}`
 }
 
 /** The log line for each final's verdict: speaker, score and (round 7) the reason when continuity decided it. Never the text. */
@@ -197,6 +205,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             ws.close(1011)
           },
           onJudged: (judgement, onlyOwner) => console.info(judgedLine(judgement, onlyOwner)),
+          onEnded: (why) => console.info(endedLine(why)),
         })
         send(ws, { type: 'ready' })
         ws.on('message', (data: RawData, isBinary: boolean) => {
@@ -211,6 +220,7 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
             else if (frame?.type === 'speakerStatus') session.speakerStatus()
             else if (frame?.type === 'speakerTest') session.speakerTest()
             else if (frame?.type === 'profileDelete') session.profileDelete()
+            else if (frame?.type === 'trace') session.trace(frame.on)
             return
           }
           if (!Buffer.isBuffer(data)) return

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES, ENDPOINT_TRAILING_MS } from '../src/speech/asrProtocol.ts'
 import { SPEAKER_REASONS } from '../src/speech/asrProtocol.ts'
-import type { AsrServerMessage, SpeakerReason } from '../src/speech/asrProtocol.ts'
+import type { AsrServerMessage, FinalWhy, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, PAUSE_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
 import type { EnrolFailure, EnrolOutcome, EnrolPhrase, Judgement, PhraseProblem, PhraseResult, Readiness, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
@@ -1340,5 +1340,116 @@ describe('the pause before the final (round 10, #7, 33.3)', () => {
     session.onlyOwner(true)
     feed([1, 2, ...silence(12)])
     expect(sent.some((m) => m.type === 'pause' || m.type === 'partial')).toBe(false)
+  })
+})
+
+// ---------- round 10 (#7, lane LATE): what ended each utterance, in numbers ----------
+
+/** RuleRecognizer with the recogniser's own token timestamps (seconds since the stream began, as sherpa-onnx reports them). */
+class TimedRecognizer extends RuleRecognizer {
+  fed = new WeakMap<RuleStream, number>()
+  stamps = new WeakMap<RuleStream, number[]>()
+  override decode(stream: RuleStream): void {
+    const before = stream.words.length
+    super.decode(stream)
+    const at = this.fed.get(stream) ?? 0
+    this.fed.set(stream, at + 0.1)
+    if (stream.words.length > before) this.stamps.set(stream, [...(this.stamps.get(stream) ?? []), at])
+  }
+  override getResult(stream: RuleStream): { text: string; timestamps: number[]; start_time: number } {
+    return { text: stream.words.join(' '), timestamps: this.stamps.get(stream) ?? [], start_time: 0 }
+  }
+  override reset(stream: RuleStream): void {
+    super.reset(stream)
+    this.stamps.set(stream, [])
+  }
+}
+
+/** FakeVad that reports a finished segment, as Silero does when speech ends: its start and samples. */
+class SegmentVad extends FakeVad {
+  segments: Array<{ start: number; samples: Float32Array }> = []
+  was = false
+  override acceptWaveform(samples: Float32Array): void {
+    super.acceptWaveform(samples)
+    const now = this.isDetected()
+    if (this.was && !now) this.segments.push({ start: 0, samples: new Float32Array(2500) })
+    this.was = now
+  }
+  override isEmpty(): boolean {
+    return this.segments.length === 0
+  }
+  front(): { start: number; samples: Float32Array } {
+    return this.segments[0] ?? { start: 0, samples: new Float32Array(0) }
+  }
+  override pop(): void {
+    this.segments.shift()
+  }
+}
+
+const traced = (decoder: Decoder) => {
+  const sent: AsrServerMessage[] = []
+  const ended: FinalWhy[] = []
+  const loop = new Loop()
+  const clock = { now: 5000 }
+  const session = createAsrSession(decoder, (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now, onEnded: (why) => ended.push(why) })
+  session.endpointMode('command')
+  const feed = (values: number[] | Float32Array[]): void => {
+    for (const value of values) {
+      session.audio(typeof value === 'number' ? frame(value) : value)
+      clock.now += 100
+      loop.settle()
+    }
+  }
+  return { sent, ended, loop, clock, session, feed }
+}
+const whyOf = (sent: AsrServerMessage[]): Array<FinalWhy | undefined> => sent.flatMap((m) => (m.type === 'final' ? [m.why] : []))
+
+describe('what ended each utterance (round 10, #7, lane LATE)', () => {
+  it('with trace on, a final carries why: the recogniser rule, the audio and wall time, when its last word showed and last changed', () => {
+    const { sent, session, feed } = traced(decoderInThread(new RuleRecognizer()))
+    session.trace(true)
+    feed([1, 2, ...silence(12)])
+    expect(whyOf(sent)).toEqual([{ cause: 'rule2', audioMs: 800, wallMs: 800, speechEndMs: null, lastTokenMs: null, lastWordMs: 200, lastChangeMs: 200, extraMs: 0, droppedMs: 0 }])
+  })
+
+  it('without trace the final is as before, and the server log still gets the why: numbers and a cause, never words', () => {
+    const { sent, ended, feed } = traced(decoderInThread(new RuleRecognizer()))
+    feed([1, 2, ...silence(12)])
+    expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'ava uus' }])
+    expect(ended).toHaveLength(1)
+    expect(JSON.stringify(ended)).not.toMatch(/ava|uus/)
+  })
+
+  it('a flush is the cause when the client ends the utterance', () => {
+    const { sent, session, feed, loop } = traced(decoderInThread(new RuleRecognizer()))
+    session.trace(true)
+    feed([1, 2, 0, 0])
+    session.flush()
+    loop.settle()
+    expect(whyOf(sent).map((w) => [w?.cause, w?.audioMs, w?.lastWordMs])).toEqual([['flush', 400, 200]])
+  })
+
+  it("the speech end is the detector's: Silero's finished segment when it gives one, else the end of the last frame it heard as speech", () => {
+    const withSegment = traced(decoderInThread(new RuleRecognizer(), null, { vad: () => new SegmentVad(1) }))
+    withSegment.session.trace(true)
+    withSegment.feed([1, 2, ...silence(12)])
+    // 2500 samples from sample 0: the segment ended at 156.25 ms.
+    expect(whyOf(withSegment.sent).map((w) => w?.speechEndMs)).toEqual([156.25])
+
+    const fallback = traced(decoderInThread(new RuleRecognizer(), null, { vad: () => new FakeVad(1) }))
+    fallback.session.trace(true)
+    fallback.feed([1, 2, ...silence(12)])
+    expect(whyOf(fallback.sent).map((w) => w?.speechEndMs)).toEqual([200])
+  })
+
+  it("the last token's place is the recogniser's timestamp, moved back by the pre-roll the detector replayed", () => {
+    const { sent, session, feed } = traced(decoderInThread(new TimedRecognizer(), null, { vad: () => new FakeVad(2) }))
+    session.trace(true)
+    // Frame 1 reaches the decoder as hiss, then again as audio with frame 2: 100 ms more audio than was sent.
+    feed([1, 2, ...silence(12)])
+    const why = whyOf(sent)[0]
+    expect(why?.extraMs).toBe(100)
+    // "uus" (frame 2) was decoded from 200 ms of the recogniser's audio: 100 ms of the session's.
+    expect(why?.lastTokenMs).toBe(100)
   })
 })

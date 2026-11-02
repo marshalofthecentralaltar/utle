@@ -65,6 +65,8 @@ export interface VadLike {
   isEmpty(): boolean
   /** Drops the oldest finished segment (the filter does not need them; popping keeps memory flat). */
   pop(): void
+  /** Round 10 (#7, lane LATE): the oldest finished segment, its first sample and its samples (Silero's own end of speech). */
+  front?(): { start: number; samples: Float32Array }
 }
 
 /** One detector per stream: it has state. */
@@ -113,6 +115,12 @@ export interface FilteredFrame {
 export interface SpeechFilter {
   /** One frame in; the frames the decoder gets now, in order (none while the pre-roll fills). */
   push(samples: Float32Array): FilteredFrame[]
+  /**
+   * Round 10 (#7, lane LATE): where the last speech ended, in ms of the audio pushed; null before any has.
+   * Silero's finished segment when the detector gives one (it knows it MIN_SILENCE after the fact), else the end of
+   * the last frame it heard as speech.
+   */
+  speechEndMs(): number | null
 }
 
 const ms = (samples: Float32Array): number => (samples.length * 1000) / ASR_SAMPLE_RATE
@@ -127,6 +135,9 @@ const ms = (samples: Float32Array): number => (samples.length * 1000) / ASR_SAMP
 export function createSpeechFilter(vad: VadLike, preRollMs = PRE_ROLL_MS): SpeechFilter {
   let recent: Float32Array[] = []
   let recentMs = 0
+  let heardMs = 0
+  let detected = false
+  let endMs: number | null = null
   // A small linear congruential generator: the hiss is the same every run, so recorded speech gives the same words.
   let seed = 1
   const quiet = (length: number): Float32Array => {
@@ -140,8 +151,16 @@ export function createSpeechFilter(vad: VadLike, preRollMs = PRE_ROLL_MS): Speec
   return {
     push(samples) {
       vad.acceptWaveform(samples)
-      while (!vad.isEmpty()) vad.pop()
-      if (vad.isDetected()) {
+      heardMs += ms(samples)
+      const was = detected
+      detected = vad.isDetected()
+      if (was && !detected) endMs = heardMs - ms(samples)
+      while (!vad.isEmpty()) {
+        const segment = vad.front?.()
+        if (segment) endMs = ((segment.start + segment.samples.length) * 1000) / ASR_SAMPLE_RATE
+        vad.pop()
+      }
+      if (detected) {
         const out = recent.map((frame) => ({ samples: frame, speech: true }))
         recent = []
         recentMs = 0
@@ -155,6 +174,9 @@ export function createSpeechFilter(vad: VadLike, preRollMs = PRE_ROLL_MS): Speec
         if (oldest) recentMs -= ms(oldest)
       }
       return [{ samples: quiet(samples.length), speech: false }]
+    },
+    speechEndMs() {
+      return endMs
     },
   }
 }

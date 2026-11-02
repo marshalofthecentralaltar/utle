@@ -29,6 +29,37 @@ export const INSTANT_SETTLE_MS = 650
 export type EndpointMode = 'command' | 'dictation'
 export const ENDPOINT_TRAILING_MS: Readonly<Record<EndpointMode, number>> = { command: 600, dictation: 1000 }
 
+/**
+ * Round 10 (#7, lane LATE): what ended an utterance. rule1, rule2, rule3: the recogniser's own endpoint rules
+ * (rule 1: nothing heard for 2.4 s; rule 2: trailing silence after the last word; rule 3: 30 s long); flush: the
+ * client asked.
+ */
+export type EndCause = 'rule1' | 'rule2' | 'rule3' | 'flush'
+/**
+ * Round 10 (#7, lane LATE): when and why a final was made, in numbers only (never words or audio). Audio times are
+ * ms of the session's audio as the client sent it (dropped audio not counted); wall times are ms since the session's
+ * first frame arrived. null: not known (a flush knows no recogniser times).
+ */
+export interface FinalWhy {
+  cause: EndCause
+  /** The session's audio at the frame that ended the utterance (a flush: all audio before it). */
+  audioMs: number
+  /** Wall time when the final was sent. */
+  wallMs: number
+  /** Where the speech detector last heard speech end, in the session's audio; null without one or before an end. */
+  speechEndMs: number | null
+  /** Where the recogniser put its last token (its own timestamp), in the session's audio. */
+  lastTokenMs: number | null
+  /** The session's audio when the final's last word first showed in a partial. */
+  lastWordMs: number | null
+  /** The session's audio when the words last changed. */
+  lastChangeMs: number | null
+  /** Audio the recogniser was given that the client did not send (the detector's pre-roll replayed), up to the end. */
+  extraMs: number
+  /** Audio dropped by the backlog while this utterance was in progress. */
+  droppedMs: number
+}
+
 /** The lines the page shows when the local recogniser cannot run (src/speech/pick.ts). */
 export const FELL_BACK = "The speech model on this computer is not running, so Chrome's recognition is listening instead."
 export const NOTHING_LEFT = 'The speech model on this computer is not running and this browser has no speech recognition. Type instead.'
@@ -45,7 +76,8 @@ export type AsrServerMessage =
    * local rule knows; the final for the same words is then not run again.
    */
   | { type: 'pause'; text: string }
-  | { type: 'final'; text: string; speaker?: Speaker; segment?: number; decision?: SpeakerDecision }
+  /** Round 10 (#7, lane LATE): why, only to a client that asked with trace. */
+  | { type: 'final'; text: string; speaker?: Speaker; segment?: number; decision?: SpeakerDecision; why?: FinalWhy }
   /** Round 10 (31.2): only the owner is obeyed and this utterance was not verified as his: no words, only why. */
   | { type: 'rejected'; decision: SpeakerDecision }
   /** Round 10 (31.2): only the owner is obeyed: speech is being decoded, words withheld until verified (replaces partial). */
@@ -237,6 +269,26 @@ export type AsrClientMessage =
   | { type: 'speakerTest' }
   /** Round 10 (31.7): delete the voice profile. */
   | { type: 'profileDelete' }
+  /** Round 10 (#7, lane LATE): attach each final's why (timings and a cause, no words) from now on; for measuring. */
+  | { type: 'trace'; on: boolean }
+
+const END_CAUSES: readonly EndCause[] = ['rule1', 'rule2', 'rule3', 'flush']
+const msOrNull = (value: unknown): number | null | undefined => (value === null ? null : typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+
+/** Round 10 (#7, lane LATE): a final's why, or null when anything in it is not a number or a known cause. */
+export function parseWhy(value: unknown): FinalWhy | null {
+  if (typeof value !== 'object' || value === null) return null
+  const r = value as Record<string, unknown>
+  const cause = END_CAUSES.find((c) => c === r.cause)
+  const numbers = [r.audioMs, r.wallMs, r.extraMs, r.droppedMs]
+  if (cause === undefined || !numbers.every((n) => typeof n === 'number' && Number.isFinite(n))) return null
+  const speechEndMs = msOrNull(r.speechEndMs)
+  const lastTokenMs = msOrNull(r.lastTokenMs)
+  const lastWordMs = msOrNull(r.lastWordMs)
+  const lastChangeMs = msOrNull(r.lastChangeMs)
+  if (speechEndMs === undefined || lastTokenMs === undefined || lastWordMs === undefined || lastChangeMs === undefined) return null
+  return { cause, audioMs: r.audioMs as number, wallMs: r.wallMs as number, speechEndMs, lastTokenMs, lastWordMs, lastChangeMs, extraMs: r.extraMs as number, droppedMs: r.droppedMs as number }
+}
 
 /** Reads one text frame from the server; null for anything that is not a known message. */
 export function parseAsrMessage(raw: string): AsrServerMessage | null {
@@ -268,8 +320,10 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
       const final: AsrServerMessage = speaker === undefined ? { type: 'final', text: record.text } : { type: 'final', text: record.text, speaker }
       // Round 10 (31.1): the segment and its decision, when the server sent them whole.
       const decision = record.decision === undefined ? null : parseDecision(record.decision)
-      if (decision !== null && typeof record.segment === 'number') return { ...final, segment: record.segment, decision }
-      return final
+      const why = record.why === undefined ? null : parseWhy(record.why)
+      const withWhy: AsrServerMessage = why === null ? final : { ...final, why }
+      if (decision !== null && typeof record.segment === 'number') return { ...withWhy, segment: record.segment, decision }
+      return withWhy
     }
     case 'rejected': {
       const decision = parseDecision(record.decision)
