@@ -6,6 +6,7 @@
  *   npx tsx scripts/kws-set.ts            (needs the network) both sets
  *   npx tsx scripts/kws-set.ts --eval     the evaluation set only, into artifacts/kws-set/ (not committed)
  *   npx tsx scripts/kws-set.ts --voice    voice.ts's clips only, into scripts/fixtures/wake-set/ (committed)
+ *   npx tsx scripts/kws-set.ts --chrome   voice.ts section 10's one clip only (CHROME_CLIP), into scripts/fixtures/wake-set/ (committed)
  *
  * Each clip is 16 kHz mono 16-bit PCM with 0.3 s of floor before it, 0.8 s after it, and a noise
  * floor at about -66 dBFS, as scripts/listen-set.ts makes them. The evaluation set is every sentence
@@ -91,6 +92,19 @@ const VOICE_SET = [
   { name: 'stranger-scroll', speaker: 'kalev', parts: ['Keri alla.'] },
 ] as const
 
+/**
+ * voice.ts section 10 (SYNTHETIC, voice "vesta"): the extension in Chromium with the spotter, one
+ * fake-microphone file. Each part its own utterance (CHROME_PAUSE_S apart): the relative wakes
+ * nothing, "Ütle." wakes ACTIVE, "Ütle." again toggles back to PASSIVE, "Ütle, ava YouTube." wakes
+ * and opens the page. "vesta": TalTech's model writes her "YouTube" as "juutube", which the rules
+ * know (most voices give "jõudube", which goes to the model).
+ */
+export const CHROME_CLIP = { name: 'chrome-sequence', speaker: 'vesta', parts: ['Ma ütlen sulle homme.', 'Ütle.', 'Ütle.', 'Ütle, ava YouTube.'] } as const
+/** Long enough for each part's final and the strip's change to land before the next part. */
+export const CHROME_PAUSE_S = 5
+/** The quiet before the first part: the microphone and the connection settle. */
+export const CHROME_LEAD_S = 2.5
+
 /** The pause between the parts of a voice.ts clip ("Ütle" + a natural pause + "ava Gmail"). */
 const PAUSE_S = 0.9
 
@@ -114,10 +128,10 @@ const noise = (): number => {
   seed = (seed * 1103515245 + 12345) % 2147483648
   return seed / 2147483648 - 0.5
 }
-/** 0.3 s of floor, the parts with PAUSE_S of floor between them, 0.8 s of floor. */
-function floored(parts: readonly Float32Array[]): Float32Array {
-  const lead = Math.round(0.3 * RATE)
-  const gap = Math.round(PAUSE_S * RATE)
+/** 0.3 s of floor (leadS), the parts with PAUSE_S (pauseS) of floor between them, 0.8 s of floor. */
+function floored(parts: readonly Float32Array[], pauseS = PAUSE_S, leadS = 0.3): Float32Array {
+  const lead = Math.round(leadS * RATE)
+  const gap = Math.round(pauseS * RATE)
   const speech = parts.reduce((sum, p) => sum + p.length, 0) + gap * (parts.length - 1)
   const samples = new Float32Array(lead + speech + Math.round(0.8 * RATE))
   let at = lead
@@ -133,9 +147,18 @@ function floored(parts: readonly Float32Array[]): Float32Array {
   return samples
 }
 
-const only = process.argv.includes('--eval') ? 'eval' : process.argv.includes('--voice') ? 'voice' : 'both'
+const only = process.argv.includes('--eval') ? 'eval' : process.argv.includes('--voice') ? 'voice' : process.argv.includes('--chrome') ? 'chrome' : 'both'
 
-if (only !== 'voice') {
+if (only === 'chrome') {
+  const parts: Float32Array[] = []
+  for (const text of CHROME_CLIP.parts) parts.push(await tts(text, CHROME_CLIP.speaker, 1))
+  const samples = floored(parts, CHROME_PAUSE_S, CHROME_LEAD_S)
+  const file = join(root, 'scripts', 'fixtures', 'wake-set', `${CHROME_CLIP.name}.wav`)
+  writeFileSync(file, wavBytes(samples, RATE))
+  console.log(`${CHROME_CLIP.name}.wav  ${CHROME_CLIP.speaker}  ${(samples.length / RATE).toFixed(2)} s  "${CHROME_CLIP.parts.join(' | ')}"`)
+}
+
+if (only === 'eval' || only === 'both') {
   const out = join(root, 'artifacts', 'kws-set')
   mkdirSync(out, { recursive: true })
   const rows = ['file\tlabel\twhere\tvoice\tspeed\ttext']
@@ -155,7 +178,7 @@ if (only !== 'voice') {
   writeFileSync(join(out, 'labels.tsv'), `${rows.join('\n')}\n`)
 }
 
-if (only !== 'eval') {
+if (only === 'voice' || only === 'both') {
   const out = join(root, 'scripts', 'fixtures', 'wake-set')
   mkdirSync(out, { recursive: true })
   for (const clip of VOICE_SET) {

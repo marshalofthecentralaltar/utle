@@ -38,7 +38,18 @@ runs. Each carries its own licence in `node_modules/<name>/`; they were not chec
 | `scripts/fixtures/*.wav` (five short Estonian recordings used by the tests) | Synthetic speech made with the TartuNLP text-to-speech service (`https://api.tartunlp.ai/text-to-speech/v2`, voice "mari"), then resampled by `scripts/fixture.ts` | **Not confirmed.** The TartuNLP service's code is MIT (https://raw.githubusercontent.com/TartuNLP/text-to-speech-api/main/LICENSE: "MIT License, Copyright (c) 2021 University of Tartu"), but no licence or terms of use for the audio the service produces, or for the voice, was found. | See `docs/PUBLISHING.md`, item 3 of the checklist. |
 
 | `scripts/fixtures/speaker-set/*.wav` (round 7: the speaker gate's calibration set, made by `scripts/speaker-set.ts`) | The five fixtures above cut into utterances, and synthetic speech from the same TartuNLP service (voices albert, kalev, meelis, kylli, vesta, liivika) | **Not confirmed**, as the row above. | As the row above. |
-| `scripts/fixtures/wake-set/*.wav` (round 10, #2: voice.ts section 9, made by `scripts/kws-set.ts --voice`; the keyword spotter's evaluation set of the same script goes to `artifacts/kws-set/` and is never committed) | Synthetic speech from the same TartuNLP service (voices mari, kalev; the evaluation set albert, kalev, meelis, kylli, vesta, liivika) | **Not confirmed**, as the rows above. | As the rows above. |
+| `scripts/fixtures/wake-set/*.wav` (round 10, #2: voice.ts sections 9 and 10, made by `scripts/kws-set.ts --voice` and `--chrome`; the keyword spotter's evaluation set of the same script goes to `artifacts/kws-set/` and is never committed) | Synthetic speech from the same TartuNLP service (voices mari, kalev, vesta for `chrome-sequence.wav`; the evaluation set albert, kalev, meelis, kylli, vesta, liivika) | **Not confirmed**, as the rows above. | As the rows above. |
+
+## Measurement data, downloaded by a script, never committed or shipped
+
+Round 10 (#2, ARCHITECTURE 35.6): `scripts/kws-real.ts --fetch <cache>` downloads these into a directory outside the
+repository and checks every file against the size and hash Hugging Face lists; nothing of them is committed, shipped or
+sent anywhere. The licence lines below were read on 2 November 2026 in each dataset's README at the pinned revision.
+
+| What | Where it comes from | Licence | Checked at (the line that states the licence) |
+|---|---|---|---|
+| FLEURS `et_ee` (dev, test and train: 3781 clips, 11.55 h of read Estonian by real people) | `google/fleurs` on Hugging Face, revision `70bb2e84b976b7e960aa89f1c648e09c59f894dd` (Conneau et al., "FLEURS: Few-shot Learning Evaluation of Universal Representations of Speech", 2022) | CC BY 4.0 | https://huggingface.co/datasets/google/fleurs/resolve/70bb2e84b976b7e960aa89f1c648e09c59f894dd/README.md: front matter `license: - cc-by-4.0`; "All datasets are licensed under the [Creative Commons license (CC-BY)](https://creativecommons.org/licenses/)." |
+| VoxPopuli `et` (validation and test: 101 clips, 0.27 h of European Parliament speeches; the train split is not served by the datasets-server, HTTP 500) | `facebook/voxpopuli` on Hugging Face, revision `42f01879c780b4a2e90ec0b4f616c2ece526e4f1`, rows and audio through `datasets-server.huggingface.co` (Wang et al., "VoxPopuli", ACL 2021) | CC0 1.0 | https://huggingface.co/datasets/facebook/voxpopuli/resolve/42f01879c780b4a2e90ec0b4f616c2ece526e4f1/README.md: front matter `license: - cc0-1.0`; "The dataset is distributet under CC0 license, see also [European Parliament's legal notice](https://www.europarl.europa.eu/legal-notice/en/) for the raw data." |
 
 `public/favicon.svg` is ours (drawn for Ütle). The screenshots in `docs/proof/` are ours and show
 only test pages and invented names.

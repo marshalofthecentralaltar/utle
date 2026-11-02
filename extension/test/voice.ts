@@ -10,6 +10,7 @@
 //   UTLE_ONLY=onlyowner                        only section 7: only the owner with the real models (a server of its own)
 //   UTLE_ONLY=listen                           only section 8: addressed speech, two synthetic voices, the real models, no browser
 //   UTLE_ONLY=wake                             only section 9: the wake word heard in the audio (the keyword spotter), the real models, no browser
+//   UTLE_ONLY=wakechrome                       only section 10: wake mode in Chromium with the spotter, a server of its own (the dev server serves the pages)
 
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
@@ -990,6 +991,148 @@ async function wakeReal(): Promise<void> {
   }
 }
 
+// ---------- round 10 (#2, ARCHITECTURE 35.5): wake mode in Chromium with the keyword spotter ----------
+// SYNTHETIC voice ("vesta", scripts/kws-set.ts --chrome). The extension as shipped (with UTLE_REAL=1
+// the real src/core/inpage.ts), its offscreen document in wake mode with the word "Ütle", the fake
+// microphone playing one file: "Ma ütlen sulle homme.", "Ütle.", "Ütle.", "Ütle, ava YouTube.", each
+// its own utterance. A server of this process over the real models (the recogniser, the spotter the
+// worker loads at its start, the speech detector); only the owner off. Its messages are tapped where
+// it sends them (wake and spotter events, finals). YouTube is a stand-in page: no real site is hit.
+
+async function wakeChrome(extensionDir: string): Promise<void> {
+  console.log('\n== 10. wake mode in Chromium with the keyword spotter (SYNTHETIC voice vesta, fake microphone: wake-set/chrome-sequence.wav): the relative wakes nothing, "Ütle." ACTIVE, "Ütle." PASSIVE, "Ütle, ava YouTube." opens the page once ==')
+  const { createServer } = await import('node:http')
+  const { WebSocket } = await import('ws')
+  const { attachAsr } = await import('../../server/asr.ts')
+  const wav = join(WAKE_SET, 'chrome-sequence.wav')
+  // The four parts: speech spans joined across pauses under 2 s (a comma is one part).
+  const parts: Array<[number, number]> = []
+  for (const [a, b] of speechSpans(wav)) {
+    const last = parts[parts.length - 1]
+    if (last !== undefined && a - last[1] < 2000) last[1] = b
+    else parts.push([a, b])
+  }
+  console.log(`      parts in the recording (ms from its start): ${parts.map(([a, b]) => `${Math.round(a)}-${Math.round(b)}`).join(', ')}`)
+  check('10. the recording has its four parts', parts.length === 4, String(parts.length))
+
+  // The server's messages as it sends them (no words go with a wake; the finals are the test's own synthetic clip).
+  const wire: Array<{ t: number; type: string; on?: boolean; segment?: number; text?: string }> = []
+  const proto = WebSocket.prototype as unknown as { send: (...args: unknown[]) => unknown }
+  const original = proto.send
+  proto.send = function tapped(this: unknown, ...args: unknown[]): unknown {
+    const data = args[0]
+    if (typeof data === 'string' && /"type":"(wake|spotter|final)"/.test(data)) {
+      const m = JSON.parse(data) as { type: string; on?: boolean; segment?: number; text?: string }
+      wire.push({ t: Date.now(), type: m.type, ...(m.on === undefined ? {} : { on: m.on }), ...(m.segment === undefined ? {} : { segment: m.segment }), ...(m.text === undefined ? {} : { text: m.text }) })
+    }
+    return Reflect.apply(original, this, args)
+  }
+  const dataDir = await mkdtemp(join(tmpdir(), 'utle-wakechrome-'))
+  const server = createServer((req, res) => {
+    res.setHeader('access-control-allow-origin', '*')
+    if ((req.url ?? '').startsWith('/api/status')) {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ intent: 'no_key', speech: { local: true, soniox: false } }))
+      return
+    }
+    res.statusCode = 404
+    res.end()
+  })
+  try {
+    // No profile: only the owner is off, and nothing of models/speaker is read.
+    attachAsr(server, repoRoot, { profileFor: () => join(dataDir, 'no-profile.json') })
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    const address = server.address()
+    const asr = `ws://localhost:${typeof address === 'object' && address !== null ? address.port : 0}/api/asr`
+    // The model (and the spotter with it) loads before the microphone opens.
+    const probe = new WebSocket(asr)
+    let ready = false
+    probe.on('message', (data) => {
+      if (String(data).includes('"type":"ready"')) ready = true
+    })
+    check('10. the server with the real models and the spotter is ready', await waitUntil(async () => ready, 90_000))
+    probe.close()
+
+    const s = await launch(extensionDir, wav)
+    try {
+      let youtube = 0
+      await s.ctx.route('https://www.youtube.com/**', async (route) => {
+        if (route.request().isNavigationRequest()) youtube += 1
+        await route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><title>YouTube (stand-in)</title><h1 style="font:32px sans-serif;margin:40px">YouTube stand-in page</h1>' })
+      })
+      const page = s.ctx.pages()[0] ?? (await s.ctx.newPage())
+      const ONE = `${FIX}/page-one.html`
+      await page.goto(ONE)
+      await page.bringToFront()
+      await waitUntil(async () => s.permission.closedAfterMs !== null, 8000)
+      await sleep(1200)
+      // Wake mode: listening starts by itself (background.ts startIfWake), the offscreen document asks for the spotter.
+      const wiredFrom = wire.length
+      await s.sw.evaluate((url) => chrome.storage.local.set({ asrUrl: url, listenMode: 'wake', wakeWord: 'Ütle' }), asr)
+      const opened = await waitUntil(async () => ((await state(s.sw))?.micOpenedAt ?? 0) > 0, 15_000)
+      check('10. wake mode set: the microphone opened by itself', opened)
+      const t0 = (await state(s.sw))?.micOpenedAt ?? Date.now()
+      const at = (ms: number): number => t0 + ms
+      const [relPart = [0, 0], firstPart = [0, 0], secondPart = [0, 0], youtubePart = [0, 0]] = parts
+
+      // Every 150 ms: ACTIVE or not, the strip's words and line, the tab's address.
+      const samples: Array<{ t: number; open: boolean; heard: string; line: string; url: string }> = []
+      const shots: Record<string, string> = {}
+      let sampling = true
+      const sampler = (async () => {
+        while (sampling) {
+          const t = Date.now()
+          const st = (await s.sw.evaluate(async () => (await chrome.storage.session.get('stripState')).stripState as { wakeOpen?: boolean; heard?: string; line?: string } | undefined).catch(() => undefined)) ?? {}
+          const tab = s.ctx.pages().find((p) => p.url().includes('youtube.com')) ?? page
+          samples.push({ t, open: st.wakeOpen === true, heard: st.heard ?? '', line: st.line ?? '', url: tab.url() })
+          const shoot = async (name: string): Promise<void> => {
+            if (shots[name] !== undefined) return
+            shots[name] = proof(name)
+            await tab.screenshot({ path: proof(name) }).catch(() => undefined)
+          }
+          // PASSIVE after the relative (just before "Ütle."), ACTIVE after the first "Ütle.", PASSIVE after the second, the page after the last.
+          if (t >= at(firstPart[0]) - 300) await shoot('wake-chrome-1-relative-passive.png')
+          if (t >= at(firstPart[1]) && t < at(secondPart[0]) && st.wakeOpen === true) await shoot('wake-chrome-2-active.png')
+          if (t >= at(secondPart[1]) + 2500 && t < at(youtubePart[0])) await shoot('wake-chrome-3-passive-again.png')
+          if (tab.url().includes('youtube.com') && t >= at(youtubePart[1]) + 2500) await shoot('wake-chrome-4-youtube.png')
+          await sleep(Math.max(0, 150 - (Date.now() - t)))
+        }
+      })()
+      await sleep(Math.max(0, at(youtubePart[1]) + 7000 - Date.now()))
+      sampling = false
+      await sampler
+
+      const within = (from: number, to: number): typeof samples => samples.filter((x) => x.t >= at(from) && x.t < at(to))
+      const wired = wire.slice(wiredFrom).map((w) => ({ ...w, ms: w.t - t0 }))
+      console.log(`      the wire (ms from the microphone opening): ${JSON.stringify(wired.map((w) => (w.type === 'final' ? `${w.ms} final${w.segment === undefined ? '' : `#${w.segment}`} ${JSON.stringify(w.text)}` : w.type === 'wake' ? `${w.ms} wake#${w.segment}` : `${w.ms} spotter ${w.on}`)))}`)
+      let previous = ''
+      for (const x of samples) {
+        const entry = `${x.open ? 'ACTIVE ' : 'PASSIVE'} heard=${JSON.stringify(x.heard)} line=${JSON.stringify(x.line)} url=${x.url}`
+        if (entry !== previous) console.log(`        ${String(x.t - t0).padStart(6)} ms  ${entry}`)
+        previous = entry
+      }
+      const wakesIn = (from: number, to: number): number => wired.filter((w) => w.type === 'wake' && w.ms >= from && w.ms < to).length
+      check('10. the server ran the spotter for this connection (spotter on: true)', wired.some((w) => w.type === 'spotter' && w.on === true), JSON.stringify(wired.filter((w) => w.type === 'spotter')))
+      const rel = within(relPart[0], firstPart[0])
+      check('10. PASSIVE "Ma ütlen sulle homme." shows nothing: never ACTIVE, no words on the strip, no wake on the wire', rel.length > 0 && rel.every((x) => !x.open && !/ütlen|homme/i.test(x.heard)) && wakesIn(relPart[0], firstPart[0]) === 0, `${rel.length} samples, wakes ${wakesIn(relPart[0], firstPart[0])}`)
+      const first = within(firstPart[0], secondPart[0])
+      check('10. PASSIVE "Ütle." shows ACTIVE on the strip, with a wake on the wire', first.some((x) => x.open) && wakesIn(firstPart[0], secondPart[0]) >= 1, `wakes ${wakesIn(firstPart[0], secondPart[0])}`)
+      const second = within(secondPart[1] + 2500, youtubePart[0])
+      check('10. ACTIVE "Ütle." again toggles back to PASSIVE', second.length > 0 && second.every((x) => !x.open), `${second.length} samples`)
+      const last = within(youtubePart[0], youtubePart[1] + 7000)
+      check('10. "Ütle, ava YouTube." from PASSIVE wakes (a wake on the wire) and opens the page once', wakesIn(youtubePart[0], youtubePart[1] + 7000) >= 1 && youtube === 1 && last.some((x) => x.url.includes('youtube.com')), `wakes ${wakesIn(youtubePart[0], youtubePart[1] + 7000)}, YouTube navigations ${youtube}`)
+      check('10. nothing else opened: one YouTube navigation over the whole run, the stand-in page in the tab', youtube === 1 && s.ctx.pages().filter((p) => p.url().includes('youtube.com')).length === 1, `${youtube}; ${JSON.stringify(s.ctx.pages().map((p) => p.url()))}`)
+      console.log(`      screenshots: ${Object.values(shots).join(', ')}`)
+    } finally {
+      await close(s)
+    }
+  } finally {
+    proto.send = original
+    server.close()
+    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function main(): Promise<void> {
   await mkdir(join(repoRoot, 'docs/proof'), { recursive: true })
   const mode = process.argv[2]
@@ -1019,6 +1162,8 @@ async function main(): Promise<void> {
     if (!only || only === 'listen') await listenReal()
     // Round 10 (35): the wake word heard in the audio, the keyword spotter, through the real models, no browser.
     if (!only || only === 'wake') await wakeReal()
+    // Round 10 (#2, 35.5): wake mode in Chromium with the spotter, a server of this process over the real models.
+    if (!only || only === 'wakechrome') await wakeChrome(extensionDir)
   }
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
   process.exitCode = failures === 0 ? 0 : 1
