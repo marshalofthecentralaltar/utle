@@ -133,6 +133,14 @@ Every step is run from a terminal. Steps 1 to 5 are done once.
    It serves the speech model at `ws://localhost:5173/api/asr`. If it is not running, the bar says so
    in one red line.
 
+   The Anthropic key (optional: without it the fixed phrases still work) has one place on this
+   computer: a line `ANTHROPIC_API_KEY=...` in `.env.local` in the `utle` folder, which git ignores.
+   Do not also set it as a Windows or shell variable: a variable of the same name wins over the file
+   without a word. At start the server prints one line saying which key it loaded, by its first
+   characters only, and from where, for example `[key] ANTHROPIC_API_KEY sk-ant-usr... from .env.local`.
+   If it says `from the environment` and names another key in `.env.local`, delete the variable
+   (Windows: **Edit environment variables for your account**) and open a new terminal.
+
 7. Open WhatsApp Web, open a chat, turn the microphone on in the bar, and speak.
 
 If the speech server runs at another address, set it under **Details**, then **Extension options**

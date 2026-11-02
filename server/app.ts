@@ -1,5 +1,5 @@
 import type { EventEmitter } from 'node:events'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { join } from 'node:path'
@@ -14,6 +14,7 @@ import { InterpretError, interpret } from './interpret.ts'
 import type { InterpretErrorCode } from './interpret.ts'
 import { modelFromEnv, modelStatus } from './model/index.ts'
 import { rehearse } from './rehearsal.ts'
+import { keyLine, keySource } from './keySource.ts'
 import { profilePath, profileSummary } from './speaker.ts'
 
 const MAX_BODY_BYTES = 1_000_000
@@ -80,6 +81,17 @@ function preflight(req: IncomingMessage, res: ServerResponse): boolean {
   return true
 }
 
+/** Round 10 (#8): .env.local beside the server, for the [key] line only; null when absent or unreadable. */
+function envLocalText(root: string): string | null {
+  const path = join(root, '.env.local')
+  if (!existsSync(path)) return null
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+}
+
 function toKnownError(error: unknown): InterpretError {
   return error instanceof InterpretError
     ? error
@@ -115,6 +127,8 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
   // names an unknown provider or lacks its key throws here, so the server does not start with it.
   const configured = modelFromEnv(env)
   if (httpServer) console.info(`[model] primary=${configured.primary} careful=${configured.carefulLabel} fallback=${configured.fallback ?? 'none'}${configured.ready ? '' : ' (no key: rules only)'}`)
+  // Round 10 (#8): which Anthropic key, by prefix, and from where (a Windows user variable outranks .env.local).
+  if (httpServer) console.info(keyLine(keySource(env.ANTHROPIC_API_KEY, envLocalText(options.root))))
 
   const answer = async (input: unknown) => {
     if (!rehearsal) return interpret(input, { model: configured.model })

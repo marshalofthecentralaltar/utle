@@ -24,6 +24,8 @@ unpacked.
 - Named exports only, except where a tool demands a default (`vite.config.ts`).
 - No `any` casts, no skipped tests, no enums (`erasableSyntaxOnly`).
 - The Anthropic key is read from `process.env.ANTHROPIC_API_KEY` on the server. Never create or commit a `.env` file.
+  On a developer machine the key's one place is `.env.local` (git-ignored; `npm run dev` and `npm run serve` load it);
+  a Windows user variable of the same name outranks it. The server's `[key]` line at start names the prefix and the source (#8).
 - Every model call goes through `server/model/` (ARCHITECTURE 30.5); nothing else imports a provider's SDK or wire format.
 - The server never logs document text, utterances or audio.
 - Test first. Behaviour changes start in `src/core/*.test.ts`.
