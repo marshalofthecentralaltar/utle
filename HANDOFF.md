@@ -976,32 +976,36 @@ conflicts cannot be resolved from the cloud until that `main` is pushed; the two
 same features twice (navigation commands, a settings page), so resolving them is a judgment call
 on which to keep, per file.**
 
-## 2. What Ralf must do before the demo
+## 2. What Ralf must do
 
-1. `git pull` on `main`, `npm ci`, `npm run ext`, reload the extension on `chrome://extensions`,
-   reload open tabs. Restart `npm run dev` and look for `[asr] model loaded on a worker thread`.
-2. Put a working Anthropic key in the environment of the terminal that runs `npm run dev`
-   (`ANTHROPIC_API_KEY`). Without it everything in section 1 except the free-form understanding
-   works, and the bar shows one amber line saying so. `curl localhost:5173/api/status` must say
-   `"intent":"live"`.
-3. With the key: `npx tsx scripts/intent-eval.ts` runs 62 Estonian and English utterances, including
-   multi-step ones, against fake YouTube, WhatsApp, Google, Gmail, news, Facebook, form and new-tab
-   pages through the real model and prints pass or fail, the latency per case, and p50/p95.
-   `UTLE_EVAL_JSON=out.json` writes the results; send that file back. This has NOT been run by anyone:
-   this machine had no key. If p50 is above about 2.5 s, start the dev server with
-   `UTLE_MODEL=claude-sonnet-5-5` (or `claude-haiku-4-5`) and run the eval again.
-4. Try the demo path on the real sites and note what misses. Selectors for YouTube and Google
-   (`extension/src/sites.ts`, `SEARCH_FIELDS`) and the player shortcuts are UNVERIFIED.
-5. Round 4: `npm run model` again (the speaker model), restart `npm run dev` and look for
-   `[asr] speaker model loaded`; on the settings page press **Õpeta mu hääl**, speak 8 s, then
-   **Kuula ainult mind**; turn listening off and on. Have someone else speak: the bar should say
-   "Keegi teine rääkis, jätsin vahele." If your own words are skipped, lower `OWNER_THRESHOLD` in
-   `server/speaker.ts`; if a stranger gets through, raise `OTHER_THRESHOLD`.
+1. After a pull: `git pull` on `main`, `npm ci`, `npm run ext`, reload the extension on
+   `chrome://extensions`, reload open tabs. Restart `npm run dev` and look for
+   `[asr] model loaded on a worker thread`.
+2. The Anthropic key's one place is `.env.local` in the repository folder (git-ignored; `npm run dev`
+   and `npm run serve` load it), not the terminal's environment. A Windows user variable
+   `ANTHROPIC_API_KEY` outranks the file: delete it, open a new terminal, `npm run dev`; the `[key]`
+   line at start must say `sk-ant-usr... from .env.local` (#8 then closes). Without a key everything
+   except the free-form understanding works, and the bar shows one amber line saying so.
+   `curl localhost:5173/api/status` must say `"intent":"live"`.
+3. The eval with the key: `npx tsx scripts/intent-eval.ts` (Estonian and English utterances against
+   stand-in pages through the real model: pass or fail, latency, p50/p95, $ per completed task). Run by
+   Ralf on 2026-10-05 (1a), in round 9 (1k-MODEL) and in round 10 prompt 3 (1p: 105/106 and 106/106 on
+   Sonnet, the default model). Run it again after a change to the prompt or the model.
+4. Real sites: YouTube's and Google's search selectors were verified on the real pages on 2026-10-27
+   (1k-REALPAGES, read only). The player shortcuts and a voice search there have not been tried; try the
+   path on the real sites and note what misses.
+5. Your voice: onboarding starts with it (1m): phrases are checked one by one and the profile is kept
+   only if the last two pass. Settings keep test, delete, re-enrol and **Kuula ainult mind**. The
+   threshold is one measured value, `OWNER_THRESHOLD` 0.54 in `server/speaker.ts`, picked on synthetic
+   voices; recalibrating it needs real recordings (#4).
+6. Review and merge #2's PR (#11, the keyword spotter and its real-voice measurement).
+7. The consent text (#9), then the 20-minute recording with two partners (#4).
 
 ## 3. Not verified by anyone
 
-- The model's answers on real pages (no key here). The server, the validation, the engine and the
-  page side are each tested with fakes; the join is tested end to end only without a model.
+- The model's answers on real pages: the eval runs the real model against stand-in pages (1p), and
+  real pages were only opened read only (1k-REALPAGES). The server, the validation, the engine and
+  the page side are each tested with fakes; the join is tested end to end only without a model.
 - His voice, a real eye tracker, real WhatsApp with the M7 build, Messenger. Real YouTube and Google
   were seen read only on 2026-10-27 (1k-REALPAGES); a voice search there was not tried.
 - Whether `requestFullscreen` works from an injected script (it may need a user gesture; then the
@@ -1025,15 +1029,22 @@ on which to keep, per file.**
   for text gets words, not digits ("numbritena" is the way round it). "kirjuta kood X" is typed by
   the rules without the model's check even in a one-line field, by design. A one-line field is
   always replaced whole, so a value said in two breaths is joined by the core, not by the page.
-- Round 5 review: see `docs/REVIEW-R5.md` when it lands; its open items belong here.
-- Fixed 2026-10-27 (round 9, FAULTS lane, ARCHITECTURE 30.3): "Kirjuta siis mulle" is dictation
-  (a filler word before a pronoun or verb is never a name), and a search whose Enter navigates
-  within 600 ms answers ok.
+- Round 5 review (`docs/REVIEW-R5.md`), two items it left open: "katkesta" after held words is the
+  cancel but arrives at the end of the 2.5 s hold, not at once; the 25 s watchdog restarts per goal,
+  not after each step, so a slow three-step goal can be given up between steps (its proposal: watch
+  after every perform in `runGoal`).
+- Dictation into a chat box in the toggle and always-on modes: nothing is previewed into the box
+  while he speaks (32.3: the addressee check answers first, so a voice in the room never appears in
+  his message); his live words are on the strip, and the sentence lands in the box 2.7 to 3.3 s after
+  he stops (1s). Round 9 typed the words as he spoke. Wake mode ACTIVE still previews.
 - The earlier faults stand: the command word can flash in the box when he keeps talking after a
-  quick command; the "Sain aru" line is replaced by the result line a moment later; live words come
-  in bursts of about 0.6 s; Chrome's own pages (settings, Web Store) cannot show the bar, and no
-  extension can change Chrome's settings. Ütle's own settings page is the answer to that.
-- Push-to-talk (listen only while the pointer rests on the microphone) is not built.
+  quick command (where the box is previewed); the "Sain aru" line is replaced by the result line a
+  moment later; live words come in bursts of about 0.6 s; Chrome's own pages (settings, Web Store)
+  cannot show the bar, and no extension can change Chrome's settings. Ütle's own settings page is
+  the answer to that.
+- On youtube.com and ilmateenistus.ee the strip covers the page's own consent button at the bottom,
+  so a pointer or dwell cannot press it (voice still lists it); a postimees headline is read with its
+  comment count, "(11)" (1k-REALPAGES, not fixed).
 - A click whose only effect is a network request with no DOM change for 400 ms gets a second
   activation (Enter) by the click fallback; on an element that handles both it could toggle twice.
 - The cookie-banner rule covers overlays; YouTube's own consent is a separate page (a form), which
