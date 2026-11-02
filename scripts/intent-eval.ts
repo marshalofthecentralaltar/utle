@@ -412,6 +412,10 @@ interface Expectation {
   body?: boolean
   /** Round 8 (29.4.2): for place, the noun. */
   noun?: string
+  /** Round 10 (#5): for switchTab, the target exactly (previous, next, { index }). */
+  to?: unknown
+  /** Round 10 (#5): for choose, the two ids in any order. */
+  ids?: number[]
 }
 
 /** One ask of the simulated loop. */
@@ -481,6 +485,123 @@ const WA_GOALS = ['mine whatsappi', 'ava Karini viimane sõnum', 'kustuta see k�
 /** Round 8: a new tab with his places' nouns in the context, as the engine sends it. */
 const PLACES_PAGE: PageContext = { ...NEW_TAB, places: placeNouns(DEFAULT_PLACES) }
 // ---------- end of wake word and places ----------
+
+// ---------- round 10: what he meant (#5, ARCHITECTURE 34) ----------
+// The session of issue #5 (2026-10-27): logging into the Anthropic console, the verification link in his mail.
+const UNICORNS_TITLE = 'Unicorns.ee | Eesti idufirmad'
+/** (a) The console's login, waiting for the link or the code from his mail; his places listed as the engine sends them. */
+const CONSOLE_LOGIN: PageContext = {
+  url: 'https://console.anthropic.com/login?returnTo=%2Fsettings%2Fkeys',
+  title: 'Log in | Anthropic Console',
+  box: { present: true, text: '', armed: false, kind: 'field', fieldKind: 'code', single: true, label: 'Verification code' },
+  items: [
+    { id: 1, role: 'field', text: 'Verification code' },
+    { id: 2, role: 'button', text: 'Continue' },
+    { id: 3, role: 'link', text: 'Resend email' },
+    { id: 4, role: 'link', text: 'Use a different email' },
+    { id: 5, role: 'other', text: '[pealkiri] Check your email' },
+    { id: 6, role: 'text', text: 'We sent a verification link to ralf@example.ee' },
+  ],
+  media: null,
+  hints: false,
+  places: placeNouns(DEFAULT_PLACES),
+}
+const { places: _consolePlaces, ...CONSOLE_LOGIN_NO_PLACES } = CONSOLE_LOGIN
+const CONSOLE_TABS: TabSummary[] = [
+  { index: 1, title: UNICORNS_TITLE, active: false },
+  { index: 2, title: CONSOLE_LOGIN.title, active: true },
+]
+/** (c) Gmail's inbox as readPage lists the real one: menu, search, folders, toolbar, category tabs, each row with its star. */
+const GMAIL_REAL: PageContext = {
+  url: 'https://mail.google.com/mail/u/0/#inbox',
+  title: 'Postkast (2) - ralf@example.ee - Gmail',
+  box: { present: true, text: '', armed: false, kind: 'search', label: 'Otsi e-kirjadest' },
+  items: [
+    { id: 1, role: 'button', text: 'Peamenüü' },
+    { id: 2, role: 'field', text: 'Otsi e-kirjadest' },
+    { id: 3, role: 'button', text: 'Koosta' },
+    { id: 4, role: 'link', text: 'Postkast 2' },
+    { id: 5, role: 'link', text: 'Tärniga' },
+    { id: 6, role: 'link', text: 'Saadetud' },
+    { id: 7, role: 'button', text: 'Vali' },
+    { id: 8, role: 'button', text: 'Värskenda' },
+    { id: 9, role: 'button', text: 'Rohkem' },
+    { id: 10, role: 'tab', text: 'Põhiline' },
+    { id: 11, role: 'tab', text: 'Reklaamid' },
+    { id: 12, role: 'tab', text: 'Suhtlusvõrgustik' },
+    { id: 13, role: 'row', text: 'Anthropic · Verify your email address · 10:42' },
+    { id: 14, role: 'button', text: 'Pole tärniga' },
+    { id: 15, role: 'row', text: 'Unicorns.ee · Uus nädal idufirmade maailmas · 09:15' },
+    { id: 16, role: 'button', text: 'Pole tärniga' },
+    { id: 17, role: 'row', text: 'Mari Maasikas · Homne koosolek · eile' },
+    { id: 18, role: 'button', text: 'Pole tärniga' },
+  ],
+  media: null,
+  hints: false,
+}
+/** (d) The verification mail open in Gmail; its verify link is styled as a black button (readPage before round 10: a link). */
+const GMAIL_VERIFY_MAIL: PageContext = {
+  url: 'https://mail.google.com/mail/u/0/#inbox/FMfcgzQXJkVerify',
+  title: 'Verify your email address - ralf@example.ee - Gmail',
+  box: { present: true, text: '', armed: false, kind: 'search', label: 'Otsi e-kirjadest' },
+  items: [
+    { id: 1, role: 'button', text: 'Peamenüü' },
+    { id: 2, role: 'field', text: 'Otsi e-kirjadest' },
+    { id: 3, role: 'button', text: 'Koosta' },
+    { id: 4, role: 'link', text: 'Postkast 1' },
+    { id: 5, role: 'button', text: 'Tagasi postkasti' },
+    { id: 6, role: 'button', text: 'Arhiveeri' },
+    { id: 7, role: 'button', text: 'Teata rämpspostist' },
+    { id: 8, role: 'button', text: 'Kustuta' },
+    { id: 9, role: 'button', text: 'Märgi lugemata' },
+    { id: 10, role: 'button', text: 'Rohkem' },
+    { id: 11, role: 'button', text: 'Vasta' },
+    { id: 12, role: 'link', text: 'Verify email address' },
+    { id: 13, role: 'link', text: 'Privacy Policy' },
+    { id: 14, role: 'link', text: 'Anthropic PBC' },
+    { id: 15, role: 'button', text: 'Vasta' },
+    { id: 16, role: 'button', text: 'Edasta' },
+    { id: 17, role: 'other', text: '[pealkiri] Verify your email address' },
+    { id: 18, role: 'text', text: 'Click the button below to verify your email address and finish logging in.' },
+    { id: 19, role: 'text', text: 'If you did not request this, you can safely ignore this email.' },
+  ],
+  media: null,
+  hints: false,
+}
+/** (e) A news section he reached by clicking Sport. */
+const NEWS_SPORT: PageContext = {
+  url: 'https://sport.err.ee/',
+  title: 'Sport | ERR',
+  box: NO_BOX,
+  items: [
+    { id: 1, role: 'tab', text: 'Uudised' },
+    { id: 2, role: 'tab', text: 'Sport' },
+    { id: 3, role: 'link', text: 'Jalgpall: Flora võitis Levadiat 2:1' },
+    { id: 4, role: 'link', text: 'Korvpall: Kalev/Cramo kaotas võõrsil' },
+  ],
+  media: null,
+  hints: false,
+}
+/** A tie: two products, each with its own "Lisa korvi", and nothing in "lisa korvi" to choose by. */
+const SHOP: PageContext = {
+  url: 'https://kohvikuku.ee/kohvioad',
+  title: 'Kohvioad | Kohvik Kuku',
+  box: NO_BOX,
+  items: [
+    { id: 1, role: 'link', text: 'Kohvik Kuku' },
+    { id: 2, role: 'link', text: 'Ostukorv (0)' },
+    { id: 3, role: 'link', text: 'Etioopia Yirgacheffe 250 g' },
+    { id: 4, role: 'button', text: 'Lisa korvi' },
+    { id: 5, role: 'link', text: 'Kolumbia Huila 250 g' },
+    { id: 6, role: 'button', text: 'Lisa korvi' },
+    { id: 7, role: 'other', text: '[pealkiri] Kohvioad' },
+  ],
+  media: null,
+  hints: false,
+}
+/** What the strip showed after "ava email" opened his mail place (the engine's recent before round 10: strip lines). */
+const OPENED_MAIL = ['Avan: Gmail.', 'Avan: Gmail.']
+// ---------- end of what he meant ----------
 
 const CASES: Case[] = [
   // --- Round 4: chains of goals. The first ask has no chain and must plan the rest; each later ask
@@ -660,6 +781,25 @@ const CASES: Case[] = [
   one('mis ilm on', PLACES_PAGE, { kind: 'place', noun: 'ilm' }),
   one('ava mu mail', PLACES_PAGE, { kind: 'place', noun: 'mail' }),
   // ---------- end of wake word and places ----------
+  // ---------- round 10: what he meant (#5, ARCHITECTURE 34) ----------
+  // (a) A site or place while a login is in progress opens beside it; a place is opened beside by the engine.
+  one('ava email', CONSOLE_LOGIN, [{ kind: 'command', command: 'newTab', url: 'mail.google' }, { kind: 'place', noun: 'mail' }], { tabs: CONSOLE_TABS }),
+  one('ava gmail', CONSOLE_LOGIN_NO_PLACES, { kind: 'command', command: 'newTab', url: 'mail.google' }, { tabs: CONSOLE_TABS }),
+  // (b) "uues vahelehes" is the thing just opened, never another open tab.
+  one('ava see uues vahelehes', GMAIL_REAL, { kind: 'command', command: 'newTab', url: 'mail.google' }, { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: GMAIL_REAL.title, active: true }], recent: OPENED_MAIL }),
+  one('ava see uues vahelehes', YOUTUBE_HOME, { kind: 'command', command: 'newTab', url: 'youtube' }, { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: YOUTUBE_HOME.title, active: true }], recent: ['Avan: www.youtube.com'] }),
+  // (c) The first mail of the list, in one ask.
+  one('ava esimene kiri', GMAIL_REAL, click(13), { done: true }),
+  // (d) A link styled as a button, by its colour, by "kinnita", by "ava link".
+  one('vajuta musta nuppu', GMAIL_VERIFY_MAIL, click(12)),
+  one('kinnita', GMAIL_VERIFY_MAIL, click(12)),
+  one('ava link', GMAIL_VERIFY_MAIL, click(12)),
+  // (e) Back to where he was: the tab he came from after a tab change, else the page before.
+  one('mine tagasi sinna kus ma olin', GMAIL_REAL, [{ kind: 'command', command: 'switchTab', to: { index: 2 } }, { kind: 'command', command: 'switchTab', to: 'previous' }, { kind: 'command', command: 'switchTab', query: 'console' }, { kind: 'command', command: 'switchTab', query: 'anthropic' }], { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: CONSOLE_LOGIN.title, active: false }, { index: 3, title: GMAIL_REAL.title, active: true }], recent: OPENED_MAIL }),
+  one('mine tagasi sinna kus ma olin', NEWS_SPORT, { kind: 'command', command: 'history', direction: 'back' }, { recent: ['Sain aru: „ava Sport“. Tehtud.'] }),
+  // A tie: two equal candidates ask one question with two numbers.
+  one('lisa korvi', SHOP, { kind: 'choose', ids: [4, 6] }),
+  // ---------- end of what he meant ----------
 ]
 
 // ---------------------------------------------------------------------------------------------
@@ -672,6 +812,8 @@ function matchesOne(intent: ModelIntent, e: Expectation): string | null {
   if (intent.kind === 'place') return e.noun && intent.noun.trim().toLowerCase() !== e.noun ? `noun ${intent.noun}` : null
   if (intent.kind === 'edit') return e.edit && intent.edit.kind !== e.edit ? `edit ${intent.edit.kind}` : null
   if (intent.kind === 'insertSaved') return e.saved && intent.name.trim().toLowerCase() !== e.saved ? `name ${intent.name}` : null
+  // Round 10 (#5): the tie's two ids, in either order.
+  if ('ids' in intent && Array.isArray(intent.ids)) return e.ids && [...intent.ids].sort().join() !== [...e.ids].sort().join() ? `ids ${intent.ids.join(',')}` : null
   if (intent.kind !== 'command') return null
   const c = intent.command
   if (e.command && c.kind !== e.command) return `command ${c.kind}`
@@ -686,6 +828,9 @@ function matchesOne(intent: ModelIntent, e: Expectation): string | null {
   if (e.media && c.kind === 'media' && c.action !== e.media) return `media ${c.action}`
   if (e.seconds !== undefined && c.kind === 'media' && c.seconds !== e.seconds) return `seconds ${c.seconds}`
   if (e.direction && c.kind === 'scroll' && c.direction !== e.direction) return `direction ${c.direction}`
+  // Round 10 (#5): history's direction and switchTab's exact target.
+  if (e.direction && c.kind === 'history' && c.direction !== e.direction) return `direction ${c.direction}`
+  if (e.to !== undefined && c.kind === 'switchTab' && JSON.stringify(c.to) !== JSON.stringify(e.to)) return `to ${JSON.stringify(c.to)}`
   // mail (29.3)
   if (e.address && c.kind === 'composeTo' && c.address.toLowerCase() !== e.address) return `address ${c.address}`
   if (e.body !== undefined && c.kind === 'composeTo' && (c.body !== undefined && c.body.trim() !== '') !== e.body) return `body ${JSON.stringify(c.body ?? null)}`
