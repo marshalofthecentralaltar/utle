@@ -2,7 +2,7 @@ import type { IntentRequest } from '../../src/core/pageIntent.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STRINGS } from '../../src/core/strings.ts'
 import { DEFAULT_ASR_URL, authHeaders, connectionFrom, isHostedAddress, serverCheck, serverStatus, socketAddress } from './connection.ts'
-import { ENOUGH_PHRASES, asrAddress, askIntent, enrolledLine, foreignNotice, serverUrl, wakeWordParam } from './offscreenMain.ts'
+import { ENOUGH_PHRASES, asrAddress, askIntent, enrolledLine, foreignNotice, phraseLine, readinessLine, serverUrl, voiceTestLine, wakeWordParam } from './offscreenMain.ts'
 import { INITIAL_STATE } from './messages.ts'
 // ---------- reading aloud (29.5) ----------
 import { beforeEach } from 'vitest'
@@ -112,6 +112,15 @@ describe('strict mode lines on the strip (round 7)', () => {
       { foreign: text.foreign },
       { foreign: text.foreign },
     ])
+  })
+
+  it('round 10 (31.5): any reason but another voice says the voice could not be confirmed, with what to do', () => {
+    const lines = { ...text, voiceUnverified: 'Häält ei õnnestunud kinnitada.', voiceTooShort: 'Proovi pikemat käsku.', voiceUnsupported: 'Häält ei saa praegu kontrollida.' }
+    expect(foreignNotice(1, lines, 'rejected_other')).toEqual({ foreign: lines.foreign })
+    expect(foreignNotice(1, lines, 'insufficient_audio')).toEqual({ foreign: lines.voiceUnverified, line: lines.voiceTooShort })
+    expect(foreignNotice(1, lines, 'model_unavailable')).toEqual({ foreign: lines.voiceUnverified, line: lines.voiceUnsupported })
+    for (const reason of ['profile_missing', 'model_mismatch', 'verification_error', 'mixed_speakers'] as const) expect(foreignNotice(1, lines, reason)).toEqual({ foreign: lines.voiceUnverified })
+    expect(foreignNotice(3, lines, 'verification_error')).toEqual({ foreign: lines.voiceUnverified, line: lines.foreignRetrain })
   })
 
   it('says how many phrases taught the voice, and when they were too few', () => {
@@ -598,5 +607,30 @@ describe('the server going away, through the real recogniser and engine (30.1)',
     expect(lines.filter((l) => l === S.serverBack)).toHaveLength(1)
     expect(patches.at(-1)).toMatchObject({ connection: 'connected', problem: '', line: S.serverBack })
     expect(mics).toBe(1)
+  })
+})
+
+describe('round 10 (31.7): the voice lines on the strip', () => {
+  const t = STRINGS.et.strip
+  it('says protected only when ready; every other state says what is wrong; an unknown state says nothing', () => {
+    expect(readinessLine('ready', t)).toBe('Kuulan ainult sind: hääl on kontrollitud.')
+    for (const state of ['no_profile', 'needs_retraining', 'model_unavailable', 'model_mismatch']) {
+      const line = readinessLine(state, t)
+      expect(line).not.toBe('')
+      expect(line).not.toContain('Kuulan ainult sind')
+      expect(line).not.toContain('kontrollitud')
+    }
+    expect(readinessLine('', t)).toBe('')
+    expect(readinessLine('protected', t)).toBe('')
+  })
+
+  it('a refused phrase says why and to read it again; an enrolment says why it failed (old voice kept) or that it was verified', () => {
+    expect(phraseLine('too_quiet', t)).toContain('loe see uuesti')
+    expect(phraseLine('clipped', t)).toContain('loe see uuesti')
+    expect(phraseLine('nonsense', t)).toBe('')
+    expect(enrolledLine(false, 0, t, { reason: 'held_out_failed' })).toContain('Senine hääl jäi alles')
+    expect(enrolledLine(true, 10, t, { heldOut: { count: 2, scores: [0.7, 0.8], passed: true, threshold: 0.54 } })).toBe('Hääl on õpitud 10 lausest ja kontrollitud 2 uuel lausel.')
+    expect(voiceTestLine('recognised', t)).toBe('Tundsin su ära.')
+    expect(voiceTestLine('too_short', t)).toContain('pikem')
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_WAKE_WORD, WAKE_WINDOW_MS, createWake, wakeClose, wakeGate, wakeHeard, wakeOpen, wakeOpenWindow, wakeStarts, wakeWordFrom } from './wake.ts'
+import { createWake, wakeFind, wakeStarts, wakeWordFrom } from './wake.ts'
 
 /** Twenty finals without the word: room talk, dictation, commands said to someone else. */
 const WITHOUT_WORD = [
@@ -25,7 +25,7 @@ const WITHOUT_WORD = [
   'okei',
 ] as const
 
-/** Ten finals with the word, and what the engine gets. */
+/** Ten finals with the word first, and what the engine gets. */
 const WITH_WORD: ReadonlyArray<readonly [string, string]> = [
   ['Ütle, keri alla', 'keri alla'],
   ['ütle keri alla', 'keri alla'],
@@ -39,53 +39,31 @@ const WITH_WORD: ReadonlyArray<readonly [string, string]> = [
   ['ütle näita numbreid', 'näita numbreid'],
 ]
 
-describe('the wake word gate (29.4)', () => {
-  it('wake: drops 20 finals without the word and acts on 10 with it, the word stripped', () => {
-    let state = createWake(DEFAULT_WAKE_WORD)
-    let now = 1_000_000
-    const passed: string[] = []
-    for (const final of WITHOUT_WORD) {
-      now += 1000
-      const r = wakeGate(state, final, now)
-      state = r.state
-      if (r.utterance !== null) passed.push(final)
-    }
-    expect(passed).toEqual([])
-    const got: string[] = []
-    for (const [final] of WITH_WORD) {
-      now += 1000
-      const r = wakeGate(state, final, now)
-      state = r.state
-      got.push(r.utterance ?? '(dropped)')
-    }
-    expect(got).toEqual(WITH_WORD.map(([, want]) => want))
-    // A woken command does not open the window by itself (only an armed box or the bare word does).
-    expect(wakeOpen(state, now)).toBe(false)
-  })
+const W = createWake('Ütle')
+const anywhere = (final: string): string | null => wakeFind(W, final, true)?.after ?? null
+const atStart = (final: string): string | null => wakeFind(W, final, false)?.after ?? null
 
-  it('phonetic: "ma tahtsin ütelda" and "ütlesin talle" are not a wake; "Ütle, keri alla", "ütle keri alla", "ütel keri alla" are', () => {
-    const state = createWake('Ütle')
-    expect(wakeGate(state, 'ma tahtsin ütelda', 0).utterance).toBeNull()
-    expect(wakeGate(state, 'ütlesin talle', 0).utterance).toBeNull()
-    expect(wakeGate(state, 'Ütle, keri alla', 0).utterance).toBe('keri alla')
-    expect(wakeGate(state, 'ütle keri alla', 0).utterance).toBe('keri alla')
-    expect(wakeGate(state, 'ütel keri alla', 0).utterance).toBe('keri alla')
+describe('the wake word at the start (29.4)', () => {
+  it('wake: 20 finals without the word are not a wake, anywhere; 10 with it first give the words after it', () => {
+    expect(WITHOUT_WORD.filter((f) => anywhere(f) !== null)).toEqual([])
+    expect(WITH_WORD.map(([f]) => atStart(f))).toEqual(WITH_WORD.map(([, want]) => want))
   })
 
   it('phonetic: a letter added is another word (ütles, ütleb, ütlen), Cyrillic look-alikes are read as Latin', () => {
-    expect(wakeStarts(createWake('Ütle'), 'ütles et')).toBeNull()
-    expect(wakeStarts(createWake('Ütle'), 'ütleb')).toBeNull()
-    expect(wakeStarts(createWake('Ütle'), 'ütlen')).toBeNull()
-    expect(wakeStarts(createWake('Ütle'), 'Üтле тере')).toBe('тере')
-    expect(wakeStarts(createWake('Ütle'), 'ütle')).toBe('')
+    expect(wakeStarts(W, 'ütles et')).toBeNull()
+    expect(wakeStarts(W, 'ütleb')).toBeNull()
+    expect(wakeStarts(W, 'ütlen')).toBeNull()
+    expect(wakeStarts(W, 'Üтле тере')).toBe('тере')
+    expect(wakeStarts(W, 'ütle')).toBe('')
   })
 
-  it('phonetic: a two-word wake word needs both words first', () => {
-    const state = createWake('Hei arvuti')
-    expect(wakeGate(state, 'hei arvuti keri alla', 0).utterance).toBe('keri alla')
-    expect(wakeGate(state, 'hei, arvuti, keri alla', 0).utterance).toBe('keri alla')
-    expect(wakeGate(state, 'hei keri alla', 0).utterance).toBeNull()
-    expect(wakeGate(state, 'arvuti keri alla', 0).utterance).toBeNull()
+  it('phonetic: a two-word wake word needs both words', () => {
+    const two = createWake('Hei arvuti')
+    expect(wakeStarts(two, 'hei arvuti keri alla')).toBe('keri alla')
+    expect(wakeStarts(two, 'hei, arvuti, keri alla')).toBe('keri alla')
+    expect(wakeStarts(two, 'hei keri alla')).toBeNull()
+    expect(wakeStarts(two, 'arvuti keri alla')).toBeNull()
+    expect(wakeFind(two, 'no nii hei arvuti ava youtube', true)).toEqual({ before: 'no nii', after: 'ava youtube' })
   })
 
   it('reads the setting: one or two words of letters, else the default', () => {
@@ -100,43 +78,53 @@ describe('the wake word gate (29.4)', () => {
   })
 })
 
-describe('the dictation window (29.4)', () => {
-  it('window: open, every final passes without the word and moves the end; 20 s of silence closes it', () => {
-    let state = wakeOpenWindow(createWake('Ütle'), 0)
-    expect(wakeOpen(state, 0)).toBe(true)
-    let r = wakeGate(state, 'tere Mari', 5000)
-    expect(r.utterance).toBe('tere Mari')
-    state = r.state
-    expect(state.openUntil).toBe(5000 + WAKE_WINDOW_MS)
-    // A partial is speech too.
-    state = wakeHeard(state, 20_000)
-    expect(state.openUntil).toBe(20_000 + WAKE_WINDOW_MS)
-    // The word is still stripped when he says it while the window is open.
-    r = wakeGate(state, 'ütle, tulen homme', 21_000)
-    expect(r.utterance).toBe('tulen homme')
-    state = r.state
-    expect(wakeOpen(state, 21_000 + WAKE_WINDOW_MS - 1)).toBe(true)
-    expect(wakeOpen(state, 21_000 + WAKE_WINDOW_MS)).toBe(false)
-    r = wakeGate(state, 'tere', 21_000 + WAKE_WINDOW_MS + 1)
-    expect(r.utterance).toBeNull()
-    // A partial after the window closed does not open it again.
-    expect(wakeOpen(wakeHeard(r.state, 50_000), 50_000)).toBe(false)
+describe('round 10 (#2, limited): the wake word anywhere in a final', () => {
+  it('anywhere: the lead-in is dropped, only the words after the word go on', () => {
+    expect(wakeFind(W, 'No nii, Ütle, ava YouTube.', true)).toEqual({ before: 'No nii,', after: 'ava YouTube.' })
+    expect(anywhere('No kuule, ütle, mine tagasi')).toBe('mine tagasi')
+    expect(anywhere('Ma mõtlesin… Ütle.')).toBe('')
+    expect(anywhere('ma just mõtlesin et ütle keri alla')).toBe('keri alla')
   })
 
-  it('window: "aitab", "see on kõik", "that\'s all" close it and type nothing, with or without the word', () => {
-    for (const stop of ['aitab', 'Aitab.', 'see on kõik', "that's all", 'ütle, aitab']) {
-      const r = wakeGate(wakeOpenWindow(createWake('Ütle'), 0), stop, 1000)
-      expect(r.utterance).toBeNull()
-      expect(wakeOpen(r.state, 1000)).toBe(false)
+  it('anywhere: the word said twice is one wake ("ütle ütle ava youtube")', () => {
+    expect(anywhere('ütle ütle ava youtube')).toBe('ava youtube')
+    expect(anywhere('Ütle. Ütle, keri alla')).toBe('keri alla')
+  })
+
+  it('glued: "ütlemine youtube\'i" is the word and "mine youtube\'i"; the rest must start a command', () => {
+    expect(anywhere("ütlemine youtube'i")).toBe("mine youtube'i")
+    expect(anywhere("Ütlemine youtube'i ja ava video")).toBe("mine youtube'i ja ava video")
+    expect(anywhere('no nii ütleava gmail')).toBe('ava gmail')
+    expect(anywhere('ütleotsi kassivideod')).toBe('otsi kassivideod')
+    expect(anywhere('ütlekeri alla')).toBe('keri alla')
+  })
+
+  it('never: ütlen, ütles, ütleb, ütlemine as a noun, ütlemise, ütelda', () => {
+    for (const f of [
+      'Ma ütlen sulle homme.',
+      'ta ütles et tuleb',
+      'mida ta ütleb',
+      'see ütlemine on raske',
+      'ütlemine on hõbe',
+      'tema ütlemine',
+      'ütlemise viis',
+      'ma ei oska ütelda',
+      'ütlemine ei aita',
+    ]) {
+      expect(anywhere(f), f).toBeNull()
     }
-    // Closed, a woken "aitab" types nothing either.
-    expect(wakeGate(createWake('Ütle'), 'ütle aitab', 0).utterance).toBeNull()
   })
 
-  it('window: the bare word opens it; wakeClose shuts it', () => {
-    const r = wakeGate(createWake('Ütle'), 'Ütle.', 100)
-    expect(r.utterance).toBeNull()
-    expect(wakeOpen(r.state, 100)).toBe(true)
-    expect(wakeOpen(wakeClose(r.state), 100)).toBe(false)
+  it('literal: "kirjuta ütle", "sõna ütle" and a quoted „ütle” are text, never a wake', () => {
+    expect(anywhere('kirjuta ütle')).toBeNull()
+    expect(anywhere('Kirjuta siia sõna ütle.')).toBeNull()
+    expect(anywhere('ta ütles „ütle” ja läks')).toBeNull()
+    expect(anywhere('trüki ütle palun')).toBeNull()
+  })
+
+  it('at the start only (an open window): a word inside a sentence is his text, a word after a full stop is a wake', () => {
+    expect(atStart('kirjuta Marile et ütle emale tere')).toBeNull()
+    expect(atStart('Tere. Ütle, keri alla')).toBe('keri alla')
+    expect(atStart("ütlemine youtube'i")).toBe("mine youtube'i")
   })
 })

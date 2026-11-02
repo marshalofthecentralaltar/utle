@@ -274,6 +274,8 @@ async function runOnNewTab(tab: Tab, tabId: number, command: BrowserCommand): Pr
 function optionsUrl(command: Extract<BrowserCommand, { kind: 'openSettings' }>): string {
   // Round 9 (30.1): "ava juhend" is the welcome page.
   if (command.section === 'welcome') return chrome.runtime.getURL('welcome.html')
+  // Round 10 (31.7): "õpi mu hääl uuesti": the welcome page's voice card, which starts the phrases.
+  if (command.section === 'voice') return chrome.runtime.getURL('welcome.html#voice')
   const hash = command.section === 'andmed' ? `#andmed${command.add ? `:${command.add}` : ''}` : ''
   return chrome.runtime.getURL(`options.html${hash}`)
 }
@@ -281,7 +283,7 @@ function optionsUrl(command: Extract<BrowserCommand, { kind: 'openSettings' }>):
 /** Opens the options page in the target window, or brings an open one to the front at the new address. */
 async function openSettings(tab: Tab, command: Extract<BrowserCommand, { kind: 'openSettings' }>): Promise<BrowserResult> {
   const url = optionsUrl(command)
-  const base = chrome.runtime.getURL(command.section === 'welcome' ? 'welcome.html' : 'options.html')
+  const base = chrome.runtime.getURL(command.section === 'welcome' || command.section === 'voice' ? 'welcome.html' : 'options.html')
   const open = (await chrome.tabs.query({})).find((t) => (t.url ?? t.pendingUrl ?? '').startsWith(base))
   if (open?.id !== undefined) {
     const updated = await chrome.tabs.update(open.id, { url, active: true })
@@ -834,6 +836,16 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       return false
     case 'utle-enrol-finish':
       void sendOffscreen({ target: 'offscreen', type: 'enrolFinish' })
+      return false
+    case 'utle-voice-test':
+      // Round 10 (31.7): the same way: the offscreen document listens and asks the server.
+      void sendOffscreen({ target: 'offscreen', type: 'voiceTest' })
+      return false
+    case 'utle-voice-delete':
+      void sendOffscreen({ target: 'offscreen', type: 'voiceDelete' })
+      return false
+    case 'utle-voice-status':
+      void sendOffscreen({ target: 'offscreen', type: 'voiceStatus' })
       return false
     case 'utle-mic-blocked':
       void chrome.storage.session.set({ wantListening: true }).then(openPermissionPage)

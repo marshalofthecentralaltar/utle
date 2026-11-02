@@ -13,6 +13,8 @@ import type { SavedItem } from '../../src/core/saved.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import type { Lang } from '../../src/core/strings.ts'
 import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
+import { verifiedOwner } from '../../src/speech/asrProtocol.ts'
+import type { SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
 import { documentPaused, inDocument } from '../../src/core/documentMode.ts'
 import { speak as synthSpeak } from '../../src/speech/synth.ts'
 // ---------- reading aloud (29.5) ----------
@@ -21,8 +23,14 @@ import type { StripState } from './messages.ts'
 // ---------- wake word and places (29.4) ----------
 import { placeByNoun, placeCommand, placeHost, placeNounSaid, placeNouns, placeVoice } from '../../src/core/places.ts'
 import type { Place } from '../../src/core/places.ts'
-import { createWake, wakeClose, wakeGate, wakeHeard, wakeOpen, wakeOpenWindow, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
+import { createWake, wakeFind, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
 import type { WakeState } from '../../src/core/wake.ts'
+// ---------- round 10: addressed speech (32) ----------
+import { createListen, listenActive, listenBusy, listenFinal, listenHeard, listenOff, listenOn, listenSleep, listenTick, listenWake } from '../../src/core/listen.ts'
+import type { ListenState } from '../../src/core/listen.ts'
+import { recentFinals } from '../../src/core/addressee.ts'
+import type { AddresseeAnswer, AddresseeRequest, AddresseeVerdict } from '../../src/core/addressee.ts'
+// ---------- end of addressed speech ----------
 /** Round 8 (29.4.3): how long "lisa koht" waits for the word. */
 export const PLACE_ASK_MS = 20_000
 // ---------- end of wake word and places ----------
@@ -52,9 +60,9 @@ export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' | 'aborted'
  */
 export type EngineHandlers = RecognizerHandlers & {
   onLag(ms: number): void
-  onUtteranceContinued(text: string, added: string): void
-  /** Round 4 (review): a foreign final takes back the preview its partials typed. */
-  onForeign(): void
+  onUtteranceContinued(text: string, added: string, decision?: SpeakerDecision): void
+  /** Round 4 (review): a foreign final takes back the preview its partials typed. Round 10 (31.7): reason, when the recogniser knows it. */
+  onForeign(reason?: SpeakerReason): void
   /** Round 4 (review): enrolment is over; utterances are handled again. */
   onEnrolled(ok: boolean, seconds: number): void
 }
@@ -97,6 +105,21 @@ export interface EngineDeps {
   hosted?: boolean
   /** Round 9 (30.5.4): one record per task as it ends, never with words. Absent: nothing is kept. */
   spend?(record: SpendRecord): void
+  /**
+   * Round 10 (ARCHITECTURE 31.4): Kuula ainult mind is on. Nothing speech-driven runs without a
+   * decision that verified the owner: partials are never typed or shown, and an utterance or a
+   * continuation without one is dropped before the rules, the page, the model or the queue.
+   */
+  onlyOwner?: boolean
+  // ---------- round 10: addressed speech (32) ----------
+  /**
+   * Round 10 (#6, 32.3): the addressee check of always-on mode (POST /api/addressee). A final no
+   * rule knows is asked once: command, dictation, or not for Ütle. Absent, or in wake mode: no check.
+   */
+  addressee?(request: AddresseeRequest, signal: AbortSignal): Promise<AddresseeAnswer | AskFailure>
+  /** Round 10 (#2, 32.2): the recogniser sends the audio off this computer (Soniox). With `hosted`, wake mode does not start. */
+  uploads?: boolean
+  // ---------- end of addressed speech ----------
 }
 
 export interface Engine {
@@ -441,6 +464,7 @@ export function createEngine(deps: EngineDeps): Engine {
       busyTimer = null
       publishBusy(0)
     }
+    listenWork()
   }
   // ---- end of busy seconds ----
 
@@ -1126,52 +1150,63 @@ export function createEngine(deps: EngineDeps): Engine {
     else say(want.action === 'save' ? wakeText.placeSaved(want.noun, placeHost(result.tab?.url ?? '')) : wakeText.placeRemoved(want.noun))
     return true
   }
-  /** Round 8 (29.4.1): the wake gate while listenMode is wake, else null. */
-  let wake: WakeState | null = deps.wakeWord === undefined ? null : createWake(deps.wakeWord)
-  /** What the strip was last told (wakeOpen), so it is told on change only. */
+  /** Round 8 (29.4.1): the wake word while listenMode is wake, else null. */
+  const wake: WakeState | null = deps.wakeWord === undefined ? null : createWake(deps.wakeWord)
+  /** Round 10 (32.1): PASSIVE, ACTIVE or HARD_OFF (src/core/listen.ts). */
+  let listen: ListenState = createListen()
+  /** What the strip was last told (wakeOpen = ACTIVE), so it is told on change only. */
   let wakeShown = false
   let wakeTimer: ReturnType<typeof setTimeout> | null = null
   /** The last final passed the gate: a continuation of it ("siis ...") passes too. */
   let lastPassed = false
-  const windowOpen = (): boolean => wake !== null && wakeOpen(wake, Date.now())
-  /** Publishes wakeOpen on change, says when the window closed, and sets the timer for its end. */
+  const windowOpen = (): boolean => wake !== null && listenActive(listen, Date.now())
+  /** Publishes ACTIVE on change, says when it ended, and sets the timer for its end (none while a task runs). */
   const showWake = (quiet = false): void => {
     if (wake === null) return
     const now = Date.now()
-    const open = wakeOpen(wake, now)
+    listen = listenTick(listen, now)
+    const open = listenActive(listen, now)
     if (wakeTimer !== null) clearTimeout(wakeTimer)
     wakeTimer = null
-    if (open) {
+    if (open && !listen.busy) {
       wakeTimer = setTimeout(() => {
         wakeTimer = null
         showWake()
-      }, wake.openUntil - now)
+      }, listen.until - now)
     }
     if (open === wakeShown) return
     wakeShown = open
-    if (!open && !quiet) deps.publish({ wakeOpen: false, line: wakeText.closed })
-    else deps.publish({ wakeOpen: open })
+    if (quiet) deps.publish({ wakeOpen: open })
+    else deps.publish({ wakeOpen: open, line: open ? wakeText.active : wakeText.passive(wakeWordFrom(deps.wakeWord)) })
   }
-  /** One final through the gate: the words to act on, or null when they go nowhere. */
-  const wakeFilter = (utterance: string): string | null => {
-    if (wake === null) return utterance
-    const r = wakeGate(wake, utterance, Date.now())
-    wake = r.state
+  /** Round 10 (32.1): a task began or ended; ACTIVE does not end mid-command. */
+  const listenWork = (): void => {
+    if (wake === null) return
+    listen = listenBusy(listen, jobs.size > 0, Date.now())
+    showWake(true)
+  }
+  /** One final through the machine: the words to act on, or null when they go nowhere (not even the strip). */
+  const wakeFilter = (word: WakeState, utterance: string): string | null => {
+    const r = listenFinal(listen, word, utterance, Date.now())
+    listen = r.state
     lastPassed = r.utterance !== null
-    showWake()
+    if (r.event === 'ignored') deps.publish({ ignored: wakeText.notForMe(listen.ignored) })
+    if (r.event === 'woke') deps.publish({ ignored: '' })
+    // A woken command says its own line; the bare word says "Kuulan sind.".
+    showWake(r.event === 'passed' || r.utterance !== null)
     return r.utterance
   }
-  /** Dictation by the rules into an armed box opens the window (a send never does). */
+  /** Dictation by the rules into an armed box keeps ACTIVE (a send never does). */
   const wakeDictation = (job: Job, box: BoxState, rules: InpageStep): void => {
     if (wake === null || job.send || !box.present || !box.armed) return
     if (!rules.commands.some((c) => c.kind === 'setText')) return
-    wake = wakeOpenWindow(wake, Date.now())
-    showWake()
+    listen = listenWake(listen, Date.now())
+    showWake(true)
   }
-  /** Listening stopped: the window closes without a line. */
+  /** Listening stopped by hand: HARD_OFF, without a line. */
   const wakeStopped = (): void => {
     if (wake === null) return
-    wake = wakeClose(wake)
+    listen = listenOff(listen)
     lastPassed = false
     showWake(true)
   }
@@ -1196,44 +1231,58 @@ export function createEngine(deps: EngineDeps): Engine {
   }
   // ---------- end of reading aloud ----------
 
+  /** The utterance being spoken ends: its preview is handed to whoever takes the final. */
+  const detachLive = (): Live | null => {
+    const u = live
+    live = null
+    if (u !== null) u.over = true
+    return u
+  }
+  /** One final, with the preview its partials typed (round 10: the addressee check may hand it over later). */
+  const takeFinal = (utterance: string, u: Live | null): void => {
+    deps.publish({ heard: utterance })
+    if (entry) {
+      toEntry(utterance)
+      return
+    }
+    // Round 5: "katkesta" drops everything at once, in the handler, and asks nobody.
+    if (isCancelAll(utterance)) {
+      cancelAll()
+      if (u !== null) queue = queue.then(() => takeBack(u))
+      say(inpageText.cancelled)
+      return
+    }
+    const job = newJob(utterance, isPlainSend(utterance))
+    finalArrived(job, u)
+    interrupt(job)
+    // A step that throws must not stop every utterance after it: the queue stays a resolved promise.
+    queue = queue.then(() => handle(job, u)).catch(() => undefined)
+  }
+  /** Round 4: "siis ava Karin" soon after the last utterance goes on from it: no barge-in, and the new words are asked as the next goal of the chain the last utterance was. */
+  const takeContinued = (text: string, added: string, u: Live | null): void => {
+    deps.publish({ heard: text })
+    const job = newJob(added, false)
+    finalArrived(job, u)
+    job.continued = true
+    job.chain = { original: text.slice(0, 1000), completed: [], goal: added.slice(0, GOAL_CHARS), remaining: [] }
+    queue = queue.then(() => handle(job, u)).catch(() => undefined)
+  }
+
   const handlers: EngineHandlers = {
     onUtterance(utterance) {
       if (enrolling) return
       if (whileReading(utterance)) return
-      deps.publish({ heard: utterance })
       if (entry) {
+        deps.publish({ heard: utterance })
         toEntry(utterance)
         return
       }
-      // Round 5: "katkesta" drops everything at once, in the handler, and asks nobody.
-      if (isCancelAll(utterance)) {
-        cancelAll()
-        say(inpageText.cancelled)
-        return
-      }
-      const u = live
-      live = null
-      if (u !== null) u.over = true
-      const job = newJob(utterance, isPlainSend(utterance))
-      finalArrived(job, u)
-      interrupt(job)
-      // A step that throws must not stop every utterance after it: the queue stays a resolved promise.
-      queue = queue.then(() => handle(job, u)).catch(() => undefined)
+      takeFinal(utterance, detachLive())
     },
     onUtteranceContinued(text, added) {
       if (enrolling) return
-      // Round 4: "siis ava Karin" soon after the last utterance goes on from it: no barge-in, and
-      // the new words are asked as the next goal of the chain the last utterance was.
       if (whileReading(added)) return
-      deps.publish({ heard: text })
-      const u = live
-      live = null
-      if (u !== null) u.over = true
-      const job = newJob(added, false)
-      finalArrived(job, u)
-      job.continued = true
-      job.chain = { original: text.slice(0, 1000), completed: [], goal: added.slice(0, GOAL_CHARS), remaining: [] }
-      queue = queue.then(() => handle(job, u)).catch(() => undefined)
+      takeContinued(text, added, detachLive())
     },
     onInterim(interim) {
       // An empty interim keeps the last words on the strip until new speech arrives.
@@ -1257,10 +1306,13 @@ export function createEngine(deps: EngineDeps): Engine {
     onNotice() {
       // The local recogniser has no fallback here; nothing to show.
     },
-    onForeign() {
+    onForeign(reason) {
       // Round 4 (review): someone else's final was dropped; the preview its partials typed must not
       // sit in his box until he next speaks (he may not). Taken back like a stopped utterance.
       dropLive()
+      // Round 10 (31.7, issue #3 C): a short word without enough owner audio ran nothing; the strip
+      // asks for the longer form. Nothing else: no recency, no exception for send.
+      if (reason === 'insufficient_audio') deps.publish({ line: text.voiceTooShort })
     },
     onEnrolled() {
       endEnrolment()
@@ -1301,34 +1353,34 @@ export function createEngine(deps: EngineDeps): Engine {
   // Round 8 (29.4.1): in wake mode every final, continuation and partial passes the gate first. The
   // voice entry flow (26.5) and enrolment are not gated.
   if (wake !== null) {
+    const word = wake
     const ungated = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
     const gated = (): boolean => !entry && !enrolling
     handlers.onUtterance = (utterance) => {
       // 29.5: while reading, the reading's filter comes before the gate: a stop word stops it without the wake word.
       if (!enrolling && whileReading(utterance)) return
       if (!gated()) return ungated.onUtterance(utterance)
-      const passed = wakeFilter(utterance)
+      const passed = wakeFilter(word, utterance)
       if (passed === null) {
-        // Heard, shown on the strip, acted on never.
-        deps.publish({ heard: utterance })
+        // Round 10 (32.1): PASSIVE, a toggle or a stop word: nothing of it reaches the strip, the box or the queue.
         dropLive()
         return
       }
       const closes = windowOpen() && isPlainSend(passed)
       ungated.onUtterance(passed)
       // The message is gone: what the room says next must not be typed.
-      if (closes && wake !== null) {
-        wake = wakeClose(wake)
+      if (closes) {
+        listen = listenSleep(listen)
         showWake(true)
       }
     }
     handlers.onUtteranceContinued = (text, added) => {
       if (!enrolling && whileReading(added)) return
       if (!gated()) return ungated.onUtteranceContinued(text, added)
-      if (lastPassed && wake !== null) {
-        const rest = wakeStarts(wake, added)
-        wake = wakeHeard(wake, Date.now())
-        showWake()
+      if (lastPassed && windowOpen()) {
+        const rest = wakeStarts(word, added)
+        listen = listenHeard(listen, Date.now())
+        showWake(true)
         return ungated.onUtteranceContinued(text, rest === null || rest === '' ? added : rest)
       }
       // What it continues was dropped: these words are a final of their own.
@@ -1336,18 +1388,137 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     handlers.onInterim = (interim) => {
       if (deps.reading?.() === true) return
-      if (!gated() || interim === '' || wake === null) return ungated.onInterim(interim)
-      wake = wakeHeard(wake, Date.now())
-      showWake()
-      if (windowOpen()) return ungated.onInterim(interim)
-      // Closed: the words are shown, never previewed into the box.
-      deps.publish({ heard: interim })
+      if (!gated() || interim === '') return ungated.onInterim(interim)
+      if (windowOpen()) {
+        listen = listenHeard(listen, Date.now())
+        showWake(true)
+        return ungated.onInterim(interim)
+      }
+      // Round 10 (32.1): PASSIVE. Nothing is shown or typed, except the words after a wake word heard just now.
+      const hit = wakeFind(word, interim, true)
+      if (hit !== null && hit.after !== '') deps.publish({ heard: hit.after })
     }
   }
   // ---------- end of wake word and places ----------
 
+  // ---------- round 10 (#6, 32.3): the addressee check of always-on mode ----------
+  /** The finals heard before (after the speaker gate), oldest first: the check's context. */
+  let finals: string[] = []
+  /** Finals not meant for Ütle since the last one that was. */
+  let ignoredCount = 0
+  /** The last final was judged not for Ütle: a continuation of it is a final of its own. */
+  let lastIgnored = false
+  /** The checks in order: a final waits for the one before it, so nothing overtakes a pending check. */
+  let checks: Promise<void> = Promise.resolve()
+  /** Review 1: "katkesta" drops the checks still pending too; each check remembers the epoch it began in. */
+  let checkEpoch = 0
+  if (wake === null && deps.addressee !== undefined) {
+    const check = deps.addressee
+    const inner = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
+    const judged = (): boolean => !entry && !enrolling && deps.reading?.() !== true
+    /** The page in front, in short. */
+    const pageNow = async (): Promise<AddresseeRequest['page']> => {
+      const read = await runSafe({ kind: 'readPage' })
+      const page = read.ok ? read.page : undefined
+      return { url: (page?.url ?? '').slice(0, URL_CHARS), title: (page?.title ?? '').slice(0, TITLE_CHARS), box: { present: page?.box.present === true, armed: page?.box.armed === true } }
+    }
+    /** The verdict, or null when the check gave none (it then goes on as before: the rules and the model still judge). */
+    const verdictOf = async (utterance: string, before: string[]): Promise<AddresseeVerdict | null> => {
+      // A rule knows it (a command, a send, the cancel): it was said to Ütle.
+      if (probe(utterance)?.ask !== true) return 'command'
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
+      try {
+        const request: AddresseeRequest = { lang: deps.lang, utterance: utterance.slice(0, UTTERANCE_CHARS), finals: before, page: await pageNow() }
+        const answer = await check(request, controller.signal).catch((): AskFailure => ({ error: 'unreachable' }))
+        return 'error' in answer ? null : answer.verdict
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    /**
+     * One final (or continuation) through the check, in order; take runs it when it was for Ütle,
+     * with whether the final before it was judged not for Ütle (read only once that verdict is in).
+     */
+    const judge = (words: string, take: (u: Live | null, priorIgnored: boolean) => void): void => {
+      const u = detachLive()
+      const before = recentFinals(finals)
+      finals = recentFinals([...finals, words])
+      const epoch = checkEpoch
+      checks = checks
+        .then(async () => {
+          // Review 1: the verdict before this one has settled here, not when these words arrived.
+          const priorIgnored = lastIgnored
+          const verdict = epoch === checkEpoch ? await verdictOf(words, before) : 'ignore'
+          if (epoch !== checkEpoch) {
+            // Cancelled while it waited: dropped like everything else in flight, nothing counted.
+            if (u !== null) queue = queue.then(() => takeBack(u))
+            return
+          }
+          if (verdict === 'ignore') {
+            lastIgnored = true
+            ignoredCount += 1
+            if (u !== null) queue = queue.then(() => takeBack(u))
+            // The bar shows the count, never the words.
+            deps.publish({ heard: '', ignored: wakeText.notForMe(ignoredCount) })
+            return
+          }
+          if (lastIgnored || ignoredCount > 0) deps.publish({ ignored: '' })
+          lastIgnored = false
+          ignoredCount = 0
+          take(u, priorIgnored)
+        })
+        .catch(() => undefined)
+    }
+    /** Review 1: "katkesta" never waits behind a check (round 5: instant) and drops the pending ones. */
+    const cancelNow = (utterance: string): void => {
+      checkEpoch += 1
+      lastIgnored = false
+      inner.onUtterance(utterance)
+    }
+    handlers.onUtterance = (utterance) => {
+      if (!judged()) return inner.onUtterance(utterance)
+      if (isCancelAll(utterance)) return cancelNow(utterance)
+      judge(utterance, (u) => takeFinal(utterance, u))
+    }
+    handlers.onUtteranceContinued = (text, added) => {
+      if (!judged()) return inner.onUtteranceContinued(text, added)
+      if (isCancelAll(added)) return cancelNow(added)
+      // What it continues was not for Ütle: these words are judged and taken on their own.
+      judge(added, (u, priorIgnored) => (priorIgnored ? takeFinal(added, u) : takeContinued(text, added, u)))
+    }
+    handlers.onInterim = (interim) => {
+      if (!judged()) return inner.onInterim(interim)
+      // Review 1: the strip shows his live words; nothing is previewed into the box before a verdict
+      // says command or dictation (dictation lands with the final).
+      if (interim !== '') deps.publish({ heard: interim })
+    }
+  }
+  // ---------- end of the addressee check ----------
+
+  // ---------- only the owner (round 10, ARCHITECTURE 31.4) ----------
+  // Outside every other wrapper: the wake word, reading aloud, the entry flow and the queue all sit
+  // behind these two doors. The recogniser checks the segment and the session (31.3); this is the
+  // second, independent wall.
+  const ownerOnly = (inner: EngineHandlers): EngineHandlers => ({
+    ...inner,
+    onInterim() {
+      // Unverified words: never typed into the box, never shown on the strip.
+    },
+    onUtterance(utterance, decision) {
+      if (verifiedOwner(decision)) inner.onUtterance(utterance)
+      else dropLive()
+    },
+    onUtteranceContinued(text, added, decision) {
+      if (verifiedOwner(decision)) inner.onUtteranceContinued(text, added)
+      else dropLive()
+    },
+  })
+  const heardBy: EngineHandlers = deps.onlyOwner === true ? ownerOnly(handlers) : handlers
+  // ---------- end of only the owner ----------
+
   const recognizer = deps.recognizer(
-    handlers,
+    heardBy,
     // Round 6: a spelled letter for the entry flow must not wait for the hold.
     // Round 8 (29.4.1): no quick reply from a partial while the wake window is closed (a partial cannot be gated).
     (utterance) => entry || ((wake === null || windowOpen()) && deps.logic.inpageInstant(session, utterance)),
@@ -1370,7 +1541,16 @@ export function createEngine(deps: EngineDeps): Engine {
 
   const start = (): void => {
     if (listening) return
+    // Round 10 (#2, 32.2): in PASSIVE the room is heard all day; a hosted server or Soniox would get all of it. Never a silent upload.
+    if (wake !== null && (deps.uploads === true || deps.hosted === true)) {
+      deps.publish({ listening: false, problem: wakeText.uploadsOff })
+      return
+    }
     listening = true
+    if (wake !== null) {
+      listen = listenOn(listen, Date.now())
+      showWake(true)
+    }
     deps.publish({ listening: true, problem: '', line: deps.wakeWord === undefined ? text.sayPrompt : wakeText.prompt(wakeWordFrom(deps.wakeWord)), resting: session.asleep })
     recognizer.start()
   }
@@ -1425,6 +1605,8 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     async idle() {
       for (;;) {
+        const c = checks
+        await c
         const q = queue
         await q
         const typing = live?.typing ?? null
@@ -1433,7 +1615,7 @@ export function createEngine(deps: EngineDeps): Engine {
           await settled(pending)
           continue
         }
-        if (q === queue && (live?.typing ?? null) === null) return
+        if (c === checks && q === queue && (live?.typing ?? null) === null) return
       }
     },
   }

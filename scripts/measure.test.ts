@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROMPTS, operatingPoint, otherTrialsNeeded, splitTrials, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
+import { FAKE_MIC_MARKER, PROMPTS, checkLabels, recordingSource, operatingPoint, otherTrialsNeeded, splitTrials, bucketOf, speechEndSample, charErrors, eer, formatLabels, insideRepo, normaliseEt, parseLabels, percentile, promptsFor, rate, ratesAt, rowsFromCaptureLog, sumCounts, wilson, wordErrors } from './measure.ts'
 import type { LabelRow } from './measure.ts'
 
 describe('normaliseEt', () => {
@@ -191,5 +191,33 @@ describe('EER threshold and the FAR-target operating point on an imbalanced set'
     expect(op.rates.falseAccepts).toBe(0)
     expect(op.rates.frr).toBe(0.5)
     expect(op.rates.farCi.high).toBeLessThanOrEqual(0.01)
+  })
+})
+
+describe('labels --check (round 10, lane VOICE): record.ts -> label.ts -> speaker-calibrate.ts with no manual step', () => {
+  const row = (file: string, speaker: string, kind: LabelRow['kind'], reference = 'x'): LabelRow => ({ file, speaker, reference, addressee: '', kind, durationS: 1 })
+  it('is ready when every clip has a speaker, the owner has enrol clips and someone else spoke; names the next command', () => {
+    const rows = [row('a/1.wav', 'ralf', 'enrol'), row('a/2.wav', 'ralf', 'enrol'), row('a/3.wav', 'ralf', 'short'), row('b/1.wav', 'partner1', 'command')]
+    const report = checkLabels(rows, 'ralf', 'C:/rec/labels.tsv')
+    expect(report.ready).toBe(true)
+    expect(report.problems).toEqual([])
+    expect(report).toMatchObject({ ownerEnrol: 2, ownerTrials: 1, otherTrials: 1, speakers: ['partner1', 'ralf'] })
+    expect(report.next).toBe('npx tsx scripts/speaker-calibrate.ts --labels C:/rec/labels.tsv --owner-speaker ralf --models all')
+  })
+
+  it('says what is missing: a blank speaker, no enrol clips for the owner, nobody else', () => {
+    const report = checkLabels([row('a/1.wav', '', 'command'), row('a/2.wav', 'ralf', 'short')], 'ralf', 'l.tsv')
+    expect(report.ready).toBe(false)
+    expect(report.problems).toEqual(['1 clip without a speaker (label.ts --edit l.tsv)', 'no enrol clips for ralf (record.ts --set enrol)', 'no clips of anyone but ralf (record a partner)'])
+  })
+})
+
+describe('recordingSource (round 10, C8): the sweep banner never says real for a fake microphone', () => {
+  const repo = 'C:/repo'
+  it('fixture clips are synthetic, a folder record.ts filled from a fake microphone is fake-mic, anything else real', () => {
+    expect(recordingSource(['C:/repo/scripts/fixtures/speaker-set/a.wav'], repo, () => false)).toBe('synthetic')
+    expect(recordingSource(['C:/temp/rec/mari/enrol-01.wav', 'C:/temp/rec/vesta/enrol-01.wav'], repo, (dir) => dir.endsWith('vesta'))).toBe('fake-mic')
+    expect(recordingSource(['C:/temp/rec/mari/enrol-01.wav'], repo, () => false)).toBe('real')
+    expect(FAKE_MIC_MARKER).toBe('FAKE-MIC.txt')
   })
 })

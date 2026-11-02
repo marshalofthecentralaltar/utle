@@ -185,6 +185,7 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
       { et: ['tavaline suurus', 'algne suurus', 'suumi tagasi'], en: 'normal size, reset zoom', does: 'Lehe tavaline suurus.', doesEn: 'Back to 100 %.', rule: 'browserIntent', expect: 'zoom' },
       { et: ['peida riba', 'näita riba'], en: 'hide the bar, show the bar', does: 'Teeb riba väikeseks nupuks ja tagasi.', doesEn: 'Folds the bar to a small pill, and back.', rule: 'browserIntent', expect: 'bar', example: true },
       { et: ['ava seaded', 'seaded'], en: 'open settings', does: 'Avab seadete lehe.', doesEn: 'Opens the settings page.', rule: 'browserIntent', expect: 'openSettings' },
+      { et: ['õpi mu hääl uuesti', 'õpeta mu hääl uuesti'], en: 'relearn my voice', does: 'Avab alustamise lehe hääle kaardil ja alustab lausete lugemist.', doesEn: 'Opens the setup guide at the voice card and starts the sentences.', rule: 'browserIntent', expect: 'openSettings' },
     ],
   },
   {
@@ -299,14 +300,14 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
     say: ['hääl', 'kuulamine', 'kuula', 'listening'],
     intro: 'Millal Ütle kuulab ja kuidas teda peatada.',
     noteEn:
-      '`katkesta` drops everything in flight at once (the chain, the question to the model, the queued words) with "Katkestatud."; it works while resting too and is never typed. With the wake word (settings, **Kuulamine: Äratussõnaga**) only what starts with the word is acted on; "Ütle" alone opens a 20 s window in which sentences need no word, closed by `aitab`, `see on kõik` or `saada`. The word is matched by sound and must be first. Push-to-talk by looking needs nothing said: look at the microphone (or the whole bar) and speak.',
+      '`katkesta` drops everything in flight at once (the chain, the question to the model, the queued words) with "Katkestatud."; it works while resting too and is never typed. With the wake word (settings, **Kuulamine: Äratussõnaga**) nothing reaches the bar until the word is heard, anywhere in a sentence ("No nii, ütle, mine youtube’i" runs "mine youtube’i"); then sentences need no word until 20 s of quiet with no task running, `aitab`, `lõpeta kuulamine`, `saada`, or "Ütle" alone again. `kirjuta ütle` types the word. Push-to-talk by looking needs nothing said: look at the microphone (or the whole bar) and speak.',
     phrases: [
       { et: ['puhka', 'ära kuula'], en: 'sleep, stop listening', does: 'Ütle ei kirjuta midagi, kuni äratad.', doesEn: 'Stops typing what it hears, until woken.', rule: 'inpage', expect: 'sleep' },
       { et: ['ärka üles'], en: 'wake up', does: 'Ütle kuulab jälle.', doesEn: 'Starts again.', rule: 'inpage', expect: 'wake', context: 'asleep' },
       { et: ['katkesta', 'tühista kõik', 'lõpeta kõik', 'stopp kõik'], en: 'cancel', does: 'Peatab kõik, mis pooleli on.', doesEn: 'Stops everything in flight at once.', rule: 'inpage', expect: 'cancel' },
-      { et: ['Ütle, keri alla'], en: 'Ütle, scroll down', does: 'Äratussõnaga: käsk algab sõnaga „Ütle“.', doesEn: 'With the wake word: the command starts with the word.', rule: 'wake', expect: 'pass', context: 'wakeShut' },
-      { et: ['Ütle'], en: 'Ütle', does: 'Äratussõna üksi: 20 sekundit võib rääkida ilma selleta.', doesEn: 'The word alone opens a 20 s window.', rule: 'wake', expect: 'open', context: 'wakeShut' },
-      { et: ['aitab', 'see on kõik'], en: "that's all", does: 'Sulgeb äratussõna akna.', doesEn: 'Closes the window.', rule: 'wake', expect: 'close', context: 'wakeOpen' },
+      { et: ['Ütle, keri alla'], en: 'Ütle, scroll down', does: 'Äratussõnaga: „Ütle“ võib olla ka lause keskel, käsk on sellele järgnev.', doesEn: 'With the wake word, anywhere in the sentence: the command is what follows it.', rule: 'wake', expect: 'pass', context: 'wakeShut' },
+      { et: ['Ütle'], en: 'Ütle', does: 'Äratussõna üksi: kuulab (ACTIVE), lauseid võib öelda ilma selleta; uuesti öeldes jääb ootele.', doesEn: 'The word alone wakes it (ACTIVE): sentences need no word; said again, it goes back to PASSIVE.', rule: 'wake', expect: 'open', context: 'wakeShut' },
+      { et: ['aitab', 'see on kõik'], en: "that's all", does: 'Lõpetab kuulamise (PASSIVE).', doesEn: 'Back to PASSIVE: nothing reaches the bar until the word.', rule: 'wake', expect: 'close', context: 'wakeOpen' },
     ],
   },
   {

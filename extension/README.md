@@ -101,6 +101,27 @@ folder and the others' in another and run
 `npx tsx scripts/speaker-calibrate.ts --owner <your folder> --other <their folder>`: it prints every
 score and the best threshold. HANDOFF 1g has a ten-minute script.
 
+### Recording people for the speaker model and threshold (round 10, three commands)
+
+Nobody is recorded until the consent text that `record.ts` prints is approved (issue #9). The folder
+must be outside the repository (the script refuses one inside it). One `record.ts` run per person,
+the owner first; each run appends to the same `labels.tsv`:
+
+    npx tsx scripts/record.ts --person ralf --out C:/temp/utle-voice --consent
+    npx tsx scripts/record.ts --person anna --out C:/temp/utle-voice --consent
+    npx tsx scripts/record.ts --person mart --out C:/temp/utle-voice --consent
+    npx tsx scripts/label.ts --check C:/temp/utle-voice/labels.tsv --owner ralf
+    npx tsx scripts/speaker-calibrate.ts --labels C:/temp/utle-voice/labels.tsv --owner-speaker ralf --models all
+
+In the recording window Space starts and stops a phrase, Backspace records the last one again,
+Escape ends (43 phrases, about 8 minutes a person). `label.ts --check` exits 0 and prints the next
+command when the set is usable. `speaker-calibrate.ts` prints, per model and seconds-of-speech
+bucket, EER, FAR and FRR at the current line and the lowest threshold with FAR at most 1 %. Its
+banner says REAL recordings only when no clip is a fixture and no speaker folder holds
+`FAKE-MIC.txt` (left by `--fake-mic` runs). The dry run of the same commands with Chromium's fake
+microphone playing the SYNTHETIC TartuNLP fixtures is in HANDOFF 1m. Delete the folder when the
+table exists.
+
 ## Hosted server (round 6)
 
 For a computer where nothing may be installed, the server runs on a hosted machine and the extension
@@ -266,14 +287,20 @@ itself within a second. A fold he asked for ("peida riba") never comes back by i
   nothing in this mode. The folded pill is a gaze target too (resting on it for two seconds no
   longer unfolds the bar in this mode; use **Näita**). When a page swallows the pointer-leave
   event, a one-second poll of the pointer's last position ends listening instead.
-- **Wake word** (`listenMode: wake`, round 8, ARCHITECTURE 29.4.1): listening starts by itself when
-  the browser starts and when the mode or the word is set, and stays on; the microphone button still
-  turns it off. Only what starts with the wake word is acted on: "Ütle, keri alla". Everything else
-  is shown on the strip's upper line and goes nowhere (not typed, not sent to the model). Dictating:
-  "Ütle, tulen kell viis" into an armed box types it and opens the dictation window, shown as a small
-  amber disc on the microphone; while it is open, sentences need no word. It closes after 20 s with
-  nothing said, on `aitab` / `see on kõik` / `that's all`, or after `saada`. "Ütle" alone opens it too.
-  The word is matched by sound ("ütel", "Ütle," pass; "ütlesin", "ütles" do not) and must be first.
+- **Wake word** (`listenMode: wake`, round 8; round 10: ARCHITECTURE 32.1, LIMITED: on the
+  recogniser's text, not an acoustic keyword spotter): listening starts by itself and stays on; the
+  microphone button turns it off (HARD_OFF). PASSIVE: nothing anyone says reaches the bar, the box or
+  the model; the strip shows only a quiet count ("3 lauset ei olnud mulle"). The word wakes it anywhere
+  in a sentence: "No nii, ütle, mine youtube'i" runs "mine youtube'i" and drops "No nii"; the
+  recogniser's glued "ütlemine youtube'i" counts too. ACTIVE (amber disc): sentences need no word until
+  20 s of quiet with no task running, `aitab` / `lõpeta kuulamine`, `saada`, or "Ütle" alone again.
+  "kirjuta ütle" types the word; "ütlen", "ütles", "ütlemine on ..." never wake. With a hosted server
+  or Soniox the mode does not start and the strip says why (PASSIVE would send the room's audio away).
+- **Always-on and the toggle** (round 10, 32.3, LIMITED: text only): a sentence no rule knows is first
+  asked once (`/api/addressee`, about 1.3 s) whether it was said to Ütle; "not for me" is never shown
+  or typed, only counted. If the check fails the sentence goes on as before. While he speaks the
+  strip shows his words, but nothing is typed into the box before the verdict: dictation lands with
+  the finished sentence, not live. `katkesta` never waits for the check.
 - **Minu kohad** (round 8, 29.4.2): `vaata uudiseid`, `näita uudiseid`, `ava uudised`, `pane raadio
   käima`, `ava raadio`, `mis ilm on`, `näita ilma`, `ava mu mail`, `ava meil`, `vaata videoid` open
   your place for that word (not while a message box is armed: there the words are typed). Defaults:
@@ -573,11 +600,11 @@ Help page: `help.html#haal`, or say `abi hääl`.
 | `puhka`, `ära kuula` | sleep, stop listening | Stops typing what it hears, until woken. |
 | `ärka üles` | wake up | Starts again. |
 | `katkesta`, `tühista kõik`, `lõpeta kõik`, `stopp kõik` | cancel | Stops everything in flight at once. |
-| `Ütle, keri alla` | Ütle, scroll down | With the wake word: the command starts with the word. |
-| `Ütle` | Ütle | The word alone opens a 20 s window. |
-| `aitab`, `see on kõik` | that's all | Closes the window. |
+| `Ütle, keri alla` | Ütle, scroll down | With the wake word, anywhere in the sentence: the command is what follows it. |
+| `Ütle` | Ütle | The word alone wakes it (ACTIVE): sentences need no word; said again, it goes back to PASSIVE. |
+| `aitab`, `see on kõik` | that's all | Back to PASSIVE: nothing reaches the bar until the word. |
 
-`katkesta` drops everything in flight at once (the chain, the question to the model, the queued words) with "Katkestatud."; it works while resting too and is never typed. With the wake word (settings, **Kuulamine: Äratussõnaga**) only what starts with the word is acted on; "Ütle" alone opens a 20 s window in which sentences need no word, closed by `aitab`, `see on kõik` or `saada`. The word is matched by sound and must be first. Push-to-talk by looking needs nothing said: look at the microphone (or the whole bar) and speak.
+`katkesta` drops everything in flight at once (the chain, the question to the model, the queued words) with "Katkestatud."; it works while resting too and is never typed. With the wake word (settings, **Kuulamine: Äratussõnaga**) nothing reaches the bar until the word is heard, anywhere in a sentence ("No nii, ütle, mine youtube’i" runs "mine youtube’i"); then sentences need no word until 20 s of quiet with no task running, `aitab`, `lõpeta kuulamine`, `saada`, or "Ütle" alone again. `kirjuta ütle` types the word. Push-to-talk by looking needs nothing said: look at the microphone (or the whole bar) and speak.
 
 ### Abi (Help)
 

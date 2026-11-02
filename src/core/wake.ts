@@ -1,29 +1,30 @@
 import { keyDistance, phoneticKey } from './phonetic.ts'
-import { normalise } from './quickReply.ts'
 
 /**
- * Round 8, the listening mode "Äratussõnaga" (docs/ARCHITECTURE.md 29.4.1): the bar listens all
- * day and acts on a final only when it starts with his wake word, or while the dictation window is
- * open. A pure state machine: the engine keeps the state, passes each final through wakeGate and
- * publishes whether the window is open. No timers here: the caller passes `now`.
+ * The wake word in a final (ARCHITECTURE 29.4.1; round 10: 32). Round 8 matched it as the first
+ * word only. Round 10 (#2, LIMITED: on the recogniser's text, not an acoustic keyword spotter)
+ * finds it anywhere in a final, splits a glued form ("ütlemine youtube'i"), and keeps literal uses
+ * ("kirjuta ütle", „ütle”) as text. The states (PASSIVE, ACTIVE, HARD_OFF) are src/core/listen.ts.
+ * Pure: no timers, no DOM.
  */
 
 export const DEFAULT_WAKE_WORD = 'Ütle'
-/** The dictation window closes after this long with nothing heard. */
-export const WAKE_WINDOW_MS = 20_000
 /** The chrome.storage.local key of the setting. */
 export const WAKE_WORD_KEY = 'wakeWord'
 /** At most this many letters in one word of the setting. */
 const WORD_LETTERS = 20
 
-/** What ends the window, with or without the word ("aitab", "see on kõik", "that's all"). */
-const STOP = new Set(['aitab', 'see on kõik', 'see oli kõik', 'thats all', 'that is all'])
-
 export interface WakeState {
   /** The phonetic keys of the wake word's words, in order. */
   keys: string[]
-  /** Date.now() until which the dictation window is open; 0 when it is closed. */
-  openUntil: number
+  /** The wake word in lower-case Latin letters when it is one word, for glued forms; '' for two words. */
+  glue: string
+}
+
+/** Where the word was found: the words before it (dropped by the caller in PASSIVE) and after it. */
+export interface WakeHit {
+  before: string
+  after: string
 }
 
 /** The setting, checked: one or two words of letters (Estonian letters too), else the default. */
@@ -52,7 +53,8 @@ function keyOf(word: string): string {
 }
 
 export function createWake(word: string): WakeState {
-  return { keys: wakeWordFrom(word).split(' ').map(keyOf), openUntil: 0 }
+  const words = wakeWordFrom(word).split(' ')
+  return { keys: words.map(keyOf), glue: words.length === 1 ? latin(words[0] ?? '') : '' }
 }
 
 /**
@@ -66,47 +68,95 @@ function same(heard: string, key: string): boolean {
   return k.length === key.length && k.length >= 4 && keyDistance(k, key, 1) <= 1
 }
 
-/** The words of the final after the wake word, as said ('' for the bare word), or null when it does not start with it. */
-export function wakeStarts(state: WakeState, final: string): string | null {
-  let rest = final.trimStart()
-  for (const key of state.keys) {
-    const m = /^(\S+)\s*/u.exec(rest)
-    if (!m?.[1] || !same(m[1], key)) return null
-    rest = rest.slice(m[0].length)
+/**
+ * Command verbs a glued form may end in: "Ütle, mine …" is heard as "ütlemine …". Only these: a
+ * glued "ütle" + anything else is another word ("ütlesin", "ütlemise").
+ */
+const GLUE_VERBS = new Set(['mine', 'ava', 'otsi', 'keri', 'kirjuta', 'saada', 'sulge', 'vajuta', 'loe', 'näita', 'vali', 'mängi', 'peata', 'kustuta', 'vasta', 'vaata', 'pane', 'lülita', 'klõpsa'])
+/**
+ * After "ütlemine" these words make it the noun ("ütlemine on hõbe", "see ütlemine ei aita"): no
+ * wake. "mine" with nothing after it is the noun too.
+ */
+const NOUN_NEXT = new Set(['on', 'oli', 'olid', 'pole', 'polnud', 'ei', 'ja', 'et', 'ka', 'kui', 'sest', 'aga', 'see', 'oleks', 'võib', 'saab', 'sai', 'jääb', 'tuleb', 'peab', 'ju', 'nüüd', 'mul', 'sul', 'tal', 'meil', 'kõige', 'alati'])
+/** The word after these is text he dictates, never a wake ("kirjuta ütle", "sõna ütle", "ta ütles ütle"). */
+const LITERAL_BEFORE = new Set(['kirjuta', 'kirjutan', 'kirjutage', 'trüki', 'sisesta', 'sõna', 'sõnad', 'sõnaga', 'sõnu', 'ütles', 'ütleb', 'ütlen', 'ütlesin', 'ütlevad', 'öelda', 'ütelda', 'öeldi'])
+const QUOTE_START = /^[„“”"«»‘’']/u
+const QUOTE_END = /[„“”"«»‘’'][\p{P}]*$/u
+/** A word ending a sentence: the next word may be a wake even when only the start is allowed. */
+const SENTENCE_END = /[.!?…]$/u
+
+interface Token {
+  raw: string
+  /** Without punctuation at either end. */
+  core: string
+  start: number
+  end: number
+}
+
+function tokens(text: string): Token[] {
+  const out: Token[] = []
+  for (const m of text.matchAll(/\S+/gu)) {
+    const start = m.index
+    out.push({ raw: m[0], core: m[0].replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, ''), start, end: start + m[0].length })
   }
-  // Punctuation after the word ("Ütle, …", "ütle... …") goes with it.
-  return rest.replace(/^[\p{P}\s]+/u, '').trim()
+  return out
 }
 
-export function wakeOpen(state: WakeState, now: number): boolean {
-  return state.openUntil > now
+/** What follows the match: punctuation after the word ("Ütle, …", "ütle... …") goes with it. */
+const tail = (text: string): string => text.replace(/^[\p{P}\s]+/u, '').trim()
+
+/** The wake word at token i: the words after it, or null. */
+function matchAt(state: WakeState, text: string, list: readonly Token[], i: number): string | null {
+  const first = list[i]
+  if (first === undefined) return null
+  const before = list[i - 1]
+  if (before !== undefined && LITERAL_BEFORE.has(latin(before.core))) return null
+  if (QUOTE_START.test(first.raw) || QUOTE_END.test(first.raw)) return null
+  // The whole word (or both words of a two-word setting).
+  let whole = true
+  for (const [k, key] of state.keys.entries()) {
+    const t = list[i + k]
+    if (t === undefined || !same(t.core, key)) {
+      whole = false
+      break
+    }
+  }
+  if (whole) {
+    const last = list[i + state.keys.length - 1]
+    return last === undefined ? null : tail(text.slice(last.end))
+  }
+  // A glued form: "ütlemine youtube'i" is "ütle" + "mine youtube'i".
+  if (state.glue === '') return null
+  const letters = latin(first.core)
+  if (!letters.startsWith(state.glue)) return null
+  const verb = letters.slice(state.glue.length)
+  if (!GLUE_VERBS.has(verb)) return null
+  const next = list[i + 1]
+  if (verb === 'mine' && (next === undefined || NOUN_NEXT.has(latin(next.core)))) return null
+  const rest = text.slice(first.end).trim()
+  return rest === '' ? verb : `${verb} ${rest}`
 }
 
-/** Opens (or keeps open) the dictation window from now. */
-export function wakeOpenWindow(state: WakeState, now: number): WakeState {
-  return { ...state, openUntil: now + WAKE_WINDOW_MS }
-}
-
-export function wakeClose(state: WakeState): WakeState {
-  return state.openUntil === 0 ? state : { ...state, openUntil: 0 }
-}
-
-/** Something was heard (a partial): an open window stays open from now. */
-export function wakeHeard(state: WakeState, now: number): WakeState {
-  return wakeOpen(state, now) ? wakeOpenWindow(state, now) : wakeClose(state)
+/** The words of the final after the wake word when it is the first word ('' for the bare word), else null. */
+export function wakeStarts(state: WakeState, final: string): string | null {
+  return matchAt(state, final, tokens(final), 0)
 }
 
 /**
- * One final through the gate. utterance is what the engine acts on, the word stripped, or null:
- * dropped (closed, no word), a stop word (closes the window), or the bare word (opens it).
+ * The first wake word in a final. anywhere: at any word (PASSIVE: the lead-in is room talk);
+ * otherwise only at the start or after a full stop (ACTIVE: a word inside his sentence is his text).
+ * The word said twice is one wake. Null when there is none, or when it is a literal use.
  */
-export function wakeGate(state: WakeState, final: string, now: number): { state: WakeState; utterance: string | null } {
-  const open = wakeOpen(state, now)
-  const base = open ? state : wakeClose(state)
-  const rest = wakeStarts(base, final)
-  const words = rest ?? (open ? final : null)
-  if (words === null) return { state: base, utterance: null }
-  if (STOP.has(normalise(words))) return { state: wakeClose(base), utterance: null }
-  if (words === '') return { state: wakeOpenWindow(base, now), utterance: null }
-  return { state: open ? wakeOpenWindow(base, now) : base, utterance: words }
+export function wakeFind(state: WakeState, final: string, anywhere: boolean): WakeHit | null {
+  const list = tokens(final)
+  for (const [i, t] of list.entries()) {
+    const prev = list[i - 1]
+    if (!anywhere && prev !== undefined && !SENTENCE_END.test(prev.raw)) continue
+    let after = matchAt(state, final, list, i)
+    if (after === null) continue
+    // "ütle ütle ava youtube", "Ütle. Ütle, keri alla": one wake.
+    for (let again = wakeStarts(state, after); again !== null && again !== after; again = wakeStarts(state, after)) after = again
+    return { before: final.slice(0, t.start).trim(), after }
+  }
+  return null
 }

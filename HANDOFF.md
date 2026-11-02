@@ -631,6 +631,41 @@ with the proofs re-run, two defect rounds each.
 - Pre-existing on main, found here: a one-word utterance right after another voice can end with a partial and no
   final (the recogniser's text empties at the endpoint). Closed in only-owner mode by GATE; off mode unchanged.
 
+## 1m. Round 10, prompt 2, lane VOICE (2026-11-02): onboarding starts with the voice (#3 D + C's safe retry)
+
+Branch `r10-voice` (stacked on `r10-gate`), not merged. Spec ARCHITECTURE 31.7.
+
+- Enrolment phrases are quality-checked (at least 0.8 s of Silero speech, RMS 0.02, at most 0.5 % clipped) and
+  asked again with a plain reason; a flush residue with no recognised words is no phrase attempt. The candidate is
+  made from N − 2 phrases and verified on the last 2; only a passing one replaces the profile (`.part` + rename).
+- Format-2 profile: embedding, model id + SHA-256, phrase count, quality numbers, threshold policy with provenance,
+  held-out scores, timestamps; no audio, no text. Round-7 files are `needs_retraining`. A factory-sourced profile is
+  judged at today's `FACTORY_THRESHOLD`, so recalibrating it from real recordings reaches existing testers.
+- Readiness (`ready | no_profile | needs_retraining | model_unavailable | model_mismatch`) on every connection and in
+  `/api/status`; protected only when ready. Welcome starts with the voice; settings keep test, delete, re-enrol, off.
+  `insufficient_audio` asks for the longer form ("ütle pikemalt: „saada sõnum“ või „jah, kinnitan“").
+- Real model, SYNTHETIC voices (`UTLE_ONLY=onlyowner UTLE_REAL=1 npx tsx extension/test/voice.ts`, enrolled over
+  the wire from `scripts/fixtures/enrol-set`, TartuNLP "mari" reading the twelve phrases): 12 of 12 phrases accepted,
+  profile from 10, held out 0.773 and 0.813 at 0.54; voice test on the verify sentence recognised 0.855; owner long
+  0.845 and 0.828 verified; vesta 0.339, kalev 0.09, mari pitched +20 % 0.424 rejected; owner "jah" (0.3 s)
+  insufficient_audio. Not a real voice; no threshold is picked from this.
+- Recording people is the three commands in `extension/README.md` ("Recording people for the speaker model");
+  `record.ts --fake-mic` runs mark the folder `FAKE-MIC.txt` and the table then says SYNTHETIC. Waiting on: the
+  consent text (issue #9), then Ralf and two partners recording.
+- Dry run of those commands with the fake microphone (SYNTHETIC: mari from `enrol-set`, vesta and kalev from
+  `speaker-set`, `--auto 4`): 75 clips, `label.ts --check` ready (owner enrol 12, owner trials 13, other trials 50),
+  calibrate banner SYNTHETIC (fake microphone), all buckets: titanet-small EER 0.0 % at 0.545, eres2net 0.0 % at 0.543,
+  campplus 46.1 %, resnet34 38.2 % (n = 13 owner / 50 other: ranks nothing, verifies nothing).
+## 1n. Round 10, prompt 2, lane LISTEN (2026-11-01): the bar shows only speech meant for Ütle
+
+Branch `r10-listen` (on `r10-gate`). ARCHITECTURE 32, LIMITED (text, not acoustic; #2 stays open for a
+keyword spotter). Wake mode: PASSIVE / ACTIVE / HARD_OFF, the word anywhere in a sentence, glued
+"ütlemine youtube'i" split, nothing of the room on the strip (a count instead); not started with a
+hosted server or Soniox. Always-on: a sentence no rule knows goes to /api/addressee; "ignore" is never
+shown or typed and never touches a running chain. Verified with tests, 16 eval cases (16/16, p50 1.3 s)
+and synthetic voices through the real models (voice.ts section 8). Not verified: real voices, a real
+room, a TV; the false-wake rate on room speech that contains "ütle" (only the owner's gate guards it).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

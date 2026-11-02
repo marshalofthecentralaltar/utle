@@ -12,7 +12,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MODEL_DIR } from '../server/asrModel.ts'
 import { HOTWORDS_SCORE, hotwordsConfig } from '../server/hotwords.ts'
@@ -29,6 +29,10 @@ const SPOKEN: Record<string, string> = {
   'et-numbers-one-16k.wav': 'näita numbreid üks',
   'et-sentence-16k.wav': 'tere ava uus vaheleht ja kirjuta marile et ma jõuan homme kell kolm',
   'et-dictate-send-16k.wav': 'tere mari ma jõuan homme kell kolm saada',
+  // Round 10 (32.4): the two-voice set of lane LISTEN (scripts/listen-set.ts), for the "ütle" hotword.
+  'listen-set/owner-wake.wav': "no nii ütle mine youtube'i",
+  'listen-set/room-shop.wav': 'kas sa tuled ka poodi',
+  'listen-set/room-wake.wav': 'ütle talle et ma tulen homme',
 }
 
 interface Stream {
@@ -120,7 +124,7 @@ try {
   const totals = new Map<number, number>(runs.map((s) => [s, 0]))
   let refWords = 0
   for (const file of files) {
-    const ref = SPOKEN[basename(file)]
+    const ref = SPOKEN[relative(fixtures, file).replaceAll('\\', '/')]
     console.log(`\n== ${basename(file)}${ref === undefined ? '' : `   spoken: "${ref}"`}`)
     if (ref !== undefined) refWords += words(ref).length
     for (const { score, r } of recognizers) {

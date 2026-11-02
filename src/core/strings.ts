@@ -314,6 +314,33 @@ export interface Strings {
     // Round 7 (SPEECH lane): strict mode and scripted enrolment.
     /** Said once after three dropped finals in a row. */
     foreignRetrain: string
+    // Round 10 (ARCHITECTURE 31.5): an utterance denied for any reason but another voice.
+    voiceUnverified: string
+    /** insufficient_audio: too little speech to check the voice. */
+    voiceTooShort: string
+    /** model_unavailable: the voice cannot be checked right now (no speaker model, or a speech engine without one). */
+    voiceUnsupported: string
+    // Round 10 (31.7): onboarding and readiness.
+    /** A read phrase was not counted: why, and to read it again. */
+    phraseProblem: Record<'too_short' | 'too_quiet' | 'clipped' | 'model_error', string>
+    /** An enrolment replaced nothing: why; the old voice stays. */
+    enrolFailedWhy: Record<'too_few_phrases' | 'too_little_speech' | 'held_out_failed' | 'write_failed' | 'model_unavailable', string>
+    /** An enrolment passed the held-out check. */
+    enrolVerified(phrases: number, held: number): string
+    /** Whether only-owner protects right now; only `ready` says it does. */
+    readiness: Record<'ready' | 'no_profile' | 'needs_retraining' | 'model_unavailable' | 'model_mismatch', string>
+    /** "Proovi minu häält": the answer. */
+    voiceTest: Record<'recognised' | 'not_recognised' | 'too_short' | 'noisy' | 'unavailable', string>
+    /** What to say for the voice test. */
+    voiceTestSay: string
+    voiceDeleted: string
+    voiceDeleteFailed: string
+    /** The settings page: delete the voice. */
+    deleteVoice: string
+    deleteVoiceEn: string
+    /** The settings page: run the voice test. */
+    testVoice: string
+    testVoiceEn: string
     /** Scripted enrolment: the button, its sub-line, the line while reading, the step counter, the early end, and a thin profile. */
     teachScript: string
     teachScriptEn: string
@@ -408,8 +435,14 @@ export interface Strings {
   wake: {
     /** The strip's line when listening starts in wake mode. */
     prompt(word: string): string
-    /** The dictation window closed ("aitab", or 20 s of silence). */
-    closed: string
+    /** Round 10 (32.1): ACTIVE ended ("aitab", the bare word, or 20 s of silence): back to waiting for the word. */
+    passive(word: string): string
+    /** Round 10 (32.1): the bare word woke it: ACTIVE, every final is his. */
+    active: string
+    /** Round 10 (32.1, 32.3): finals not meant for Ütle (PASSIVE, or the addressee check said ignore), counted quietly. */
+    notForMe(count: number): string
+    /** Round 10 (32.2): wake mode with a hosted server or Soniox would send the room's audio away: it does not start. */
+    uploadsOff: string
     /** The settings page: the mode's choice and the word's field. */
     listenWake: string
     listenWakeEn: string
@@ -487,6 +520,22 @@ export interface Strings {
     voiceTitle: string
     voiceBody: string
     voiceDone: string
+    // Round 10 (31.7): the voice first: the phrases, the test, the choice.
+    voiceStart: string
+    voiceFinish: string
+    voiceStep(at: number, of: number): string
+    testTitle: string
+    testBody: string
+    testStart: string
+    guardTitle: string
+    guardBody: string
+    guardOn: string
+    guardOnSub: string
+    guardAll: string
+    guardAllSub: string
+    guardOnDone: string
+    guardAllDone: string
+    guardNeedsTest: string
     readyTitle: string
     readyBody: string
     readyDone: string
@@ -724,7 +773,7 @@ const ET: Strings = {
       case 'zoom':
         return command.direction === 'in' ? 'Suurendan.' : command.direction === 'out' ? 'Vähendan.' : 'Tavaline suurus.'
       case 'openSettings':
-        return command.section === 'andmed' ? 'Avan minu andmed.' : command.section === 'welcome' ? 'Avan alustamise.' : 'Avan seaded.'
+        return command.section === 'andmed' ? 'Avan minu andmed.' : command.section === 'welcome' ? 'Avan alustamise.' : command.section === 'voice' ? 'Avan hääle õpetamise.' : 'Avan seaded.'
       case 'openHelp': {
         const group = PHRASE_GROUPS.find((g) => g.id === command.group)
         return group ? `Avan abi: ${group.name}.` : 'Avan abi.'
@@ -1022,13 +1071,51 @@ const ET: Strings = {
     onlyOwnerEn: 'Listen only to me',
     everyone: 'Kuula kõiki',
     everyoneEn: 'Listen to everyone',
-    voiceNote: '„Kuula ainult mind“ vajab õpitud häält ja häälemudelit arendusserveris (npm run model). Ilma mudelita jäetakse vahele ainult vaiksem kõne. Valik hakkab kehtima järgmisel sisselülitamisel.',
-    voiceNoteEn: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model only fainter speech is skipped. The choice takes effect the next time listening starts.',
+    voiceNote: '„Kuula ainult mind“ vajab õpitud häält ja häälemudelit arendusserveris (npm run model). Ilma mudelita või õpitud hääleta ei kuuletu ma kellelegi. Valik hakkab kehtima järgmisel sisselülitamisel. Server hoiab hääle kohta ainult arve (hääle kirjeldus, lausete arv, nende pikkus ja valjus, piir ja kontroll-lausete tulemus, kuupäevad), mitte heli ega teksti. „Kustuta mu hääl“ kustutab need.',
+    voiceNoteEn: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model or a learnt voice nobody is obeyed. The choice takes effect the next time listening starts. The server keeps only numbers about the voice (its description, how many phrases, their length and loudness, the line and the check phrases’ result, dates), never audio or text. "Delete my voice" deletes them.',
     enrolStart: (seconds) => `Räägi ${seconds} sekundit tavalisel häälel…`,
     enrolDone: 'Hääl on õpitud.',
     enrolFailed: 'Hääle õppimine ei õnnestunud.',
     foreign: 'Keegi teine rääkis, jätsin vahele.',
     foreignRetrain: 'Kui see olid sina, õpeta hääl uuesti seadetes.',
+    voiceUnverified: 'Häält ei õnnestunud kinnitada.',
+    voiceTooShort: 'Liiga lühike, et häält kontrollida. Ütle pikemalt: „saada sõnum“ või „jah, kinnitan“.',
+    voiceUnsupported: 'Häält ei saa praegu kontrollida. Vali seadetes kohalik kõnetuvastus või luba kõik hääled.',
+    phraseProblem: {
+      too_short: 'Lause jäi liiga lühikeseks. Loe see uuesti.',
+      too_quiet: 'Liiga vaikne. Räägi mikrofonile lähemal ja loe see uuesti.',
+      clipped: 'Liiga vali, heli moonutub. Räägi veidi vaiksemalt ja loe see uuesti.',
+      model_error: 'Häält ei õnnestunud mõõta. Loe see uuesti.',
+    },
+    enrolFailedWhy: {
+      too_few_phrases: 'Lauseid jäi liiga vähe, vaja on vähemalt kuus. Senine hääl jäi alles.',
+      too_little_speech: 'Kõnet jäi liiga vähe. Senine hääl jäi alles.',
+      held_out_failed: 'Kahel viimasel lausel ma sind ära ei tundnud. Senine hääl jäi alles. Proovi vaiksemas kohas uuesti.',
+      write_failed: 'Häält ei õnnestunud salvestada. Senine hääl jäi alles.',
+      model_unavailable: 'Häälemudel ei tööta (npm run model). Senine hääl jäi alles.',
+    },
+    enrolVerified: (phrases, held) => `Hääl on õpitud ${phrases} lausest ja kontrollitud ${held} uuel lausel.`,
+    readiness: {
+      ready: 'Kuulan ainult sind: hääl on kontrollitud.',
+      no_profile: 'Hääl on õpetamata, nii et „Kuula ainult mind“ ei kuuletu kellelegi. Õpeta hääl või vali „Kuula kõiki“.',
+      needs_retraining: 'Hääl on õpetatud vanas vormingus ega kaitse. Õpeta hääl uuesti.',
+      model_unavailable: 'Häälemudel ei tööta, häält ei saa kontrollida. Ma ei kuuletu kellelegi.',
+      model_mismatch: 'Hääl on õpetatud teise mudeliga ega kaitse. Õpeta hääl uuesti.',
+    },
+    voiceTest: {
+      recognised: 'Tundsin su ära.',
+      not_recognised: 'Ei tundnud sind ära. Proovi uuesti või õpeta hääl uuesti.',
+      too_short: 'Liiga lühike. Ütle pikem lause.',
+      noisy: 'Liiga mürane või vali. Proovi vaiksemas kohas.',
+      unavailable: 'Häält ei saa praegu kontrollida.',
+    },
+    voiceTestSay: 'Ütle tavalisel häälel:',
+    voiceDeleted: 'Hääl on kustutatud. „Kuula ainult mind“ ei kuuletu kellelegi, kuni õpetad hääle uuesti.',
+    voiceDeleteFailed: 'Häält ei õnnestunud kustutada.',
+    deleteVoice: 'Kustuta mu hääl',
+    deleteVoiceEn: 'Delete my voice from the server',
+    testVoice: 'Proovi minu häält',
+    testVoiceEn: 'Check that it knows my voice',
     teachScript: 'Õpeta mu hääl lausetega',
     teachScriptEn: 'Teach it my voice: read 12 short sentences aloud',
     teachFree: 'Õpeta vabalt rääkides',
@@ -1106,7 +1193,10 @@ const ET: Strings = {
   // ---------- wake word and places (29.4) ----------
   wake: {
     prompt: (word) => `Kuulan. Alusta sõnaga „${word}“.`,
-    closed: 'Dikteerimine lõpetatud.',
+    passive: (word) => `Ootan sõna „${word}“.`,
+    active: 'Kuulan sind.',
+    notForMe: (count) => (count === 1 ? '1 lause ei olnud mulle' : `${count} lauset ei olnud mulle`),
+    uploadsOff: 'Ütle-sõna töötab ainult selle arvuti kõneserveriga: muidu läheks kogu toa heli välja. Vali seadetes kuulamine „Lülitiga“ või kasuta selle arvuti serverit.',
     listenWake: 'Äratussõnaga',
     listenWakeEn: 'Wake word: always listening, acts on what starts with the word',
     wordLabel: 'Äratussõna · Wake word',
@@ -1172,9 +1262,24 @@ const ET: Strings = {
     tryArm: 'Kirjuta siia',
     tryWaiting: 'Sõnad tulevad siia kasti.',
     tryWorks: 'Töötab.',
-    voiceTitle: 'Hääl',
-    voiceBody: 'Valikuline. Kui Ütle õpib su häält, kuuletub ta ainult sulle.',
+    voiceTitle: 'Õpeta mu hääl',
+    voiceBody: 'Loe 12 lühikest lauset tavalisel häälel. Iga lause järel ütlen, kas see sobis. Kaks viimast lauset on kontrolliks: nende peal vaatan, kas tunnen su ära. Heli ei salvestata, ainult hääle kirjeldus.',
     voiceDone: 'Hääl on õpetatud.',
+    voiceStart: 'Alusta lugemist',
+    voiceFinish: 'Lõpeta nende lausetega',
+    voiceStep: (at, of) => `Lause ${at} / ${of}`,
+    testTitle: 'Proovi minu häält',
+    testBody: 'Ütle üks uus lause. Ütle ei tee midagi, ainult ütleb, kas tundis su ära.',
+    testStart: 'Proovi minu häält',
+    guardTitle: 'Kuula ainult mind',
+    guardBody: 'Kui see on sees, ei tee Ütle midagi, mida keegi teine ütleb. See ei ole turvaline isikutuvastus.',
+    guardOn: 'Lülita sisse',
+    guardOnSub: 'Kuula ainult mind',
+    guardAll: 'Kuula kõiki',
+    guardAllSub: 'Kõik hääled, ilma kaitseta',
+    guardOnDone: 'Sees: kuulan ainult sind.',
+    guardAllDone: 'Kuulan kõiki hääli. Kaitse ei ole sees.',
+    guardNeedsTest: 'Enne sisselülitamist proovi oma häält: ma pean sind ära tundma.',
     readyTitle: 'Valmis',
     readyBody: 'Ütle näiteks:',
     readyDone: 'Kõik on valmis.',
@@ -1301,7 +1406,7 @@ const EN: Strings = {
       case 'zoom':
         return command.direction === 'in' ? 'Zooming in.' : command.direction === 'out' ? 'Zooming out.' : 'Normal size.'
       case 'openSettings':
-        return command.section === 'andmed' ? 'Opening my details.' : command.section === 'welcome' ? 'Opening the setup guide.' : 'Opening the settings.'
+        return command.section === 'andmed' ? 'Opening my details.' : command.section === 'welcome' ? 'Opening the setup guide.' : command.section === 'voice' ? 'Opening voice training.' : 'Opening the settings.'
       case 'openHelp': {
         const group = PHRASE_GROUPS.find((g) => g.id === command.group)
         return group ? `Opening help: ${group.nameEn}.` : 'Opening help.'
@@ -1598,13 +1703,51 @@ const EN: Strings = {
     onlyOwnerEn: '',
     everyone: 'Listen to everyone',
     everyoneEn: '',
-    voiceNote: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model only fainter speech is skipped. The choice takes effect the next time listening starts.',
+    voiceNote: '"Listen only to me" needs the learnt voice and the speaker model on the dev server (npm run model). Without the model or a learnt voice nobody is obeyed. The choice takes effect the next time listening starts. The server keeps only numbers about the voice (its description, how many phrases, their length and loudness, the line and the check phrases’ result, dates), never audio or text. "Delete my voice" deletes them.',
     voiceNoteEn: '',
     enrolStart: (seconds) => `Speak for ${seconds} seconds in your usual voice…`,
     enrolDone: 'Your voice is learnt.',
     enrolFailed: 'Learning your voice did not work.',
     foreign: 'Someone else spoke; skipped it.',
     foreignRetrain: 'If that was you, teach it your voice again in the settings.',
+    voiceUnverified: 'Could not confirm the voice.',
+    voiceTooShort: 'Too short to check the voice. Say it longer: "saada sõnum" or "jah, kinnitan".',
+    voiceUnsupported: 'The voice cannot be checked right now. Choose the local speech engine in the settings, or allow all voices.',
+    phraseProblem: {
+      too_short: 'The sentence was too short. Read it again.',
+      too_quiet: 'Too quiet. Speak closer to the microphone and read it again.',
+      clipped: 'Too loud, the sound distorts. Speak a little softer and read it again.',
+      model_error: 'The voice could not be measured. Read it again.',
+    },
+    enrolFailedWhy: {
+      too_few_phrases: 'Too few sentences, at least six are needed. The voice you had is kept.',
+      too_little_speech: 'Too little speech. The voice you had is kept.',
+      held_out_failed: 'I did not know you on the last two sentences. The voice you had is kept. Try again somewhere quieter.',
+      write_failed: 'The voice could not be saved. The voice you had is kept.',
+      model_unavailable: 'The speaker model is not running (npm run model). The voice you had is kept.',
+    },
+    enrolVerified: (phrases, held) => `Your voice is learnt from ${phrases} sentences and checked on ${held} new ones.`,
+    readiness: {
+      ready: 'Listening only to you: the voice is checked.',
+      no_profile: 'No voice is learnt, so "Listen only to me" obeys no one. Teach your voice or choose "Listen to everyone".',
+      needs_retraining: 'The voice was learnt in an old format and protects nothing. Teach it again.',
+      model_unavailable: 'The speaker model is not running, the voice cannot be checked. I obey no one.',
+      model_mismatch: 'The voice was learnt with another model and protects nothing. Teach it again.',
+    },
+    voiceTest: {
+      recognised: 'I know your voice.',
+      not_recognised: 'I did not know your voice. Try again or teach it again.',
+      too_short: 'Too short. Say a longer sentence.',
+      noisy: 'Too noisy or too loud. Try somewhere quieter.',
+      unavailable: 'The voice cannot be checked right now.',
+    },
+    voiceTestSay: 'Say in your usual voice:',
+    voiceDeleted: 'The voice is deleted. "Listen only to me" obeys no one until you teach it again.',
+    voiceDeleteFailed: 'The voice could not be deleted.',
+    deleteVoice: 'Delete my voice',
+    deleteVoiceEn: '',
+    testVoice: 'Check my voice',
+    testVoiceEn: '',
     teachScript: 'Teach it my voice with sentences',
     teachScriptEn: 'Read 12 short sentences aloud',
     teachFree: 'Teach it by speaking freely',
@@ -1682,7 +1825,10 @@ const EN: Strings = {
   // ---------- wake word and places (29.4) ----------
   wake: {
     prompt: (word) => `Listening. Start with "${word}".`,
-    closed: 'Dictation ended.',
+    passive: (word) => `Waiting for "${word}".`,
+    active: 'Listening to you.',
+    notForMe: (count) => (count === 1 ? '1 sentence was not for me' : `${count} sentences were not for me`),
+    uploadsOff: 'The wake word works only with the speech server on this computer: otherwise all the sound in the room would leave it. Choose the toggle in the settings, or use this computer’s server.',
     listenWake: 'Wake word',
     listenWakeEn: 'Always listening, acts on what starts with the word',
     wordLabel: 'Wake word',
@@ -1748,9 +1894,24 @@ const EN: Strings = {
     tryArm: 'Write here',
     tryWaiting: 'The words appear in this box.',
     tryWorks: 'It works.',
-    voiceTitle: 'Your voice',
-    voiceBody: 'Optional. Once Ütle has learnt your voice, it obeys only you.',
+    voiceTitle: 'Teach it my voice',
+    voiceBody: 'Read 12 short sentences in your usual voice. After each one I say whether it was good. The last two are a check: on them I see whether I know you. No sound is stored, only a description of the voice.',
     voiceDone: 'The voice is learnt.',
+    voiceStart: 'Start reading',
+    voiceFinish: 'Finish with these sentences',
+    voiceStep: (at, of) => `Sentence ${at} / ${of}`,
+    testTitle: 'Check my voice',
+    testBody: 'Say one new sentence. Ütle does nothing with it, it only says whether it knew you.',
+    testStart: 'Check my voice',
+    guardTitle: 'Listen only to me',
+    guardBody: 'When this is on, Ütle does nothing anyone else says. It is not secure identity verification.',
+    guardOn: 'Turn it on',
+    guardOnSub: 'Listen only to me',
+    guardAll: 'Listen to everyone',
+    guardAllSub: 'Every voice, no protection',
+    guardOnDone: 'On: listening only to you.',
+    guardAllDone: 'Listening to every voice. Protection is off.',
+    guardNeedsTest: 'Check your voice before turning it on: I must know you.',
     readyTitle: 'Ready',
     readyBody: 'Say, for example:',
     readyDone: 'Everything is ready.',

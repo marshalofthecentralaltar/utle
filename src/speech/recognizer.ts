@@ -1,3 +1,11 @@
+import type { EnrolFailure, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason, SpeakerTestResult } from './asrProtocol.ts'
+
+/** Round 10 (31.7): why an enrolment replaced nothing, and the candidate's held-out scores. */
+export interface EnrolDetail {
+  reason?: EnrolFailure
+  heldOut?: HeldOutResult
+}
+
 /** A source of spoken utterances. Chrome's built-in recognition today; a paid recogniser can replace it. */
 export interface Recognizer {
   start(): void
@@ -14,17 +22,26 @@ export interface Recognizer {
   enrolScript?(phrases: number): void
   /** Round 7: ends scripted enrolment now with the phrases read so far. Optional. */
   enrolFinish?(): void
+  /** Round 10 (31.7): asks whether the voice check can protect; answered through onSpeakerStatus. Optional. */
+  speakerStatus?(): void
+  /** Round 10 (31.7): the next utterance is a voice test; answered through onSpeakerTested, never delivered. Optional. */
+  speakerTest?(): void
+  /** Round 10 (31.7): deletes the voice profile; answered through onProfileDeleted. Optional. */
+  deleteProfile?(): void
 }
 
 export interface RecognizerHandlers {
-  /** One complete utterance, already joined across pauses. */
-  onUtterance(text: string): void
+  /**
+   * One complete utterance, already joined across pauses. Round 10 (31.3): with only the owner
+   * obeyed, decision is the verified owner decision of its newest final; absent otherwise.
+   */
+  onUtterance(text: string, decision?: SpeakerDecision): void
   /**
    * Round 4: a final that began with a connective ("siis ava Karin") soon after the last utterance
    * continues it: text is the whole joined utterance, added the new words. Optional; without it
    * the words come through onUtterance as an utterance of their own.
    */
-  onUtteranceContinued?(text: string, added: string): void
+  onUtteranceContinued?(text: string, added: string, decision?: SpeakerDecision): void
   /** What is being heard right now, for display only. Empty when nothing is in progress. */
   onInterim(text: string): void
   /** A problem the user should see. The microphone has stopped. */
@@ -36,12 +53,19 @@ export interface RecognizerHandlers {
   /**
    * Round 4: an utterance was someone else's voice and was dropped (only-owner mode). Round 7:
    * streak is how many finals in a row have been dropped (1 for the first; an obeyed final resets it).
+   * Round 10 (31.5): reason is why it was not verified, when the server said.
    */
-  onForeign?(streak: number): void
-  /** Round 4: the server has learnt the owner's voice, or could not. Round 7: phrases, after scripted enrolment. */
-  onEnrolled?(ok: boolean, seconds: number, phrases?: number): void
-  /** Round 7: scripted enrolment has heard this many phrases. */
-  onEnrolPhrase?(count: number): void
+  onForeign?(streak: number, reason?: SpeakerReason): void
+  /** Round 4: the server has learnt the owner's voice, or could not. Round 7: phrases, after scripted enrolment. Round 10: detail, when the server said why or how it verified. */
+  onEnrolled?(ok: boolean, seconds: number, phrases?: number, detail?: EnrolDetail): void
+  /** Round 7: scripted enrolment has heard this many phrases. Round 10 (31.7): problem: the last phrase was not counted. */
+  onEnrolPhrase?(count: number, problem?: PhraseProblem): void
+  /** Round 10 (31.7): whether only-owner can protect right now. */
+  onSpeakerStatus?(readiness: SpeakerReadiness): void
+  /** Round 10 (31.7): the answer of a voice test. */
+  onSpeakerTested?(result: SpeakerTestResult, score?: number): void
+  /** Round 10 (31.7): the profile was deleted (or not). */
+  onProfileDeleted?(ok: boolean): void
   /** Round 9 (30.1): the socket to the server changed: connecting (a start), connected (ready), down (refused or lost). Once per change. */
   onConnection?(state: 'connecting' | 'connected' | 'down'): void
 }

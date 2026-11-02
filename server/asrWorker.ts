@@ -6,14 +6,14 @@
  */
 import { join } from 'node:path'
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads'
-import type { AsrUnavailableReason } from '../src/speech/asrProtocol.ts'
+import type { AsrUnavailableReason, PhraseProblem, SpeakerReadiness } from '../src/speech/asrProtocol.ts'
 import { loadModel } from './asrModel.ts'
 import { captureFromEnv } from './capture.ts'
 import type { DecodeResult, Decoder, DecoderExtras, OnlineRecognizerLike, OnlineStreamLike, ScriptResult } from './asrSession.ts'
-import { decoderInThread } from './asrSession.ts'
+import { NO_GATE_READINESS, decoderInThread } from './asrSession.ts'
 import { loadVad } from './vad.ts'
 import { PROFILE_FILE, SPEAKER_DIR, speakerGates } from './speaker.ts'
-import type { Judgement, SpeakerGate } from './speaker.ts'
+import type { Judgement, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import { loadSpeakerModel } from './speakerModel.ts'
 
 /** Main thread to worker. The frame's buffer is transferred, not copied. judge and enrol are round 4 (the speaker gate). */
@@ -23,11 +23,19 @@ export type ToWorker =
   | { type: 'reset'; id: number }
   | { type: 'close'; id: number }
   | { type: 'judge'; id: number; seq: number }
+  /** Round 10 (31.2): the fail-closed check with only the owner on, and the profile's version. */
+  | { type: 'verify'; id: number; seq: number }
+  | { type: 'version'; id: number; seq: number }
   | { type: 'enrol'; id: number; seq: number; seconds: number }
   /** Round 7: scripted enrolment, its early end, and UTLE_CAPTURE's clip of the final just judged. */
   | { type: 'enrolScript'; id: number; seq: number; phrases: number }
   | { type: 'enrolFinish'; id: number }
   | { type: 'capture'; id: number; text: string; judgement: Judgement | null }
+  /** Round 10 (31.7): readiness, the voice test and delete, one request each. */
+  | { type: 'speaker'; id: number; seq: number; op: SpeakerOp }
+
+/** Round 10 (31.7): the speaker requests that need no audio of their own. */
+export type SpeakerOp = 'readiness' | 'test' | 'delete'
 
 /** What the speaker gate has (round 4): the embedding model, and a learnt voice. */
 export interface SpeakerStatus {
@@ -42,8 +50,11 @@ export type FromWorker =
   | { type: 'result'; id: number; seq: number; result: DecodeResult }
   | { type: 'failed'; id: number; seq: number; message: string }
   | { type: 'judged'; id: number; seq: number; judgement: Judgement | null }
+  | { type: 'verified'; id: number; seq: number; verification: SpeakerVerification }
+  | { type: 'versioned'; id: number; seq: number; version: string }
   | { type: 'enrolled'; id: number; seq: number; ok: boolean }
-  | { type: 'enrolPhrase'; id: number; seq: number; count: number }
+  | { type: 'enrolPhrase'; id: number; seq: number; count: number; problem?: PhraseProblem }
+  | { type: 'spoke'; id: number; seq: number; readiness?: SpeakerReadiness; test?: SpeakerTest; deleted?: boolean }
   | { type: 'scripted'; id: number; seq: number; result: ScriptResult }
 
 export interface WorkerData {
@@ -73,7 +84,8 @@ export type HostStart = { ok: true; host: DecoderHost } | { ok: false; reason: A
 /** The speaker gate over the model in models/speaker/ (round 4), with or without the model file. gateFor: one gate per profile file (27.6), the default one without a path. */
 export function openSpeakerGate(root: string): { gate: SpeakerGate; status: SpeakerStatus; gateFor(profile?: string): SpeakerGate } {
   const loaded = loadSpeakerModel(root)
-  const gates = speakerGates(loaded.ok ? loaded.extractor : null)
+  // Round 10 (31.7): the profile records the model file's hash; another file of the same name is model_mismatch.
+  const gates = speakerGates(loaded.ok ? loaded.extractor : null, undefined, loaded.ok ? loaded.hash : '')
   const defaultPath = join(root, SPEAKER_DIR, PROFILE_FILE)
   const gate = gates(defaultPath)
   return { gate, status: { model: loaded.ok, profile: gate.hasProfile() }, gateFor: (profile) => gates(profile ?? defaultPath) }
@@ -137,6 +149,35 @@ function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognize
         }
         return
       }
+      case 'verify': {
+        const decoder = streams.get(message.id)
+        const reply = (body: FromWorker): void => port.postMessage(body)
+        if (!decoder?.verify) {
+          reply({ type: 'verified', id: message.id, seq: message.seq, verification: { judgement: null, reason: 'verification_error', profileVersion: '' } })
+          return
+        }
+        try {
+          Promise.resolve(decoder.verify()).then(
+            (verification) => reply({ type: 'verified', id: message.id, seq: message.seq, verification }),
+            (error: unknown) => reply({ type: 'failed', id: message.id, seq: message.seq, message: String(error) }),
+          )
+        } catch (error) {
+          reply({ type: 'failed', id: message.id, seq: message.seq, message: String(error) })
+        }
+        return
+      }
+      case 'version': {
+        const decoder = streams.get(message.id)
+        let version = ''
+        try {
+          const v = decoder?.profileVersion?.()
+          version = typeof v === 'string' ? v : ''
+        } catch {
+          version = ''
+        }
+        port.postMessage({ type: 'versioned', id: message.id, seq: message.seq, version } satisfies FromWorker)
+        return
+      }
       case 'enrol': {
         const decoder = streams.get(message.id)
         const reply = (ok: boolean): void => port.postMessage({ type: 'enrolled', id: message.id, seq: message.seq, ok } satisfies FromWorker)
@@ -148,7 +189,7 @@ function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognize
       case 'enrolScript': {
         const decoder = streams.get(message.id)
         const reply = (result: ScriptResult): void => port.postMessage({ type: 'scripted', id: message.id, seq: message.seq, result } satisfies FromWorker)
-        const learning = decoder?.enrolScript?.(message.phrases, (count) => port.postMessage({ type: 'enrolPhrase', id: message.id, seq: message.seq, count } satisfies FromWorker))
+        const learning = decoder?.enrolScript?.(message.phrases, (count, problem) => port.postMessage({ type: 'enrolPhrase', id: message.id, seq: message.seq, count, ...(problem === undefined ? {} : { problem }) } satisfies FromWorker))
         if (!learning) reply({ ok: false, phrases: 0, seconds: 0 })
         else learning.then(reply, () => reply({ ok: false, phrases: 0, seconds: 0 }))
         return
@@ -156,6 +197,18 @@ function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognize
       case 'enrolFinish':
         streams.get(message.id)?.enrolFinish?.()
         return
+      case 'speaker': {
+        const decoder = streams.get(message.id)
+        const reply = (body: { readiness?: SpeakerReadiness; test?: SpeakerTest; deleted?: boolean }): void => port.postMessage({ type: 'spoke', id: message.id, seq: message.seq, ...body } satisfies FromWorker)
+        try {
+          if (message.op === 'readiness') void Promise.resolve(decoder?.readiness?.() ?? NO_GATE_READINESS).then((readiness) => reply({ readiness }), () => reply({ readiness: NO_GATE_READINESS }))
+          else if (message.op === 'test') void Promise.resolve(decoder?.test?.() ?? { result: 'unavailable' as const }).then((test) => reply({ test }), () => reply({ test: { result: 'unavailable' } }))
+          else void Promise.resolve(decoder?.deleteProfile?.() ?? false).then((deleted) => reply({ deleted }), () => reply({ deleted: false }))
+        } catch {
+          reply(message.op === 'readiness' ? { readiness: NO_GATE_READINESS } : message.op === 'test' ? { test: { result: 'unavailable' } } : { deleted: false })
+        }
+        return
+      }
       case 'capture':
         try {
           void streams.get(message.id)?.capture?.(message.text, message.judgement)
@@ -210,8 +263,11 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
     }
     const pending = new Map<string, { resolve(result: DecodeResult): void; reject(error: Error): void }>()
     const judging = new Map<string, { resolve(judgement: Judgement | null): void; reject(error: Error): void }>()
+    const verifying = new Map<string, { resolve(verification: SpeakerVerification): void; reject(error: Error): void }>()
+    const versioning = new Map<string, (version: string) => void>()
     const enrolling = new Map<string, (ok: boolean) => void>()
-    const scripting = new Map<string, { resolve(result: ScriptResult): void; onPhrase(count: number): void }>()
+    const scripting = new Map<string, { resolve(result: ScriptResult): void; onPhrase(count: number, problem?: PhraseProblem): void }>()
+    const speaking = new Map<string, (body: { readiness?: SpeakerReadiness; test?: SpeakerTest; deleted?: boolean }) => void>()
     const exitListeners: Array<(code: number) => void> = []
     let started = false
     let nextId = 1
@@ -233,6 +289,15 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
         const id = nextId
         nextId += 1
         let seq = 0
+        /** Round 10 (31.7): one speaker request to the worker and its answer. */
+        const ask = (op: SpeakerOp): Promise<{ readiness?: SpeakerReadiness; test?: SpeakerTest; deleted?: boolean }> => {
+          seq += 1
+          const mine = seq
+          return new Promise((resolveSpoke) => {
+            speaking.set(key(id, mine), resolveSpoke)
+            worker.postMessage({ type: 'speaker', id, seq: mine, op } satisfies ToWorker)
+          })
+        }
         worker.postMessage((profile === undefined ? { type: 'open', id } : { type: 'open', id, profile }) satisfies ToWorker)
         return {
           accept(samples) {
@@ -259,6 +324,22 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
               worker.postMessage({ type: 'judge', id, seq: mine } satisfies ToWorker)
             })
           },
+          verify() {
+            seq += 1
+            const mine = seq
+            return new Promise<SpeakerVerification>((resolveVerification, reject) => {
+              verifying.set(key(id, mine), { resolve: resolveVerification, reject })
+              worker.postMessage({ type: 'verify', id, seq: mine } satisfies ToWorker)
+            })
+          },
+          profileVersion() {
+            seq += 1
+            const mine = seq
+            return new Promise<string>((resolveVersion) => {
+              versioning.set(key(id, mine), resolveVersion)
+              worker.postMessage({ type: 'version', id, seq: mine } satisfies ToWorker)
+            })
+          },
           enrol(seconds) {
             seq += 1
             const mine = seq
@@ -280,6 +361,15 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           },
           capture(text, judgement) {
             worker.postMessage({ type: 'capture', id, text, judgement } satisfies ToWorker)
+          },
+          readiness() {
+            return ask('readiness').then((body) => body.readiness ?? NO_GATE_READINESS)
+          },
+          test() {
+            return ask('test').then((body) => body.test ?? { result: 'unavailable' })
+          },
+          deleteProfile() {
+            return ask('delete').then((body) => body.deleted === true)
           },
         }
       },
@@ -315,6 +405,16 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           pending.delete(key(message.id, message.seq))
           judging.get(key(message.id, message.seq))?.reject(new Error(message.message))
           judging.delete(key(message.id, message.seq))
+          verifying.get(key(message.id, message.seq))?.reject(new Error(message.message))
+          verifying.delete(key(message.id, message.seq))
+          return
+        case 'verified':
+          verifying.get(key(message.id, message.seq))?.resolve(message.verification)
+          verifying.delete(key(message.id, message.seq))
+          return
+        case 'versioned':
+          versioning.get(key(message.id, message.seq))?.(message.version)
+          versioning.delete(key(message.id, message.seq))
           return
         case 'judged':
           judging.get(key(message.id, message.seq))?.resolve(message.judgement)
@@ -325,7 +425,11 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           enrolling.delete(key(message.id, message.seq))
           return
         case 'enrolPhrase':
-          scripting.get(key(message.id, message.seq))?.onPhrase(message.count)
+          scripting.get(key(message.id, message.seq))?.onPhrase(message.count, message.problem)
+          return
+        case 'spoke':
+          speaking.get(key(message.id, message.seq))?.(message)
+          speaking.delete(key(message.id, message.seq))
           return
         case 'scripted':
           scripting.get(key(message.id, message.seq))?.resolve(message.result)
@@ -347,10 +451,16 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
       pending.clear()
       for (const entry of judging.values()) entry.reject(new Error(`decode worker exited with ${code}`))
       judging.clear()
+      for (const entry of verifying.values()) entry.reject(new Error(`decode worker exited with ${code}`))
+      verifying.clear()
+      for (const entry of versioning.values()) entry('')
+      versioning.clear()
       for (const entry of enrolling.values()) entry(false)
       enrolling.clear()
       for (const entry of scripting.values()) entry.resolve({ ok: false, phrases: 0, seconds: 0 })
       scripting.clear()
+      for (const entry of speaking.values()) entry({})
+      speaking.clear()
       if (!started) {
         started = true
         resolve({ ok: false, reason: 'load_failed' })

@@ -33,8 +33,20 @@ export interface StripState {
   foreign: string
   /** Round 7: scripted enrolment: phrases heard so far (0 at its start), or -1 when none is running. The settings page follows it. */
   enrolPhrases: number
-  /** Round 8 (29.4.1): the wake mode's dictation window is open: the strip shows an amber disc. */
+  /** Round 8 (29.4.1): the wake mode's dictation window is open: the strip shows an amber disc. Round 10 (32.1): ACTIVE. */
   wakeOpen: boolean
+  // ---------- the voice (round 10, 31.7) ----------
+  /** The last read phrase was not counted: its PhraseProblem, or ''. Cleared by the next counted phrase. */
+  enrolProblem: string
+  /** The last enrolment: 'ok', its EnrolFailure, or '' before any. */
+  enrolOutcome: string
+  /** The server's readiness (ReadinessState) at the last connection, or '' when not asked. Only 'ready' is protected. */
+  voiceReady: string
+  /** The last voice test's SpeakerTestResult, or '', and how many tests have answered (to see a new one). */
+  voiceTest: string
+  voiceTests: number
+  /** Round 10 (32.1, 32.3): the quiet counter of finals not meant for Ütle ("3 lauset ei olnud mulle"), or ''. Never their words. */
+  ignored: string
   /** Counters for the tests and for debugging. */
   connects: number
   micOpens: number
@@ -56,7 +68,7 @@ export type ConnectionState = 'connected' | 'connecting' | 'down'
 export const STATE_KEY = 'stripState'
 export const OFFSCREEN_CREATED_KEY = 'offscreenCreated'
 
-export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, wakeOpen: false, connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false, connection: 'connecting' }
+export const INITIAL_STATE: StripState = { listening: false, resting: false, heard: '', line: '', problem: '', hidden: false, thinking: false, modelProblem: '', lag: 0, busySeconds: 0, chain: '', foreign: '', enrolPhrases: -1, wakeOpen: false, enrolProblem: '', enrolOutcome: '', voiceReady: '', voiceTest: '', voiceTests: 0, ignored: '', connects: 0, micOpens: 0, micOpenedAt: 0, reading: false, micMuted: false, connection: 'connecting' }
 
 /** To the service worker. */
 export type ToBackground =
@@ -88,6 +100,10 @@ export type ToBackground =
   /** Round 7: from the options page: scripted enrolment of `phrases` read phrases starts, or ends now with what was read. */
   | { type: 'utle-enrol-script'; phrases: number }
   | { type: 'utle-enrol-finish' }
+  /** Round 10 (31.7): from the welcome or settings page: the voice test, deleting the profile, the readiness. Listening starts if it was off. */
+  | { type: 'utle-voice-test' }
+  | { type: 'utle-voice-delete' }
+  | { type: 'utle-voice-status' }
   /** Round 6 (26.1): from the offscreen engine at start: his saved values and whether the entry flow runs. Answered with a SavedAnswer. */
   | { type: 'utle-saved' }
   /** Round 6 (26.5): from the options page: the voice entry flow started (on) or ended. */
@@ -111,6 +127,9 @@ export type ToOffscreen =
   /** Round 7: scripted enrolment starts, or ends now. */
   | { target: 'offscreen'; type: 'enrolScript'; phrases: number }
   | { target: 'offscreen'; type: 'enrolFinish' }
+  | { target: 'offscreen'; type: 'voiceTest' }
+  | { target: 'offscreen'; type: 'voiceDelete' }
+  | { target: 'offscreen'; type: 'voiceStatus' }
   /** Round 6 (26.1): his saved values changed. They stay on this machine. */
   | { target: 'offscreen'; type: 'saved'; items: SavedItem[] }
   /** Round 6 (26.5): the options page's entry flow started or ended. */

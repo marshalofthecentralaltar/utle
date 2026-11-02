@@ -14,25 +14,28 @@
  *     --crosstalk                                  everyone talks at once while --person reads the
  *                                                  commands; clips get kind "crosstalk"
  *     --auto <seconds>                             no keys: each phrase is recorded for that long
- *     --fake-mic <wav>                             Chromium's fake microphone plays this file (tests)
+ *     --fake-mic <wav|folder>[,<wav|folder>...]    Chromium's fake microphone plays these files, joined and
+ *                                                  looped (tests; the speaker folder gets FAKE-MIC.txt)
  *     --headless                                   no window (only with --fake-mic)
  *
  * In the window: Space starts and stops a phrase, Backspace records the last phrase again, Escape ends.
  * Without --consent the script prints what the speaker agrees to and stops. That text is a DRAFT that
  * Ralf must approve before any recording (issue #9).
  */
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { wavBytes } from '../server/capture.ts'
-import { LABEL_COLUMNS, formatLabels, insideRepo, promptsFor } from './measure.ts'
+import { FAKE_MIC_MARKER, LABEL_COLUMNS, formatLabels, insideRepo, promptsFor } from './measure.ts'
+import { readAnyWav, resample } from './wav.ts'
 import type { Prompt } from './measure.ts'
 
 const HELP = `usage: npx tsx scripts/record.ts --person <name> --out <folder outside the repo> --consent
-  [--set all|enrol,command,dictation,wake,short] [--crosstalk] [--auto <seconds>] [--fake-mic <wav> [--headless]]
+  [--set all|enrol,command,dictation,wake,short] [--crosstalk] [--auto <seconds>] [--fake-mic <wav|folder>[,...] [--headless]]
 
 Records each phrase into <out>/<person>/<phrase id>.wav (16 kHz mono) and appends to <out>/labels.tsv.
 The folder must be outside the repository: recordings are personal data and never go in git.
@@ -88,6 +91,36 @@ if (has('--headless') && fakeMic === undefined) throw new Error('--headless need
 
 const personDir = join(out, person)
 mkdirSync(personDir, { recursive: true })
+// Round 10 (C8): fake-microphone clips are marked, so the sweep never calls them real; a person is
+// never recorded into a folder that holds them.
+const marker = join(personDir, FAKE_MIC_MARKER)
+if (fakeMic === undefined && existsSync(marker)) {
+  console.error(`refused: ${personDir} holds fake-microphone clips (${FAKE_MIC_MARKER}). Record people into a new --out folder.`)
+  process.exit(3)
+}
+
+/** The fake microphone's file: every wav named (a folder gives its wavs in name order), 0.6 s apart, at 16 kHz. */
+function fakeMicFile(spec: string): string {
+  const files = spec.split(',').flatMap((part) => {
+    const path = resolve(part)
+    return statSync(path).isDirectory() ? readdirSync(path).filter((f) => f.endsWith('.wav')).sort().map((f) => join(path, f)) : [path]
+  })
+  const gap = new Float32Array(Math.round(0.6 * 16000))
+  const parts = files.flatMap((file) => {
+    const wav = readAnyWav(file)
+    return [wav.rate === 16000 ? wav.samples : resample(wav.samples, wav.rate, 16000), gap]
+  })
+  const all = new Float32Array(parts.reduce((n, p) => n + p.length, 0))
+  let at = 0
+  for (const p of parts) {
+    all.set(p, at)
+    at += p.length
+  }
+  const joined = join(tmpdir(), `utle-fake-mic-${process.pid}.wav`)
+  writeFileSync(joined, wavBytes(all, 16000))
+  writeFileSync(marker, `Recorded from Chromium's fake microphone, not a person (SYNTHETIC):\n${files.join('\n')}\n`)
+  return joined
+}
 const labelsFile = join(out, 'labels.tsv')
 if (!existsSync(labelsFile)) writeFileSync(labelsFile, `${LABEL_COLUMNS.join('\t')}\n`)
 
@@ -171,7 +204,8 @@ await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
 const port = (server.address() as AddressInfo).port
 
 const args = ['--autoplay-policy=no-user-gesture-required']
-if (fakeMic !== undefined) args.push('--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(fakeMic)}%noloop`)
+// Looped: an --auto window never falls past the end of the file into silence.
+if (fakeMic !== undefined) args.push('--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${fakeMicFile(fakeMic)}`)
 const browser = await chromium.launch({ headless: has('--headless'), args })
 const context = await browser.newContext({ permissions: ['microphone'] })
 const page = await context.newPage()

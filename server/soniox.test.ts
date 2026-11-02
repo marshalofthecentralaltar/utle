@@ -372,3 +372,47 @@ describe('soniox lag (review R3 M4)', () => {
     expect(browser.json).toEqual([{ type: 'ready' }])
   })
 })
+
+// Issue #3 work package A: the baseline that fails on main. Soniox has no speaker verdict, so with
+// onlyOwner on its words must never reach the browser as an obeyable final.
+describe('issue #3: Soniox with only the owner on', () => {
+  it('sends no final without a verdict while only the owner is obeyed', () => {
+    const { browser, upstream } = session()
+    browser.text(JSON.stringify({ type: 'onlyOwner', on: true }))
+    upstream.open()
+    upstream.text(response([{ text: 'saada', is_final: true }, { text: '<end>', is_final: true }]))
+    const finals = browser.json.filter((m): m is AsrServerMessage => typeof m === 'object' && m !== null && (m as { type?: unknown }).type === 'final')
+    expect(finals).toEqual([])
+  })
+
+  it('round 10 (31.2): sends a model_unavailable rejection without the words and no partials; off again, words flow as before', () => {
+    const { browser, upstream } = session()
+    browser.text(JSON.stringify({ type: 'onlyOwner', on: true }))
+    upstream.open()
+    upstream.text(response([{ text: 'saa', is_final: false }]))
+    upstream.text(response([{ text: 'saada', is_final: true }, { text: '<end>', is_final: true }]))
+    const after = browser.json.slice(1) as Array<Record<string, unknown>>
+    expect(after.map((m) => m.type)).toEqual(['rejected'])
+    expect(after[0]?.decision).toMatchObject({ segmentId: 1, verdict: 'unknown', reason: 'model_unavailable', profileVersion: '' })
+    expect(JSON.stringify(after)).not.toContain('saada')
+    browser.text(JSON.stringify({ type: 'onlyOwner', on: false }))
+    upstream.text(response([{ text: 'jah', is_final: true }, { text: '<end>', is_final: true }]))
+    expect(browser.json.at(-1)).toEqual({ type: 'final', text: 'jah' })
+  })
+})
+
+describe('round 10 (31.7): Soniox cannot check the voice, and says so to every speaker request', () => {
+  it('speakerStatus is model_unavailable (never protected); the voice test is unavailable; enrolment and delete do nothing', () => {
+    const { browser, upstream } = session()
+    upstream.open()
+    for (const type of ['speakerStatus', 'speakerTest', 'profileDelete']) browser.text(JSON.stringify({ type }))
+    browser.text(JSON.stringify({ type: 'enrolScript', phrases: 12 }))
+    const after = browser.json.slice(1)
+    expect(after).toEqual([
+      { type: 'speakerStatus', readiness: { state: 'model_unavailable', protected: false, extractor: false, profileMatchesModel: false, verifiable: false } },
+      { type: 'speakerTested', result: 'unavailable' },
+      { type: 'profileDeleted', ok: false },
+      { type: 'enrolled', ok: false, seconds: 0, phrases: 0, reason: 'model_unavailable' },
+    ])
+  })
+})

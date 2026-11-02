@@ -25,6 +25,10 @@ import { DEFAULT_PLACES, placeNouns } from '../src/core/places.ts'
 import type { Lang } from '../src/core/strings.ts'
 import type { PageContext } from '../src/browser/protocol.ts'
 import { pageIntent } from '../server/intent.ts'
+// ---------- round 10: addressed speech (32.3) ----------
+import { addresseeAnswer } from '../server/addressee.ts'
+import type { AddresseeRequest, AddresseeVerdict } from '../src/core/addressee.ts'
+// ---------- end of addressed speech ----------
 import { ModelConfigError, NO_USAGE, modelFromEnv } from '../server/model/index.ts'
 import type { Model, ModelUsage } from '../server/model/index.ts'
 import { costOf, deepseekPeak } from './prices.ts'
@@ -745,7 +749,8 @@ interface AskResult {
   got: string
   say: string
   done: boolean
-  wanted: Expectation | Expectation[]
+  /** Round 10: an addressee case wants a verdict. */
+  wanted: Expectation | Expectation[] | AddresseeVerdict
   problem: string | null
   error?: string
   care: 'quick' | 'careful'
@@ -890,6 +895,65 @@ async function runCase(c: Case, model: Model): Promise<{ passed: boolean; asks: 
   return { passed, asks }
 }
 
+// ---------- round 10 (#6, ARCHITECTURE 32.3): the addressee check of always-on mode ----------
+/**
+ * Typed from the 27 Oct session (docs/plans/2026-10-28-round-10-testers-week.md, P1 to P3: Ralf's
+ * commands while people talked) and from the room speech that landed in the bar. Synthetic text,
+ * not a recording. Each is one ask of POST /api/addressee's brain with the three finals before it.
+ */
+interface AddresseeCase {
+  name: string
+  utterance: string
+  page: PageContext
+  finals?: string[]
+  want: AddresseeVerdict
+}
+const ADDRESSEE_CASES: AddresseeCase[] = [
+  { name: 'addressee: P3 the command said while people talk', utterance: "mine youtube'i ja ava video", page: NEW_TAB, finals: ['kas keegi teed tahab', 'jah palun'], want: 'command' },
+  { name: 'addressee: P1 ava email', utterance: 'ava email', page: NEW_TAB, want: 'command' },
+  { name: 'addressee: P1 ava esimene kiri', utterance: 'ava esimene kiri', page: GMAIL_INBOX, finals: ['ava email'], want: 'command' },
+  { name: 'addressee: P7 misheard "mina emaili"', utterance: 'mina emaili', page: NEW_TAB, want: 'command' },
+  { name: 'addressee: search on youtube', utterance: 'otsi kassivideod', page: YOUTUBE_HOME, finals: ['täna on ilus ilm'], want: 'command' },
+  { name: 'addressee: go back', utterance: 'mine tagasi eelmisele lehele', page: YOUTUBE_WATCH, want: 'command' },
+  { name: 'addressee: room, a question to someone', utterance: 'kas sa tuled ka poodi', page: YOUTUBE_HOME, finals: ['kus mu võtmed on'], want: 'ignore' },
+  { name: 'addressee: room, put the bag down', utterance: 'pane see kott sinna lauale', page: YOUTUBE_HOME, want: 'ignore' },
+  { name: 'addressee: room, thanks for the food', utterance: 'aitäh, väga maitsev oli', page: NEW_TAB, want: 'ignore' },
+  { name: 'addressee: room, an answer to someone else', utterance: 'ma ei tea, küsi emalt', page: GMAIL_INBOX, finals: ['kas me lähme homme maale'], want: 'ignore' },
+  { name: 'addressee: room, coming to dinner', utterance: 'jah, ma kohe tulen', page: YOUTUBE_WATCH, finals: ['Ralf, söök on laual'], want: 'ignore' },
+  { name: 'addressee: television news', utterance: 'uudistes öeldi, et homme sajab lund', page: NEW_TAB, want: 'ignore' },
+  { name: 'addressee: side talk about the video', utterance: 'no kuule, see on ju naljakas', page: YOUTUBE_WATCH, finals: ['vaata seda'], want: 'ignore' },
+  { name: 'addressee: P2 room talk with "ütlen"', utterance: 'ma ütlen sulle homme', page: NEW_TAB, finals: ['mis sa arvad'], want: 'ignore' },
+  { name: 'addressee: dictation into an armed chat', utterance: 'tere Karin, ma jõuan homme kella kolmeks', page: WHATSAPP_KARIN, want: 'dictation' },
+  { name: 'addressee: dictation goes on in the chat', utterance: 'ja võta palun leiba ka', page: WHATSAPP_KARIN, finals: ['tere Karin, ma jõuan homme kella kolmeks'], want: 'dictation' },
+]
+
+async function runAddressee(c: AddresseeCase, model: Model): Promise<AskResult> {
+  const request: AddresseeRequest = { lang: 'et', utterance: c.utterance, finals: c.finals ?? [], page: { url: c.page.url, title: c.page.title, box: { present: c.page.box.present, armed: c.page.box.armed } } }
+  const started = Date.now()
+  let verdict: AddresseeVerdict | null = null
+  let error: string | undefined
+  let usage: ModelUsage = NO_USAGE
+  let usd = 0
+  let provider = ''
+  try {
+    const answer = await addresseeAnswer(request, { model })
+    verdict = answer.verdict
+    if (answer.usage) {
+      usage = { input: answer.usage.input, output: answer.usage.output, cacheRead: answer.usage.cacheRead, cacheWrite: answer.usage.cacheWrite }
+      usd = costOf(answer.usage.model, answer.usage, new Date(started))
+      provider = answer.usage.provider
+    }
+  } catch (e) {
+    error = e instanceof Error ? e.message : String(e)
+  }
+  const ms = Date.now() - started
+  const ok = verdict === c.want
+  const problem = error ? `error ${error}` : ok ? null : `verdict ${verdict ?? 'none'}`
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms quick   ${siteOf(c.page).padEnd(18)} "${c.utterance}" -> ${verdict ?? 'error'}${problem ? ` (wanted ${c.want})` : ''} [in=${fresh(usage)} out=${usage.output} ${dollars(usd)}]`)
+  return { name: c.name, utterance: c.utterance, step: 1, site: siteOf(c.page), ms, ok, got: verdict ?? 'error', say: '', done: true, wanted: c.want, problem, ...(error ? { error } : {}), care: 'quick', usage, usd, provider }
+}
+// ---------- end of the addressee check ----------
+
 async function main(): Promise<void> {
   if (!CONFIGURED.ready) {
     console.error(`intent-eval: ${MODEL} has no key (ANTHROPIC_API_KEY is not set)`)
@@ -916,6 +980,20 @@ async function main(): Promise<void> {
     tasks.push({ name: c.name, passed: result.passed, asks: result.asks.length, input: fresh(usage), cacheRead: usage.cacheRead, output: usage.output, usd, ms })
     console.log(`  task ${result.passed ? 'done  ' : 'failed'} ${c.name}: ${result.asks.length} asks, tokens in=${fresh(usage)} cached=${usage.cacheRead} out=${usage.output}, ${dollars(usd)}`)
   }
+  // Round 10 (32.3): the addressee cases, one ask each, counted in the same table.
+  const addressees = ADDRESSEE_CASES.filter((c) => ONLY === '' || `${c.name} ${c.utterance}`.toLowerCase().includes(ONLY))
+  let addresseePassed = 0
+  for (const c of addressees) {
+    const result = await runAddressee(c, EVAL_MODEL)
+    all.push(result)
+    if (result.ok) {
+      passed += 1
+      addresseePassed += 1
+    }
+    tasks.push({ name: c.name, passed: result.ok, asks: 1, input: fresh(result.usage), cacheRead: result.usage.cacheRead, output: result.usage.output, usd: result.usd, ms: result.ms })
+  }
+  if (addressees.length > 0) console.log(`addressee: ${addresseePassed}/${addressees.length} verdicts right`)
+  selected.push(...addressees.map((c): Case => ({ name: c.name, utterance: c.utterance, steps: [] })))
 
   const latencies = all.map((a) => a.ms).sort((a, b) => a - b)
   const p50 = percentile(latencies, 50)

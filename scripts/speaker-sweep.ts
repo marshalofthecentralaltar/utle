@@ -20,13 +20,13 @@
  * OWNER_THRESHOLD (0.54) was set on TitaNet-small; on the other models it is on another scale and its
  * FAR/FRR are shown only for comparison.
  */
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import { OWNER_THRESHOLD, SPEAKER_MODEL_FILE, cosine, embeddedSamples, meanEmbedding, normalised } from '../server/speaker.ts'
 import { loadSpeakerModel } from '../server/speakerModel.ts'
-import { BUCKETS, bucketOf, eer, insideRepo, operatingPoint, otherTrialsNeeded, parseLabels, ratesAt, splitTrials } from './measure.ts'
+import { BUCKETS, FAKE_MIC_MARKER, bucketOf, eer, insideRepo, operatingPoint, recordingSource, otherTrialsNeeded, parseLabels, ratesAt, splitTrials } from './measure.ts'
 import type { Bucket, Kind, OperatingPoint, Rates } from './measure.ts'
 import { sweepModels } from './speaker-models.ts'
 import { readAnyWav } from './wav.ts'
@@ -125,8 +125,15 @@ export async function runSweep(argv: string[]): Promise<void> {
   const farTarget = Number(value('--far-target') ?? '0.01')
   if (!(farTarget > 0 && farTarget < 1)) throw new Error('--far-target must be between 0 and 1, e.g. 0.01')
   const models = sweepModels(value('--models') ?? SPEAKER_MODEL_FILE)
-  const synthetic = clips.some((c) => insideRepo(c.path, join(repoRoot, 'scripts', 'fixtures')))
-  const banner = synthetic ? 'SYNTHETIC: TartuNLP text-to-speech voices from scripts/fixtures, not people. No model or threshold is picked from this.' : 'REAL recordings'
+  // Round 10 (C8): a folder record.ts filled from Chromium's fake microphone is synthetic too.
+  const origin = recordingSource(clips.map((c) => c.path), repoRoot, (dir) => existsSync(join(dir, FAKE_MIC_MARKER)))
+  const banner =
+    origin === 'synthetic'
+      ? 'SYNTHETIC: TartuNLP text-to-speech voices from scripts/fixtures, not people. No model or threshold is picked from this.'
+      : origin === 'fake-mic'
+        ? `SYNTHETIC (fake microphone): record.ts played fixture audio into Chromium (${FAKE_MIC_MARKER} in the speaker folders), not people. No model or threshold is picked from this.`
+        : 'REAL recordings'
+  const synthetic = origin !== 'real'
 
   const loaded = clips.map((c) => {
     const wav = readAnyWav(c.path)
@@ -140,7 +147,18 @@ export async function runSweep(argv: string[]): Promise<void> {
   for (const m of models) {
     const model = loadSpeakerModel(repoRoot, m.file)
     if (!model.ok) throw new Error(`${m.file}: ${model.reason} (npx tsx scripts/speaker-models.ts)`)
-    const embedded = loaded.map((c) => ({ ...c, embedding: normalised(model.extractor.embed(embeddedSamples(framesOf(c.samples)))) }))
+    // Round 10 (lane VOICE): a clip with too little speech for an embedding (a near-silent take) is
+    // listed and left out, as the gate leaves it out (insufficient_audio), never a crash of the whole run.
+    const unembedded: string[] = []
+    const embedded = loaded.flatMap((c) => {
+      try {
+        return [{ ...c, embedding: normalised(model.extractor.embed(embeddedSamples(framesOf(c.samples)))) }]
+      } catch {
+        unembedded.push(c.file)
+        return []
+      }
+    })
+    if (unembedded.length > 0) console.log(`${m.name}: ${unembedded.length} clip(s) with too little speech for an embedding, left out: ${unembedded.join(', ')}`)
     const owners = embedded.filter((c) => c.label === 'owner')
     const profile = split.method === 'enrol' ? meanEmbedding(owners.filter((o) => enrolSet.has(o.file)).map((o) => o.embedding)) : meanEmbedding(owners.map((o) => o.embedding))
     const scored = embedded

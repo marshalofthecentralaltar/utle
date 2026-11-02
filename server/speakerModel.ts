@@ -4,7 +4,8 @@
  * nothing here runs in the browser bundle or the build. Null when the model file or the addon is
  * missing: the speaker gate then works on loudness alone.
  */
-import { existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { ASR_SAMPLE_RATE } from '../src/speech/asrProtocol.ts'
@@ -20,7 +21,7 @@ interface ExtractorLike {
 
 type ExtractorConstructor = new (config: unknown) => ExtractorLike
 
-export type SpeakerModelLoad = { ok: true; extractor: EmbeddingExtractor; ms: number } | { ok: false; reason: 'model_missing' | 'addon_missing' | 'load_failed' }
+export type SpeakerModelLoad = { ok: true; extractor: EmbeddingExtractor; ms: number; hash: string } | { ok: false; reason: 'model_missing' | 'addon_missing' | 'load_failed' }
 
 /** file: another model in models/speaker/ (the calibration reads an older profile with the model that made it). */
 export function loadSpeakerModel(root: string, file: string = SPEAKER_MODEL_FILE): SpeakerModelLoad {
@@ -43,6 +44,7 @@ export function loadSpeakerModel(root: string, file: string = SPEAKER_MODEL_FILE
     return {
       ok: true,
       ms: Date.now() - started,
+      hash: modelFileHash(model),
       extractor: {
         embed(samples) {
           const stream = extractor.createStream()
@@ -55,5 +57,14 @@ export function loadSpeakerModel(root: string, file: string = SPEAKER_MODEL_FILE
     }
   } catch {
     return { ok: false, reason: 'load_failed' }
+  }
+}
+
+/** Round 10 (31.7): the SHA-256 of a model file (hex), recorded in every profile made with it; '' when it cannot be read. */
+export function modelFileHash(path: string): string {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex')
+  } catch {
+    return ''
   }
 }

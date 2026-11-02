@@ -389,3 +389,50 @@ export function splitTrials<T extends TrialClip>(clips: readonly T[]): { method:
   if (enrol.length === 0) return { method: 'leave-one-out', enrol: [], trials: [...clips] }
   return { method: 'enrol', enrol, trials: clips.filter((c) => !enrol.includes(c)) }
 }
+
+/** Round 10 (lane VOICE): what label.ts --check says of a labels file before speaker-calibrate.ts runs on it. */
+export interface LabelCheck {
+  ready: boolean
+  problems: string[]
+  speakers: string[]
+  ownerEnrol: number
+  ownerTrials: number
+  otherTrials: number
+  /** The calibration command for this file and owner. */
+  next: string
+}
+
+/** Round 10 (lane VOICE): whether a labels file is ready for the speaker calibration, and what is missing if not. */
+export function checkLabels(rows: readonly LabelRow[], owner: string, labelsPath: string): LabelCheck {
+  const blank = rows.filter((r) => r.speaker.trim() === '').length
+  const ownerRows = rows.filter((r) => r.speaker === owner)
+  const ownerEnrol = ownerRows.filter((r) => r.kind === 'enrol').length
+  const otherTrials = rows.filter((r) => r.speaker.trim() !== '' && r.speaker !== owner).length
+  const problems: string[] = []
+  if (blank > 0) problems.push(`${blank} clip${blank === 1 ? '' : 's'} without a speaker (label.ts --edit ${labelsPath})`)
+  if (ownerEnrol === 0) problems.push(`no enrol clips for ${owner} (record.ts --set enrol)`)
+  if (otherTrials === 0) problems.push(`no clips of anyone but ${owner} (record a partner)`)
+  return {
+    ready: problems.length === 0,
+    problems,
+    speakers: [...new Set(rows.map((r) => r.speaker).filter((x) => x.trim() !== ''))].sort(),
+    ownerEnrol,
+    ownerTrials: ownerRows.length - ownerEnrol,
+    otherTrials,
+    next: `npx tsx scripts/speaker-calibrate.ts --labels ${labelsPath} --owner-speaker ${owner} --models all`,
+  }
+}
+
+/**
+ * Round 10 (C8): the file record.ts leaves in <out>/<person>/ when Chromium's fake microphone played
+ * fixture audio instead of a person speaking. The sweep then says SYNTHETIC, never "REAL recordings".
+ */
+export const FAKE_MIC_MARKER = 'FAKE-MIC.txt'
+
+/** Where a set of clips came from: fixture files, a fake-microphone recording, or people. */
+export function recordingSource(paths: readonly string[], repoRoot: string, hasMarker: (dir: string) => boolean): 'synthetic' | 'fake-mic' | 'real' {
+  const dirOf = (p: string): string => p.replace(/\\/g, '/').replace(/\/[^/]*$/, '')
+  if (paths.some((p) => insideRepo(p, `${repoRoot.replace(/\\/g, '/').replace(/\/+$/, '')}/scripts/fixtures`))) return 'synthetic'
+  if (paths.some((p) => hasMarker(dirOf(p)))) return 'fake-mic'
+  return 'real'
+}

@@ -8,7 +8,8 @@ import type { IntentAnswer, IntentRequest, TabSummary } from '../../src/core/pag
 import { STRINGS } from '../../src/core/strings.ts'
 import { browserSocket, createLocalRecognizer, retrainDue } from '../../src/speech/local.ts'
 import type { AudioSource } from '../../src/speech/local.ts'
-import type { Recognizer } from '../../src/speech/recognizer.ts'
+import type { EnrolDetail, Recognizer } from '../../src/speech/recognizer.ts'
+import type { SpeakerReason } from '../../src/speech/asrProtocol.ts'
 import { createMicrophoneFrames } from '../../src/speech/microphone.ts'
 import { askTimeoutMs, createEngine } from './engine.ts'
 import { spendLine } from '../../src/core/spend.ts'
@@ -20,6 +21,8 @@ import { DEFAULT_ASR_URL, authHeaders, isHostedAddress, serverStatus, serverUrl,
 // ---------- wake word and places (29.4) ----------
 import { placesFrom } from '../../src/core/places.ts'
 import { wakeWordFrom } from '../../src/core/wake.ts'
+import { verdictFrom } from '../../src/core/addressee.ts'
+import type { AddresseeAnswer, AddresseeRequest } from '../../src/core/addressee.ts'
 
 /**
  * Round 8 (29.4.1): the wake word when the service worker made this document for wake mode
@@ -95,6 +98,19 @@ export async function askIntent(intentUrl: string, request: IntentRequest, signa
   return parsed.success ? parsed.data : { error: 'bad' }
 }
 
+/** Round 10 (#6, 32.3): POST /api/addressee. Any failure is a failure (the engine then goes on as before). */
+export async function askAddressee(url: string, request: AddresseeRequest, signal: AbortSignal, token = ''): Promise<AddresseeAnswer | AskFailure> {
+  try {
+    const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(token) }, body: JSON.stringify(request), signal })
+    if (!response.ok) return { error: 'bad' }
+    const body: unknown = await response.json()
+    const verdict = typeof body === 'object' && body !== null ? verdictFrom((body as Record<string, unknown>).verdict) : null
+    return verdict === null ? { error: 'bad' } : { verdict }
+  } catch {
+    return { error: 'unreachable' }
+  }
+}
+
 /**
  * After a flush, the microphone stays open this long so the final can arrive (round 3). The server
  * first decodes what it still holds (up to its 1500 ms backlog), and Soniox answers a finalize over
@@ -113,17 +129,38 @@ export const ENOUGH_PHRASES = 6
  */
 export const SCRIPT_ENROL_SECONDS = 60
 
-/**
- * Round 7: what the strip shows for a dropped final: the foreign line every time, and, at the third
- * in a row, once, the line that tells him to teach his voice again.
- */
-export function foreignNotice(streak: number, text: { foreign: string; foreignRetrain: string }): { foreign: string; line?: string } {
-  return retrainDue(streak) ? { foreign: text.foreign, line: text.foreignRetrain } : { foreign: text.foreign }
+/** The strip's lines for a dropped utterance. Round 10 (31.5): the lines for reasons other than another voice. */
+export interface ForeignText {
+  foreign: string
+  foreignRetrain: string
+  voiceUnverified?: string
+  voiceTooShort?: string
+  voiceUnsupported?: string
 }
 
-/** Round 7: the strip's line when enrolment ends: phrases is set after scripted enrolment. */
-export function enrolledLine(ok: boolean, phrases: number | undefined, text: { enrolDone: string; enrolFailed: string; enrolPhrasesDone(n: number): string; enrolFew(n: number, enough: number): string }): string {
-  if (!ok) return text.enrolFailed
+/**
+ * Round 7: what the strip shows for a dropped final: the foreign line every time, and, at the third
+ * in a row, once, the line that tells him to teach his voice again. Round 10 (31.5): a drop for
+ * another voice (or without a reason) says so as before; any other reason says the voice could not
+ * be confirmed, too little audio adds "try a longer command", and a voice that cannot be checked
+ * says what to do instead of the retrain line.
+ */
+export function foreignNotice(streak: number, text: ForeignText, reason?: SpeakerReason): { foreign: string; line?: string } {
+  const other = reason === undefined || reason === 'rejected_other'
+  const foreign = other ? text.foreign : (text.voiceUnverified ?? text.foreign)
+  const line = reason === 'insufficient_audio' ? text.voiceTooShort : reason === 'model_unavailable' ? text.voiceUnsupported : undefined
+  if (line !== undefined) return { foreign, line }
+  return retrainDue(streak) ? { foreign, line: text.foreignRetrain } : { foreign }
+}
+
+import type { VoiceText } from './voiceLines.ts'
+export { phraseLine, readinessLine, voiceTestLine } from './voiceLines.ts'
+import { phraseLine, readinessLine, voiceTestLine } from './voiceLines.ts'
+
+/** Round 7: the strip's line when enrolment ends: phrases is set after scripted enrolment. Round 10 (31.7): detail says why it failed, or that it was verified on held-out phrases. */
+export function enrolledLine(ok: boolean, phrases: number | undefined, text: { enrolDone: string; enrolFailed: string; enrolPhrasesDone(n: number): string; enrolFew(n: number, enough: number): string } & Partial<VoiceText>, detail?: EnrolDetail): string {
+  if (!ok) return detail?.reason !== undefined && text.enrolFailedWhy !== undefined ? text.enrolFailedWhy[detail.reason] : text.enrolFailed
+  if (detail?.heldOut !== undefined && text.enrolVerified !== undefined) return text.enrolVerified(phrases ?? 0, detail.heldOut.count)
   if (phrases === undefined) return text.enrolDone
   return phrases < ENOUGH_PHRASES ? text.enrolFew(phrases, ENOUGH_PHRASES) : text.enrolPhrasesDone(phrases)
 }
@@ -256,6 +293,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
   const token = params.get('token') ?? ''
   const address = socketAddress(asrAddress(params.get('asr') ?? DEFAULT_ASR_URL, params.get('engine')), token)
   const intentUrl = serverUrl(address, '/api/intent')
+  const addresseeUrl = serverUrl(address, '/api/addressee')
   const statusUrl = serverUrl(address, '/api/status')
   let connects = 0
   let micOpens = 0
@@ -308,17 +346,20 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
   // Round 8 (29.4.1): wake mode, from the address.
   const wakeWord = wakeWordParam(params)
   let foreignTimer: ReturnType<typeof setTimeout> | null = null
-  const onForeign = (streak: number): void => {
-    publish(foreignNotice(streak, stripText))
+  const onForeign = (streak: number, reason?: SpeakerReason): void => {
+    publish(foreignNotice(streak, stripText, reason))
     if (foreignTimer !== null) clearTimeout(foreignTimer)
     foreignTimer = setTimeout(() => {
       foreignTimer = null
       publish({ foreign: '' })
     }, FOREIGN_SHOWN_MS)
   }
-  const onEnrolled = (ok: boolean, phrases: number | undefined): void => {
-    publish({ line: enrolledLine(ok, phrases, stripText), enrolPhrases: -1 })
+  const onEnrolled = (ok: boolean, phrases: number | undefined, detail?: EnrolDetail): void => {
+    publish({ line: enrolledLine(ok, phrases, stripText, detail), enrolPhrases: -1, enrolProblem: '', enrolOutcome: ok ? 'ok' : (detail?.reason ?? 'failed') })
+    // Round 10 (31.7): a new profile is a new readiness.
+    if (ok) recognizer?.speakerStatus?.()
   }
+  let voiceTests = 0
   /**
    * Round 7: scripted enrolment rides on the engine's enrolment (listening starts, what he reads is
    * neither typed nor run, onEnrolled ends it). While `scripted` is set, the engine's call to the
@@ -348,15 +389,23 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
       const inner = createLocalRecognizer(
         {
           ...handlers,
-          onForeign: (streak) => {
-            handlers.onForeign()
-            onForeign(streak)
+          onForeign: (streak, reason) => {
+            handlers.onForeign(reason)
+            onForeign(streak, reason)
           },
-          onEnrolled: (ok, seconds, phrases) => {
+          onEnrolled: (ok, seconds, phrases, detail) => {
             handlers.onEnrolled(ok, seconds)
-            onEnrolled(ok, phrases)
+            onEnrolled(ok, phrases, detail)
           },
-          onEnrolPhrase: (count) => publish({ enrolPhrases: count }),
+          // Round 10 (31.7): a phrase not counted keeps the count and says why; the page shows it under the phrase.
+          onEnrolPhrase: (count, problem) => publish(problem === undefined ? { enrolPhrases: count, enrolProblem: '' } : { enrolPhrases: count, enrolProblem: problem, line: phraseLine(problem, stripText) }),
+          // Round 10 (31.7): at every connection with only the owner on; the strip says so whenever it does not protect.
+          onSpeakerStatus: (readiness) => publish(onlyOwner && !readiness.protected ? { voiceReady: readiness.state, line: readinessLine(readiness.state, stripText) } : { voiceReady: readiness.state }),
+          onSpeakerTested: (result) => {
+            voiceTests += 1
+            publish({ voiceTest: result, voiceTests, line: voiceTestLine(result, stripText) })
+          },
+          onProfileDeleted: (ok) => publish({ line: ok ? stripText.voiceDeleted : stripText.voiceDeleteFailed }),
         },
         isInstant,
         {
@@ -401,7 +450,13 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     },
     status: () => serverStatus(statusUrl, token),
     hosted: isHostedAddress(address),
+    // Round 10 (31.4): the engine's own wall behind the recogniser's.
+    onlyOwner,
     ...(wakeWord === undefined ? {} : { wakeWord }),
+    // Round 10 (#2, 32.2): Soniox sends the audio off this computer; with it (or a hosted server) wake mode does not start.
+    uploads: params.get('engine') === 'soniox',
+    // Round 10 (#6, 32.3): always-on and the toggle ask whether a final no rule knows was said to Ütle. Wake mode never does.
+    ...(wakeWord === undefined ? { addressee: (request: AddresseeRequest, signal: AbortSignal) => askAddressee(addresseeUrl, request, signal, token) } : {}),
   })
 
   // Round 6 (26.1, 26.5): his saved values and whether the entry flow runs, once at start; changes arrive as messages.
@@ -465,6 +520,18 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
         break
       case 'enrolFinish':
         recognizer?.enrolFinish?.()
+        break
+      case 'voiceTest':
+      case 'voiceDelete':
+      case 'voiceStatus':
+        // Round 10 (31.7): listening starts when it was off (the request waits for the connection).
+        cancelStop()
+        if (!engine.listening) engine.start()
+        if (message.type === 'voiceTest') {
+          recognizer?.speakerTest?.()
+          publish({ line: stripText.voiceTestSay })
+        } else if (message.type === 'voiceDelete') recognizer?.deleteProfile?.()
+        else recognizer?.speakerStatus?.()
         break
       case 'stop':
         cancelStop()
