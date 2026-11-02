@@ -249,9 +249,14 @@ itself within a second. A fold he asked for ("peida riba") never comes back by i
   **Seaded** opens the settings page. On the pill: click or dwell one second to turn listening on
   or off; the small **Näita** next to it, resting on the pill for two seconds, or `näita riba`
   brings the strip back.
-- Open a chat in WhatsApp Web and speak: the words appear in the chat's message box as you say
-  them, and are tidied when you stop (capital letter, full stop). Words that may be a command
-  ("saa...", "keri...") are not typed; if they turn out not to be one, they appear then.
+- Open a chat in WhatsApp Web and speak: the strip's upper line shows the words as you say them,
+  and when you stop the whole sentence lands in the chat's message box, tidied (capital letter, full
+  stop), about three seconds after your last word. Since round 10 (32.3) nothing is typed into the
+  box while you speak: in always-on and the toggle the sentence is first checked to be meant for
+  Ütle, so a voice in the room never appears in your message, not even for a moment. In wake mode
+  (ACTIVE, after "Ütle") the words still appear in the box as you say them; with **Kuula ainult mind**
+  on, nothing shows until your voice is confirmed (31). Words that may be a command ("saa...",
+  "keri...") are not typed; if they turn out not to be one, they appear then.
 - The upper line of the strip always shows the words being heard, and keeps the last ones until you
   speak again. Under it, the amber line says what was understood or done; three pulsing dots and
   "Mõtlen" appear while the model is asked what you meant ("Mõtlen pikemalt…" for a long sentence or a
