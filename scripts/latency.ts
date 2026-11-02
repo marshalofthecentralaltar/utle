@@ -3,7 +3,12 @@
  * labelled clips through the real dev server and the real command logic.
  *
  *   npx vite --port 5393 --strictPort                      (in another shell, with ANTHROPIC_API_KEY set)
- *   npx tsx scripts/latency.ts --labels <labels.tsv> [--kind command,short] [--base http://localhost:5393] [--json <file>] [--endpoint command|dictation] [--tail <ms>]
+ *   npx tsx scripts/latency.ts --labels <labels.tsv> [--kind command,short] [--base http://localhost:5393] [--json <file>] [--endpoint command|dictation] [--tail <ms>] [--why] [--asr-only]
+ *
+ * Round 10 (#7, lane LATE): --why asks the server for each final's why (FinalWhy: the cause and its timings, never
+ * words) and prints, per clip, what ended it and where each stage stood in the clip's audio, as ms after the speech end
+ * (E, -40 dBFS): the speech detector's end, the recogniser's last token, the last word's first showing in a partial,
+ * the last change of the words, the final in audio and in wall time. --asr-only stops after stage 1 (no browser, no model).
  *
  * Per clip:
  *   1. speech end -> final   the clip is streamed to <base>/api/asr as the extension streams it
@@ -34,6 +39,7 @@ import type { InpageStep } from '../src/core/inpage.ts'
 import { pageIntentFrom } from '../src/core/pageIntent.ts'
 import type { IntentAnswer, IntentRequest } from '../src/core/pageIntent.ts'
 import { ASR_FRAME_SAMPLES, ASR_SAMPLE_RATE, parseAsrMessage } from '../src/speech/asrProtocol.ts'
+import type { FinalWhy } from '../src/speech/asrProtocol.ts'
 import { buildExtension } from './ext.ts'
 import { insideRepo, parseLabels, percentile, speechEndSample } from './measure.ts'
 import { readAnyWav } from './wav.ts'
@@ -61,6 +67,9 @@ const FRAME_MS = (ASR_FRAME_SAMPLES * 1000) / ASR_SAMPLE_RATE
 const TAIL_MS = Number(value('--tail') ?? 1500)
 /** Round 10 (33.2): the endpoint mode told the server before each clip, as the extension tells it (--endpoint dictation for a box armed). */
 const ENDPOINT = value('--endpoint') === 'dictation' ? 'dictation' : 'command'
+/** Round 10 (#7, lane LATE): each final's why (trace on the wire), and stage 1 only. */
+const WHY = argv.includes('--why')
+const ASR_ONLY = argv.includes('--asr-only')
 /** Commands extension/src/background.ts runs itself rather than in the page. */
 const BROWSER_LEVEL = new Set<BrowserCommand['kind']>(['newTab', 'closeTab', 'switchTab', 'goTo', 'history', 'reload', 'bar', 'zoom', 'openSettings', 'openHelp', 'compose', 'composeTo', 'savePlace', 'removePlace', 'ping'])
 
@@ -71,7 +80,7 @@ const synthetic = insideRepo(labelsFile, repoRoot)
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** Stage 1: stream a clip, return its finals and the ms from the last speech frame sent to the last final. */
-async function recognise(samples: Float32Array): Promise<{ text: string; ms: number }> {
+async function recognise(samples: Float32Array): Promise<{ text: string; ms: number; why: FinalWhy | null; endMs: number }> {
   const frames: Float32Array<ArrayBuffer>[] = []
   for (let at = 0; at < samples.length; at += ASR_FRAME_SAMPLES) {
     const f = new Float32Array(ASR_FRAME_SAMPLES)
@@ -83,6 +92,7 @@ async function recognise(samples: Float32Array): Promise<{ text: string; ms: num
   const ws = new WebSocket(ASR)
   ws.binaryType = 'arraybuffer'
   const finals: string[] = []
+  let why: FinalWhy | null = null
   let speechSentAt = Number.NaN
   let lastFinalAt = Number.NaN
   let ready: () => void = () => {}
@@ -97,6 +107,7 @@ async function recognise(samples: Float32Array): Promise<{ text: string; ms: num
     if (m?.type === 'final' && m.text.trim() !== '') {
       finals.push(m.text)
       lastFinalAt = performance.now()
+      why = m.why ?? null
     }
   })
   await new Promise<void>((r, j) => {
@@ -106,6 +117,7 @@ async function recognise(samples: Float32Array): Promise<{ text: string; ms: num
   await Promise.race([isReady, sleep(30_000)])
   // Round 10 (33.2): the extension says command when no box is armed; a client that says nothing gets dictation (1.0 s).
   ws.send(JSON.stringify({ type: 'endpoint', mode: ENDPOINT }))
+  if (WHY) ws.send(JSON.stringify({ type: 'trace', on: true }))
   const started = performance.now()
   for (const [i, frame] of frames.entries()) {
     await sleep(Math.max(0, started + i * FRAME_MS - performance.now()))
@@ -117,7 +129,7 @@ async function recognise(samples: Float32Array): Promise<{ text: string; ms: num
   // The last final: wait until 2 s pass with none new, at most 8 s after the flush.
   while (performance.now() - flushedAt < 8000 && !(performance.now() - (Number.isNaN(lastFinalAt) ? flushedAt : Math.max(lastFinalAt, flushedAt)) > 2000)) await sleep(50)
   ws.close()
-  return { text: finals.join(' '), ms: lastFinalAt - speechSentAt }
+  return { text: finals.join(' '), ms: lastFinalAt - speechSentAt, why, endMs: (speechEndSample(samples) * 1000) / ASR_SAMPLE_RATE }
 }
 
 interface Result {
@@ -131,14 +143,17 @@ interface Result {
   finalToIntentMs: number
   intentToActionMs: number
   actionNote: string
+  /** Round 10 (#7, lane LATE): with --why, the last final's why and the clip's speech end (ms of its audio). */
+  why?: FinalWhy | null
+  speechEndMs?: number
 }
 
 const pageScript = join(repoRoot, 'extension', 'dist', 'page.js')
-if (!existsSync(pageScript)) await buildExtension()
-const browser = await chromium.launch({ headless: true })
-const page = await browser.newPage()
+if (!ASR_ONLY && !existsSync(pageScript)) await buildExtension()
+const browser = ASR_ONLY ? null : await chromium.launch({ headless: true })
+const page = browser === null ? null : await browser.newPage()
 const run = (command: BrowserCommand): Promise<BrowserResult> =>
-  page.evaluate(async (c) => {
+  page === null ? Promise.resolve({ ok: false, code: 'failed' as const, message: 'asr only' }) : page.evaluate(async (c) => {
     const utle = (globalThis as unknown as { __utle?: { run(cmd: unknown): Promise<BrowserResult> } }).__utle
     return utle ? utle.run({ ...c, site: null }) : { ok: false, code: 'failed' as const, message: 'no page script' }
   }, command) as Promise<BrowserResult>
@@ -150,6 +165,16 @@ for (const row of rows) {
   const wav = readAnyWav(path)
   if (wav.rate !== ASR_SAMPLE_RATE) throw new Error(`${row.file}: ${wav.rate} Hz`)
   const heard = await recognise(wav.samples)
+  /** Round 10 (#7, lane LATE): ms after the speech end, '-' when not known. */
+  const after = (ms: number | null | undefined): string => (ms === null || ms === undefined ? '-' : String(Math.round(ms - heard.endMs)))
+  const whyCells = WHY
+    ? ` | ${(heard.why?.cause ?? 'none').padEnd(5)} E ${String(Math.round(heard.endMs)).padStart(4)} det ${after(heard.why?.speechEndMs).padStart(5)} tok ${after(heard.why?.lastTokenMs).padStart(5)} word ${after(heard.why?.lastWordMs).padStart(5)} chg ${after(heard.why?.lastChangeMs).padStart(5)} fin ${after(heard.why?.audioMs).padStart(5)} drop ${String(heard.why?.droppedMs ?? '-')}`
+    : ''
+  if (page === null) {
+    results.push({ file: row.file, speaker: row.speaker, reference: row.reference, heard: heard.text, route: heard.text === '' ? 'none' : 'rules', commands: [], speechToFinalMs: Math.round(heard.ms), finalToIntentMs: Number.NaN, intentToActionMs: Number.NaN, actionNote: 'asr only', why: heard.why, speechEndMs: heard.endMs })
+    console.log(`${basename(row.file).padEnd(28)} ${String(Math.round(heard.ms)).padStart(5)} ms${whyCells}  "${heard.text}"`)
+    continue
+  }
 
   await page.goto(PAGE_URL)
   await page.addScriptTag({ path: pageScript })
@@ -197,11 +222,11 @@ for (const row of rows) {
     actionMs = performance.now() - t2
     note = last.ok ? 'ok' : `failed: ${last.message}`
   }
-  const r: Result = { file: row.file, speaker: row.speaker, reference: row.reference, heard: heard.text, route, commands: step.commands.map((c) => c.kind), speechToFinalMs: Math.round(heard.ms), finalToIntentMs: Math.round(t1 - t0), intentToActionMs: Math.round(actionMs), actionNote: note }
+  const r: Result = { file: row.file, speaker: row.speaker, reference: row.reference, heard: heard.text, route, commands: step.commands.map((c) => c.kind), speechToFinalMs: Math.round(heard.ms), finalToIntentMs: Math.round(t1 - t0), intentToActionMs: Math.round(actionMs), actionNote: note, why: heard.why, speechEndMs: heard.endMs }
   results.push(r)
-  console.log(`${basename(row.file).padEnd(28)} ${String(r.speechToFinalMs).padStart(5)} ms | ${r.route.padEnd(5)} ${String(r.finalToIntentMs).padStart(5)} ms | ${Number.isNaN(actionMs) ? '    -' : String(r.intentToActionMs).padStart(5)} ms  "${heard.text}" -> ${r.commands.join(',') || '-'} (${note})`)
+  console.log(`${basename(row.file).padEnd(28)} ${String(r.speechToFinalMs).padStart(5)} ms${whyCells} | ${r.route.padEnd(5)} ${String(r.finalToIntentMs).padStart(5)} ms | ${Number.isNaN(actionMs) ? '    -' : String(r.intentToActionMs).padStart(5)} ms  "${heard.text}" -> ${r.commands.join(',') || '-'} (${note})`)
 }
-await browser.close()
+await browser?.close()
 
 const stat = (label: string, values: number[]): string => {
   const v = values.filter((x) => Number.isFinite(x))
@@ -212,6 +237,19 @@ console.log(stat('speech end -> final', results.map((r) => r.speechToFinalMs)))
 console.log(stat('final -> intent (rules)', results.filter((r) => r.route === 'rules').map((r) => r.finalToIntentMs)))
 console.log(stat('final -> intent (model)', results.filter((r) => r.route === 'model').map((r) => r.finalToIntentMs)))
 console.log(stat('intent -> action (page)', results.map((r) => r.intentToActionMs)))
+if (WHY) {
+  // Round 10 (#7, lane LATE): where each stage stood, ms of audio after the speech end, and what ended the finals.
+  const rel = (pick: (w: FinalWhy) => number | null): number[] => results.flatMap((r) => (r.why && r.speechEndMs !== undefined && pick(r.why) !== null ? [(pick(r.why) ?? 0) - r.speechEndMs] : []))
+  console.log(stat('why: detector end (audio)', rel((w) => w.speechEndMs)))
+  console.log(stat('why: last token (audio)', rel((w) => w.lastTokenMs)))
+  console.log(stat('why: last word shown (audio)', rel((w) => w.lastWordMs)))
+  console.log(stat('why: last change (audio)', rel((w) => w.lastChangeMs)))
+  console.log(stat('why: final (audio)', rel((w) => w.audioMs)))
+  console.log(stat('why: final wall - audio', results.flatMap((r) => (r.why ? [r.why.wallMs - r.why.audioMs] : []))))
+  const causes = new Map<string, number>()
+  for (const r of results) causes.set(r.why?.cause ?? 'none', (causes.get(r.why?.cause ?? 'none') ?? 0) + 1)
+  console.log(`why: causes ${[...causes].map(([c, n]) => `${c} ${n}`).join(', ')}`)
+}
 const jsonPath = value('--json') ?? (synthetic ? join(repoRoot, 'artifacts', 'latency.json') : join(dirname(labelsFile), 'latency.json'))
 mkdirSync(dirname(jsonPath), { recursive: true })
 writeFileSync(jsonPath, `${JSON.stringify({ labels: labelsFile, synthetic, base: BASE, results }, null, 2)}\n`)

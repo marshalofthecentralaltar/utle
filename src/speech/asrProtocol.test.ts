@@ -72,3 +72,15 @@ describe('the speaker decision (round 10, 31.1)', () => {
     expect(authorizes({ ...d, reason: 'insufficient_audio' }, SESSION, 0)).toBe(false)
   })
 })
+
+describe("a final's why (round 10, #7, lane LATE)", () => {
+  const why = { cause: 'rule2', audioMs: 1900, wallMs: 2010, speechEndMs: 1390, lastTokenMs: 1740, lastWordMs: 1300, lastChangeMs: 1800, extraMs: 300, droppedMs: 0 }
+  it('reads the cause and the timings with the final, and drops a why that is not numbers and a known cause', () => {
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why }))).toEqual({ type: 'final', text: 'keri alla', why })
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, speechEndMs: null, lastTokenMs: null, cause: 'flush' } }))).toEqual({ type: 'final', text: 'keri alla', why: { ...why, speechEndMs: null, lastTokenMs: null, cause: 'flush' } })
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, cause: 'guess' } }))).toEqual({ type: 'final', text: 'keri alla' })
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, cause: 'detector', paddedMs: 400 } }))).toEqual({ type: 'final', text: 'keri alla', why: { ...why, cause: 'detector', paddedMs: 400 } })
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, paddedMs: 'some' } }))).toEqual({ type: 'final', text: 'keri alla' })
+    expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, audioMs: 'late' } }))).toEqual({ type: 'final', text: 'keri alla' })
+  })
+})

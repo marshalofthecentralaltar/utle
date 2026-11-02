@@ -1166,6 +1166,36 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
+
+  it("lane LATE review 2: the detector's onset (activity, onset) restarts the hold of a held final, so the words after a pause join it", () => {
+    const { r, socket, utterances } = setup()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'final', text: 'keri natuke' })
+    vi.advanceTimersByTime(600)
+    socket().says({ type: 'activity', onset: true })
+    vi.advanceTimersByTime(600)
+    expect(utterances).toEqual([])
+    socket().says({ type: 'final', text: 'alla' })
+    vi.advanceTimersByTime(800)
+    expect(utterances).toEqual([['keri natuke alla', undefined]])
+  })
+
+  it('lane LATE review 2: bounded: a second onset with no words does not hold the final again (at most two holds, where main had one)', () => {
+    const { r, socket, utterances } = setup()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'final', text: 'keri natuke' })
+    vi.advanceTimersByTime(600)
+    socket().says({ type: 'activity', onset: true })
+    vi.advanceTimersByTime(600)
+    socket().says({ type: 'activity', onset: true })
+    // The first onset held it ONSET_HOLD_MS from 600 ms; the second one adds nothing: released by 1800 ms.
+    vi.advanceTimersByTime(550)
+    expect(utterances).toEqual([])
+    vi.advanceTimersByTime(100)
+    expect(utterances).toEqual([['keri natuke', undefined]])
+  })
   const setup = (options: { onlyOwner?: boolean; longerCommands?: readonly string[] } = {}) => {
     const utterances: Array<[string, SpeakerDecision | undefined]> = []
     const r = createLocalRecognizer(

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE, ENDPOINT_TRAILING_MS, verdictFor } from '../src/speech/asrProtocol.ts'
-import type { AsrServerMessage, EndpointMode, EnrolFailure, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason } from '../src/speech/asrProtocol.ts'
+import { ASR_FRAME_SAMPLES, ASR_MAX_FRAME_BYTES, ASR_SAMPLE_RATE, ENDPOINT_TRAILING_MS, verdictFor } from '../src/speech/asrProtocol.ts'
+import type { AsrServerMessage, EndCause, EndpointMode, EnrolFailure, FinalWhy, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason } from '../src/speech/asrProtocol.ts'
 import type { Capture } from './capture.ts'
 import type { EnrolPhrase, Judgement, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import type { FilteredFrame, SpeechFilter, VadFactory } from './vad.ts'
@@ -16,7 +16,8 @@ export interface OnlineRecognizerLike<S extends OnlineStreamLike = OnlineStreamL
   createStream(): S
   isReady(stream: S): boolean
   decode(stream: S): void
-  getResult(stream: S): { text: string }
+  /** Round 10 (#7, lane LATE): sherpa-onnx also gives each token's time (s) from start_time (s since the stream began). */
+  getResult(stream: S): { text: string; timestamps?: number[]; start_time?: number }
   isEndpoint(stream: S): boolean
   reset(stream: S): void
 }
@@ -29,7 +30,30 @@ export interface DecodeResult {
   endpoint: boolean
   /** Round 10 (#7, 33.3): ms of audio since the speech detector last heard speech in this utterance. */
   quietMs?: number
+  /** Round 10 (#7, lane LATE): where the recogniser and the detector stand, in the session's audio (numbers only). */
+  why?: DecodeWhy
+  /** Round 10 (#7, lane LATE review 2): the speech detector heard speech start in this frame. */
+  onset?: boolean
 }
+
+/** Round 10 (#7, lane LATE): the decoder's part of a final's why. cause only on an endpoint. */
+export interface DecodeWhy {
+  cause?: EndCause
+  speechEndMs: number | null
+  lastTokenMs: number | null
+  extraMs: number
+  paddedMs?: number
+}
+
+/**
+ * Round 10 (#7, lane LATE, ARCHITECTURE 33.2): the most hiss handed to the recogniser ahead of time in one utterance.
+ * Measured on the 18 clips: its rule needed at most 1.3 s of it; noise the detector took for speech, with no
+ * words, costs at most this much decoding once.
+ */
+export const MAX_PAD_MS = 2000
+
+/** Round 10 (#7, lane LATE): rule 3 of the recogniser (asrModel.ts rule3MinUtteranceLength), for naming the cause. */
+export const RULE3_MS = 30_000
 
 /**
  * One connection's stream of the recogniser, decoded on this thread or on a worker. The session
@@ -207,10 +231,49 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
   let wordsBefore = ''
   /** Audio since the speech detector last heard speech in this utterance. */
   let quietMs = 0
+  /** Round 10 (#7, lane LATE): audio sent by the client (accept), audio given to the recogniser (pre-roll replays included), and since its last reset. */
+  let inputMs = 0
+  let fedMs = 0
+  let utteranceMs = 0
+  let cause: EndCause = 'rule2'
+  /** Round 10 (#7, lane LATE): hiss handed ahead of time in this utterance, and where in the session's audio it began. */
+  let paddedMs = 0
+  let utteranceStartMs = 0
+  /**
+   * Round 10 (#7, lane LATE review 2): hiss the recogniser already decoded ahead of time (endOnSilence) and so skips
+   * as the same amount of not-speech arrives; and whether the last part was speech (the detector's onset).
+   */
+  let aheadMs = 0
+  let lastSpeech = false
   const forgetUtterance = (): void => {
     pastRuleMs = null
     wordsBefore = ''
     quietMs = 0
+    utteranceMs = 0
+    paddedMs = 0
+    utteranceStartMs = inputMs
+  }
+  /**
+   * Round 10 (#7, lane LATE, ARCHITECTURE 33.2). The speech detector has heard the mode's silence (command 0.6 s,
+   * dictation 1.0 s) since speech in this utterance ended. The recogniser learns it only later: it decodes 640 ms
+   * chunks, needs about 200 ms of audio past each, puts the last token up to half a second after the speech, and
+   * counts its rule from that token (measured 2026-11-02: the final came 1.6 to 1.9 s after a command's speech end).
+   * What it would hear meanwhile is known: the detector hands it hiss for all that is not speech. So it gets that hiss
+   * now, as fast as it decodes, until its own rule ends the utterance (the words are its own, from the same input),
+   * at most MAX_PAD_MS. Never before the mode's silence, and not at all without a detector.
+   */
+  const endOnSilence = (f: SpeechFilter): boolean => {
+    const end = f.speechEndMs()
+    if (end === null || end <= utteranceStartMs || paddedMs >= MAX_PAD_MS || f.silenceMs() < ENDPOINT_TRAILING_MS[mode]) return false
+    while (paddedMs < MAX_PAD_MS) {
+      const samples = f.hiss(ASR_FRAME_SAMPLES)
+      paddedMs += frameMs(samples)
+      if (decodeOne({ samples, speech: false }, true)) {
+        if (cause !== 'rule1') cause = 'detector'
+        return true
+      }
+    }
+    return false
   }
   /**
    * Whether the utterance ends with this frame. Rule 1 (nothing heard) ends as the recogniser says.
@@ -226,6 +289,7 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       pastRuleMs = null
       return false
     }
+    cause = words === '' ? 'rule1' : utteranceMs >= RULE3_MS ? 'rule3' : 'rule2'
     if (words === '') return true
     if (changed) {
       pastRuleMs = null
@@ -236,10 +300,13 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
   }
   // ---------- end of endpointing per mode ----------
 
-  /** One frame into the recogniser; true when it ended the utterance. */
-  const decodeOne = (part: FilteredFrame): boolean => {
+  /** One frame into the recogniser; true when it ended the utterance. Hiss handed ahead of time (ahead) is no one's audio. */
+  const decodeOne = (part: FilteredFrame, ahead = false): boolean => {
     stream.acceptWaveform({ samples: part.samples, sampleRate: ASR_SAMPLE_RATE })
+    fedMs += frameMs(part.samples)
+    utteranceMs += frameMs(part.samples)
     while (recognizer.isReady(stream)) recognizer.decode(stream)
+    if (ahead) return ends(frameMs(part.samples))
     if (gate) {
       // Without a detector every frame is kept, as before; with one, only speech.
       if (!filter || part.speech) keep(part.samples)
@@ -251,21 +318,42 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
 
   return {
     accept(samples) {
+      inputMs += frameMs(samples)
       const parts: FilteredFrame[] = [...carry, ...(filter ? filter.push(samples) : [{ samples, speech: rms(samples) >= SILENCE_RMS }])]
       carry = []
       let endpoint = false
+      let onset = false
       for (let i = 0; i < parts.length; i += 1) {
         const part = parts[i]
         if (!part) continue
+        if (filter && part.speech && !lastSpeech) onset = true
+        lastSpeech = part.speech
+        // Round 10 (#7, lane LATE review 2): the recogniser decoded this much hiss ahead of time to end the last
+        // utterance (endOnSilence); the same amount of not-speech is skipped as it arrives, so nothing is decoded
+        // twice. Speech is never skipped: it ends the skip (an onset decodes as always, its pre-roll included).
+        if (part.speech) aheadMs = 0
+        else if (aheadMs > 0) {
+          aheadMs -= frameMs(part.samples)
+          quietMs += frameMs(part.samples)
+          continue
+        }
         endpoint = decodeOne(part)
         if (endpoint) {
           carry = parts.slice(i + 1)
           break
         }
       }
-      const text = recognizer.getResult(stream).text.trim()
+      if (!endpoint && filter) endpoint = endOnSilence(filter)
+      const result = recognizer.getResult(stream)
+      const text = result.text.trim()
       const quiet = quietMs
+      // Round 10 (#7, lane LATE): the recogniser's clock runs ahead of the session's by the replayed pre-roll.
+      const stamps = result.timestamps ?? []
+      const lastStamp = stamps.length > 0 ? ((result.start_time ?? 0) + (stamps[stamps.length - 1] ?? 0)) * 1000 : null
+      const extraMs = fedMs - inputMs - paddedMs
+      const why: DecodeWhy = { speechEndMs: filter?.speechEndMs() ?? null, lastTokenMs: lastStamp === null ? null : lastStamp - extraMs, extraMs, ...(endpoint ? { cause } : {}), ...(paddedMs > 0 ? { paddedMs } : {}) }
       if (endpoint) {
+        if (cause === 'detector') aheadMs = paddedMs
         recognizer.reset(stream)
         forgetUtterance()
       }
@@ -277,7 +365,7 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
           if (text !== '') takePhrase(ended)
         } else if (parts.length > 0) ended = null
       }
-      return { text, endpoint, quietMs: quiet }
+      return { text, endpoint, quietMs: quiet, why, ...(onset ? { onset: true } : {}) }
     },
     endpointMode(next) {
       mode = next
@@ -394,6 +482,8 @@ export interface AsrSession {
   speakerTest(): void
   /** Round 10 (31.7): deletes the profile, then profileDeleted, the new version (mode on) and speakerStatus. */
   profileDelete(): void
+  /** Round 10 (#7, lane LATE): each final from now on carries its why (timings and a cause, never words). */
+  trace(on: boolean): void
 }
 
 export interface AsrSessionOptions {
@@ -405,6 +495,8 @@ export interface AsrSessionOptions {
   onError?: (error: unknown) => void
   /** Each final's verdict, for the server log: numbers only, never the text. */
   onJudged?: (judgement: Judgement, onlyOwner: boolean) => void
+  /** Round 10 (#7, lane LATE): what ended each utterance that had words, for the server log: numbers and a cause only. */
+  onEnded?: (why: FinalWhy) => void
   /** Round 10 (31.1): this session's id in every decision. Default a random UUID. */
   sessionId?: string
 }
@@ -466,6 +558,50 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   let testing = false
   /** Round 10 (#7, 33.3): the words of the utterance in progress a pause was sent for. */
   let paused = ''
+  // ---------- round 10 (#7, lane LATE): what ended each utterance ----------
+  let tracing = false
+  /** Wall time of the first frame; the session's wall clock starts there. */
+  let startedAt: number | null = null
+  /** Session audio when the words of the utterance in progress first had n words (index n), and when they last changed. */
+  let firstAtWords: number[] = []
+  let lastChangeMs: number | null = null
+  let droppedBefore = 0
+  let progress: DecodeWhy = { speechEndMs: null, lastTokenMs: null, extraMs: 0 }
+  const noteWords = (text: string): void => {
+    const count = text === '' ? 0 : text.split(/\s+/).length
+    for (let n = firstAtWords.length; n <= count; n += 1) firstAtWords[n] = decodedMs
+    lastChangeMs = decodedMs
+  }
+  const forgetWords = (): void => {
+    firstAtWords = []
+    lastChangeMs = null
+    droppedBefore = droppedMs
+  }
+  /** The why of the utterance that ends now, from the count of the words it ended with. */
+  const whyNow = (text: string, decoderWhy: DecodeWhy, cause: EndCause): FinalWhy => {
+    const why: FinalWhy = {
+      cause,
+      audioMs: decodedMs,
+      wallMs: 0,
+      speechEndMs: decoderWhy.speechEndMs,
+      lastTokenMs: decoderWhy.lastTokenMs,
+      lastWordMs: firstAtWords[text.split(/\s+/).length] ?? null,
+      lastChangeMs,
+      extraMs: decoderWhy.extraMs,
+      droppedMs: droppedMs - droppedBefore,
+      ...(decoderWhy.paddedMs === undefined ? {} : { paddedMs: decoderWhy.paddedMs }),
+    }
+    forgetWords()
+    return why
+  }
+  /** Logs the why and, when traced, puts it on the final. wallMs is taken as the message goes. */
+  const withWhy = <M extends AsrServerMessage>(message: M, why: FinalWhy | null): M => {
+    if (why === null) return message
+    const stamped = { ...why, wallMs: startedAt === null ? 0 : now() - startedAt }
+    options.onEnded?.(stamped)
+    return tracing && message.type === 'final' ? { ...message, why: stamped } : message
+  }
+  // ---------- end of what ended each utterance ----------
 
   /** Round 10 (31.7): sends speakerStatus; a decoder without readiness (no gate) is never protected. */
   const tellStatus = (): void => {
@@ -597,7 +733,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
    * verified_owner sends the words, with the decision. Anything else, a missing verify and a verify
    * that fails included, sends a rejection without the words.
    */
-  const sendVerified = (text: string, then: () => void): void => {
+  const sendVerified = (text: string, why: FinalWhy | null, then: () => void): void => {
     const started = now()
     segments += 1
     const segment = segments
@@ -614,9 +750,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
         timings: judgement?.seconds === undefined ? { judgeMs: Math.max(0, now() - started) } : { judgeMs: Math.max(0, now() - started), speechMs: Math.round(judgement.seconds * 1000) },
       }
       if (judgement !== null && judgement.score !== 0) decision.score = judgement.score
-      if (reason === 'verified_owner') send({ type: 'final', text, speaker: 'owner', segment, decision })
+      if (reason === 'verified_owner') send(withWhy({ type: 'final', text, speaker: 'owner', segment, decision }, why))
       else {
-        send({ type: 'rejected', decision })
+        send(withWhy({ type: 'rejected', decision }, why))
         foreignFinals += 1
       }
       options.onJudged?.({ speaker: decision.verdict, score: judgement?.score ?? 0, ...(judgement?.seconds === undefined ? {} : { seconds: judgement.seconds }), reason }, true)
@@ -639,22 +775,22 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
    * that fails (review) loses the verdict, not the words: the final goes without a speaker.
    * Round 10: with only the owner on, sendVerified instead (fail closed).
    */
-  const sendFinal = (text: string, then: () => void): void => {
+  const sendFinal = (text: string, why: FinalWhy | null, then: () => void): void => {
     if (testing) {
       runTest(then)
       return
     }
     if (onlyOwner) {
-      sendVerified(text, then)
+      sendVerified(text, why, then)
       return
     }
     const deliver = (judgement: Judgement | null | undefined): void => {
       if (closed) return
       if (judgement) {
-        send({ type: 'final', text, speaker: judgement.speaker })
+        send(withWhy({ type: 'final', text, speaker: judgement.speaker }, why))
         options.onJudged?.(judgement, onlyOwner)
         if (onlyOwner && judgement.speaker !== 'owner') foreignFinals += 1
-      } else send({ type: 'final', text })
+      } else send(withWhy({ type: 'final', text }, why))
       // Round 7: UTLE_CAPTURE writes the clip and its words; without it the decoder does nothing here.
       captured(text, judgement ?? null)
       then()
@@ -675,6 +811,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     // Round 7: text with no letter or digit (a lone "." the recogniser can make of a breath) is no words.
     const heard = result.text.trim()
     const text = /[\p{L}\p{N}]/u.test(heard) ? heard : ''
+    // Round 10 (#7, lane LATE review 2): speech started: a wordless activity in both modes (never a voice test), so a
+    // final the client holds waits for what follows; it signals no utterance (nothing is closed for it).
+    if (result.onset === true && !testing) send({ type: 'activity', onset: true })
     // Round 10 (31.2): with only the owner on, unverified words never leave the server: the client
     // gets a wordless activity signal instead of the partial (it keeps the assembler's hold alive).
     // Round 10 (31.7): a voice test sends no partial words either: nothing of it may reach a page.
@@ -682,6 +821,8 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       send(onlyOwner ? { type: 'activity' } : { type: 'partial', text })
       signalled = true
     }
+    if (result.why) progress = result.why
+    if (text !== last) noteWords(text)
     last = text
     if (!result.endpoint) {
       // Round 10 (#7, 33.3): the words, once the detector has heard PAUSE_MS of silence after them.
@@ -696,11 +837,12 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     last = ''
     paused = ''
     if (text === '') {
+      forgetWords()
       closeEmpty()
       then()
     } else {
       signalled = false
-      sendFinal(text, then)
+      sendFinal(text, whyNow(text, progress, progress.cause ?? 'rule2'), then)
     }
   }
 
@@ -726,8 +868,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       // Judged before the reset: the frames of the utterance in progress are still the decoder's.
       if (text !== '') {
         signalled = false
-        sendFinal(text, next)
+        sendFinal(text, whyNow(text, progress, 'flush'), next)
       } else {
+        forgetWords()
         closeEmpty()
         next()
       }
@@ -757,6 +900,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   return {
     audio(samples) {
       if (closed) return
+      if (startedAt === null) startedAt = now()
       const ms = frameMs(samples)
       receivedMs += ms
       queuedMs += ms
@@ -841,6 +985,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     speakerTest() {
       if (closed) return
       testing = true
+    },
+    trace(on) {
+      tracing = on
     },
     profileDelete() {
       if (closed) return

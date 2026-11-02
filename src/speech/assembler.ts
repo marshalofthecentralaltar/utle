@@ -3,8 +3,11 @@ import { CONTINUE_WINDOW_MS, endsWithConnective, startsWithConnective } from '..
 export interface Assembler {
   /** A final result from the recogniser, with any other readings it offered. */
   final(text: string, alternatives?: readonly string[]): void
-  /** The user is audibly still speaking (an interim result arrived). */
-  activity(): void
+  /**
+   * The user is audibly still speaking (an interim result arrived). Round 10 (#7, lane LATE review 2): holdMs, a held
+   * text waits this long instead (the speech detector's onset: the words come later).
+   */
+  activity(holdMs?: number): void
   /** True when nothing is held waiting to be joined. */
   idle(): boolean
   /** Delivers what is held now, without waiting for the hold (push-to-talk released). */
@@ -89,9 +92,9 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
     deliver(text)
   }
 
-  const hold = (): void => {
+  const hold = (override?: number): void => {
     cancel()
-    const ms = endsWithConnective(held.join(' ')) ? (opts.connectiveHoldMs ?? opts.holdMs) : opts.holdMs
+    const ms = override ?? (endsWithConnective(held.join(' ')) ? (opts.connectiveHoldMs ?? opts.holdMs) : opts.holdMs)
     timer = setTimeout(release, ms)
   }
 
@@ -116,8 +119,8 @@ export function createAssembler(opts: AssemblerOptions): Assembler {
       held.push(clean)
       hold()
     },
-    activity() {
-      if (held.length > 0) hold()
+    activity(holdMs) {
+      if (held.length > 0) hold(holdMs)
       else if (firstActivityAt === null) firstActivityAt = Date.now()
     },
     idle() {

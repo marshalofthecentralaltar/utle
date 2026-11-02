@@ -747,6 +747,87 @@ came 797 to 1035 ms after the speech end, under the 1.0 s rule 2 itself, so on t
 rule 2 alone. What does make it (the speech detector's end, the flush, the decoder's backlog) is not known. Criterion
 7 is NOT MET; #7 stays open and finding what produces the final comes first in round 10 prompt 4.
 
+## 1q. Round 10, prompt 4, lane LATE (2026-11-02): why the final came late, and a command final about 0.5 s sooner (#7)
+
+ARCHITECTURE 33.2 and 33.3. Branch `r10-late`: 8ceced7 (each final's why, no behaviour change: main 6ccff92 plus the
+measurement) and 381ce67 (the fix). SYNTHETIC: the 18 clips of `scripts/fixtures/labels.tsv`, TartuNLP voices.
+
+**What made the final.** `scripts/latency.ts --why` and the server's `[asr] final cause=...` line (timings and a cause,
+never words) give, per final, which rule ended it and where each stage stood on the session's audio clock. Load cannot
+move that clock: the server's numbers equalled the in-process probe (`artifacts/late/probe.ts`) clip for clip. On main
+all 18 finals were made by rule 2. None came from rule 1, rule 3, the flush (3 s tail) or a backlog cut: 0 ms dropped,
+and the server ran within 25 ms of real time. Rule 2 counts its 0.6 s from the recogniser's last token. The model puts
+that token 320 to 540 ms after a multi-token command's speech end, and 680 ms before to 80 ms after a one-token word's.
+The encoder decodes 640 ms chunks, each once about 200 ms more audio is there. So on the audio clock: multi-word
+command finals came 1620 to 1940 ms after the speech end, one-token words 780 to 1140. The speech detector's end lay
+36 to 260 ms after the -40 dBFS end. The "saada" finals under 1.0 s on 2bb7398 are explained: its token comes 180 to
+680 ms before the speech ends, so even 1.0 s counted from it ends 320 to 820 ms after the speech.
+
+**What changed.** Once the speech detector has heard the mode's silence (0.6 s command, 1.0 s dictation, counted from
+Silero's own end of the segment), the decoder hands the recogniser the hiss it would have got anyway, as fast as it
+decodes, until the recogniser's own rule ends the utterance. The cause is `detector`, with at most 2 s of hiss per
+utterance; the 18 clips needed at most 1.3 s. The words are the recogniser's own: the same on every clip in every run.
+Without the detector model nothing changes.
+
+Three runs each, interleaved base/branch, one fresh vite on 5178 per run, `--tail 3000 --why --asr-only`, command
+mode, under the suite lock. CPU was 26 to 77 % from another lane's eval, logged per run in
+`artifacts/late/runs/pids.log`. Speech end -> final (wall), ms:
+
+| run | base p50 / p95 | branch p50 / p95 | paired base - branch, p50 (min, max) | audio p50 base / branch | WER base / branch | branch causes |
+|---|---|---|---|---|---|---|
+| 1 | 1457 / 1932 | 872 / 991 | 519 (-71, 1180) | 1380 / 800 | 1/33 / 1/33 | detector 15, rule2 3 |
+| 2 | 1441 / 1912 | 921 / 988 | 509 (-98, 1069) | 1380 / 800 | 1/33 / 1/33 | detector 15, rule2 3 |
+| 3 | 1442 / 1917 | 880 / 993 | 534 (-12, 1084) | 1380 / 800 | 1/33 / 1/33 | detector 15, rule2 3 |
+
+Over the three runs the paired difference is p50 516 ms (n=54, p25 98, p75 861); the three runs' p50s spread 25 ms.
+Multi-word commands gain 700 to 1200 ms. One-token words gain 0 to 300 ms: three of them ("saada" of kylli, meelis,
+vesta) are still ended by rule 2 before the detector's 0.6 s, and they cost at most 98 ms in the wall noise. The one
+WER error is the same in all six runs ("Näita numbrid" for "numbreid"). Dictation, on the audio clock (probe, both
+codes): main 1180 to 2340 ms after the speech end, branch 1040 to 1280, and never under 1.0 s of the detector's
+silence. Tables per clip: `artifacts/late/three-runs-command.md`; runs: `artifacts/late/runs/` (not committed).
+
+Not verified: a real voice and a real microphone (room noise that Silero takes for speech would cost up to 2 s of
+extra decoding once per utterance, never a final); dictation in wall time (audio clock only); an idle machine. The
+hiss decode costs one or two chunk decodes at an utterance's end: 57 ms p50 in one probe run, about 300 ms in another
+while another process loaded the CPU. The three runs were measured under 26 to 77 % CPU from another process; an idle
+machine was not measured.
+
+**Pauses inside a command (review round 1).** `artifacts/late/splice.ts` puts 0.5, 0.7, 0.9 and 1.2 s of silence between
+two words of three clips (cut where the energy envelope is quiet), decodes them with the speech detector in command
+mode, passes the finals through the client's 700 ms hold (`LOCAL_HOLD_MS`: an instant final goes at once, any other
+waits for the next speech) and the real `inpageStep`. The hard splice makes some misreadings ("kerina Toom",
+"Järgmine vastu"); they are the same in both codes. Main gave one final up to 0.7 s. At 0.9 and 1.2 s it gave two
+finals, and the hold joined them again: its first final came about 1.2 s after the first piece, so the second piece's
+first partial fell inside the hold. The branch gave one final at 0.5 s. From 0.7 s it delivered two utterances: its
+first final now comes about 0.6 s sooner, while the second piece's first partial still lags its speech by about 0.6 s
+(the same chunk and token delay). On the rules alone, "keri", "keri natuke", "alla", "näita" and "numbreid" each go to
+the model, and "natuke alla" scrolls. So "keri | natuke alla" with a 0.7 to 1.2 s pause becomes a model question plus a
+scroll on the branch, where main makes one rule scroll. "keri natuke | alla" and "Näita | numbreid" become two model
+questions instead of one rule action. "järgmine" alone is instant in both codes (it switches tab), so main splits
+"Järgmine | vaheleht" too once the recogniser does. Not fixed in this round; a fix is proposed to the planner. Output:
+`artifacts/late/splice-main.txt`, `splice-branch.txt`, `pieces.txt` (not committed).
+
+**Review round 2: both proposals built** (f7680f8, 0753ded). (A) After a detector-ended final the recogniser skips as
+much arriving not-speech as it decoded ahead, so nothing is decoded twice; speech is never skipped. (B) The server
+sends the wordless `{ type: 'activity', onset: true }` when the detector hears speech start, in both modes. The client
+holds a held final `ONSET_HOLD_MS` (1.2 s) from it, once per final. A 700 ms restart was tried first and still split
+0.7 and 0.9 s pauses, because the resumed words come up to about a second after the onset. The tests were red first
+(`artifacts/late/red-review2.txt`).
+
+- Pauses (`artifacts/late/splice2-main.txt`, `splice2-branch.txt`, same clips and cuts as above): at 0.7, 0.9 and
+  1.2 s every spliced command now arrives as ONE utterance on the branch, as on main.
+- Hold bound: a partial with words restarts the hold with no cap on both codes. An onset without words holds a final
+  at most 1.9 s after it on the branch, against 0.7 s on main (test "bounded" in `src/speech/local.test.ts`).
+- Latency, one more interleaved round at 31 to 34 % CPU (`artifacts/late/round-r2-command.md`): base 1401 / 1914,
+  branch 864 / 937. The paired p50 is 502 ms (min -51, max 1179), words were identical on all 18 clips, and WER was
+  1/33 in both.
+- voice.ts on the branch at 24 % CPU (`artifacts/late/voice-r2.log`): 53 PASS / 2 FAIL. Sections 6, 7 and 8 passed
+  26 of 26 with 0 s dropped. The 2 FAILs ("box texts", "first words") are among base's 3 section 1 FAILs; the hover
+  check passed this time.
+- `npm run check`: 59 files, 4231 tests. Browser suite: 330 PASS, ALL PASS.
+
+**voice.ts on base and branch (review round 1).** Run back to back under the lock on vite 5194 (5193 was held by another lane's vite): base 2edb8b5 gave 52 PASS / 3 FAIL, the branch 51 PASS / 4 FAIL. The three section 1 FAILs ("hovering the microphone 1.3 s turns listening on", "at least 3 distinct box texts", "first words visible while speech is still playing") fail on base too: they predate this lane. Sections 7 and 8 passed 18 of 18 on both. The branch's fourth FAIL, section 6 "üks opens the first tile", came with the CPU at 100 % (model load 25.7 s). The server's backlog dropped 5 s of that session's audio, "üks" among it. Base, at 76 %, dropped 1 s and lost nothing; the branch's earlier run (18:07) dropped nothing and passed section 6. The hiss handed ahead is decoding on top of the real-time frames (up to 1.3 s of audio per utterance), so on a starved machine it can add to the backlog. Not fixed here; a fix is proposed to the planner. Logs: `artifacts/late/voice-base.log`, `voice-branch.log`, `voice.log`; the server's lines in `artifacts/late/vite-5193-base.log` and `vite-5193-branch.log` (not committed).
+
 ## 1p. Round 10, prompt 3, lane AMBIGUITY (2026-11-02): what he meant, on the page he is on (#5)
 
 Branch `r10-ambig`. ARCHITECTURE 34. From Ralf's session of 2026-10-27 (logging into the Anthropic

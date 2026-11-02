@@ -2883,12 +2883,63 @@ keep what they had; only the extension, which always says, gets the shorter comm
 streams clips itself, so it says `command` before each clip as the extension does with no box armed
 (`--endpoint dictation` for the other).
 
+**What made the final (lane LATE, 2026-11-02; corrects what prompt 3 expected of the 0.6 s rule).** Measured on the
+session's audio clock, which machine load cannot move (`scripts/latency.ts --why`, the server's
+`[asr] final cause=...` line, `artifacts/late/probe.ts`; the 18 SYNTHETIC clips): on main 6ccff92 every command final was
+made by rule 2. None by rule 1, rule 3 or the flush (3 s tail), and the backlog dropped nothing. Rule 2 counts its
+silence from the recogniser's last token, and three stages sit between the speech end (-40 dBFS) and the end of that
+count:
+
+1. Where the model puts the last token. TalTech's streaming zipformer puts the last token of a multi-token command
+   320 to 540 ms after the speech end ("all|a", "vahe|leht"), and a one-token word ("saada", "üks", "jah") anywhere
+   from 680 ms before it to 80 ms after it.
+2. Rule 2 itself: 600 ms (command) of the recogniser's decoded audio after that token.
+3. The chunk: the encoder decodes 640 ms chunks, each only once about 200 ms more audio is there, so a rule that
+   holds inside a chunk is seen 0 to 640 ms plus about 200 ms later.
+
+So a multi-word command's final came 1620 to 1940 ms of audio after the speech end, and a one-token word's 780 to
+1140 ms. That is why the 0.6 s rule hardly showed, and why "saada" ended under 1.0 s on 2bb7398 with rule 2 at
+1.0 s: its token comes before the speech ends. The speech detector puts the end of speech 36 to 260 ms after the
+-40 dBFS end and knows it 0.5 s later (`VAD_MIN_SILENCE_SECONDS`). It made no final and delayed none.
+
+**Ending on the detector's silence (`server/asrSession.ts` `endOnSilence`, `MAX_PAD_MS`; `server/vad.ts`
+`speechEndMs`, `silenceMs`, `hiss`).** With the speech detector, the decoder acts once the detector has heard the
+mode's silence since this utterance's speech ended: 600 or 1000 ms of the session's audio after Silero's own segment
+end. It hands the recogniser the hiss it would get anyway for the coming frames (the detector replaces everything that
+is not speech, 24.2), as fast as it decodes, until the recogniser's own rule ends the utterance. In dictation that
+includes the 0.4 s hold. At most `MAX_PAD_MS` (2 s) goes ahead per utterance. The final's cause is `detector`. The
+words are the recogniser's own, from the same input, only sooner: on the 18 clips the words were the same in both
+modes. The step never starts before the mode's silence. Silero's 0.5 s minimum silence keeps a segment open over the
+gaps between words, and the silence counts from the segment's end. It is counted in the session's audio, never wall
+time, and without the detector model nothing changes. Speech that starts after the mode's silence is the next
+utterance; the detector's pre-roll replays its onset, as at any onset. On the audio clock, command finals now come 640
+to 880 ms after the speech end (main: 780 to 1940), dictation finals 1040 to 1280 (main: 1180 to 2340). They are never
+less than the mode's silence after the detector's end. The hiss handed ahead costs one or two chunk decodes at the end
+of an utterance: 57 ms p50 in one probe run, about 300 ms in another while another process loaded the CPU (an idle
+machine was not measured). Review 2: the hiss is not decoded twice. After a final ended this way, the decoder skips
+as much arriving not-speech as it handed ahead. The skip sits in `accept`, beside `decodeOne`. Speech is never skipped
+and ends the skip, so an onset decodes as always, its pre-roll included. Before this, voice.ts at 100 % CPU had the
+extra decoding feed a backlog that dropped 5 s of audio, "üks" among it. A pause inside a command is held by the
+detector's onset (33.3). Wall time, three runs each: HANDOFF 1q.
+
 ### 33.3 Acting on a partial (`server/asrSession.ts` `PAUSE_MS`, `src/speech/local.ts` `onPause`)
 
 When the speech detector has heard 300 ms of silence after the words of the utterance in progress, the server sends
-`{ type: 'pause', text }` once for those words. A partial the rules know (`inpageInstant`, the same test as the
+`{ type: 'pause', text }` once for those words. (Lane LATE, measured: the detector says silence only after its 0.5 s minimum, so the pause
+comes about 0.8 s after Silero's end of speech, about 1 s after the -40 dBFS end. A command's final now comes at the
+detector's 0.6 s (33.2), usually before its pause; the pause still comes before a dictation final.) A partial the rules know (`inpageInstant`, the same test as the
 quick-reply release of round 3) that is settling on exactly those words is released at once instead of after
 `INSTANT_SETTLE_MS`; its final is swallowed as for any released reply, so the command runs once.
+
+**The detector's onset (lane LATE review 2, `server/asrSession.ts`, `src/speech/local.ts`, `ONSET_HOLD_MS`).** When
+the speech detector hears speech start, the server sends the wordless `{ type: 'activity', onset: true }`. It goes in
+both modes, and it signals no utterance, so nothing is closed or rejected for it and no word leaves (31.2 unchanged).
+The client holds a held final `ONSET_HOLD_MS` (1.2 s) from it, once per final, because the first words of the resumed
+speech arrive up to about a second after the onset (33.2). Without this, ending on the detector's 0.6 s split a
+command with a 0.7 to 1.2 s pause inside it into two utterances; main had joined them, because its late final left
+the second piece inside the 700 ms hold. With it they join again (HANDOFF 1q). Bound: a partial with words restarts
+the hold with no cap, on main as here. An onset without words holds a final at most `LOCAL_HOLD_MS` +
+`ONSET_HOLD_MS` (1.9 s) after it; main held it 0.7 s.
 
 A command that a longer command starts with is never released from a partial, neither on the pause nor on the
 settle (`src/core/commandPrefix.ts` `extendsCommand`, used in `src/speech/local.ts` beside `isInstant`): "keri" and a
@@ -2898,10 +2949,10 @@ page (`COMMAND_FORMS`, from `src/core/phrases.ts`) whose words start with the pa
 to the help page is covered with no more code. Such a partial waits for its final, and the final is never held (the
 assembler still takes it as instant), so "keri alla" said alone runs when its final comes. Released early, "keri
 alla" would scroll a page and "kaks minutit" would arrive alone as the next utterance (a final more than one word
-longer than what was released keeps only its new words). Nothing is slower than before round 10: the final comes
-at the 0.6 s command endpoint after the last word, about when the old 650 ms settle released the partial (the settle
-counts from the last change of the partial, which comes a little after the last word, and before round 10 the final
-needed 1.0 s). These commands lose only the pause's head start, about 300 ms.
+longer than what was released keeps only its new words). Nothing is slower than before round 10. Lane LATE measured
+what prompt 3 assumed here: the final did not come at 0.6 s after the last word but 1.6 to 1.9 s after a command's
+speech end (33.2). It now comes 0.64 to 0.88 s after it, before the old 650 ms settle would have released the partial,
+so these commands lose nothing to the pause.
 
 With only the owner on (31), nothing of this runs: the server sends no partial and no pause, the client's strict mode
 never settles a partial and ignores a pause, and the engine's `ownerOnly` wrapper drops any utterance without a
