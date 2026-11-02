@@ -747,6 +747,50 @@ came 797 to 1035 ms after the speech end, under the 1.0 s rule 2 itself, so on t
 rule 2 alone. What does make it (the speech detector's end, the flush, the decoder's backlog) is not known. Criterion
 7 is NOT MET; #7 stays open and finding what produces the final comes first in round 10 prompt 4.
 
+## 1q. Round 10, prompt 4, lane LATE (2026-11-02): why the final came late, and a command final about 0.5 s sooner (#7)
+
+ARCHITECTURE 33.2 and 33.3. Branch `r10-late`: 8ceced7 (each final's why, no behaviour change: main 6ccff92 plus the
+measurement) and 381ce67 (the fix). SYNTHETIC: the 18 clips of `scripts/fixtures/labels.tsv`, TartuNLP voices.
+
+**What made the final.** `scripts/latency.ts --why` and the server's `[asr] final cause=...` line (timings and a cause,
+never words) give, per final, which rule ended it and where each stage stood on the session's audio clock. Load cannot
+move that clock: the server's numbers equalled the in-process probe (`artifacts/late/probe.ts`) clip for clip. On main
+all 18 finals were made by rule 2. None came from rule 1, rule 3, the flush (3 s tail) or a backlog cut: 0 ms dropped,
+and the server ran within 25 ms of real time. Rule 2 counts its 0.6 s from the recogniser's last token. The model puts
+that token 320 to 540 ms after a multi-token command's speech end, and 680 ms before to 80 ms after a one-token word's.
+The encoder decodes 640 ms chunks, each once about 200 ms more audio is there. So on the audio clock: multi-word
+command finals came 1620 to 1940 ms after the speech end, one-token words 780 to 1140. The speech detector's end lay
+36 to 260 ms after the -40 dBFS end. The "saada" finals under 1.0 s on 2bb7398 are explained: its token comes 180 to
+680 ms before the speech ends, so even 1.0 s counted from it ends 320 to 820 ms after the speech.
+
+**What changed.** Once the speech detector has heard the mode's silence (0.6 s command, 1.0 s dictation, counted from
+Silero's own end of the segment), the decoder hands the recogniser the hiss it would have got anyway, as fast as it
+decodes, until the recogniser's own rule ends the utterance. The cause is `detector`, with at most 2 s of hiss per
+utterance; the 18 clips needed at most 1.3 s. The words are the recogniser's own: the same on every clip in every run.
+Without the detector model nothing changes.
+
+Three runs each, interleaved base/branch, one fresh vite on 5178 per run, `--tail 3000 --why --asr-only`, command
+mode, under the suite lock. CPU was 26 to 77 % from another lane's eval, logged per run in
+`artifacts/late/runs/pids.log`. Speech end -> final (wall), ms:
+
+| run | base p50 / p95 | branch p50 / p95 | paired base - branch, p50 (min, max) | audio p50 base / branch | WER base / branch | branch causes |
+|---|---|---|---|---|---|---|
+| 1 | 1457 / 1932 | 872 / 991 | 519 (-71, 1180) | 1380 / 800 | 1/33 / 1/33 | detector 15, rule2 3 |
+| 2 | 1441 / 1912 | 921 / 988 | 509 (-98, 1069) | 1380 / 800 | 1/33 / 1/33 | detector 15, rule2 3 |
+| 3 | 1442 / 1917 | 880 / 993 | 534 (-12, 1084) | 1380 / 800 | 1/33 / 1/33 | detector 15, rule2 3 |
+
+Over the three runs the paired difference is p50 516 ms (n=54, p25 98, p75 861); the three runs' p50s spread 25 ms.
+Multi-word commands gain 700 to 1200 ms. One-token words gain 0 to 300 ms: three of them ("saada" of kylli, meelis,
+vesta) are still ended by rule 2 before the detector's 0.6 s, and they cost at most 98 ms in the wall noise. The one
+WER error is the same in all six runs ("Näita numbrid" for "numbreid"). Dictation, on the audio clock (probe, both
+codes): main 1180 to 2340 ms after the speech end, branch 1040 to 1280, and never under 1.0 s of the detector's
+silence. Tables per clip: `artifacts/late/three-runs-command.md`; runs: `artifacts/late/runs/` (not committed).
+
+Not verified: a real voice and a real microphone (room noise that Silero takes for speech would cost up to 2 s of
+extra decoding once per utterance, never a final); dictation in wall time (audio clock only); an idle machine. The
+hiss decode costs one or two chunks at an utterance's end: 57 ms each idle, about 300 ms under this lane's load, and
+the gain above was measured under that load.
+
 ## 1p. Round 10, prompt 3, lane AMBIGUITY (2026-11-02): what he meant, on the page he is on (#5)
 
 Branch `r10-ambig`. ARCHITECTURE 34. From Ralf's session of 2026-10-27 (logging into the Anthropic

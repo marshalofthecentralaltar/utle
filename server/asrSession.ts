@@ -45,7 +45,7 @@ export interface DecodeWhy {
 
 /**
  * Round 10 (#7, lane LATE, ARCHITECTURE 33.2): the most hiss handed to the recogniser ahead of time in one utterance.
- * Measured on the 18 clips: its rule needs at most about 1.1 s of it; noise the detector took for speech, with no
+ * Measured on the 18 clips: its rule needed at most 1.3 s of it; noise the detector took for speech, with no
  * words, costs at most this much decoding once.
  */
 export const MAX_PAD_MS = 2000
