@@ -733,14 +733,30 @@ ran on a machine at 76 % CPU from two old `chrome-headless-shell` processes nobo
 decoder fell more than 1.5 s behind, dropped audio ("keri natuke alla" heard as "keri") and the page timed out. The
 fall in speech end -> final and the model stage on Haiku need one clean pair of runs, base and branch back to back.
 
-Checkpoint 2, C7: BLOCKED, not measured. At 14:56, 15:07 and 15:27 (2026-11-02) the two `chrome-headless-shell`
-processes (PIDs 17048 and 32932, started 2026-10-29 14:35, 223,000 and 357,000 CPU seconds and still climbing about
-one core each) were running; nobody in this lane started them and none of this lane may stop them. The "before" row
-above was taken under the same load and is not a baseline. To finish: stop them, then run `npx vite --port 5193
---strictPort` and `UTLE_REAL=1 npx tsx scripts/latency.ts --labels <labels> --base http://localhost:5193` in the
-primary checkout (main) and then in this branch, back to back, and once more on the branch with
-`UTLE_MODEL=anthropic:claude-haiku-5-5`. The branch's `latency.ts` says command before each clip (0.6 s); main has no
-modes (1.0 s for everything), so the pair measures exactly the change a command gets.
+Checkpoint 2, C7, measured 2026-11-02 15:41-16:30 after Ralf stopped the two runaway `chrome-headless-shell`
+processes (none left). SYNTHETIC, 18 clips of `scripts/fixtures/labels.tsv`, vite on 5193, one server at a time,
+logs and JSON in `artifacts/fast/cp2/` (not committed). Speech end -> final, p50 / p95 ms:
+
+| run | tail before flush | n | speech end -> final | rules | model | page |
+|---|---|---|---|---|---|---|
+| base (main 2bb7398, main's script) | 1.5 s | 18 | 1698 / 2105 | 4 / 101 | 2746 / 3310 (n=2) | 169 / 437 |
+| branch, command, Sonnet | 1.5 s | 18 | 1702 / 2040 | 5 / 23 | 3241 / 4317 (n=2) | 173 / 434 |
+| branch, dictation, Sonnet | 1.5 s | 18 | 2008 / 2958 | 6 / 97 | 3047 / 3559 (n=4) | 377 / 768 |
+| base (main's server, branch script) | 3 s | 18 | 1704 / 2286 | 4 / 22 | 2589 / 2710 (n=2) | 166 / 444 |
+| branch, command, Sonnet | 3 s | 17 | 1678 / 3045 | 12 / 61 | 2665 / 3293 (n=2) | 186 / 603 |
+| branch, command, Haiku | 3 s | 18 | 1668 / 1954 | 5 / 31 | 2839 / 2851 (n=2) | 176 / 452 |
+
+The fall in speech end -> final p50 is NOT the 300 ms the brief asked for: 4 ms worse at the 1.5 s tail, 26 to 36 ms
+better at 3 s (p95 330 ms better in the Haiku run, 760 ms worse in the Sonnet run). Dictation is 306 ms slower than
+command on the same server, so the mode reaches the decoder. Why the command gain does not show: (1) the
+recogniser's last word arrives late. A probe (`artifacts/fast/cp2/probe.ts`, "keri natuke alla") saw the first
+pause 810 ms after the speech end with "keri natuke all" and the whole last word only at 1078 ms; the final came at
+1763 ms (command) and 1984 ms (dictation). The trailing silence is counted from the last token, so its emission
+delay comes first and the endpoint saving is a fraction of the total. (2) At the recipe's 1.5 s tail the flush ends
+the base's slower utterances before its 1.0 s endpoint fires, so the base is capped (hence `--tail`). (3) Noise:
+the two branch runs at 3 s, same server code, differ by up to 1.3 s on a single clip, so 18 clips cannot resolve
+300 ms. The model stage on Haiku: 2839 / 2851 ms (n=2, "Jah" and "Üks"), no faster than Sonnet here (Haiku thinks
+before the tool call, 33.1). Not done: more clips or repeated runs, and a look at the decoder's emission delay.
 
 ## 2. What Ralf must do before the demo
 
