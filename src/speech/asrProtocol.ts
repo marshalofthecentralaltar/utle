@@ -83,8 +83,12 @@ export type AsrServerMessage =
   | { type: 'final'; text: string; speaker?: Speaker; segment?: number; decision?: SpeakerDecision; why?: FinalWhy }
   /** Round 10 (31.2): only the owner is obeyed and this utterance was not verified as his: no words, only why. */
   | { type: 'rejected'; decision: SpeakerDecision }
-  /** Round 10 (31.2): only the owner is obeyed: speech is being decoded, words withheld until verified (replaces partial). */
-  | { type: 'activity' }
+  /**
+   * Round 10 (31.2): only the owner is obeyed: speech is being decoded, words withheld until verified (replaces partial).
+   * Round 10 (#7, lane LATE review 2): onset: the speech detector heard speech start (in both modes, never words); a held
+   * final waits for what follows.
+   */
+  | { type: 'activity'; onset?: true }
   /** Round 10 (31.2): the session and profile version every decision on this socket must carry (sent while onlyOwner is on). */
   | { type: 'speakerSession'; sessionId: string; profileVersion: string }
   /**
@@ -335,7 +339,7 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
       return decision === null ? null : { type: 'rejected', decision }
     }
     case 'activity':
-      return { type: 'activity' }
+      return record.onset === true ? { type: 'activity', onset: true } : { type: 'activity' }
     case 'speakerSession':
       return typeof record.sessionId === 'string' && typeof record.profileVersion === 'string' ? { type: 'speakerSession', sessionId: record.sessionId, profileVersion: record.profileVersion } : null
     case 'enrolled': {

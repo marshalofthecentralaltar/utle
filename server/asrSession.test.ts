@@ -1595,3 +1595,52 @@ describe("ending on the speech detector's silence (round 10, #7, lane LATE)", ()
     expect(sent.filter((m) => m.type === 'final' || m.type === 'rejected').length).toBe(1)
   })
 })
+
+// ---------- round 10 (#7, lane LATE review 2): the hiss handed ahead is not decoded twice; the detector's onset ----------
+
+class CountingChunkRecognizer extends ChunkRecognizer {
+  streams: ChunkStream[] = []
+  override createStream(): ChunkStream {
+    const s = super.createStream()
+    this.streams.push(s)
+    return s
+  }
+  /** Frames handed to the recogniser so far (decoded or waiting for their chunk). */
+  fed(): number {
+    return this.streams.reduce((n, s) => n + s.decoded + s.pending.length, 0)
+  }
+}
+
+describe('after a detector-ended final (round 10, #7, lane LATE review 2)', () => {
+  it('the recogniser is not handed the same hiss twice: the audio it decodes equals the audio sent, within one frame', () => {
+    const recognizer = new CountingChunkRecognizer()
+    const { sent, feed } = detectorSetup('command', () => new FakeVad(1), recognizer)
+    // 32 frames sent; the final at frame 7 was ended with hiss handed ahead.
+    feed([1, 2, ...silence(30)])
+    expect(whyOf(sent).map((w) => w?.cause)).toEqual(['detector'])
+    expect(Math.abs(recognizer.fed() - 32)).toBeLessThanOrEqual(1)
+  })
+
+  it('speech inside that window is never skipped: the next words are decoded', () => {
+    const { sent, feed } = detectorSetup('command')
+    feed([1, 2, ...silence(6), 3, ...silence(16)])
+    expect(finals(sent)).toEqual(['ava uus', 'vaheleht'])
+  })
+})
+
+describe("the speech detector's onset (round 10, #7, lane LATE review 2)", () => {
+  it('sends one wordless activity when speech starts, before the words, with only the owner off', () => {
+    const { sent, feed } = detectorSetup('command')
+    feed([0, 1, 2, ...silence(12)])
+    expect(sent.filter((m) => m.type === 'activity')).toEqual([{ type: 'activity', onset: true }])
+    expect(sent.findIndex((m) => m.type === 'activity')).toBeLessThan(sent.findIndex((m) => m.type === 'partial'))
+  })
+
+  it('and with only the owner on: no words, and a noise onset with no words closes nothing (no rejection)', () => {
+    const { sent, session, feed } = detectorSetup('command')
+    session.onlyOwner(true)
+    feed([0.3, 0.3, ...silence(12)])
+    expect(sent.filter((m) => m.type === 'activity')).toEqual([{ type: 'activity', onset: true }])
+    expect(sent.some((m) => m.type === 'rejected' || m.type === 'partial' || m.type === 'final')).toBe(false)
+  })
+})

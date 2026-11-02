@@ -32,6 +32,8 @@ export interface DecodeResult {
   quietMs?: number
   /** Round 10 (#7, lane LATE): where the recogniser and the detector stand, in the session's audio (numbers only). */
   why?: DecodeWhy
+  /** Round 10 (#7, lane LATE review 2): the speech detector heard speech start in this frame. */
+  onset?: boolean
 }
 
 /** Round 10 (#7, lane LATE): the decoder's part of a final's why. cause only on an endpoint. */
@@ -237,6 +239,12 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
   /** Round 10 (#7, lane LATE): hiss handed ahead of time in this utterance, and where in the session's audio it began. */
   let paddedMs = 0
   let utteranceStartMs = 0
+  /**
+   * Round 10 (#7, lane LATE review 2): hiss the recogniser already decoded ahead of time (endOnSilence) and so skips
+   * as the same amount of not-speech arrives; and whether the last part was speech (the detector's onset).
+   */
+  let aheadMs = 0
+  let lastSpeech = false
   const forgetUtterance = (): void => {
     pastRuleMs = null
     wordsBefore = ''
@@ -314,9 +322,21 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       const parts: FilteredFrame[] = [...carry, ...(filter ? filter.push(samples) : [{ samples, speech: rms(samples) >= SILENCE_RMS }])]
       carry = []
       let endpoint = false
+      let onset = false
       for (let i = 0; i < parts.length; i += 1) {
         const part = parts[i]
         if (!part) continue
+        if (filter && part.speech && !lastSpeech) onset = true
+        lastSpeech = part.speech
+        // Round 10 (#7, lane LATE review 2): the recogniser decoded this much hiss ahead of time to end the last
+        // utterance (endOnSilence); the same amount of not-speech is skipped as it arrives, so nothing is decoded
+        // twice. Speech is never skipped: it ends the skip (an onset decodes as always, its pre-roll included).
+        if (part.speech) aheadMs = 0
+        else if (aheadMs > 0) {
+          aheadMs -= frameMs(part.samples)
+          quietMs += frameMs(part.samples)
+          continue
+        }
         endpoint = decodeOne(part)
         if (endpoint) {
           carry = parts.slice(i + 1)
@@ -333,6 +353,7 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       const extraMs = fedMs - inputMs - paddedMs
       const why: DecodeWhy = { speechEndMs: filter?.speechEndMs() ?? null, lastTokenMs: lastStamp === null ? null : lastStamp - extraMs, extraMs, ...(endpoint ? { cause } : {}), ...(paddedMs > 0 ? { paddedMs } : {}) }
       if (endpoint) {
+        if (cause === 'detector') aheadMs = paddedMs
         recognizer.reset(stream)
         forgetUtterance()
       }
@@ -344,7 +365,7 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
           if (text !== '') takePhrase(ended)
         } else if (parts.length > 0) ended = null
       }
-      return { text, endpoint, quietMs: quiet, why }
+      return { text, endpoint, quietMs: quiet, why, ...(onset ? { onset: true } : {}) }
     },
     endpointMode(next) {
       mode = next
@@ -790,6 +811,9 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     // Round 7: text with no letter or digit (a lone "." the recogniser can make of a breath) is no words.
     const heard = result.text.trim()
     const text = /[\p{L}\p{N}]/u.test(heard) ? heard : ''
+    // Round 10 (#7, lane LATE review 2): speech started: a wordless activity in both modes (never a voice test), so a
+    // final the client holds waits for what follows; it signals no utterance (nothing is closed for it).
+    if (result.onset === true && !testing) send({ type: 'activity', onset: true })
     // Round 10 (31.2): with only the owner on, unverified words never leave the server: the client
     // gets a wordless activity signal instead of the partial (it keeps the assembler's hold alive).
     // Round 10 (31.7): a voice test sends no partial words either: nothing of it may reach a page.

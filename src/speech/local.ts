@@ -195,6 +195,8 @@ export function createLocalRecognizer(
   let released: string[] | null = null
   /** The last partial of the utterance in progress; empty after its final. */
   let current = ''
+  /** Round 10 (#7, lane LATE review 2): the held final was already held once more for the detector's onset. */
+  let onsetHeld = false
   /** A flush was sent while an utterance was in progress: its final is delivered without the hold. */
   let flushed = false
   /** Frames not sent because the socket was full; the next sent frame ends the lag. */
@@ -457,6 +459,7 @@ export function createLocalRecognizer(
           onPause(message.text)
           return
         case 'final':
+          onsetHeld = false
           if (strict) strictFinal(message)
           else {
             dropStreak = 0
@@ -467,6 +470,15 @@ export function createLocalRecognizer(
           if (strict) onForeignFinal(message.decision.reason)
           return
         case 'activity':
+          // Round 10 (#7, lane LATE review 2): the speech detector heard speech start: a held final waits for it
+          // (the words after a pause inside a command join it), once per final, so noise cannot hold it for ever.
+          if (message.onset === true) {
+            if (!assembler.idle() && !onsetHeld) {
+              onsetHeld = true
+              assembler.activity()
+            }
+            return
+          }
           // Round 10 (31.2): speech in progress, words withheld by the server: an utterance is in
           // progress (for a flush) and the hold stays alive; nothing is shown or typed.
           if (strict) onPartial(SPEAKING)
