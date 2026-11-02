@@ -324,11 +324,16 @@ export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'pag
   const intent = parsed.data
   // Round 6: only a name he has saved, as the request listed it.
   if (intent.kind === 'insertSaved') return namedIn(request.page.saved ?? [], intent.name) ? intent : null
-  // Round 10 (#5, 34.4): a tie is two different items of the page.
+  // Round 10 (#5, 34.4): a tie is two different items of the page, of the same kind (two buttons,
+  // two links, two rows). Two of different kinds (a Kommenteeri button and the comment field it opens)
+  // are no tie: the first, the model's likelier, runs by its role, so sampling never asks there.
   if (intent.kind === 'choose') {
     const [a, b] = intent.ids
-    const onPage = (id: number): boolean => request.page.items.some((item) => item.id === id)
-    return a !== b && onPage(a) && onPage(b) ? intent : null
+    const first = request.page.items.find((item) => item.id === a)
+    const second = request.page.items.find((item) => item.id === b)
+    if (a === b || first === undefined || second === undefined) return null
+    if (first.role === second.role) return intent
+    return { kind: 'command', command: first.role === 'field' ? { kind: 'focusItem', id: a } : { kind: 'clickItem', id: a } }
   }
   if (intent.kind !== 'command') return intent
   const c = intent.command
