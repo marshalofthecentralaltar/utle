@@ -686,7 +686,12 @@ async function ensureOffscreen(): Promise<void> {
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
   const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
   if (existing && existing.documentUrl === wanted) return
-  if (creating) return creating
+  // A document being made was asked for with the settings of its moment (the wake mode chosen, the word not yet
+  // saved): once it is there, look again, so a setting changed meanwhile still gets its document.
+  if (creating) {
+    await creating
+    return ensureOffscreen()
+  }
   creating = (async () => {
     if (existing) {
       // The old engine dies with its document without a word: what it published is no longer true.

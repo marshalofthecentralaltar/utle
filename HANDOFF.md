@@ -686,8 +686,18 @@ on which to keep, per file.**
 ## 1o. Round 10, FAST lane (2026-11-02): two models, endpointing per mode, acting on a pause (#7)
 
 ARCHITECTURE 33. Built: `UTLE_MODEL_CAREFUL` (33.1), command 0.6 s and dictation 1.0 s endpointing told on the wire
-(33.2), the server's `pause` and the early release of a rule-matched partial with only the owner off (33.3).
-Not built: the timed scroll (33.4). Gate: `npm run check` 56 files, 4085 tests. The browser suite was not run.
+(33.2), the server's `pause` and the early release of a rule-matched partial with only the owner off (33.3), and the
+timed scroll (33.4): "keri alla kaks minutit", "keri üles 30 sekundit", "keri alla minut aega" scroll slowly for that
+long, the strip says so while it runs and "Kerimine lõppes." after, "stopp", "aitab" and "katkesta" end it at once.
+
+Checkpoint 2: a client that never says its endpoint mode keeps dictation (1.0 s), so the dev page and `npm run smoke`
+behave as before; only the extension (which always says) gets 0.6 s for commands, and `scripts/latency.ts` says
+command before each clip. An Anthropic `UTLE_MODEL_CAREFUL` without `ANTHROPIC_API_KEY` while the quick slot can
+answer now stops the start naming the variable. Gate: `npm run check` 56 files, 4114 tests. Browser suite
+(`npx tsx extension/test/run.ts`): 326 PASS, 0 FAIL, the two timed-scroll checks among them. On the way it failed
+three runs in a row on "wake: ... &wake=": choosing wake mode starts making the listening document with the default
+word, and a word saved before that document existed was lost (`ensureOffscreen` handed back the document already
+being made). It now looks again once that document is there (`extension/src/background.ts`).
 
 Eval, `npx tsx scripts/intent-eval.ts`, 94 cases (78 intent, 16 addressee), each run twice. Logs and JSON in
 `artifacts/fast/` (not committed).
@@ -722,6 +732,15 @@ from the before run (it had hot-restarted on every server edit and loaded the sp
 ran on a machine at 76 % CPU from two old `chrome-headless-shell` processes nobody in this lane started, where the
 decoder fell more than 1.5 s behind, dropped audio ("keri natuke alla" heard as "keri") and the page timed out. The
 fall in speech end -> final and the model stage on Haiku need one clean pair of runs, base and branch back to back.
+
+Checkpoint 2, C7: BLOCKED, not measured. At 14:56, 15:07 and 15:27 (2026-11-02) the two `chrome-headless-shell`
+processes (PIDs 17048 and 32932, started 2026-10-29 14:35, 223,000 and 357,000 CPU seconds and still climbing about
+one core each) were running; nobody in this lane started them and none of this lane may stop them. The "before" row
+above was taken under the same load and is not a baseline. To finish: stop them, then run `npx vite --port 5193
+--strictPort` and `UTLE_REAL=1 npx tsx scripts/latency.ts --labels <labels> --base http://localhost:5193` in the
+primary checkout (main) and then in this branch, back to back, and once more on the branch with
+`UTLE_MODEL=anthropic:claude-haiku-5-5`. The branch's `latency.ts` says command before each clip (0.6 s); main has no
+modes (1.0 s for everything), so the pair measures exactly the change a command gets.
 
 ## 2. What Ralf must do before the demo
 
