@@ -3224,5 +3224,68 @@ only-owner rejection under the same segment), `src/speech/local.test.ts` (the as
 match by segment, the stale wake, LIMITED without a spotter, only-owner), `extension/src/engine.test.ts`
 (the matrix in the engine, only-owner), and `extension/test/voice.ts` section 9: the behaviour matrix
 of #2 through the real recogniser, the real spotter, TitaNet and the real engine (SYNTHETIC voices,
-`scripts/fixtures/wake-set`), part B with only the owner on. Not verified: a real voice, a real room,
-a real microphone, the extension in Chrome end to end with the spotter (section 9 has no browser).
+`scripts/fixtures/wake-set`), part B with only the owner on. `extension/test/voice.ts` section 10
+(`UTLE_ONLY=wakechrome`, lane REALWAKE): the extension in Chromium, wake mode set in its storage, the
+fake microphone playing `wake-set/chrome-sequence.wav` (SYNTHETIC voice vesta, `scripts/kws-set.ts
+--chrome`), a server of the test's process over the real models with the spotter; its messages are
+tapped where it sends them. PASSIVE "Ma ütlen sulle homme." showed nothing (no wake on the wire, never
+ACTIVE), "Ütle." showed ACTIVE ("Kuulan sind.", the dot on), "Ütle." again went back to PASSIVE, and
+"Ütle, ava YouTube." from PASSIVE woke and navigated the tab to YouTube once (a stand-in page answers
+for it: no real site is hit); screenshots `docs/proof/wake-chrome-*.png`. Not verified: a real voice
+saying the word (35.6), a real room, a real microphone.
+
+### 35.6 Real voices (lane REALWAKE: `scripts/kws-real.ts`, `scripts/kws-forms.ts`)
+
+**The set.** `npx tsx scripts/kws-real.ts --fetch <cache>` downloads FLEURS `et_ee` (dev, test, train;
+read sentences; CC BY 4.0) and VoxPopuli `et` (validation and test; European Parliament speeches; CC0)
+into a directory outside the repository, at pinned revisions, each file checked against the size and
+hash Hugging Face lists (THIRD-PARTY.md). VoxPopuli's train split is left out: its rows are too large
+for Hugging Face's datasets-server (HTTP 500) and its parquet needs a reader this repository does not
+have. Each transcript is searched for every form of the verb (`formsOf`: a word starting with `ütl`,
+`ütel`, `öel` or `öeld`, also after a compounding particle as in "väljaütlemine"; "rüütlite" and
+"ööelu" are not forms) and the clip labelled: wake (the bare "ütle"), literal (that form quoted or
+after "sõna"), relative (another `ütl`/`ütel` form), kin (only `öel`/`öeld` forms), none.
+
+| set | clips | hours | speakers | female / male | wake | literal | relative | kin | none |
+|---|---|---|---|---|---|---|---|---|---|
+| fleurs-dev | 387 | 1.24 | not published | 387 / 0 | 0 | 0 | 12 | 0 | 375 (73 min) |
+| fleurs-test | 893 | 3.01 | not published | 893 / 0 | 0 | 0 | 20 | 7 | 866 (175 min) |
+| fleurs-train | 2501 | 7.30 | not published | 995 / 1506 | 0 | 0 | 76 | 16 | 2409 (420 min) |
+| voxpopuli-validation | 50 | 0.14 | 5 | 12 / 38 | 0 | 0 | 5 | 0 | 45 (7 min) |
+| voxpopuli-test | 51 | 0.13 | 6 | 32 / 19 | 0 | 0 | 3 | 1 | 47 (7 min) |
+| all | 3882 | 11.81 | 8 in VoxPopuli | 2319 / 1563 | 0 | 0 | 116 | 24 | 3742 (11.35 h) |
+
+The forms found: ütles 84, ütlesid 13, öeldes 11, ütleb 8, öelda 7, öeldakse 4, ütlematagi 3, öeldi 3,
+öelge 2, öeldut 2, ütlen 2, ütlemast 2, ütlevad 2, ütelda 1, ütleksin 1. The bare form is in none of the
+3882 clips: read encyclopaedia sentences and parliament speeches do not tell anyone "ütle". These
+corpora cannot measure recall on real voices, and no recall claim is made from them. FLEURS publishes
+no speaker ids; its dev and test splits are female voices only.
+
+**The method.** `--eval <cache> --set <sets> [--part i/n]` runs the server's own path, not a copy:
+`createAsrSession` over `decoderInThread` with the recogniser (hotwords included), the speech detector
+and the spotter (`WAKE_SPEC`), command endpointing (wake mode, PASSIVE, no box), each set as one
+continuous stream (every clip, then 1.5 s of silence, in 100 ms frames, decoded as fast as it goes,
+nothing dropped). The coordinator is `listenFinal` from PASSIVE as `local.ts` feeds it: a final is heard
+when it carries the newest wake's segment. Each final is judged from PASSIVE on its own (an upper bound:
+in ACTIVE a second wake is none; the assembler's joining of finals is not modelled). `--report` gives
+false wakes per hour on the clips labelled none (spotter wake events, coordinator wakes, the text alone)
+with the one-sided 95 % Poisson upper bound, and per label n, spotter hit, coordinator woke. Cost: real
+time factor 0.30 to 0.47, 89 % of one core in CPU time (recogniser, detector and spotter together), so the
+11.8 h take about 3.6 h on one process. It saves every 50 clips and the same command resumes.
+
+**REAL, measured 2026-11-02, beside the SYNTHETIC table of 35.1.** Only VoxPopuli test is complete
+(0.12 h without any form). The full run (two processes, 20:07 to 20:33) was stopped by the session's
+low-memory reap at about 40 minutes of audio each, before it saved anything; it has not been run again.
+
+| set (REAL) | hours without any form | spotter wake events | coordinator wakes (35) | text alone (32) | per hour, 95 % upper bound | relatives: spotter hit / woke | kin: hit / woke |
+|---|---|---|---|---|---|---|---|
+| voxpopuli-test | 0.12 | 0 | 0 | 0 | 0 (25.9) | 1/3 ("ütleb") / 0/3 | 0/1 / 0/1 |
+
+What this says: nothing about #2's target (at most 0.1 false activations per hour): 0.12 h bounds the rate
+only at 25.9 per hour. The one relative the spotter took for the word ("Nimelt ütleb punkt kuus ...")
+woke nothing, because the text said "ütleb" (35.3). With no false wake at all, a claim of 0.1 per hour at
+95 % needs about 30 h of such audio; the 11.35 h here could bound it at 0.26 per hour at best.
+
+**What it changes in 35.1.** Nothing: the spec stays as measured, and the SYNTHETIC table stays the
+only measurement of recall. Recall on real voices needs real people saying "Ütle": the owner's
+recordings (#4) or a recorded set; no public Estonian corpus found has the bare imperative.

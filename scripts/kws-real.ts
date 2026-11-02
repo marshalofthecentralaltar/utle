@@ -10,7 +10,8 @@
  *   npx tsx scripts/kws-real.ts --eval <cache> --set fleurs-dev[,voxpopuli-test,...] [--part 1/2]
  *                                                    each set through the server's own decoder: one continuous
  *                                                    stream as one connection feeds it; writes artifacts/kws-real/
- *   npx tsx scripts/kws-real.ts --report            the tables from every artifacts/kws-real/*.json
+ *   npx tsx scripts/kws-real.ts --report            the tables from every artifacts/kws-real/*.json (a stopped run is saved every
+ *                                                    CHECKPOINT clips; the same --eval command resumes it)
  *
  * The eval runs the server's path, not a copy of it: createAsrSession over decoderInThread with the
  * recogniser (server/asrModel.ts, hotwords included), the speech detector (server/vad.ts) and the
@@ -273,7 +274,12 @@ interface SetOut {
   cpuS: number
   wallS: number
   clips: ClipOut[]
+  /** Saved at a checkpoint (every CHECKPOINT clips): the same command resumes after its last clip. */
+  partial?: boolean
 }
+
+/** Clips between checkpoints: a stopped run loses at most this many. */
+const CHECKPOINT = 50
 
 /** The spotter with its hits counted (the server never reports a decoy). */
 function counted(spotter: KeywordSpotterLike, onHit: (label: string) => void): KeywordSpotterLike {
@@ -290,7 +296,11 @@ function counted(spotter: KeywordSpotterLike, onHit: (label: string) => void): K
   }
 }
 
-function evaluate(cache: string, name: string, rows: readonly Row[]): SetOut {
+/**
+ * A resumed run (previous: a checkpoint of the same set and part) starts a new stream at the first clip the
+ * checkpoint does not have: one stream boundary more than an uninterrupted run, nothing else differs.
+ */
+function evaluate(cache: string, name: string, rows: readonly Row[], previous: SetOut | null, save: (result: SetOut) => void): SetOut {
   const model = loadModel(root)
   if (!model.ok) throw new Error(`recogniser: ${model.reason}`)
   const vad = loadVad(root)
@@ -298,7 +308,7 @@ function evaluate(cache: string, name: string, rows: readonly Row[]): SetOut {
   const loaded = loadSpotter(root, WAKE_SPEC)
   if (!loaded.ok) throw new Error(`spotter: ${loaded.reason}`)
   const word = createWake('Ütle')
-  const out: ClipOut[] = []
+  const out: ClipOut[] = [...(previous?.clips ?? [])]
   let clip: ClipOut | null = null
   let pendingWake: number | null = null
   let spotterOn = false
@@ -331,7 +341,13 @@ function evaluate(cache: string, name: string, rows: readonly Row[]): SetOut {
   const cpu = process.cpuUsage()
   const wall = performance.now()
   let audioS = 0
+  const sofar = (partial: boolean): SetOut => {
+    const used = process.cpuUsage(cpu)
+    return { name, spec: 'server (WAKE_SPEC)', audioS: (previous?.audioS ?? 0) + audioS, cpuS: (previous?.cpuS ?? 0) + (used.user + used.system) / 1e6, wallS: (previous?.wallS ?? 0) + (performance.now() - wall) / 1000, clips: out, ...(partial ? { partial: true } : {}) }
+  }
+  if (previous !== null) console.log(`  ${name}: resuming after ${out.length} clips of a checkpoint`)
   for (const [i, row] of rows.entries()) {
+    if (i < out.length) continue
     const wav = readAnyWav(join(cache, row.path))
     const samples = wav.rate === RATE ? wav.samples : resample(wav.samples, wav.rate, RATE)
     clip = { set: row.set, path: row.path, label: row.label, seconds: samples.length / RATE, text: row.text, wakes: 0, decoys: [], finals: [] }
@@ -343,13 +359,15 @@ function evaluate(cache: string, name: string, rows: readonly Row[]): SetOut {
       }
     }
     audioS += samples.length / RATE + GAP_S
-    if ((i + 1) % 100 === 0) console.log(`  ${name}: ${i + 1}/${rows.length} clips, ${(audioS / 60).toFixed(0)} min of audio, RTF ${((performance.now() - wall) / 1000 / audioS).toFixed(3)}`)
+    if ((i + 1) % CHECKPOINT === 0) {
+      save(sofar(true))
+      console.log(`  ${name}: ${i + 1}/${rows.length} clips, ${(audioS / 60).toFixed(0)} min of audio this run, RTF ${((performance.now() - wall) / 1000 / audioS).toFixed(3)}`)
+    }
   }
   session.flush()
   run()
   session.close()
-  const used = process.cpuUsage(cpu)
-  return { name, spec: 'server (WAKE_SPEC)', audioS, cpuS: (used.user + used.system) / 1e6, wallS: (performance.now() - wall) / 1000, clips: out }
+  return sofar(false)
 }
 
 // ---------- the report ----------
@@ -360,6 +378,8 @@ function report(sets: readonly SetOut[]): void {
   const clips = sets.flatMap((s) => s.clips)
   const audio = sets.reduce((sum, s) => sum + s.audioS, 0)
   const cpu = sets.reduce((sum, s) => sum + s.cpuS, 0)
+  const partial = sets.filter((s) => s.partial === true).map((s) => `${s.name} (${s.clips.length} clips)`)
+  if (partial.length > 0) console.log(`PARTIAL: these sets stopped at a checkpoint and are counted as far as they got: ${partial.join(', ')}`)
   console.log(`REAL: ${clips.length} clips of real human Estonian voices (${sets.map((s) => s.name).join(', ')}); spec ${sets[0]?.spec ?? '-'}; ${(audio / 3600).toFixed(2)} h fed (gaps included), CPU ${(100 * cpu / audio).toFixed(1)} % of one core for the recogniser, speech detector and spotter together.`)
   const groups = [...new Set(clips.map((c) => c.set.split('-')[0] ?? ''))]
   const negLines = [
@@ -446,8 +466,14 @@ async function main(): Promise<void> {
       const rows = all.filter((_, i) => i % parts === part - 1)
       const name = parts === 1 ? set : `${set}.${part}of${parts}`
       console.log(`${name}: ${rows.length} clips, ${hours(rows).toFixed(2)} h`)
-      const result = evaluate(cache, name, rows)
-      writeFileSync(join(outDir, `${name}.json`), JSON.stringify(result))
+      const file = join(outDir, `${name}.json`)
+      const previous = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as SetOut) : null
+      if (previous !== null && previous.partial !== true) {
+        console.log(`${name}: done already (${file}); delete it to run again`)
+        continue
+      }
+      const result = evaluate(cache, name, rows, previous, (partial) => writeFileSync(file, JSON.stringify(partial)))
+      writeFileSync(file, JSON.stringify(result))
       console.log(`${name}: ${(result.audioS / 3600).toFixed(2)} h in ${(result.wallS / 60).toFixed(1)} min (RTF ${(result.wallS / result.audioS).toFixed(3)}, CPU ${(100 * result.cpuS / result.audioS).toFixed(1)} % of one core)`)
     }
     return

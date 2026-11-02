@@ -992,6 +992,44 @@ the spotter (section 9 has no browser), the confirmation time target (p95 1.1 s 
 0.8 s; the final comes later anyway). Open on #2: the browser-side detector and PASSIVE without recognition on a hosted
 server (35.1 says what they take), real voices.
 
+## 1t. Round 10, prompt 5, lane REALWAKE (2026-11-02): the wake word on real voices, and in Chrome (#2)
+
+ARCHITECTURE 35.5 (section 10) and 35.6. Branch `r10-realwake` on `r10-kws` (PR #11), not merged.
+
+Built. `scripts/kws-real.ts`: `--fetch <cache>` downloads FLEURS `et_ee` (11.55 h, CC BY 4.0) and VoxPopuli `et`
+validation and test (0.27 h, CC0) into a directory outside the repository, pinned revisions, every file checked
+against Hugging Face's size and hash (VoxPopuli's audio comes through the datasets-server, which publishes no hash:
+sha256 of each in `<cache>/voxpopuli-et/SHA256SUMS`); `labels.tsv` labels each clip from its transcript
+(`scripts/kws-forms.ts`, tested). `--eval` runs the server's own decoder path with the spotter as one stream per set
+and judges each final with `listenFinal` from PASSIVE; `--report` prints the tables. `voice.ts` section 10: wake mode
+in Chromium with the spotter (`UTLE_REAL=1 UTLE_ONLY=wakechrome npx tsx extension/test/voice.ts`, needs vite on 5193
+for the pages; the ASR server is the test's own).
+
+The set (`--fetch`, every checksum OK): 3882 clips, 11.81 h, 11.35 h of them without any form of the verb; 116
+relatives, 24 kin (`öel-` only), the bare "ütle" in 0 clips (table in 35.6). So no recall on real voices can come
+from these corpora, and none is claimed. FLEURS dev and test are female voices only; FLEURS publishes no speaker ids.
+
+Measured. Section 10, first run: ALL PASS, 9 checks. The wire: spotter on; "Ma ütlen sulle homme" final with no wake;
+`wake#1` then `final#1 "Ütle"` and the strip ACTIVE; `wake#2`, `final#2 "Ütle."` and back to PASSIVE; `wake#3`,
+`final#3 "Ütle, ava Youtube."`, the strip "Avatud: YouTube (stand-in).", one YouTube navigation. The eval: only
+VoxPopuli test completed (0.12 h without the word: 0 spotter wake events, 0 coordinator wakes, 0 on the text alone;
+95 % upper bound 25.9 per hour; one relative, "ütleb", got a spotter wake event and woke nothing). The full run (two
+processes at Idle priority, 2026-11-02 20:07 to 20:33, about 3 cores each, while lane LIVE held the suite lock from
+20:08) was stopped by the session's low-memory reap after about 40 minutes of audio each, before its first save; the
+orphaned workers were stopped too. Not run again: the reap asks for a go first. The script now saves every 50
+clips and resumes. To finish it, one process at a time:
+`npx tsx scripts/kws-real.ts --eval <cache> --set fleurs-test,fleurs-dev,voxpopuli-validation,fleurs-train`, then
+`--report` (about 3.6 h for everything; fleurs-test plus dev alone are 4.25 h of audio, about 1.3 h).
+
+Gate on `cae1838`: `npm run check` 61 files, 4279 tests, green; `npx tsx extension/test/run.ts` 330 PASS, ALL PASS
+(docs/proof restored after it). Spec unchanged (nothing measured asks for a change), so the SYNTHETIC table of 35.1
+was not re-run.
+
+Not verified: false wakes per hour on hours of real speech (0.12 h is not a measurement of #2's 0.1 per hour; 30 h
+without a false wake would be), recall on real voices (no public corpus has people saying "Ütle"), the resume path
+of `--eval` (written after the reap, type-checked, not run), a real microphone or room (section 10 is a synthetic voice
+through Chrome's fake microphone).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
