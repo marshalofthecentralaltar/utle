@@ -572,7 +572,7 @@ const COMMAND_PHRASES = [
   'sulge', 'close', 'peida riba', 'peida ütle', 'hide the bar', 'näita riba', 'show the bar',
   'kirjuta siia', 'siia', 'write here', 'type here', 'ära kirjuta siia', 'do not write here',
   'tühjenda otsing', 'kustuta otsing', 'tühjenda kast', 'clear the search', 'clear the field',
-  'sulge aken', 'pane kinni', 'välja', 'escape', 'close this', 'enter', 'sisesta', 'kinnita',
+  'sulge aken', 'pane kinni', 'välja', 'escape', 'close this', 'enter', 'sisesta',
   'otsi googlest ilm', 'guugelda ilm', 'google weather', "otsi youtube'ist kassid", 'otsi youtubest kassid', 'search youtube for cats',
   'mängi', 'esita', 'play', 'paus', 'peata', 'pause', 'stop the video', 'vaigista', 'heli maha', 'mute', 'heli tagasi', 'heli peale',
   'unmute', 'heli valjemaks', 'valjemaks', 'kõvemaks', 'louder', 'volume up', 'heli vaiksemaks', 'vaiksemaks', 'quieter', 'volume down',
@@ -1110,7 +1110,6 @@ describe('M7 the new phrases', () => {
     ['close this', { kind: 'pressKey', key: 'Escape' }],
     ['enter', { kind: 'pressKey', key: 'Enter' }],
     ['sisesta', { kind: 'pressKey', key: 'Enter' }],
-    ['kinnita', { kind: 'pressKey', key: 'Enter' }],
     ['otsi kassid', { kind: 'siteSearch', query: 'kassid' }],
     ['Otsi ilm Tallinnas.', { kind: 'siteSearch', query: 'ilm tallinnas' }],
     ['search for cats', { kind: 'siteSearch', query: 'cats' }],
@@ -1876,7 +1875,9 @@ describe('Round 5 fields: "valmis", "edasi", "kinnita" in a form', () => {
     expect(inpageStep(session(), 'edasi', EMPTY).commands).toEqual(only({ kind: 'history', direction: 'forward' }))
     expect(inpageStep(session(), 'edasi', box('Tere')).commands).toEqual(only({ kind: 'setText', text: 'Tere edasi' }))
     expect(inpageStep(session(), 'kinnita', box('Tere')).commands).toEqual(only({ kind: 'setText', text: 'Tere kinnita' }))
-    expect(inpageStep(session(), 'kinnita', EMPTY).commands).toEqual(only({ kind: 'pressKey', key: 'Enter' }))
+    // Round 10 (#5, 34.1): outside a one-line field "kinnita" is the page's confirming button: the model is asked.
+    expect(inpageStep(session(), 'kinnita', EMPTY).ask).toBe(true)
+    expect(inpageStep(session(), 'kinnita', { present: false, text: '', armed: false }).ask).toBe(true)
     expect(setTextOf(inpageStep(session(), 'valmis', box('Tere')).commands)).toBe('Tere valmis')
     expect(inpageStep(session(), 'logi sisse', EMPTY).ask).toBe(true)
   })

@@ -34,7 +34,8 @@ describe('scripted enrolment phrases (round 7)', () => {
 
   it("take the command words from the browser's own tables, or the engine's three", () => {
     const browserWords = new Set(BROWSER_PHRASES.flatMap(phraseWords))
-    const engineWords = new Set(['saada', 'valmis', 'katkesta'])
+    // Round 10 (#5, 34.1): kinnita is Enter only in an armed one-line field (inpage.ts FORM_KEYS), like valmis.
+    const engineWords = new Set(['saada', 'valmis', 'katkesta', 'kinnita'])
     for (const word of ENROL_COMMAND_WORDS) expect(browserWords.has(word) || engineWords.has(word), word).toBe(true)
   })
 

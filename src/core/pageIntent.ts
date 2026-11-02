@@ -21,8 +21,11 @@ export interface IntentRequest {
   utterance: string
   page: PageContext
   tabs: TabSummary[]
-  /** The last strip lines, newest last, so "ei, teine" can refer to them. At most 3. */
-  recent: string[]
+  /**
+   * Round 10 (#5, ARCHITECTURE 34.2): the last commands he gave and how they went, oldest first, at
+   * most 3, so "ava see uues vahelehes" and "mine tagasi sinna kus ma olin" can refer to them.
+   */
+  recent: RecentCommand[]
   /**
    * Round 5: how hard the model should think. quick for a short utterance (low effort, answer in a
    * second); careful for a long one or a chain (higher effort: read the whole utterance, plan every
@@ -64,6 +67,17 @@ export interface IntentStep {
   message: string
 }
 
+/** Round 10 (#5, 34.2): one earlier command: what he said, what ran on the page, whether it worked. */
+export interface RecentCommand {
+  /** His words, as heard. '' for an entry from an extension older than round 10 (a strip line). */
+  utterance: string
+  /** What ran, e.g. "newTab https://mail.google.com/", "clickItem 13 \"Anthropic\"", "nothing; said \"…\"". */
+  ran: string
+  ok: boolean
+  /** When it opened, switched or closed a tab: the tab in front before it, as `2 "title"`. */
+  from?: string
+}
+
 export interface TabSummary {
   /** 1-based, left to right. */
   index: number
@@ -89,6 +103,11 @@ export type PageIntent =
   | { kind: 'wake' }
   /** The model could not tell. say is one short line in the request's language for the strip. */
   | { kind: 'unclear'; say: string }
+  /**
+   * Round 10 (#5, 34.4): two items of the page match his words equally well; the bar asks
+   * "Kumb: 1 …, 2 …?" and his next "üks" or "kaks" clicks one. Both ids are items of the page.
+   */
+  | { kind: 'choose'; ids: [number, number] }
   /**
    * Round 6 (26.3): type one of his saved values. name is one of page.saved, exactly as listed;
    * the engine finds the value locally. The model never sees a value.
@@ -210,6 +229,7 @@ export const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kin
   z.object({ kind: z.literal('sleep') }),
   z.object({ kind: z.literal('wake') }),
   z.object({ kind: z.literal('unclear'), say: Short }),
+  z.object({ kind: z.literal('choose'), ids: z.tuple([Id, Id]) }),
   z.object({ kind: z.literal('insertSaved'), name: z.string().min(1).max(SAVED_NAME_CHARS + 20) }),
 ])
 
@@ -231,7 +251,12 @@ export const MAX_INTENT_STEPS = 4
 
 const IntentStepSchema: z.ZodType<IntentStep> = z.object({ action: z.string().max(60), say: z.string().max(120), ok: z.boolean(), message: z.string().max(200) })
 
-const PageItemSchema = z.object({ id: Id, role: z.string().max(20), text: z.string().max(80) })
+const PageItemSchema = z.object({ id: Id, role: z.string().max(20), text: z.string().max(80), color: z.string().max(20).optional() })
+/** Round 10 (#5, 34.2): one earlier command. A plain string is a strip line from an extension older than round 10. */
+const RecentCommandSchema = z.union([
+  z.object({ utterance: z.string().max(200), ran: z.string().max(200), ok: z.boolean(), from: z.string().max(320).optional() }),
+  z.string().max(200).transform((line): RecentCommand => ({ utterance: '', ran: line, ok: true })),
+])
 const BoxSchema = z.object({
   present: z.boolean(),
   text: z.string().max(4000),
@@ -262,7 +287,7 @@ export const IntentRequestSchema: z.ZodType<IntentRequest> = z.object({
     places: z.array(z.string().max(PLACE_NOUN_CHARS)).max(MAX_PLACES).optional(),
   }),
   tabs: z.array(z.object({ index: z.number().int().min(1), title: z.string().max(300), active: z.boolean() })).max(60),
-  recent: z.array(z.string().max(200)).max(3),
+  recent: z.array(RecentCommandSchema).max(3),
   care: z.enum(['quick', 'careful']).optional(),
   steps: z.array(IntentStepSchema).max(MAX_INTENT_STEPS).optional(),
   chain: z
@@ -299,6 +324,12 @@ export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'pag
   const intent = parsed.data
   // Round 6: only a name he has saved, as the request listed it.
   if (intent.kind === 'insertSaved') return namedIn(request.page.saved ?? [], intent.name) ? intent : null
+  // Round 10 (#5, 34.4): a tie is two different items of the page.
+  if (intent.kind === 'choose') {
+    const [a, b] = intent.ids
+    const onPage = (id: number): boolean => request.page.items.some((item) => item.id === id)
+    return a !== b && onPage(a) && onPage(b) ? intent : null
+  }
   if (intent.kind !== 'command') return intent
   const c = intent.command
   // ---------- mail (29.3.3): a recipient's address is one the page shows, never one the model made up ----------

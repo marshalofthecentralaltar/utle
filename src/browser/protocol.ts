@@ -202,6 +202,8 @@ export interface PageItem {
   role: string
   /** Its visible text or label, at most 60 characters. */
   text: string
+  /** Round 10 (#5, ARCHITECTURE 34.1): a filled button's colour in one plain English word ("black"); absent otherwise. */
+  color?: string
 }
 
 export interface MediaState {

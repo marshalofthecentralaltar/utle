@@ -18,6 +18,8 @@ import { composeWindowOf, mailPartOf, subjectIn } from './box.ts'
 import type { MailPart } from './box.ts'
 // ---------- reading aloud (29.5) ----------
 import { readingText } from '../../src/core/reading.ts'
+// Round 10 (#5, 34.1): a link styled as a button, and a filled button's colour.
+import { colorName, isFilled, looksLikeButton } from './buttonLook.ts'
 
 /** What background.ts sends: a command plus which messaging site the page is. */
 export type PageCommand = BrowserCommand & { site: SiteName | null }
@@ -165,6 +167,8 @@ interface Candidate {
   dialog: boolean
   role: string
   text: string
+  /** Round 10 (#5, 34.1): a filled button's colour in one plain word ("black"); absent otherwise. */
+  color?: string
 }
 
 function sameBox(a: DOMRect, b: DOMRect): boolean {
@@ -201,12 +205,72 @@ function roleOf(el: HTMLElement): string {
   // A plain boolean: the type guard would otherwise narrow el to never below.
   const typeable: boolean = isTextField(el)
   if (typeable || el instanceof HTMLSelectElement || role === 'textbox') return 'field'
-  if (el instanceof HTMLAnchorElement || role === 'link') return 'link'
+  // Round 10 (#5, 34.1): a link styled as a button (role, class, or a filled box round short text) is a button.
+  if (el instanceof HTMLAnchorElement) return looksLikeButton(linkLook(el)) ? 'button' : 'link'
+  if (role === 'link') return 'link'
   if (el instanceof HTMLButtonElement || role === 'button' || role === 'checkbox' || el.localName === 'summary') return 'button'
   if (role === 'tab') return 'tab'
   if (role === 'option' || role === 'menuitem') return 'option'
   if (role === 'row' || role === 'listitem' || role === 'gridcell') return 'row'
   return 'other'
+}
+
+/**
+ * Round 10 (#5, 34.1): the element whose box a link shows: the link, or the cell around it that
+ * holds only it (a mail's button is often a filled table cell with the link inside), up to two up.
+ */
+function boxOfLink(a: HTMLElement): HTMLElement {
+  const own = getComputedStyle(a)
+  if (isFilled(own.backgroundColor, own.backgroundImage)) return a
+  let inner: HTMLElement = a
+  let node = a.parentElement
+  for (let depth = 0; node && node !== document.body && depth < 2; depth++, inner = node, node = node.parentElement) {
+    if (!holdsOnly(node, inner)) break
+    const s = getComputedStyle(node)
+    if (isFilled(s.backgroundColor, s.backgroundImage)) return node
+  }
+  return a
+}
+
+/**
+ * True when nothing in `node` beside `inner` has text or a link, so its text is the link's and it
+ * holds one link. Stops at the first sibling that has either: on a list or a menu of many links that
+ * is the next one, so the walk costs the same per link however long the list is (round 10 defect 2:
+ * comparing the parent's whole textContent made readPage quadratic in the list).
+ */
+function holdsOnly(node: HTMLElement, inner: HTMLElement): boolean {
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child === inner) continue
+    if (child.nodeType === Node.TEXT_NODE) {
+      if ((child.textContent ?? '').trim() !== '') return false
+    } else if (child instanceof Element) {
+      if ((child.textContent ?? '').trim() !== '' || child.matches('a[href]') || child.querySelector('a[href]')) return false
+    }
+  }
+  return true
+}
+
+/** What looksLikeButton reads of a link: its role, its class and its box's, its name, the fill and padding of its box. */
+function linkLook(a: HTMLAnchorElement): Parameters<typeof looksLikeButton>[0] {
+  const box = boxOfLink(a)
+  const s = getComputedStyle(box)
+  const inner = box === a ? null : getComputedStyle(a)
+  const px = (outer: string, link: string | undefined): number => (Number.parseFloat(outer) || 0) + (link === undefined ? 0 : Number.parseFloat(link) || 0)
+  return {
+    role: a.getAttribute('role'),
+    className: `${a.getAttribute('class') ?? ''} ${box === a ? '' : (box.getAttribute('class') ?? '')}`.trim(),
+    // The name only matters for a filled box (looksLikeButton's third rule); innerText costs a layout read per link.
+    text: isFilled(s.backgroundColor, s.backgroundImage) ? firstLine(a.innerText || a.textContent || '') : '',
+    background: s.backgroundColor,
+    backgroundImage: s.backgroundImage,
+    padding: { top: px(s.paddingTop, inner?.paddingTop), right: px(s.paddingRight, inner?.paddingRight), bottom: px(s.paddingBottom, inner?.paddingBottom), left: px(s.paddingLeft, inner?.paddingLeft) },
+  }
+}
+
+/** Round 10 (#5, 34.1): a button's fill in one plain word, or undefined (transparent, faint, a gradient). */
+function buttonColor(el: HTMLElement): string | undefined {
+  const box = el instanceof HTMLAnchorElement ? boxOfLink(el) : el
+  return colorName(getComputedStyle(box).backgroundColor) ?? undefined
 }
 
 // ----- accessible names -----
@@ -436,14 +500,19 @@ function collect(site: Site | null): { visible: Candidate[]; near: Candidate[] }
     return true
   })
   const memo = new Map<Element, boolean>()
-  const named: Candidate[] = kept.map((c) => ({
-    el: c.el,
-    rect: c.rect,
-    near: c.near,
-    dialog: inDialog(c.el, memo),
-    role: roleOf(c.el),
-    text: c.el === video ? 'praegune video' : nameOfItem(c.el, site),
-  }))
+  const named: Candidate[] = kept.map((c) => {
+    const role = roleOf(c.el)
+    const color = role === 'button' ? buttonColor(c.el) : undefined
+    return {
+      el: c.el,
+      rect: c.rect,
+      near: c.near,
+      dialog: inDialog(c.el, memo),
+      role,
+      text: c.el === video ? 'praegune video' : nameOfItem(c.el, site),
+      ...(color === undefined ? {} : { color }),
+    }
+  })
   // One item per address: the member with the longest name, placed where the topmost member is.
   const byHref = new Map<string, Candidate>()
   const merged: Candidate[] = []
@@ -465,6 +534,8 @@ function collect(site: Site | null): { visible: Candidate[]; near: Candidate[] }
       first.text = c.text
       first.role = first.role === 'video' || c.role === 'video' ? 'video' : c.role
       first.near = c.near
+      if (c.color === undefined) delete first.color
+      else first.color = c.color
     }
     if (c.rect.top < first.rect.top) first.rect = c.rect
   }
@@ -886,7 +957,7 @@ function readPage(site: Site | null): BrowserResult {
   for (const [i, c] of actionable.entries()) {
     if (c.text === '' && c.role !== 'field' && c.role !== 'video') continue
     const text = c.near ? `${NEAR_PREFIX}${c.text}` : c.dialog ? `${DIALOG_PREFIX}${c.text}` : c.text
-    items.push({ id: i + 1, role: c.role, text })
+    items.push({ id: i + 1, role: c.role, text, ...(c.color === undefined ? {} : { color: c.color }) })
   }
   for (const [i, m] of extra.entries()) items.push({ id: actionable.length + i + 1, role: 'other', text: m.text })
   for (const [i, t] of texts.entries()) items.push({ id: actionable.length + extra.length + i + 1, role: 'text', text: t.text })

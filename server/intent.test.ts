@@ -578,3 +578,64 @@ describe('round 9 (30.5.6): the shapes of the default model', () => {
     expect((await pageIntent(request({ steps: passed }), { model: client })).intent).toEqual({ kind: 'command', command: { kind: 'clickItem', id: 2 } })
   })
 })
+
+describe('round 10 (#5, ARCHITECTURE 34)', () => {
+  it('the user turn lists the last commands, oldest first, with what ran, how it went and the tab it came from', async () => {
+    const { client, calls } = fakeClient(CLICK_LATER)
+    const recent = [
+      { utterance: 'ava email', ran: 'newTab https://mail.google.com/', ok: true, from: '2 "Log in | Anthropic Console"' },
+      { utterance: 'vajuta musta nuppu', ran: 'nothing', ok: false },
+    ]
+    await pageIntent(request({ recent }), { model: client })
+    const text = calls[0]?.user ?? ''
+    expect(text).toContain('recent 1: "ava email" -> newTab https://mail.google.com/ -> ok (from tab 2 "Log in | Anthropic Console")')
+    expect(text).toContain('recent 2: "vajuta musta nuppu" -> nothing -> failed')
+    const none = fakeClient(CLICK_LATER)
+    await pageIntent(request(), { model: none.client })
+    expect(none.calls[0]?.user ?? '').toContain('recent: none')
+  })
+
+  it('a filled button shows its colour after the role', async () => {
+    const page = { ...YOUTUBE, items: [...YOUTUBE.items, { id: 5, role: 'button', text: 'Verify email address', color: 'black' }] }
+    const { client, calls } = fakeClient(CLICK_LATER)
+    await pageIntent(request({ page }), { model: client })
+    expect(calls[0]?.user ?? '').toContain('5. [button, black] Verify email address')
+  })
+
+  it('the prompt opens beside a login in progress, reads "uues vahelehes" and "tagasi sinna kus ma olin" from the recent commands, and asks on a tie', () => {
+    expect(INTENT_SYSTEM_PROMPT).toContain('# What he did just before')
+    expect(INTENT_SYSTEM_PROMPT).toContain('# Open beside')
+    expect(INTENT_SYSTEM_PROMPT).toMatch(/login.*sign in.*verify.*logi sisse.*kinnita/s)
+    // Round 10 defect 1: the same narrowed rule as formInProgress, so a news page is not opened beside.
+    expect(INTENT_SYSTEM_PROMPT).toContain('a whole path segment')
+    expect(INTENT_SYSTEM_PROMPT).toContain('STARTS with')
+    expect(INTENT_SYSTEM_PROMPT).toContain('"Riigikogu kinnitas eelarve | Delfi"')
+    expect(INTENT_SYSTEM_PROMPT).toContain('"How to sign up for a gym - YouTube"')
+    expect(INTENT_SYSTEM_PROMPT).toContain('"mine tagasi sinna kus ma olin"')
+    expect(INTENT_SYSTEM_PROMPT).toContain('choose')
+  })
+
+  it('the tool offers choose with two item ids', () => {
+    const intent = (ANSWER_TOOL.input_schema.properties as Record<string, { anyOf: Array<{ properties: { kind: { enum: string[] }; ids?: { minItems: number; maxItems: number } } }> }>).intent
+    const choose = intent?.anyOf.find((option) => option.properties.kind.enum[0] === 'choose')
+    expect(choose?.properties.ids).toMatchObject({ minItems: 2, maxItems: 2 })
+  })
+
+  it('a choose wrapped as a command is lifted out and validated, like a place', async () => {
+    const { client } = fakeClient(
+      answer({ intent: { kind: 'command', command: { kind: 'choose', ids: [1, 2] } }, say: '', done: true, plan: [] }),
+      answer({ intent: { kind: 'command', command: { kind: 'choose', ids: [1, 99] } }, say: '', done: true, plan: [] }),
+    )
+    expect((await pageIntent(request(), { model: client })).intent).toEqual({ kind: 'choose', ids: [1, 2] })
+    expect((await pageIntent(request(), { model: client })).intent.kind).toBe('unclear')
+  })
+
+  it('a choose answer of two items on the page passes; an id not on the page is unclear', async () => {
+    const { client } = fakeClient(
+      answer({ intent: { kind: 'choose', ids: [1, 2] }, say: '', done: true, plan: [] }),
+      answer({ intent: { kind: 'choose', ids: [1, 99] }, say: '', done: true, plan: [] }),
+    )
+    expect((await pageIntent(request(), { model: client })).intent).toEqual({ kind: 'choose', ids: [1, 2] })
+    expect((await pageIntent(request(), { model: client })).intent.kind).toBe('unclear')
+  })
+})

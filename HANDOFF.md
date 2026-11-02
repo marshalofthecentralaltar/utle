@@ -666,23 +666,6 @@ shown or typed and never touches a running chain. Verified with tests, 16 eval c
 and synthetic voices through the real models (voice.ts section 8). Not verified: real voices, a real
 room, a TV; the false-wake rate on room speech that contains "ütle" (only the owner's gate guards it).
 
-## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
-
-- As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
-  schemas or reduce the number of strict tools." The answer tool is no longer strict (the schema is
-  still closed; `pageIntentFrom` validates every answer). Fixed in this branch.
-- Without strict: 61 of 62 pass. Latency on `claude-opus-5-5` at low effort: p50 2.7 s, p95 5.4 s.
-  The one miss ("recovery: click failed, do not repeat it") was the engine's loop stopping after a
-  failed step when the model had said done; the engine now asks once more after a failed step. Fixed.
-- 2.7 s per free-form command is noticeable in a voice UI. `UTLE_MODEL=claude-sonnet-5-5` is the
-  thing to try next, with the eval, before the demo. Dictation is not affected: it is typed first.
-
-**The laptop's `main` has 27 commits (sections 21.4 to 21.7: navigation, settings) that are not on
-GitHub. This branch conflicts with them in 23 files. Ralf asked that the PR not be merged. The
-conflicts cannot be resolved from the cloud until that `main` is pushed; the two sides built the
-same features twice (navigation commands, a settings page), so resolving them is a judgment call
-on which to keep, per file.**
-
 ## 1o. Round 10, FAST lane (2026-11-02): two models, endpointing per mode, acting on a pause (#7)
 
 ARCHITECTURE 33. Built: `UTLE_MODEL_CAREFUL` (33.1), command 0.6 s and dictation 1.0 s endpointing told on the wire
@@ -757,6 +740,98 @@ the base's slower utterances before its 1.0 s endpoint fires, so the base is cap
 the two branch runs at 3 s, same server code, differ by up to 1.3 s on a single clip, so 18 clips cannot resolve
 300 ms. The model stage on Haiku: 2839 / 2851 ms (n=2, "Jah" and "Üks"), no faster than Sonnet here (Haiku thinks
 before the tool call, 33.1). Not done: more clips or repeated runs, and a look at the decoder's emission delay.
+
+Planner's review (2026-11-02, the same JSON paired clip by clip, 3 s tail): base minus branch is a median of
+-268 ms (the branch slower) against the Sonnet run and +11 ms against the Haiku run; and the base's "saada" finals
+came 797 to 1035 ms after the speech end, under the 1.0 s rule 2 itself, so on these clips the final is not made by
+rule 2 alone. What does make it (the speech detector's end, the flush, the decoder's backlog) is not known. Criterion
+7 is NOT MET; #7 stays open and finding what produces the final comes first in round 10 prompt 4.
+
+## 1p. Round 10, prompt 3, lane AMBIGUITY (2026-11-02): what he meant, on the page he is on (#5)
+
+Branch `r10-ambig`. ARCHITECTURE 34. From Ralf's session of 2026-10-27 (logging into the Anthropic
+console): "ava email" now opens his mail beside a login or form in progress, never over it (it was the
+place rule, which never asked the model; the engine now turns every goTo into newTab while the page in
+front is a login, a verification, a password or code field, or unsent words); the model hears his last
+three commands, what ran and whether it worked, and the tab he came from, so "ava see uues vahelehes"
+opens the thing just opened and "mine tagasi sinna kus ma olin" goes back to that tab; readPage lists a
+link styled as a button as a button, with its colour ("vajuta musta nuppu"); "kinnita" outside a
+one-line field is the page's confirming button, not Enter; a tie asks "Kumb: 1 …, 2 …?" and "üks" or
+"kaks" answers it.
+
+Intent eval, `anthropic:claude-sonnet-5-5` (the default), 89 intent cases (78 old, 11 new) and 16
+addressee cases, each run twice:
+
+| run | pass | asks per task | $ per completed task | p50 / p95 ms |
+|---|---|---|---|---|
+| before 1 (new cases, old prompt) | 99/105 | 1.15 | $0.00521 | 1995 / 4200 |
+| before 2 | 99/105 | 1.15 | $0.00493 | 1968 / 3410 |
+| after 1 | 103/105 | 1.14 | $0.00495 | 1905 / 3135 |
+| after 2 | 105/105 | 1.15 | $0.00497 | 1872 / 2972 |
+
+Before, in both runs, six new cases missed: "ava gmail" on the console's login (goTo, the login lost),
+"ava see uues vahelehes" twice (unclear), "vajuta musta nuppu" (showHints), "mine tagasi sinna kus ma
+olin" after a tab change (history back), "lisa korvi" with two equal buttons (clicked the first); the old
+94 passed, "puhka" included. After: all 11 new cases pass in both runs; the old ones 94/94 and 92/94,
+the two misses in one run only (noise): "ava sport" (the model took over 7 s, a timeout) and "täida
+telefon" step 1 (done true where false was wanted). Logs: `artifacts/eval-before-*.txt`,
+`artifacts/eval-after-*.txt` (untracked).
+
+Not verified: the real Gmail and the real console logged in (why "ava esimene kiri" took two tries on
+the real Gmail is not known; on the stand-in and in the eval it is one click), a real voice.
+
+Defect round 1 (review): open beside fired on ordinary pages. The first rule matched its words anywhere
+in the url and the title, inflections included, so a Delfi article "Riigikogu kinnitas eelarve", an ERR
+headline "Officials confirm deal", a YouTube video "How to sign up for a gym" and a blog "Blogin
+igapäevaselt" all turned "ava youtube" into a new tab he cannot close by hand. Now (ARCHITECTURE 34.3)
+the url counts only by a login host label (accounts., login., auth., sso.) or a whole path segment that
+is a login word (/login, /signin, /signup, /verify, /login.php, #/signin), never a word inside a slug;
+the title only when one of its parts starts with a whole-word login phrase ("Log in - Anthropic",
+"Facebook – log in or sign up", "Kinnita tellimus"). The prompt's "Open beside" says the same; a new
+eval case "ava youtube" on the Delfi article wants goTo (106 cases):
+
+| run | pass | asks per task | $ per completed task | p50 / p95 ms |
+|---|---|---|---|---|
+| after fix 1 | 106/106 | 1.15 | $0.00503 | 1824 / 2721 |
+| after fix 2 | 105/106 | 1.15 | $0.00506 | 1866 / 3047 |
+
+The one miss is in one run only: "kommenteeri" on the Facebook stand-in answered choose (the tie
+question) where focusItem of the comment field or clickItem of the Kommenteeri button was wanted. The
+old prompt already answered goTo on the Delfi page (2 of 2), so the fault was the engine's rewrite; the
+prompt change keeps the two in step. Logs: `artifacts/eval-defect1-run*.txt` (untracked).
+
+readPage cost (`scripts/readpage-timing.ts`, page.ts bundled at 2bb7398 and at the branch, timed inside
+Chromium, fresh load per run). The first version of the button rule read the whole textContent of a
+link's parent for every link, quadratic in a list: 2,000 links under one parent took 1,382 ms against
+189 ms (7.3x), 2,000 list rows 347 ms against 164 ms (2.1x). The parent walk now stops at the first
+sibling with text or a link, and an unfilled link skips its innerText. After, median of 15:
+
+| page | items | base ms | branch ms | branch / base |
+|---|---|---|---|---|
+| real-delfi.html | 4 | 2.9 | 3.5 | 1.21 |
+| real-postimees.html | 12 | 3.2 | 3.7 | 1.16 |
+| 2,000 links in one div | 120 | 183.2 | 202.3 | 1.10 |
+| 2,000 list rows | 80 | 161.6 | 164.0 | 1.01 |
+
+On the two small fixtures the difference is about half a millisecond, inside the run-to-run spread
+(five-run medians of the same code gave 1.10 to 1.58 on Delfi). Logs: `artifacts/readpage-timing-*.txt`.
+
+## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
+
+- As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
+  schemas or reduce the number of strict tools." The answer tool is no longer strict (the schema is
+  still closed; `pageIntentFrom` validates every answer). Fixed in this branch.
+- Without strict: 61 of 62 pass. Latency on `claude-opus-5-5` at low effort: p50 2.7 s, p95 5.4 s.
+  The one miss ("recovery: click failed, do not repeat it") was the engine's loop stopping after a
+  failed step when the model had said done; the engine now asks once more after a failed step. Fixed.
+- 2.7 s per free-form command is noticeable in a voice UI. `UTLE_MODEL=claude-sonnet-5-5` is the
+  thing to try next, with the eval, before the demo. Dictation is not affected: it is typed first.
+
+**The laptop's `main` has 27 commits (sections 21.4 to 21.7: navigation, settings) that are not on
+GitHub. This branch conflicts with them in 23 files. Ralf asked that the PR not be merged. The
+conflicts cannot be resolved from the cloud until that `main` is pushed; the two sides built the
+same features twice (navigation commands, a settings page), so resolving them is a judgment call
+on which to keep, per file.**
 
 ## 2. What Ralf must do before the demo
 

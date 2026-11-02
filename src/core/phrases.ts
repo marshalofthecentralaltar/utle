@@ -174,6 +174,10 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
       { et: ['uus leht'], en: 'new page', does: 'Avab uue vahelehe.', doesEn: 'Opens a new tab.', rule: 'browserIntent', expect: 'newTab', example: true },
       { et: ['sulge'], en: 'close', does: 'Sulgeb selle vahelehe.', doesEn: 'Closes this tab.', rule: 'browserIntent', expect: 'closeTab' },
       { et: ['mine tagasi', 'mine edasi'], en: 'page back, go forward', does: 'Eelmine või järgmine leht.', doesEn: 'The page history.', rule: 'browserIntent', expect: 'history' },
+      // Round 10 (#5, ARCHITECTURE 34): what he just did, and the button that is a link.
+      { et: ['ava see uues vahelehes'], en: 'open it in a new tab', does: 'Avab just avatud asja uues vahelehes. Vajab mudelit.', doesEn: 'Opens what you just opened in a new tab (needs the model).', rule: 'model', expect: 'ask' },
+      { et: ['mine tagasi sinna kus ma olin'], en: 'go back to where I was', does: 'Tagasi vahelehele, kust tulid, muidu eelmisele lehele. Vajab mudelit.', doesEn: 'Back to the tab you came from, else the page before (needs the model).', rule: 'model', expect: 'ask' },
+      { et: ['vajuta musta nuppu', 'vajuta sinist nuppu'], en: 'press the black button', does: 'Vajutab nuppu selle värvi järgi. Vajab mudelit.', doesEn: 'Presses a button by its colour (needs the model).', rule: 'model', expect: 'ask' },
       { et: ['laadi uuesti'], en: 'reload', does: 'Laadib lehe uuesti.', doesEn: 'Reloads the page.', rule: 'browserIntent', expect: 'reload' },
       { et: ['näita numbreid'], en: 'show numbers', does: 'Paneb kõigele, mida saab vajutada, numbri.', doesEn: 'Puts a number on everything clickable.', rule: 'browserIntent', expect: 'showHints', example: true },
       { et: ['vajuta viis'], en: 'click five', does: 'Vajutab numbrit viis.', doesEn: 'Clicks number five.', rule: 'browserIntent', expect: 'clickHint' },
@@ -218,6 +222,7 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
       { et: ['uus meil'], en: 'new email', does: 'Avab tühja kirja.', doesEn: 'Opens an empty message with To ready.', rule: 'inpage', expect: 'compose' },
       { et: ['teema Koosolek'], en: 'subject Meeting', does: 'Kirjutab kirja teema.', doesEn: 'Writes the subject.', rule: 'inpage', expect: 'mailField', context: 'mail' },
       { et: ['lisa koopia', 'lisa koopia Jaanile'], en: 'add a copy', does: 'Avab koopia välja.', doesEn: 'Opens Cc.', rule: 'inpage', expect: 'mailField', context: 'mail' },
+      { et: ['ava esimene kiri'], en: 'open the first mail', does: 'Avab postkastis esimese kirja. Vajab mudelit.', doesEn: 'Opens the first mail of the inbox (needs the model).', rule: 'model', expect: 'ask' },
       { et: ['kirjuta talle meil', 'võta see meiliaadress siit lehelt ja kirjuta talle, et tulen homme'], en: 'write to the address on this page', does: 'Uus kiri aadressile, mis lehel on. Vajab mudelit.', doesEn: 'A new mail to an address the page shows (needs the model).', rule: 'model', expect: 'ask' },
     ],
   },
