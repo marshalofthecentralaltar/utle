@@ -733,7 +733,7 @@ ran on a machine at 76 % CPU from two old `chrome-headless-shell` processes nobo
 decoder fell more than 1.5 s behind, dropped audio ("keri natuke alla" heard as "keri") and the page timed out. The
 fall in speech end -> final and the model stage on Haiku need one clean pair of runs, base and branch back to back.
 
-Checkpoint 2, C7, measured 2026-11-02 15:41-16:30 after Ralf stopped the two runaway `chrome-headless-shell`
+Checkpoint 2, C7, measured 2026-11-02 15:41-16:05 after Ralf stopped the two runaway `chrome-headless-shell`
 processes (none left). SYNTHETIC, 18 clips of `scripts/fixtures/labels.tsv`, vite on 5193, one server at a time,
 logs and JSON in `artifacts/fast/cp2/` (not committed). Speech end -> final, p50 / p95 ms:
 
