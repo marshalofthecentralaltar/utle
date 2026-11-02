@@ -683,6 +683,46 @@ conflicts cannot be resolved from the cloud until that `main` is pushed; the two
 same features twice (navigation commands, a settings page), so resolving them is a judgment call
 on which to keep, per file.**
 
+## 1o. Round 10, FAST lane (2026-11-02): two models, endpointing per mode, acting on a pause (#7)
+
+ARCHITECTURE 33. Built: `UTLE_MODEL_CAREFUL` (33.1), command 0.6 s and dictation 1.0 s endpointing told on the wire
+(33.2), the server's `pause` and the early release of a rule-matched partial with only the owner off (33.3).
+Not built: the timed scroll (33.4). Gate: `npm run check` 56 files, 4085 tests. The browser suite was not run.
+
+Eval, `npx tsx scripts/intent-eval.ts`, 94 cases (78 intent, 16 addressee), each run twice. Logs and JSON in
+`artifacts/fast/` (not committed).
+
+| run | model | pass | asks per task | $ per completed task | p50 / p95 ms |
+|---|---|---|---|---|---|
+| sonnet 1 (base 2bb7398) | anthropic:claude-sonnet-5-5 | 94/94 | 1.17 | $0.00493 | 1889 / 2818 |
+| sonnet 2 (base 2bb7398) | anthropic:claude-sonnet-5-5 | 94/94 | 1.17 | $0.00466 | 1818 / 3385 |
+| haiku+opus 1 | anthropic:claude-haiku-5-5 (quick) | 82/88 | 1.03 | $0.00025 | 1384 / 2768 |
+| | anthropic:claude-opus-5-5 (careful) | 6/6 | 3.17 | $0.02713 | 2682 / 7218 |
+| | all | 88/94 | 1.17 | $0.00208 | 1552 / 4110 |
+| haiku+opus 2 | anthropic:claude-haiku-5-5 (quick) | 83/88 | 1.03 | $0.00023 | 1343 / 2384 |
+| | anthropic:claude-opus-5-5 (careful) | 6/6 | 3.17 | $0.02698 | 2553 / 6336 |
+| | all | 89/94 | 1.17 | $0.00203 | 1472 / 3909 |
+
+Haiku misses in both runs: "kolmas video" (www.youtube.com, clickItem 6 for 5), "recovery: not on the page, scroll
+once, then search" step 2 (www.youtube.com, scroll for siteSearch), "saada ära" (web.whatsapp.com, unclear for
+send). In one run only (noise): "tagasi", "puhka" (chrome://newtab), "kommenteeri" (www.facebook.com, cut at 400
+tokens), "tulen homme kell viis", "homme asemel täna". Defaults stay Sonnet 5.5.
+
+Latency, `scripts/latency.ts`, SYNTHETIC, 18 clips. Before (base 2bb7398, 10:05 UTC, Sonnet):
+
+| stage | n | p50 ms | p95 ms |
+|---|---|---|---|
+| speech end -> final | 18 | 1675 | 2104 |
+| final -> intent, rules | 16 | 5 | 24 |
+| final -> intent, model | 2 | 2036 | 2143 |
+| intent -> action, page | 17 | 163 | 423 |
+
+After: NOT MEASURED. Two attempts failed for reasons outside the code: the first hit the base server still running
+from the before run (it had hot-restarted on every server edit and loaded the speech model five times); the second
+ran on a machine at 76 % CPU from two old `chrome-headless-shell` processes nobody in this lane started, where the
+decoder fell more than 1.5 s behind, dropped audio ("keri natuke alla" heard as "keri") and the page timed out. The
+fall in speech end -> final and the model stage on Haiku need one clean pair of runs, base and branch back to back.
+
 ## 2. What Ralf must do before the demo
 
 1. `git pull` on `main`, `npm ci`, `npm run ext`, reload the extension on `chrome://extensions`,

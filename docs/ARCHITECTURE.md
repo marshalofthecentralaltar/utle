@@ -2843,3 +2843,52 @@ once and drops the checks still pending. Eval: 16 cases in `scripts/intent-eval.
 `src/core/wake.test.ts`, `src/core/listen.test.ts`, engine tests "wake mode" and "always-on mode",
 `server/addressee.test.ts`, `voice.ts` section 8 (SYNTHETIC two voices, `scripts/listen-set.ts`,
 through TalTech's model, TitaNet and the real engine), the "ütle" hotword in `asr-hotwords-eval.ts`.
+
+## 33. Round 10: speed (FAST lane, issue #7)
+
+### 33.1 Two models through the door (`server/model/config.ts`, `server/model/index.ts`, `server/intent.ts`)
+
+`UTLE_MODEL` serves the quick asks of `/api/intent` and the addressee check (32.3); `UTLE_MODEL_CAREFUL` (same
+syntax as 30.5.2; `openai:<model>` takes `UTLE_MODEL_CAREFUL_URL` and `UTLE_MODEL_CAREFUL_KEY`) serves the careful
+asks (`care: 'careful'`, set by the engine's `careOf`). Unset: the quick model when `UTLE_MODEL` is set, else
+`DEFAULT_CAREFUL_MODEL`. `UTLE_FALLBACK` stands behind each slot with the rules of 30.5 (fast failures only, never a
+timeout); each slot has its own instance, so `/api/status` reports `primary`, `careful`, `fallback`, `last` and
+`lastCareful`. An unknown provider or a missing non-Anthropic key in the careful slot stops the server at start,
+naming `UTLE_MODEL_CAREFUL`. The eval (`scripts/intent-eval.ts`) runs each case on the model its care selects and
+prints one row per model.
+
+Defaults stay Sonnet 5.5 for both slots. Haiku 5.5 quick + Opus 5.5 careful scored 88/94 and 89/94 against
+Sonnet's 94/94 and 94/94 (HANDOFF 1o); three misses repeat in both runs ("kolmas video" on YouTube clicks the
+fourth item, the scroll-then-search recovery scrolls again, "saada ära" in WhatsApp is unclear). Haiku is about 20
+times cheaper per completed task and about 500 ms faster at p50, so it stays one variable away.
+
+The addressee check's answer budget is 400 tokens (was 60): Haiku 5.5 thinks before the tool call even at effort
+low, and 60 cut its answer off (stop `max_tokens`, verdict `bad`) on the dictation cases.
+
+### 33.2 Endpointing per mode (`src/speech/asrProtocol.ts` `ENDPOINT_TRAILING_MS`, `server/asrSession.ts`, `server/asrModel.ts`)
+
+A command ends at 0.6 s of trailing silence, dictation at 1.0 s. The recogniser's rule 2 is configured at the command
+value; in dictation the decoder holds the endpoint until 0.4 s more audio has been decoded with the rule still true
+(new words reset it). Rule 1 (nothing heard) ends as before. An endpoint is never taken on a frame whose words
+changed (a beam search changing its mind): that frame waits for the next. Everything is counted in decoded audio,
+never wall time, so a backlog cannot cut an utterance.
+
+The client says which on the wire: `{ type: 'endpoint', mode: 'command' | 'dictation' }`. The engine sends dictation
+when the last box it read was armed or the entry flow is on, command otherwise (`tellEndpoint` beside `readBox`);
+the local recogniser sends the newest mode at once and again after every `ready`. A client that never says gets
+command.
+
+### 33.3 Acting on a partial (`server/asrSession.ts` `PAUSE_MS`, `src/speech/local.ts` `onPause`)
+
+When the speech detector has heard 300 ms of silence after the words of the utterance in progress, the server sends
+`{ type: 'pause', text }` once for those words. A partial the rules know (`inpageInstant`, the same test as the
+quick-reply release of round 3) that is settling on exactly those words is released at once instead of after
+`INSTANT_SETTLE_MS`; its final is swallowed as for any released reply, so the command runs once.
+
+With only the owner on (31), nothing of this runs: the server sends no partial and no pause, the client's strict mode
+never settles a partial and ignores a pause, and the engine's `ownerOnly` wrapper drops any utterance without a
+`verified_owner` decision. Never "run then undo".
+
+### 33.4 Timed scroll: NOT BUILT
+
+"keri alla N minutit" (issue #5 point 5, the plan's P6) was in this lane's brief and is not built.
