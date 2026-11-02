@@ -907,6 +907,91 @@ says the same. Eval on r10-ambig, Sonnet, 106 cases: 105/106 ($0.00538 per compl
 run 1 only: "recovery: not on the page, scroll once, then search [2/2]" on YouTube answered scroll down
 where siteSearch was wanted (2 of 7 runs since the round 10 prompt). Logs: `artifacts/eval-round2-*.txt`.
 
+## 1r. Round 10, prompt 4, lane WAKE (2026-11-02): the wake word heard in the audio (#2, acoustic half)
+
+ARCHITECTURE 35. Built: in wake mode the local server runs sherpa-onnx's `KeywordSpotter` over TalTech's zipformer
+(the recogniser's own files, no download) beside the recogniser on the same frames (`server/kws.ts`, fed from
+`decoderInThread`'s accept loop; `ends` and `decodeOne` unchanged). A hit goes on the wire as
+`{ type: 'wake', segment, startMs, endMs, score }` before the final of its utterance, which carries the same
+`segment`; the client matches them (with only the owner on, only for a verified final) and the coordinator wakes only
+when the spotter heard the word AND the text places it (`listenFinal(..., heard)`). Without a spotter the text decides
+as before (LIMITED, 32). Branch `r10-kws`, not merged (#2: the orchestrator opens the PR for Ralf).
+
+The evaluation (`npx tsx scripts/kws-set.ts --eval` once, then `npx tsx scripts/kws-eval.ts --coordinator --spec
+server,bare1`; SYNTHETIC: 150 clips, six TartuNLP voices at speeds 0.9, 1 and 1.15, one continuous stream as the server
+feeds a connection; log `artifacts/kws-eval-final.log` in the worktree, not committed). `server` is the shipped spec
+(both spellings, 29 decoys, 2 trailing blanks, threshold 0.1); `bare1` is the naive one (`▁ütle` only, 1 blank). The
+"decoys" column of this run counted the keywords minus one (30 for 29 decoys; fixed in the script after the run).
+
+| spec | trailing blanks | threshold | score | decoys | wake (all) | start | middle | end | relatives fired | per form | literal fired | other fired | room fired | paragraph wakes | decoy hits | bare word: speech end to wake, ms p50 / p95 | CPU of one core (RTF) | RSS MB load / after |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| server | 2 | 0.1 | 1 | 30 | 41/42 (98%) | 18/18 (100%) | 11/12 (92%) | 12/12 (100%) | 3/42 (7%) | utlen 0/6, utles 1/6, utleb 2/6, utleme 0/6, utlemine 0/6, utelda 0/6, utlesin 0/6 | 10/12 (83%) | 5/12 (42%) | 0/36 (0%) | 1 in 4.5 min | 35 | 967 / 1114 | 12.5% (RTF 0.135) | 202 / 250 |
+| bare1 | 1 | 0.1 | 1 | 0 | 16/42 (38%) | 1/18 (6%) | 9/12 (75%) | 6/12 (50%) | 6/42 (14%) | utlen 0/6, utles 1/6, utleb 0/6, utleme 0/6, utlemine 5/6, utelda 0/6, utlesin 0/6 | 6/12 (50%) | 1/12 (8%) | 0/36 (0%) | 0 in 4.5 min | 0 | - | 12.7% (RTF 0.136) | 179 / 221 |
+
+What the coordinator did from PASSIVE (clips that woke):
+
+| spec | set | spotter fired | woke on the text alone (LIMITED, 32) | woke with the spotter (35) |
+|---|---|---|---|---|
+| server | wake | 41/42 (98%) | 42/42 | 41/42 |
+| server | relative | 3/42 (7%) | 0/42 | 0/42 |
+| server | literal | 10/12 (83%) | 0/12 | 0/12 |
+| server | other | 5/12 (42%) | 11/12 | 5/12 |
+| server | room | 0/36 (0%) | 0/36 | 0/36 |
+| server | paragraph (4.5 min) | 1 hits | 0 clips woke | 0 clips woke |
+
+Read it this way: on synthetic voices the text alone was already right about the relatives and literal uses; what the
+spotter adds is that "ütle" said to someone else ("Ütle talle, et ...", "ütle tere") wakes 5 of 12 instead of 11 of 12
+(a word run straight into the next has no silence after it), for one missed wake in 42 ("No kuule, ütle, mine tagasi",
+liivika). The sweep that chose the spec (rounds 1 to 3, `artifacts/kws-sweep-r1-*.log`, `kws-r2-*.log`, `kws-r3-*.log`):
+`▁ütle` alone missed every "Ütle" at a sentence start (the model is cased: `▁Ü t le`); without decoys the spotter fired
+on 23 of 42 relatives; three trailing blanks fired on none but woke 81 %.
+
+Proofs. Tests first (red runs kept in the worktree's `artifacts/red-*.log`): `npx vitest run src/core/wake.test.ts
+src/core/listen.test.ts server/asrSession.test.ts src/speech/local.test.ts extension/src/engine.test.ts` 5 files, 452
+tests, 0 failed. `UTLE_REAL=1 UTLE_ONLY=wake npx tsx extension/test/voice.ts` (section 9, no browser: a server of this
+process with the real recogniser, spotter, TitaNet and Silero, the real `local.ts`, engine and `inpage.ts`; SYNTHETIC
+"mari" owner, "kalev" stranger, `scripts/fixtures/wake-set`): ALL PASS, 16 checks. Part A, only-owner off, one session:
+"Ma ütlen sulle homme." and "Kirjuta siia sõna ütle." woke nothing; "Ütle." ACTIVE, "Ütle." again PASSIVE; "No nii,
+Ütle, ava YouTube." ACTIVE and the rules got "ava Youtube." once, goTo youtube.com once; in ACTIVE "Kirjuta siia sõna,
+ütle." reached the rules whole and did not toggle; "Ütle." + 0.9 s + "Ava Gmail." woke and ran goTo mail.google.com with
+one wake. Part B, only-owner on: the stranger's "Ütle, ava YouTube." (a wake WAS on the wire) changed nothing and ran
+nothing, the owner's "Keri alla." after it stayed PASSIVE, his "No nii, ütle, ava YouTube." woke and the rules got "ava
+jõudube." once (the model writes YouTube as "jõudube"; offline it went to the stand-in ask), the stranger's "Keri alla."
+in ACTIVE ran nothing: 0 commands from the stranger. The first run of section 9 failed 6 checks: the spotter was then
+loaded at the first wake-mode ask, held the decode thread 20.8 s, and the backlog dropped the first clips; it now loads
+with the recogniser at the server's start (35.2, `UTLE_SPOTTER=off` leaves it out). The wire's `startMs` is not
+reliable (sherpa's token times are not on the stream's clock: it came out 4 to 13 s before `endMs`); `endMs` is.
+Gate: `npm run check` 59 files, 4241 tests, green; browser suite (`npx tsx extension/test/run.ts`, under the lock) 330
+PASS, ALL PASS.
+
+Review round 1 (rebased on lane LATE's 64a97e5). (1) LATE's detector ends a command 640 to 880 ms after the speech,
+before the spotter's hit (about 1 s): at every endpoint whose text has the word and whose spotter has not answered, the
+spotter now gets up to 1.2 s of hiss and answers inside the utterance; its stream starts over at every endpoint and
+flush, so no hit lands on the next one (`server/asrSession.test.ts` "review 1", red without the flush in
+`artifacts/red-review1.log`). Wake mode off on the rebased branch, `latency.ts --why --asr-only --tail 3000 --endpoint
+command`, 18 clips: speech end to final p50 851 / p95 906 ms, final in audio p50 800, causes detector 15 / rule2 3 (as in
+1q). voice.ts section 9 on the rebased branch: ALL PASS. (2) The spotter knows only "ütle": wake mode asks for it, and
+the engine believes it, only when the wake word is Ütle (`spotterHears`); "Arvuti" runs on the text. (3) The wire's
+`wake` is `{ segment, endMs }`: `startMs` (off the stream's clock) and `score` (a constant) are gone. (4) Start-up of a
+fresh decode worker (`artifacts/startup.ts`, the machine was NOT idle: 29 to 58 % CPU before each start):
+
+| run | CPU before | spotter on: to loaded, RSS | `UTLE_SPOTTER=off`: to loaded, RSS |
+|---|---|---|---|
+| 1 | 58 % / 43 % | 11678 ms, 617 MB | 5861 ms, 423 MB |
+| 2 | 32 % / 32 % | 11764 ms, 615 MB | 5929 ms, 423 MB |
+| 3 | 29 % / 56 % | 12872 ms, 617 MB | 7639 ms, 423 MB |
+
+Ruling (review round 2): the spotter keeps loading at start, for everyone (+~6 s, +~193 MB); a load at the first ask
+stalls decoding mid-use, and a second worker is not worth it now. `UTLE_SPOTTER=off` leaves it out. Rebased on main
+8133773 (LATE merged): the spotter hears the parts the recogniser decodes, not the not-speech LATE skips after a
+detector-ended final (`aheadMs`); it restarts at every endpoint, so nothing it needs is in them.
+
+Not verified: a real voice (every number above is SYNTHETIC), a real room or microphone, false wakes per hour (4.5
+minutes of negative audio is far from the hours a 0.1 per hour claim needs), the extension in Chrome end to end with
+the spotter (section 9 has no browser), the confirmation time target (p95 1.1 s from the speech end against the issue's
+0.8 s; the final comes later anyway). Open on #2: the browser-side detector and PASSIVE without recognition on a hosted
+server (35.1 says what they take), real voices.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

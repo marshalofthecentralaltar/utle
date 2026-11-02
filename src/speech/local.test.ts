@@ -1316,3 +1316,94 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
     expect(utterances.map(([text]) => text)).toEqual(['keri alla'])
   })
 })
+
+describe('the keyword spotter on the wire (round 10, #2, 35)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    FakeSocket.made = []
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  const setup = (options: { onlyOwner?: boolean; spotter?: boolean } = {}) => {
+    const utterances: unknown[][] = []
+    const r = createLocalRecognizer(
+      { onUtterance: (...args: unknown[]) => utterances.push(args), onInterim: () => undefined, onError: () => undefined, onForeign: () => undefined },
+      () => false,
+      {
+        onUnavailable: () => undefined,
+        connect: (events) => new FakeSocket(events),
+        audio: () => new FakeAudio(),
+        keepTrying: true,
+        ...(options.onlyOwner === true ? { onlyOwner: true } : {}),
+        ...(options.spotter === true ? { spotter: true } : {}),
+      },
+    )
+    r.start()
+    const socket = (): FakeSocket => {
+      const s = FakeSocket.made.at(-1)
+      if (!s) throw new Error('no socket')
+      return s
+    }
+    const told = (type: string): unknown[] => socket().sent.filter((d): d is string => typeof d === 'string').map((d) => JSON.parse(d) as { type: string }).filter((m) => m.type === type)
+    socket().says({ type: 'ready' })
+    return { r, utterances, socket, told }
+  }
+  const owner = (segmentId: number): SpeakerDecision => ({ segmentId, sessionId: 's1', profileVersion: 'v1', verdict: verdictFor('verified_owner'), reason: 'verified_owner', timings: { judgeMs: 1 } })
+  const stranger = (segmentId: number): SpeakerDecision => ({ segmentId, sessionId: 's1', profileVersion: 'v1', verdict: verdictFor('rejected_other'), reason: 'rejected_other', timings: { judgeMs: 1 } })
+
+  it('asks the server for the spotter at every ready, only in wake mode', () => {
+    expect(setup({ spotter: true }).told('spotter')).toEqual([{ type: 'spotter', on: true }])
+    expect(setup().told('spotter')).toEqual([])
+  })
+
+  it('the spotter runs: an utterance whose final carries the segment of a wake was heard; one without was not', () => {
+    const { socket, utterances } = setup({ spotter: true })
+    socket().says({ type: 'spotter', on: true })
+    socket().says({ type: 'wake', segment: 3, endMs: 1900 })
+    socket().says({ type: 'final', text: 'no nii ütle ava youtube', segment: 3 })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
+    socket().says({ type: 'final', text: 'ma ütlen sulle homme' })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
+    expect(utterances).toEqual([
+      ['no nii ütle ava youtube', undefined, { spotted: true }],
+      ['ma ütlen sulle homme', undefined, { spotted: false }],
+    ])
+  })
+
+  it('a wake whose utterance sent no final never carries over to the next one', () => {
+    const { socket, utterances } = setup({ spotter: true })
+    socket().says({ type: 'spotter', on: true })
+    socket().says({ type: 'wake', segment: 1, endMs: 700 })
+    // The server burnt segment 1 (no words); the next final has none of its own.
+    socket().says({ type: 'final', text: 'kas sa tuled ka poodi' })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
+    expect(utterances).toEqual([['kas sa tuled ka poodi', undefined, { spotted: false }]])
+  })
+
+  it('without the spotter (the server said off, or never said) the handlers are called as before: the text decides (LIMITED)', () => {
+    const { socket, utterances } = setup({ spotter: true })
+    socket().says({ type: 'spotter', on: false })
+    socket().says({ type: 'final', text: 'ütle ava youtube', segment: 1 })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
+    expect(utterances).toEqual([['ütle ava youtube']])
+  })
+
+  it('only the owner: the wake counts only with its own segment verified; a stranger\'s wake is dropped with the rejection', () => {
+    const { socket, utterances } = setup({ spotter: true, onlyOwner: true })
+    socket().says({ type: 'spotter', on: true })
+    socket().says({ type: 'speakerSession', sessionId: 's1', profileVersion: 'v1' })
+    socket().says({ type: 'wake', segment: 1, endMs: 700 })
+    socket().says({ type: 'rejected', decision: stranger(1) })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
+    expect(utterances).toEqual([])
+    // His next utterance has no wake of its own: it is not heard as one.
+    socket().says({ type: 'final', text: 'ava youtube', speaker: 'owner', segment: 2, decision: owner(2) })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
+    expect(utterances).toEqual([['ava youtube', owner(2), { spotted: false }]])
+    socket().says({ type: 'wake', segment: 3, endMs: 5700 })
+    socket().says({ type: 'final', text: 'ütle', speaker: 'owner', segment: 3, decision: owner(3) })
+    vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
+    expect(utterances.at(-1)).toEqual(['ütle', owner(3), { spotted: true }])
+  })
+})

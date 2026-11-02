@@ -5,12 +5,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES, ENDPOINT_TRAILING_MS } from '../src/speech/asrProtocol.ts'
 import { SPEAKER_REASONS } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage, FinalWhy, SpeakerReason } from '../src/speech/asrProtocol.ts'
+import { SPOT_FLUSH_MS } from './asrSession.ts'
 import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, PAUSE_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
 import type { EnrolFailure, EnrolOutcome, EnrolPhrase, Judgement, PhraseProblem, PhraseResult, Readiness, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import { CAPTURE_LOG, captureFromEnv, createCapture } from './capture.ts'
 import type { Capture } from './capture.ts'
 import type { VadLike } from './vad.ts'
+import type { KeywordSpotterLike, SpotterStreamLike } from './kws.ts'
 import { QUIET_AMPLITUDE, createSpeechFilter } from './vad.ts'
 
 /** A recogniser that "hears" one word per frame and ends the utterance on a silent frame (first sample under 0.5: zero, or the detector's faint hiss). */
@@ -1642,5 +1644,195 @@ describe("the speech detector's onset (round 10, #7, lane LATE review 2)", () =>
     feed([0.3, 0.3, ...silence(12)])
     expect(sent.filter((m) => m.type === 'activity')).toEqual([{ type: 'activity', onset: true }])
     expect(sent.some((m) => m.type === 'rejected' || m.type === 'partial' || m.type === 'final')).toBe(false)
+  })
+})
+
+/** A keyword spotter that hears the wake word in a frame whose first sample is 7 (or -7, of which the fake recogniser writes nothing), and a relative (a decoy) at 8. */
+class FakeSpotterStream implements SpotterStreamLike {
+  pending: number[] = []
+  keyword = ''
+  /** Frames decoded since the stream started over: sherpa's timestamps count from there. */
+  decoded = 0
+  acceptWaveform(input: { samples: Float32Array; sampleRate: number }): void {
+    this.pending.push(input.samples[0] ?? 0)
+  }
+}
+class FakeSpotter implements KeywordSpotterLike<FakeSpotterStream> {
+  streams = 0
+  createStream(): FakeSpotterStream {
+    this.streams += 1
+    return new FakeSpotterStream()
+  }
+  isReady(stream: FakeSpotterStream): boolean {
+    return stream.pending.length > 0
+  }
+  decode(stream: FakeSpotterStream): void {
+    const value = stream.pending.shift() ?? 0
+    stream.decoded += 1
+    stream.keyword = Math.abs(value) === 7 ? 'ütle' : value === 8 ? 'ütle-n' : ''
+  }
+  getResult(stream: FakeSpotterStream): { keyword: string; start_time: number; timestamps: number[] } {
+    return { keyword: stream.keyword, start_time: 0, timestamps: [(stream.decoded - 1) * 0.1] }
+  }
+  reset(stream: FakeSpotterStream): void {
+    stream.keyword = ''
+    stream.decoded = 0
+  }
+}
+
+describe('the keyword spotter beside the recogniser (round 10, #2, 35)', () => {
+  const spotted = (gate: FakeGate | null = null, spotter: FakeSpotter | null = new FakeSpotter()) => {
+    const recognizer = new FakeRecognizer()
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    const session = createAsrSession(decoderInThread(recognizer, gate, { spotter: spotter === null ? null : () => spotter }), (message) => sent.push(message), { schedule: loop.schedule, now: () => 1000, sessionId: 'session-A' })
+    session.endpointMode('command')
+    return { recognizer, sent, loop, session, spotter }
+  }
+
+  it('is off until the client asks: no stream, no wake, finals as before', () => {
+    const { sent, loop, session, spotter } = spotted()
+    feed(session, loop, [7, 2, 0])
+    expect(spotter?.streams).toBe(0)
+    expect(sent.some((m) => m.type === 'wake')).toBe(false)
+    expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'ava uus' }])
+  })
+
+  it('asked, it answers spotter on; the wake goes on the wire with the segment its final then carries and its audio time', () => {
+    const { sent, loop, session } = spotted()
+    session.spotter(true)
+    feed(session, loop, [1, 0, 7, 2, 0])
+    expect(sent[0]).toEqual({ type: 'spotter', on: true })
+    // The first utterance had no wake: its final is unchanged.
+    expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'ava' }, { type: 'final', text: 'ava uus', segment: 1 }])
+    const wake = sent.find((m) => m.type === 'wake')
+    // endMs: the client's audio when the spotter confirmed the word (the third frame).
+    expect(wake).toEqual({ type: 'wake', segment: 1, endMs: 300 })
+    // The wake comes before the final of its utterance.
+    expect(sent.findIndex((m) => m.type === 'wake')).toBeLessThan(sent.findIndex((m) => m.type === 'final' && m.segment === 1))
+  })
+
+  it('a relative (a decoy) is never a wake', () => {
+    const { sent, loop, session } = spotted()
+    session.spotter(true)
+    feed(session, loop, [8, 2, 0])
+    expect(sent.some((m) => m.type === 'wake')).toBe(false)
+    expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'uus uus' }])
+  })
+
+  it('a wake in an utterance that ends with no words burns its segment: the next wake has a new one', () => {
+    const { sent, loop, session } = spotted()
+    session.spotter(true)
+    // -7: the spotter hears the word, the fake recogniser writes nothing of it.
+    feed(session, loop, [-7, 0, 7, 0])
+    const wakes = sent.filter((m) => m.type === 'wake').map((m) => (m.type === 'wake' ? m.segment : 0))
+    const finals = sent.filter((m) => m.type === 'final').map((m) => (m.type === 'final' ? m.segment : 0))
+    expect(wakes).toEqual([1, 2])
+    // The first utterance had no words: no final took segment 1.
+    expect(finals).toEqual([2])
+  })
+
+  it('turned off, the stream goes and no wake is sent', () => {
+    const { sent, loop, session } = spotted()
+    session.spotter(true)
+    session.spotter(false)
+    feed(session, loop, [7, 0])
+    expect(sent.filter((m) => m.type === 'spotter')).toEqual([{ type: 'spotter', on: true }, { type: 'spotter', on: false }])
+    expect(sent.some((m) => m.type === 'wake')).toBe(false)
+  })
+
+  it('without a spotter (the model would not load) the answer is spotter off, and the text decides (LIMITED)', () => {
+    const { sent, session } = spotted(null, null)
+    session.spotter(true)
+    expect(sent).toEqual([{ type: 'spotter', on: false }])
+  })
+
+  it('only the owner on: a wake is not a decision; a stranger\'s utterance with the wake is rejected under the same segment', async () => {
+    const gate = new FakeGate()
+    const { sent, loop, session } = spotted(gate)
+    session.onlyOwner(true)
+    session.spotter(true)
+    gate.answer = { speaker: 'other', score: 0.1, seconds: 1.2 }
+    feed(session, loop, [7, 2, 0])
+    await microtasks()
+    const wake = sent.find((m) => m.type === 'wake')
+    const rejected = sent.find((m) => m.type === 'rejected')
+    expect(wake?.type === 'wake' ? wake.segment : 0).toBe(1)
+    expect(rejected?.type === 'rejected' ? rejected.decision.segmentId : 0).toBe(1)
+    expect(sent.some((m) => m.type === 'final')).toBe(false)
+    // No words left the server: the wake carries none.
+    expect(JSON.stringify(wake)).not.toMatch(/ava|uus/)
+  })
+})
+
+/** Review 1: a spotter as slow as the real one: it confirms the word three frames after it (the real one about 1 s). */
+class SlowSpotterStream implements SpotterStreamLike {
+  pending: number[] = []
+  keyword = ''
+  countdown = -1
+  acceptWaveform(input: { samples: Float32Array; sampleRate: number }): void {
+    this.pending.push(input.samples[0] ?? 0)
+  }
+}
+class SlowSpotter implements KeywordSpotterLike<SlowSpotterStream> {
+  createStream(): SlowSpotterStream {
+    return new SlowSpotterStream()
+  }
+  isReady(stream: SlowSpotterStream): boolean {
+    return stream.pending.length > 0
+  }
+  decode(stream: SlowSpotterStream): void {
+    const value = stream.pending.shift() ?? 0
+    // 7 is the word ("ütle" to the recogniser below); 9 sounds like it but the recogniser writes "vaheleht".
+    if (value === 7 || value === 9) stream.countdown = 3
+    else if (stream.countdown > 0) stream.countdown -= 1
+    if (stream.countdown === 0) {
+      stream.keyword = 'ütle'
+      stream.countdown = -1
+    }
+  }
+  getResult(stream: SlowSpotterStream): { keyword: string } {
+    return { keyword: stream.keyword }
+  }
+  reset(stream: SlowSpotterStream): void {
+    stream.keyword = ''
+    stream.countdown = -1
+  }
+}
+/** Writes "ütle" for a frame of 7. */
+class UtleRecognizer extends FakeRecognizer {
+  override decode(stream: FakeStream): void {
+    if (stream.pending[0] === 7) {
+      stream.pending.shift()
+      stream.words.push('ütle')
+    } else super.decode(stream)
+  }
+}
+
+describe('review 1: a wake at the end of an utterance belongs to that utterance (round 10, #2, 35)', () => {
+  const slow = () => {
+    const sent: AsrServerMessage[] = []
+    const loop = new Loop()
+    const spotter = new SlowSpotter()
+    const session = createAsrSession(decoderInThread(new UtleRecognizer(), null, { spotter: () => spotter }), (message) => sent.push(message), { schedule: loop.schedule, now: () => 1000 })
+    session.endpointMode('command')
+    session.spotter(true)
+    return { sent, loop, session }
+  }
+
+  it('an utterance that ends right after the word (before the spotter answered) carries its wake; the next one carries none', () => {
+    const { sent, loop, session } = slow()
+    feed(session, loop, [1, 7, 0, 2, 3, 0])
+    const finals = sent.filter((m) => m.type === 'final')
+    expect(finals).toEqual([{ type: 'final', text: 'ava ütle', segment: 1 }, { type: 'final', text: 'uus vaheleht' }])
+    expect(sent.filter((m) => m.type === 'wake').map((m) => (m.type === 'wake' ? m.segment : 0))).toEqual([1])
+    expect(SPOT_FLUSH_MS).toBeLessThanOrEqual(1500)
+  })
+
+  it('a word the recogniser did not write is not waited for, and its late hit never lands on the next utterance', () => {
+    const { sent, loop, session } = slow()
+    feed(session, loop, [9, 0, 2, 3, 0])
+    expect(sent.some((m) => m.type === 'wake')).toBe(false)
+    expect(sent.filter((m) => m.type === 'final')).toEqual([{ type: 'final', text: 'vaheleht' }, { type: 'final', text: 'uus vaheleht' }])
   })
 })

@@ -20,7 +20,7 @@ import { savedFrom } from '../../src/core/saved.ts'
 import { DEFAULT_ASR_URL, authHeaders, isHostedAddress, serverStatus, serverUrl, socketAddress } from './connection.ts'
 // ---------- wake word and places (29.4) ----------
 import { placesFrom } from '../../src/core/places.ts'
-import { wakeWordFrom } from '../../src/core/wake.ts'
+import { spotterHears, wakeWordFrom } from '../../src/core/wake.ts'
 import { verdictFrom } from '../../src/core/addressee.ts'
 import type { AddresseeAnswer, AddresseeRequest } from '../../src/core/addressee.ts'
 
@@ -413,6 +413,9 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
           address,
           holdMs: options.holdMs ?? INPAGE_HOLD_MS,
           onlyOwner,
+          // Round 10 (#2, 35): wake mode with the word "Ütle" asks the local server for its keyword spotter (it knows no other
+          // word; a hosted server never gets here in wake mode, 32.2).
+          ...(spotterHears(wakeWord) ? { spotter: true } : {}),
           // Round 9 (30.1): wait for the server to come back; the strip says it once.
           keepTrying: true,
           connect: (events) => {

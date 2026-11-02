@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createWake, wakeFind, wakeStarts, wakeWordFrom } from './wake.ts'
+import { createWake, spotterHears, wakeFind, wakeMentioned, wakeStarts, wakeWordFrom } from './wake.ts'
 
 /** Twenty finals without the word: room talk, dictation, commands said to someone else. */
 const WITHOUT_WORD = [
@@ -126,5 +126,31 @@ describe('round 10 (#2, limited): the wake word anywhere in a final', () => {
     expect(atStart('kirjuta Marile et ütle emale tere')).toBeNull()
     expect(atStart('Tere. Ütle, keri alla')).toBe('keri alla')
     expect(atStart("ütlemine youtube'i")).toBe("mine youtube'i")
+  })
+})
+
+describe('round 10 (#2, 35): the word written anywhere, literal or not (wakeMentioned)', () => {
+  const W2 = createWake('Ütle')
+  it('finds the word in a literal place, in quotes, inside his sentence and at the start', () => {
+    expect(wakeMentioned(W2, 'Kirjuta siia sõna ütle.')).toBe(true)
+    expect(wakeMentioned(W2, 'ta ütles „ütle”')).toBe(true)
+    expect(wakeMentioned(W2, 'no nii ütle ava youtube')).toBe(true)
+    expect(wakeMentioned(W2, 'Ütle.')).toBe(true)
+  })
+  it('a relative or another word is not the word', () => {
+    expect(wakeMentioned(W2, 'Ma ütlen sulle homme.')).toBe(false)
+    expect(wakeMentioned(W2, 'ütlemine on hõbe')).toBe(false)
+    expect(wakeMentioned(W2, 'Kõik, ava YouTube')).toBe(false)
+  })
+})
+
+describe('review 1: the word the keyword spotter knows (spotterHears)', () => {
+  it('is "ütle" in any case; every other word, and none, is not', () => {
+    expect(spotterHears('Ütle')).toBe(true)
+    expect(spotterHears('ütle')).toBe(true)
+    expect(spotterHears(' ÜTLE ')).toBe(true)
+    expect(spotterHears('Arvuti')).toBe(false)
+    expect(spotterHears('hei ütle')).toBe(false)
+    expect(spotterHears(undefined)).toBe(false)
   })
 })

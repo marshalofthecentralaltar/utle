@@ -5,6 +5,9 @@ import type { Capture } from './capture.ts'
 import type { EnrolPhrase, Judgement, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import type { FilteredFrame, SpeechFilter, VadFactory } from './vad.ts'
 import { createSpeechFilter } from './vad.ts'
+import { WAKE_LABEL } from './kws.ts'
+import { DEFAULT_WAKE_WORD, createWake, wakeMentioned } from '../src/core/wake.ts'
+import type { KeywordSpotterLike, SpotterStreamLike } from './kws.ts'
 
 /** The parts of sherpa-onnx-node's OnlineStream this server uses. */
 export interface OnlineStreamLike {
@@ -34,6 +37,17 @@ export interface DecodeResult {
   why?: DecodeWhy
   /** Round 10 (#7, lane LATE review 2): the speech detector heard speech start in this frame. */
   onset?: boolean
+  /** Round 10 (#2, 35): the keyword spotter heard the wake word in this result's utterance (in its audio, or in the end flush). */
+  wake?: SpottedWake
+}
+
+/**
+ * Round 10 (#2, 35): a wake word heard by the spotter. endMs: the session's audio (ms the client sent
+ * since the stream opened) when the spotter confirmed it, about 1 s after the word; a hit in the end
+ * flush carries the endpoint's time.
+ */
+export interface SpottedWake {
+  endMs: number
 }
 
 /** Round 10 (#7, lane LATE): the decoder's part of a final's why. cause only on an endpoint. */
@@ -55,6 +69,11 @@ export const MAX_PAD_MS = 2000
 /** Round 10 (#7, lane LATE): rule 3 of the recogniser (asrModel.ts rule3MinUtteranceLength), for naming the cause. */
 export const RULE3_MS = 30_000
 
+/** Round 10 (#2, 35, review 1): the most hiss the spotter is handed at an utterance's end to answer for a word the recogniser wrote. */
+export const SPOT_FLUSH_MS = 1200
+/** The word the spotter knows (server/kws.ts). */
+const SPOTTER_WAKE = createWake(DEFAULT_WAKE_WORD)
+
 /**
  * One connection's stream of the recogniser, decoded on this thread or on a worker. The session
  * feeds it one frame at a time and waits for the result before the next, so results come in frame order.
@@ -66,6 +85,8 @@ export interface Decoder {
   close(): void
   /** Round 10 (#7, 33.2): the trailing silence that ends an utterance from the next frame on. */
   endpointMode?(mode: EndpointMode): void
+  /** Round 10 (#2, 35): runs the keyword spotter on the frames from the next on (true), or stops it; answers whether it runs. */
+  spotter?(on: boolean): boolean | Promise<boolean>
   /**
    * Round 4: who spoke the utterance that has just ended (the accept that returned the endpoint)
    * or the one in progress (before a flush's reset). Null when the server has no voice profile.
@@ -118,6 +139,8 @@ export interface DecoderExtras {
   vad?: VadFactory | null
   /** UTLE_CAPTURE; null: nothing is written. */
   capture?: Capture | null
+  /** Round 10 (#2, 35): the keyword spotter, loaded at the first ask (one for all streams); null when it cannot load. */
+  spotter?: (() => KeywordSpotterLike | null) | null
 }
 
 /**
@@ -300,6 +323,50 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
   }
   // ---------- end of endpointing per mode ----------
 
+  // ---------- round 10 (#2, ARCHITECTURE 35): the keyword spotter, fed the frames the recogniser gets ----------
+  let spotter: KeywordSpotterLike | null = null
+  let spotStream: SpotterStreamLike | null = null
+  /** The spotter answered (the wake word or a decoy) in the utterance in progress. */
+  let spottedHere = false
+  /** One frame into the spotter (when it runs): true when it heard the wake word. A decoy (a relative of the word) is never one. */
+  const spotFrame = (samples: Float32Array): boolean => {
+    if (spotter === null || spotStream === null) return false
+    spotStream.acceptWaveform({ samples, sampleRate: ASR_SAMPLE_RATE })
+    let heard = false
+    while (spotter.isReady(spotStream)) {
+      spotter.decode(spotStream)
+      const keyword = spotter.getResult(spotStream).keyword
+      if (keyword === '') continue
+      spotter.reset(spotStream)
+      spottedHere = true
+      if (keyword === WAKE_LABEL) heard = true
+    }
+    return heard
+  }
+  /** A frame of the client's audio into the spotter: the wake heard in it, on the session's clock. */
+  const spot = (part: FilteredFrame): SpottedWake | undefined => (spotFrame(part.samples) ? { endMs: Math.round(inputMs) } : undefined)
+  /**
+   * Review 1: the utterance ends now. The spotter confirms a word about 1 s of audio after it
+   * (kws-eval: p50 967 ms) and the detector ends a command 640 to 880 ms after the speech (33.2), so
+   * a word at the end of an utterance would be heard only in the next one. When the recogniser wrote
+   * the word and the spotter has not answered in this utterance, it gets hiss now, at most
+   * SPOT_FLUSH_MS, until it answers. Then it starts over either way, so a hit never lands on the next
+   * utterance. Only such utterances pay (about 0.13 ms of decoding per ms of hiss).
+   */
+  const flushSpot = (text: string, f: SpeechFilter | null): SpottedWake | undefined => {
+    if (spotter === null || spotStream === null) return undefined
+    let heard: SpottedWake | undefined
+    if (!spottedHere && wakeMentioned(SPOTTER_WAKE, text)) {
+      for (let ms = 0; ms < SPOT_FLUSH_MS && !spottedHere; ms += frameMs(new Float32Array(ASR_FRAME_SAMPLES))) {
+        if (spotFrame(f ? f.hiss(ASR_FRAME_SAMPLES) : new Float32Array(ASR_FRAME_SAMPLES))) heard = { endMs: Math.round(inputMs) }
+      }
+    }
+    spotter.reset(spotStream)
+    spottedHere = false
+    return heard
+  }
+  // ---------- end of the keyword spotter ----------
+
   /** One frame into the recogniser; true when it ended the utterance. Hiss handed ahead of time (ahead) is no one's audio. */
   const decodeOne = (part: FilteredFrame, ahead = false): boolean => {
     stream.acceptWaveform({ samples: part.samples, sampleRate: ASR_SAMPLE_RATE })
@@ -322,6 +389,7 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       const parts: FilteredFrame[] = [...carry, ...(filter ? filter.push(samples) : [{ samples, speech: rms(samples) >= SILENCE_RMS }])]
       carry = []
       let endpoint = false
+      let wake: SpottedWake | undefined
       let onset = false
       for (let i = 0; i < parts.length; i += 1) {
         const part = parts[i]
@@ -337,6 +405,8 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
           quietMs += frameMs(part.samples)
           continue
         }
+        // Round 10 (#2, 35): the spotter hears what the recogniser decodes (not the skipped not-speech; it restarts at every endpoint).
+        wake = spot(part) ?? wake
         endpoint = decodeOne(part)
         if (endpoint) {
           carry = parts.slice(i + 1)
@@ -346,6 +416,8 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
       if (!endpoint && filter) endpoint = endOnSilence(filter)
       const result = recognizer.getResult(stream)
       const text = result.text.trim()
+      // Round 10 (#2, 35, review 1): a word at the utterance's end is heard before the utterance goes.
+      if (endpoint) wake = flushSpot(text, filter) ?? wake
       const quiet = quietMs
       // Round 10 (#7, lane LATE): the recogniser's clock runs ahead of the session's by the replayed pre-roll.
       const stamps = result.timestamps ?? []
@@ -365,13 +437,28 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
           if (text !== '') takePhrase(ended)
         } else if (parts.length > 0) ended = null
       }
-      return { text, endpoint, quietMs: quiet, why, ...(onset ? { onset: true } : {}) }
+      return { text, endpoint, quietMs: quiet, why, ...(onset ? { onset: true } : {}), ...(wake === undefined ? {} : { wake }) }
     },
     endpointMode(next) {
       mode = next
     },
+    spotter(on) {
+      spottedHere = false
+      if (!on) {
+        spotStream = null
+        return false
+      }
+      if (spotStream !== null) return true
+      spotter ??= extras.spotter?.() ?? null
+      if (spotter === null) return false
+      spotStream = spotter.createStream()
+      return true
+    },
     reset() {
       forgetUtterance()
+      // Round 10 (#2, 35): a flush ends the utterance; the spotter starts over, so nothing of it reaches the next.
+      if (spotter !== null && spotStream !== null) spotter.reset(spotStream)
+      spottedHere = false
       // Round 10 (31.7): only frames the recogniser made words of are a phrase attempt; the residue
       // after an endpoint (a breath, a tail) would otherwise answer a spurious too_short.
       const words = /[\p{L}\p{N}]/u.test(recognizer.getResult(stream).text)
@@ -459,6 +546,8 @@ export interface AsrSession {
   audio(samples: Float32Array): void
   /** Round 10 (#7, 33.2): the trailing silence that ends an utterance from now on (command 0.6 s, dictation 1.0 s). */
   endpointMode(mode: EndpointMode): void
+  /** Round 10 (#2, 35): runs the keyword spotter on this socket's audio from now on, or stops it; answered with `spotter`. */
+  spotter(on: boolean): void
   /** Decodes what is queued, sends the utterance so far as a final, and starts the next utterance. */
   flush(): void
   close(): void
@@ -602,6 +691,18 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     return tracing && message.type === 'final' ? { ...message, why: stamped } : message
   }
   // ---------- end of what ended each utterance ----------
+  /** Round 10 (#2, 35): the segment a wake was sent for in the utterance in progress; null without one. */
+  let woke: number | null = null
+  /**
+   * Round 10 (#2, 35): the utterance ended. Its wake's segment, if it had one; a segment no final or
+   * rejection took is burnt, so a wake never carries over to the next utterance.
+   */
+  const endWake = (): number | null => {
+    const segment = woke
+    woke = null
+    if (segment !== null && segments < segment) segments = segment
+    return segment
+  }
 
   /** Round 10 (31.7): sends speakerStatus; a decoder without readiness (no gate) is never protected. */
   const tellStatus = (): void => {
@@ -646,8 +747,12 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   const closeEmpty = (): void => {
     const had = signalled
     signalled = false
-    if (!had || !onlyOwner) return
+    if (!had || !onlyOwner) {
+      endWake()
+      return
+    }
     segments += 1
+    endWake()
     send({ type: 'rejected', decision: { segmentId: segments, sessionId, profileVersion: announced, verdict: 'unknown', reason: 'insufficient_audio', timings: { judgeMs: 0 } } })
     foreignFinals += 1
   }
@@ -737,6 +842,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     const started = now()
     segments += 1
     const segment = segments
+    endWake()
     const decide = (verification: SpeakerVerification | null): void => {
       if (closed) return
       const reason: SpeakerReason = verification?.reason ?? 'verification_error'
@@ -777,6 +883,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
    */
   const sendFinal = (text: string, why: FinalWhy | null, then: () => void): void => {
     if (testing) {
+      endWake()
       runTest(then)
       return
     }
@@ -784,13 +891,16 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       sendVerified(text, why, then)
       return
     }
+    // Round 10 (#2, 35): a final the spotter heard the wake word in carries the wake's segment.
+    const wakeSegment = endWake()
+    const woken = wakeSegment === null ? {} : { segment: wakeSegment }
     const deliver = (judgement: Judgement | null | undefined): void => {
       if (closed) return
       if (judgement) {
-        send(withWhy({ type: 'final', text, speaker: judgement.speaker }, why))
+        send(withWhy({ type: 'final', text, speaker: judgement.speaker, ...woken }, why))
         options.onJudged?.(judgement, onlyOwner)
         if (onlyOwner && judgement.speaker !== 'owner') foreignFinals += 1
-      } else send(withWhy({ type: 'final', text }, why))
+      } else send(withWhy({ type: 'final', text, ...woken }, why))
       // Round 7: UTLE_CAPTURE writes the clip and its words; without it the decoder does nothing here.
       captured(text, judgement ?? null)
       then()
@@ -880,6 +990,11 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     const done = (result: DecodeResult): void => {
       if (closed) return
       decodedMs += item.ms
+      // Round 10 (#2, 35): the wake goes first, with the segment the final of its utterance will carry. No words.
+      if (result.wake !== undefined) {
+        woke = segments + 1
+        send({ type: 'wake', segment: woke, endMs: result.wake.endMs })
+      }
       finish(result, () => schedule(step))
     }
     try {
@@ -915,6 +1030,20 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     },
     endpointMode(mode) {
       if (!closed) decoder.endpointMode?.(mode)
+    },
+    spotter(on) {
+      if (closed) return
+      const tell = (running: boolean): void => {
+        if (!closed) send({ type: 'spotter', on: running })
+      }
+      let running: boolean | Promise<boolean>
+      try {
+        running = decoder.spotter?.(on) ?? false
+      } catch {
+        running = false
+      }
+      if (running instanceof Promise) running.then(tell, () => tell(false))
+      else tell(running)
     },
     close() {
       closed = true

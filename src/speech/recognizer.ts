@@ -1,3 +1,4 @@
+import type { HeardWake } from '../core/listen.ts'
 import type { EndpointMode, EnrolFailure, HeldOutResult, PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason, SpeakerTestResult } from './asrProtocol.ts'
 
 /** Round 10 (31.7): why an enrolment replaced nothing, and the candidate's held-out scores. */
@@ -39,14 +40,16 @@ export interface RecognizerHandlers {
   /**
    * One complete utterance, already joined across pauses. Round 10 (31.3): with only the owner
    * obeyed, decision is the verified owner decision of its newest final; absent otherwise.
+   * Round 10 (#2, 35): heard, what the local server's keyword spotter heard in it (wake mode with
+   * the spotter running); absent without a spotter, and the text decides (LIMITED).
    */
-  onUtterance(text: string, decision?: SpeakerDecision): void
+  onUtterance(text: string, decision?: SpeakerDecision, heard?: HeardWake): void
   /**
    * Round 4: a final that began with a connective ("siis ava Karin") soon after the last utterance
    * continues it: text is the whole joined utterance, added the new words. Optional; without it
    * the words come through onUtterance as an utterance of their own.
    */
-  onUtteranceContinued?(text: string, added: string, decision?: SpeakerDecision): void
+  onUtteranceContinued?(text: string, added: string, decision?: SpeakerDecision, heard?: HeardWake): void
   /** What is being heard right now, for display only. Empty when nothing is in progress. */
   onInterim(text: string): void
   /** A problem the user should see. The microphone has stopped. */

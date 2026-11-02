@@ -160,3 +160,25 @@ export function wakeFind(state: WakeState, final: string, anywhere: boolean): Wa
   }
   return null
 }
+
+/**
+ * Round 10 (#2, 35, review 1): the keyword spotter on the server knows one word, "ütle" (server/kws.ts).
+ * Wake mode asks for it, and believes what it heard, only when the setting is that word; any other
+ * word runs on the text, LIMITED (32).
+ */
+export function spotterHears(word: string | undefined): boolean {
+  return word !== undefined && latin(wakeWordFrom(word)) === 'ütle'
+}
+
+/**
+ * Round 10 (#2, 35): the word is written somewhere in the final, literal or not. With the keyword
+ * spotter, a wake heard in the audio whose word the final has only in a literal place ("kirjuta sõna
+ * ütle") stays text; one whose word the recogniser did not write at all wakes without running words.
+ */
+export function wakeMentioned(state: WakeState, final: string): boolean {
+  const list = tokens(final)
+  return list.some((_, i) => state.keys.every((key, k) => {
+    const t = list[i + k]
+    return t !== undefined && same(t.core, key)
+  }))
+}

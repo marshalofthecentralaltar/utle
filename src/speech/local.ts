@@ -5,6 +5,7 @@ import type { AssemblerOptions } from './assembler.ts'
 import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, ONSET_HOLD_MS, authorizes, parseAsrMessage } from './asrProtocol.ts'
 import type { AsrClientMessage, AsrServerMessage, EndpointMode, SpeakerDecision, SpeakerReason, SpeakerSessionInfo } from './asrProtocol.ts'
 import type { Recognizer, RecognizerHandlers } from './recognizer.ts'
+import type { HeardWake } from '../core/listen.ts'
 
 /** The parts of the browser's WebSocket this recogniser uses. */
 export interface SocketLike {
@@ -53,6 +54,13 @@ export interface LocalOptions {
    * is never released early. Default: every Estonian form of the help page (COMMAND_FORMS).
    */
   longerCommands?: readonly string[]
+  /**
+   * Round 10 (#2, ARCHITECTURE 35): wake mode. The server is asked to run its keyword spotter at every
+   * ready; once it says it runs, every utterance is delivered with what the spotter heard in it
+   * (`{ spotted }`, the third argument). Until then, or when it cannot run, nothing changes: the
+   * handlers get the arguments they always did and the text decides (LIMITED, 32).
+   */
+  spotter?: boolean
 }
 
 /** Round 9 (30.1): the waits before each new try in an outage; the last one repeats. */
@@ -158,22 +166,57 @@ export function createLocalRecognizer(
   const releasable = (text: string): boolean => isInstant(text) && !extendsCommand(text, longer)
   /** The decision of the newest authorized final; null when none (or after a lost connection). */
   let authorized: SpeakerDecision | null = null
+  // ---- round 10 (#2, 35): the keyword spotter ----
+  /** The server said its spotter runs on this socket. */
+  let spotterOn = false
+  /** The segment of the newest wake not yet matched to its final. */
+  let pendingWake: number | null = null
+  /** A final the assembler holds (or is about to deliver) had its wake. */
+  let heardWake = false
+  /** What the spotter heard in the utterance being delivered (and forgets it); undefined without a spotter. */
+  const heardNow = (): HeardWake | undefined => {
+    if (!spotterOn) return undefined
+    const heard = { spotted: heardWake }
+    heardWake = false
+    return heard
+  }
+  /** A final arrived with this segment (undefined: none): it was heard when its wake came before it. Any older wake is stale. */
+  const matchWake = (segment: number | undefined): void => {
+    if (spotterOn && segment !== undefined && pendingWake === segment) heardWake = true
+    pendingWake = null
+  }
+  const forgetWake = (): void => {
+    spotterOn = false
+    pendingWake = null
+    heardWake = false
+  }
+  // ---- end of the keyword spotter ----
   const continuedWith = (text: string, added: string): void => {
+    const heard = heardNow()
     if (!strict) {
-      handlers.onUtteranceContinued?.(text, added)
+      if (heard === undefined) handlers.onUtteranceContinued?.(text, added)
+      else handlers.onUtteranceContinued?.(text, added, undefined, heard)
       return
     }
-    if (authorized !== null) handlers.onUtteranceContinued?.(text, added, authorized)
+    if (authorized === null) return
+    if (heard === undefined) handlers.onUtteranceContinued?.(text, added, authorized)
+    else handlers.onUtteranceContinued?.(text, added, authorized, heard)
   }
   const chained: Pick<AssemblerOptions, 'connectiveHoldMs' | 'onUtteranceContinued'> = {
     connectiveHoldMs: CONNECTIVE_HOLD_MS,
     ...(handlers.onUtteranceContinued ? { onUtteranceContinued: continuedWith } : {}),
   }
-  const delivered = strict
-    ? (text: string): void => {
-        if (authorized !== null) handlers.onUtterance(text, authorized)
-      }
-    : handlers.onUtterance
+  const delivered = (text: string): void => {
+    const heard = heardNow()
+    if (strict) {
+      if (authorized === null) return
+      if (heard === undefined) handlers.onUtterance(text, authorized)
+      else handlers.onUtterance(text, authorized, heard)
+      return
+    }
+    if (heard === undefined) handlers.onUtterance(text)
+    else handlers.onUtterance(text, undefined, heard)
+  }
   const assembler = createAssembler({ holdMs: options.holdMs ?? LOCAL_HOLD_MS, onUtterance: delivered, isInstant, ...chained })
   const connect = options.connect ?? ((events: SocketEvents) => browserSocket(events, options.address))
   let running = false
@@ -220,7 +263,9 @@ export function createLocalRecognizer(
     handlers.onInterim('')
     // Round 5 (review M8): a quick reply past the assembler still counts as the last delivery.
     assembler.noteDelivered(text)
-    handlers.onUtterance(text)
+    // Round 10 (35): a quick reply from a partial was heard when the wake of the utterance in progress came.
+    if (spotterOn) handlers.onUtterance(text, undefined, { spotted: pendingWake !== null })
+    else handlers.onUtterance(text)
   }
 
   const onPartial = (text: string): void => {
@@ -332,9 +377,12 @@ export function createLocalRecognizer(
       lastSegment = decision.segmentId
       authorized = decision
       dropStreak = 0
+      // Round 10 (35): a wake counts only once its own segment is verified as the owner's.
+      matchWake(decision.segmentId)
       onFinal(message.text)
       return
     }
+    pendingWake = null
     onForeignFinal(decision?.reason ?? 'verification_error')
   }
   const send = (message: AsrClientMessage): boolean => {
@@ -375,6 +423,8 @@ export function createLocalRecognizer(
       send({ type: 'onlyOwner', on: true })
       send({ type: 'speakerStatus' })
     }
+    // Round 10 (35): wake mode asks for the keyword spotter on every connection; the server answers spotter.
+    if (options.spotter === true) send({ type: 'spotter', on: true })
     if (enrolWanted !== null) sendEnrol(enrolWanted)
     if (scriptWanted !== null) sendScript(scriptWanted)
     const waiting = speakerWanted
@@ -386,6 +436,7 @@ export function createLocalRecognizer(
   const teardown = (): void => {
     clearFlushWait()
     forgetAuthorization()
+    forgetWake()
     if (retry !== null) clearTimeout(retry)
     retry = null
     cancelSettle()
@@ -463,11 +514,24 @@ export function createLocalRecognizer(
           if (strict) strictFinal(message)
           else {
             dropStreak = 0
+            matchWake(message.segment)
             onFinal(message.text)
           }
           return
         case 'rejected':
+          pendingWake = null
           if (strict) onForeignFinal(message.decision.reason)
+          return
+        case 'wake':
+          // Round 10 (35): no words; it counts when the final of its segment comes (and, only-owner on, is verified).
+          if (spotterOn) pendingWake = message.segment
+          return
+        case 'spotter':
+          spotterOn = options.spotter === true && message.on
+          if (!spotterOn) {
+            pendingWake = null
+            heardWake = false
+          }
           return
         case 'activity':
           // Round 10 (#7, lane LATE review 2): the speech detector heard speech start: a held final waits for it
@@ -520,6 +584,7 @@ export function createLocalRecognizer(
       if (strict) {
         clearFlushWait()
         forgetAuthorization()
+    forgetWake()
         assembler.dispose()
         current = ''
         flushed = false

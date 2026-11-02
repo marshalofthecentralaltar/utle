@@ -2795,8 +2795,10 @@ kinnitan“"); "jah kinnitan" and "kinnitan" are yes.
 0.3 to 1 s words (C's second half), a model swap, Soniox verdicts (E), any real voice.
 ## 32. Round 10: addressed speech (LISTEN lane, issues #2 and #6), LIMITED
 
-LIMITED: everything here works on the recogniser's text. There is no acoustic keyword spotter; #2
-stays open for one (a local Estonian KWS model, PASSIVE without any recognition). Pipeline order,
+LIMITED: everything here works on the recogniser's text. Round 10, lane WAKE (35): with the local
+server the wake is heard in the audio by a keyword spotter, and this text match is the fallback
+wherever the spotter does not run; #2 stays open for real voices, the browser-side detector and
+PASSIVE without any recognition (35.1). Pipeline order,
 binding: microphone, speaker gate (31, only-owner), wake word or addressee check, engine. A wake word
 never authorises a speaker; neither check ever sees words the gate rejected.
 
@@ -3071,3 +3073,156 @@ round 10 section on `extension/test/fixtures/gmail-verify.html` (the verify link
 "näita numbreid", the tie through the real core); `scripts/intent-eval.ts` cases (a) to (e) and the tie
 on fake pages typed from the session (HANDOFF 1p has the before and after tables). Not verified: the
 real Gmail and the real console (logged in), a real voice.
+
+## 35. Round 10: the wake word in the audio (lane WAKE, issue #2, acoustic half)
+
+Section 32 woke on the recogniser's text alone (LIMITED). With the local server the wake word is
+now heard in the audio: sherpa-onnx's `KeywordSpotter` (already a dependency, 1.13.8) runs over
+TalTech's streaming zipformer, the recogniser's own model files (no download), beside the recogniser
+on the same frames. 32 stands for everything this section does not change: the states, the timeout,
+the stop words, the literal rules and the order microphone, speaker gate, wake word, engine.
+
+### 35.1 The decision (ADR)
+
+**Question.** Can a keyword spotter over the existing model hear "Ütle" and not its relatives
+("ütlen", "ütles", "ütleb", "ütleme", "ütlemine", "ütelda", "ütlesin"), at a cost the local server can
+carry? Measured with `scripts/kws-eval.ts` over `scripts/kws-set.ts --eval` (150 clips, six
+TartuNLP voices at three speeds, SYNTHETIC: not one real voice), one continuous stream per spec as the
+server feeds one connection (HANDOFF 1r has the tables).
+
+**What the measurement showed.**
+
+- The model is cased. "Ütle" at the start of a sentence is the three tokens `▁Ü t le`, inside one the
+  single token `▁ütle` (id 231). A spec with `▁ütle` alone missed every sentence-start "Ütle"
+  (round 1 of the sweep: "Ütle." 0 of 6). Both spellings are the wake word.
+- The relatives decode as the wake word's tokens plus a suffix (`▁ütle n`, `▁ütle s`, `▁ütle b`,
+  `▁ütle mine`, `▁ütle sin`; `▁ütleme` is one token; "ütelda" is `▁ ü te lda`). With `▁ütle` alone
+  and one trailing blank the spotter fired on 23 of 42 relative clips. With the relatives as decoy
+  keywords (a hit on a decoy resets the stream and is never a wake) and two trailing blanks it
+  fires on 3 of 42; with three blanks on 0, but the wake recall falls to 81 %.
+- Chosen spec (`server/kws.ts` `WAKE_SPEC`): both spellings, 29 decoys, `numTrailingBlanks` 2,
+  `keywordsThreshold` 0.1, `keywordsScore` 1, `maxActivePaths` 4, one thread. The spotter alone:
+  41 of 42 wake clips (start 18/18, middle 11/12, end 12/12), 3 of 42 relatives, 0 of 36 room
+  sentences, 1 hit in 4.5 minutes of a paragraph without the word.
+- The coordinator asks both (35.3): a wake needs the spotter's hit AND the word where a wake can be
+  in the recogniser's text. From PASSIVE: 41 of 42 wake clips woke, 0 of 42 relatives, 0 of 12
+  literal ("kirjuta sõna ütle"), 0 of 36 room sentences, 0 paragraph clips; the word said to someone
+  else ("Ütle talle, et ...", "ütle tere") woke 5 of 12 against 11 of 12 on the text alone. The
+  spotter's three relative hits never woke anything: the text said "ütles", "ütleb".
+- Cost: about 13 % of one core (CPU time over audio time, one thread); about 200 MB more resident
+  memory at load (a second copy of the 155 MB int8 encoder) and about 250 MB after ten minutes of
+  audio on one stream. Loaded with the recogniser at the server's start (35.2); `UTLE_SPOTTER=off`
+  leaves it out. Start-up, a fresh decode worker, three runs each on a busy machine (29 to 58 % CPU):
+  to loaded 11.7, 11.8, 12.9 s and 615 to 617 MB with the spotter; 5.9, 5.9, 7.6 s and 423 MB without
+  (about +6 s, +193 MB). Ruled 2026-11-02 (review round 2): it keeps loading at start, for everyone,
+  because a load at the first wake-mode ask stalls decoding mid-use (20.8 s measured) and a second
+  worker for it is not worth it now.
+- Time: the spotter confirms the bare word about 1.0 s after the speech ends (p50 967 ms, p95
+  1114 ms, in 100 ms frames). That misses the issue's trial target (p95 800 ms from the keyword's
+  end); it costs the user nothing today, because the wake is taken with the final, which comes later
+  (about 1.7 s after the speech, HANDOFF 1o).
+
+**Decision.** Feasible: the local server runs the spotter in wake mode, and the spotter's hit is the
+wake signal for the local engine (35.2 to 35.4). The text match stays as the fallback, labelled
+LIMITED (32), wherever the spotter does not run: Chrome's engine, Soniox, a hosted server (wake mode
+does not start there, 32.2), a spotter that failed to load.
+
+**Alternatives looked at.**
+
+- openWakeWord: English-first pretrained models; an Estonian "Ütle" needs a custom model trained on
+  synthetic speech (its pipeline uses English TTS voices) plus negative data, in Python, outside this
+  repository's stack, and it has no notion of the relatives: they are just more negatives to collect.
+  Not chosen: no measured gain over a spotter that already knows Estonian.
+- A trained small KWS (a few hundred kB, e.g. a CNN or a small zipformer KWS trained for one word):
+  the right end state for the browser and for low CPU, but it needs recordings of real voices saying
+  the word and its relatives (the owner's recordings, #9 consent) and a training setup. Not now:
+  nothing to train on but synthetic voices.
+- The recogniser's own tokens with times: no second model, but it is the text approach of 32 by
+  another name (the recogniser's beam decides, not a constrained search); the issue rules it out as
+  the acoustic detector.
+- A browser-side (WASM) spotter and wake mode on a hosted server: out of scope. What it would take:
+  sherpa-onnx's WASM build in the offscreen document, a model small enough to ship (the 155 MB
+  encoder is not; a trained small KWS above is), and a frame router that sends nothing to the server
+  in PASSIVE. Until then 32.2 stands: no wake mode with a hosted server or Soniox.
+
+**What stays open on #2.** Real voices (the owner's recordings): recall, the relatives, and false
+wakes per hour can only be claimed on them; the synthetic paragraph is 4.5 minutes, far from the
+hours a 0.1 per hour claim needs. The confirmation time (p95 1.1 s against 0.8 s). The browser-side
+detector and hosted-passive privacy above. The word said to someone else still wakes 5 of 12: the
+sound is the wake word's, only the addressee differs (32.3's question).
+
+### 35.2 The server (`server/kws.ts`, `server/asrSession.ts`, `server/asrWorker.ts`)
+
+`loadSpotter(root, spec)` builds the spotter over the recogniser's files, the keywords passed as a
+buffer (`keywordsBuf`): nothing is written into `models/`. The decode worker loads it once, with the
+recogniser and before it says loaded, for every stream (`lazySpotter`; the thread fallback loads it at
+the first ask); a failure is logged once with its reason (never words) and the answer is off from
+then on. Measured on 2026-11-02 (voice.ts section 9, first run): loaded at the first wake-mode ask
+instead, it held the decode thread 20.8 s on a busy machine and the backlog dropped the speech of
+those seconds, so the first clips never reached the recogniser. `UTLE_SPOTTER=off` leaves it out
+(about 200 MB less; wake mode then decides on the text, LIMITED).
+
+The client asks with `{ type: 'spotter', on }` (wake mode, every connection); the session answers
+`{ type: 'spotter', on }` with whether it runs. The offscreen document asks only when the wake word is
+"Ütle" (`spotterHears`), and the engine ignores what the spotter heard for any other word (review 1:
+the spotter knows one word; "Arvuti" would never have woken). `decoderInThread` feeds the spotter each frame the
+recogniser gets, in the same order (the speech detector's output, the carry after an endpoint
+included), from the accept loop beside `decodeOne`; `ends` and `decodeOne` are unchanged. A hit on a
+decoy resets the spotter's stream and is dropped. A hit on the wake word goes into the frame's
+`DecodeResult.wake` (`endMs`: the session's audio, ms the client sent since the stream opened, when
+the spotter confirmed the word, about 1 s after it). Review 1 dropped two fields: `startMs` came from
+sherpa's token times, which are not on the stream's clock (4 to 13 s before `endMs` in voice.ts
+section 9), and `score` was the constant threshold (sherpa-onnx 1.13.8 reports no probability).
+
+**The end flush** (review 1). The spotter confirms a word about 1 s of audio after it, and since
+lane LATE (33.2) the speech detector ends a command 640 to 880 ms after the speech, handing the
+recogniser hiss that never reaches the spotter. Left alone, a word at the end of an utterance ("Ütle."
+alone) would be confirmed in the next utterance, under its segment. So at every endpoint, when the
+recogniser's text has the word (`wakeMentioned`) and the spotter has not answered in this utterance,
+the spotter is handed hiss (the detector's, else zeros), at most `SPOT_FLUSH_MS` 1200 ms, until it
+answers; a hit there belongs to this utterance. Then its stream starts over either way, at every
+endpoint and every flush, so no hit lands on the next utterance. Utterances without the word pay
+nothing; one with it pays at most 1.2 s of spotter decoding (about 160 ms).
+
+The session sends `{ type: 'wake', segment, endMs }` at once, before anything else of
+that frame. `segment` is the id the final (or rejection) of the same utterance will carry: the
+session's segment counter plus one. A final with only the owner off carries `segment` only when a
+wake was sent for it (every other final is byte for byte as before); with the owner on it carries
+it anyway (31.1). An utterance whose wake was sent but that ends with no words burns its segment, so
+a wake never attaches to the next utterance. No words ever go with a wake.
+
+### 35.3 The client and the coordinator (`src/speech/local.ts`, `src/core/listen.ts`, `extension/src/engine.ts`)
+
+`createLocalRecognizer` with `spotter: true` (the offscreen document sets it in wake mode) asks at
+every ready. Once the server says the spotter runs, every utterance is delivered with a third
+argument, `{ spotted }`: true when a final in it carried the segment of the newest wake; any other
+wake is stale and forgotten. Until the server says so, or when it says off, the handlers are called
+exactly as before and the text decides (LIMITED).
+
+`listenFinal(state, wake, final, now, heard)`: with `heard`, PASSIVE wakes only when the spotter heard
+the word AND `wakeFind` places it in the text (the lead-in dropped, the words after it run once, a
+literal use stays literal). Heard but not placed (a relative the spotter took for the word, a wake the
+recogniser wrote as something else) is no wake: a false wake opens ACTIVE to the room, a missed one
+costs a repeated word. Not heard is never a wake or a toggle, whatever the text says; in ACTIVE such
+a final is his text whole (a leading "Ütle" is kept), and the stop words still end ACTIVE.
+
+### 35.4 Only the owner
+
+Binding from 31: a wake is not a speaker decision. The client matches a wake to its final only when
+that final's own decision authorizes it (`strictFinal`); a rejection drops the pending wake with the
+words. The engine's `ownerOnly` wall passes `heard` on only with a verified owner decision. A wake
+heard in a stranger's voice therefore wakes nothing, and the command after the owner's wake still
+needs `verified_owner` for its own segment. A wake event carries no words, so sending it before the
+verdict leaks nothing.
+
+### 35.5 Proof
+
+`scripts/kws-eval.ts` (the tables, HANDOFF 1r), `src/core/listen.test.ts` and `src/core/wake.test.ts`
+(the coordinator with and without the spotter), `server/asrSession.test.ts` (the spotter off until
+asked, the wake before its final with the segment, the decoys, the burnt segment, off and missing,
+only-owner rejection under the same segment), `src/speech/local.test.ts` (the ask at ready, the
+match by segment, the stale wake, LIMITED without a spotter, only-owner), `extension/src/engine.test.ts`
+(the matrix in the engine, only-owner), and `extension/test/voice.ts` section 9: the behaviour matrix
+of #2 through the real recogniser, the real spotter, TitaNet and the real engine (SYNTHETIC voices,
+`scripts/fixtures/wake-set`), part B with only the owner on. Not verified: a real voice, a real room,
+a real microphone, the extension in Chrome end to end with the spotter (section 9 has no browser).
