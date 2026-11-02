@@ -2838,6 +2838,22 @@ only live feedback) and never previewed into the box: dictation lands with the f
 not live, and an ignored final clears the strip line. `katkesta` never waits behind a check: it runs at
 once and drops the checks still pending. Eval: 16 cases in `scripts/intent-eval.ts`.
 
+**Asked on the stable words (round 10 prompt 6, lane QUICK; `RecognizerHandlers.onStable`, the addressee
+wrapper in `extension/src/engine.ts`).** Where the time went on main (section 1 of `voice.ts`, the server's
+lines, HANDOFF 1u): from his last word the final reached the client about 0.6 s later; the client held it
+`LOCAL_HOLD_MS` (0.7 s) to join a next final; only then was the check asked, and it answered in 1.5 to 2.1 s;
+the typing took about 0.1 s. The check no longer waits for the hold. The recogniser names the stable words
+(`onStable(text, decision)`) when a final arrives, before the hold, and when the server's pause (33.3) names
+them; the engine asks the check for those words at once, with the finals before them and the page as it is
+then. When a final reaches the engine, a check asked for exactly its words, with exactly the same finals
+before them, since the last `katkesta`, is its check, pending or answered; anything else (a final joined with
+the next, words that changed after the pause, a cancel in between) is asked as before, and the earlier answer
+is dropped unread. Nothing else of this section changes: nothing is typed before the final and its verdict,
+finals are taken in order, a verdict belongs to exact words and never to a piece of them. With only the owner
+on, the recogniser names stable words only for an authorized final (the server sends no pause) and the
+engine's `ownerOnly` wall drops any without a verified owner decision (31.2). Cost: one check per final as
+before; stable words the final does not keep cost one more.
+
 ### 32.4 Proof
 
 `src/core/wake.test.ts`, `src/core/listen.test.ts`, engine tests "wake mode" and "always-on mode",
