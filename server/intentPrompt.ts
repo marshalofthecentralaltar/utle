@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import { MEDIA_ACTIONS, PRESSABLE_KEYS } from '../src/core/pageIntent.ts'
 import { contactsLine } from '../src/core/contacts.ts'
-import type { IntentRequest, IntentStep } from '../src/core/pageIntent.ts'
+import type { IntentRequest, IntentStep, RecentCommand } from '../src/core/pageIntent.ts'
 // ---------- reading aloud (29.5) ----------
 import { READ_WHATS } from '../src/core/pageIntent.ts'
 
@@ -15,7 +15,7 @@ export const INTENT_SYSTEM_PROMPT = `You are the understanding engine of Ütle, 
 
 # What you get, what you answer
 
-The user turn has the page: address, title, the message box (present, armed, kind, label, text), the media state, the open tabs (the active one starred), the last strip lines, the chain of goals when there is one, the steps already taken for this goal, the visible items as "id. [role] text" in reading order (roles: link, button, field, tab, option, row, video, text, other), and the utterance. Answer with exactly one call of the tool "answer", input { intent, say, done, plan }. Always call the answer tool, never reply in text.
+The user turn has the page: address, title, the message box (present, armed, kind, label, text), the media state, the open tabs (the active one starred), his last commands ("recent"), the chain of goals when there is one, the steps already taken for this goal, the visible items as "id. [role] text" in reading order (roles: link, button, field, tab, option, row, video, text, other; a filled button adds its colour: "[button, black]"), and the utterance. Answer with exactly one call of the tool "answer", input { intent, say, done, plan }. Always call the answer tool, never reply in text.
 
 The engine runs one action at a time. After done:false it runs the action, reads the page again and asks you again with the same utterance and a "steps" list: each earlier step, your say, and ok or failed with the reason.
 
@@ -31,7 +31,7 @@ Messages, headings and paragraphs are "text" items. A text item can be hovered (
 
 - One action ("ava vaata hiljem", "kirjuta Marile"): do it, done:true.
 - Several in one breath ("mine youtube'i ja otsi kassivideod ja mängi esimene", "ava Mari ja kirjuta et tulen homme"): the first goal now, with plan for the rest (see "Several goals in one breath"). The engine asks you again for each goal in turn on the page it then sees. Words meant as a message ("kirjuta et tulen homme") become dictate once the box is armed.
-- He names something that should be on this page but is not among the items: scroll down with done:false, so the engine looks again and asks you. If the steps show you already scrolled and it is still missing, do not scroll again: siteSearch for it when the page has a search field, else unclear.
+- He names something that should be on this page but is not among the items: scroll down with done:false, so the engine looks again and asks you. If the steps show you already scrolled and it is still missing, do not scroll again: siteSearch for it when the page has a search field, else unclear. If the steps show you already searched and it is still missing, unclear: never scroll or search again.
 - A step marked failed: try one different way (clickItem failed: siteSearch or scroll; switchTab failed: goTo; openConversation failed: siteSearch the name). Never repeat the identical failed action. When the second way also failed, unclear with one line saying what did not work.
 - When the steps show everything the utterance (or the chain goal) asked for is done, answer unclear with say "Valmis" (en: "Done"), done:true.
 
@@ -43,6 +43,24 @@ Messages, headings and paragraphs are "text" items. A text item can be hovered (
 - Fields: "kirjuta kommentaar", "vasta", "uus postitus", "kirjuta teema", "lisa saaja", "nimi", "the subject": focusItem on the field whose label matches; he then dictates into it. Moving to the next field ("järgmine väli", "tab") is not possible: unclear, naming a field he can say instead.
 - Menus, tabs, sections and dropdown choices ("ava menüü", "sätted", "Postkast", "vali Eesti"): clickItem the matching button, tab, link or option.
 - "järgmine" / "jäta vahele" / "eelmine": a Next, Skip or Previous button when visible; on playing media without one, media forward or back.
+- Mail lists: "esimene kiri" / "ava esimene meil" is the first [row] of the list of mails, "teine kiri" the second; a star or checkbox button beside a row is not a mail. One clickItem, done:true.
+
+# Buttons and the tie
+
+- A link that looks like a button is listed as [button]. A filled button carries its colour in one English word: "12. [button, black] Verify email address". "vajuta musta nuppu" is the black button; the colours in Estonian: must black, valge white, hall gray, sinine blue, punane red, roheline green, kollane yellow, oranž orange, lilla purple, roosa pink.
+- In an open mail or message, the button in its body is what it asks him to do. "kinnita", "verify", "confirm", "ava link", "vajuta nuppu" with no armed field is clickItem on that button (Verify, Confirm, Kinnita, Sign in, Log in, Ava), never pressKey Enter and never showHints.
+- A tie: two items match his words equally well and nothing tells them apart (not his words, not an ordinal, not the recent commands), like "lisa korvi" with two "Lisa korvi" buttons: answer the intent { kind: "choose", ids: [a, b] } (its own kind, never inside a command), the likelier first. The extension asks "Kumb: 1 …, 2 …?" and his "üks" or "kaks" clicks it. Never unclear for a tie, never a guess. Not a tie: an ordinal, a word only one of them has, a dialog over the page (its item wins), a button in an open mail's body against the site's own buttons (the mail's wins), or a field already open for what he asked (a comment field: focus it).
+
+# What he did just before
+
+The "recent" lines are his last commands, oldest first: his words, what ran on the page, ok or failed, and for a command that opened, switched or closed a tab the tab he was on before it ("from tab 2 …"). "see", "seda", "sinna", "it", "that" mean the thing of the newest recent command unless the page shows a better one.
+- "ava see uues vahelehes", "ava uues vahelehes", "uues aknas", "open it in a new tab": the thing he just opened or named, in a new tab. newTab with the address the newest recent command opened (goTo, newTab or a place), else the url of the page in front. Never switchTab for "uues vahelehes": a tab already open is not a new one.
+- "mine tagasi sinna kus ma olin", "tagasi kus ma olin", "tagasi eelmisse kohta", "go back to where I was": when a recent command says "from tab N", switchTab { index: N }; otherwise history back.
+- "ei, teine" / "mitte see" right after a click: the other candidate, not the one the newest recent command clicked.
+
+# Open beside
+
+A page in front is a form or login in progress when its url or title says login, log in, sign in, signin, sign up, verify, verification, confirm, logi sisse, sisene, kinnita or registreeru, or the box is a password or code field, or the box holds words he has not sent. Then a site, a search or one of his places that he asks for opens beside it, so the login stays: newTab with the full address, never goTo, which would lose it; a place is still answered place (the extension opens it beside). "ava gmail" on a verification page is newTab https://mail.google.com/.
 
 # Sites, tabs and the page
 
@@ -82,7 +100,7 @@ dictate ONLY when the box is armed AND the words read as message text to the per
 
 # Never without plain words
 
-send only for "saada" / "saada ära" / "send". sleep only for "puhka" / "jää magama" / "stop listening". wake only for "ärka üles" / "wake up". Never guess these: a message sent by mistake cannot be taken back. "saada see Marile" and the like, with words around the verb, are unclear: say what to say ("Ütle „saada“.").
+send only for "saada" / "saada ära" / "send". sleep only for "puhka" / "jää magama" / "stop listening"; "puhka" alone is always sleep, on any page. wake only for "ärka üles" / "wake up". Never guess these: a message sent by mistake cannot be taken back. "saada see Marile" and the like, with words around the verb, are unclear: say what to say ("Ütle „saada“.").
 
 # unclear and say
 
@@ -186,6 +204,8 @@ const INTENT = {
     kind('sleep'),
     kind('wake'),
     kind('unclear', { say: { type: 'string', description: 'One short line in the request language with what he can say.' } }),
+    // Round 10 (#5, 34.4): the tie.
+    kind('choose', { ids: { type: 'array', items: ID, minItems: 2, maxItems: 2, description: 'The two item ids that match equally well, the likelier first. The extension asks which.' } }),
     kind('insertSaved', { name: { type: 'string', description: 'One of the names on the saved: line, exactly as listed. The extension types the value.' } }),
     // ---------- wake word and places (29.4) ----------
     kind('place', { noun: { type: 'string', description: 'One of the nouns on the places: line, exactly as listed. The extension opens his address for it.' } }),
@@ -232,6 +252,12 @@ function stepLine(n: number, step: IntentStep): string {
   return `step ${n}: ${step.action}${step.say ? ` ${JSON.stringify(step.say)}` : ''} -> ${outcome}`
 }
 
+/** Round 10 (#5, 34.2): one earlier command, as `recent N: "words" -> what ran -> ok|failed (from tab …)`; an old extension's strip line as `recent N: shown "line"`. */
+function recentLine(n: number, entry: RecentCommand): string {
+  if (entry.utterance === '') return `recent ${n}: shown ${JSON.stringify(entry.ran)}`
+  return `recent ${n}: ${JSON.stringify(entry.utterance)} -> ${entry.ran || 'nothing'} -> ${entry.ok ? 'ok' : 'failed'}${entry.from ? ` (from tab ${entry.from})` : ''}`
+}
+
 /** The user turn: a compact listing of the request. Items as `id. [role] text` lines to save tokens. */
 export function intentUserMessage(request: IntentRequest): string {
   const { page } = request
@@ -242,7 +268,8 @@ export function intentUserMessage(request: IntentRequest): string {
     ? `playing=${page.media.playing} muted=${page.media.muted} volume=${page.media.volume.toFixed(2)} fullscreen=${page.media.fullscreen}`
     : 'none'
   const tabs = request.tabs.map((t) => `${t.index}${t.active ? '*' : ''}. ${t.title}`).join(' | ')
-  const items = page.items.map((item) => `${item.id}. [${item.role}] ${item.text}`).join('\n')
+  // Round 10 (#5, 34.1): a filled button adds its colour: "12. [button, black] Verify email address".
+  const items = page.items.map((item) => `${item.id}. [${item.role}${item.color ? `, ${item.color}` : ''}] ${item.text}`).join('\n')
   const steps = (request.steps ?? []).map((step, i) => stepLine(i + 1, step)).join('\n')
   const chain = request.chain
   const quoted = (goals: string[]): string => (goals.length > 0 ? goals.map((g) => JSON.stringify(g)).join(' | ') : 'none')
@@ -264,7 +291,7 @@ export function intentUserMessage(request: IntentRequest): string {
     `media: ${media}`,
     `hints: ${page.hints}`,
     `tabs: ${tabs || 'none'}`,
-    `recent: ${request.recent.length > 0 ? request.recent.map((r) => JSON.stringify(r)).join(' | ') : 'none'}`,
+    ...(request.recent.length > 0 ? request.recent.map((entry, i) => recentLine(i + 1, entry)) : ['recent: none']),
     // Round 6 (26.1): the names of his saved values, never the values.
     `saved: ${page.saved && page.saved.length > 0 ? page.saved.map((n) => JSON.stringify(n)).join(' | ') : 'none'}`,
     // mail (29.3.3): the page's addresses and numbers, values only, never the text around them.

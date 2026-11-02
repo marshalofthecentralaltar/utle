@@ -2843,3 +2843,75 @@ once and drops the checks still pending. Eval: 16 cases in `scripts/intent-eval.
 `src/core/wake.test.ts`, `src/core/listen.test.ts`, engine tests "wake mode" and "always-on mode",
 `server/addressee.test.ts`, `voice.ts` section 8 (SYNTHETIC two voices, `scripts/listen-set.ts`,
 through TalTech's model, TitaNet and the real engine), the "ütle" hotword in `asr-hotwords-eval.ts`.
+
+## 34. Round 10: what he meant (AMBIGUITY lane, issue #5)
+
+Issue #5 (Ralf, 2026-10-27, logging into the Anthropic console): "ava email" replaced the login with
+his mail in the same tab; "ava uues vahelehes" switched to another open tab; "ava esimene kiri" took two
+tries; the black verify button of the mail, a link styled as a button, could not be clicked by name. The
+class: Ütle did not use what is on screen and what was just said. Four changes, `src/core/meant.ts`
+(pure), `extension/src/buttonLook.ts` (pure), `extension/src/page.ts`, `src/core/pageIntent.ts`,
+`server/intentPrompt.ts`, `extension/src/engine.ts`. The timed scroll of #5 point 5 is lane FAST (33).
+
+### 34.1 readPage: a link that looks like a button is a button
+
+An `<a href>` is listed with role `button` when it has role="button", a class name with `button` or
+`btn` in it, or a box: a filled background (alpha 0.5 or more, or a gradient) and padding on every
+side (4 px top and bottom, 8 px left and right) around short text (40 characters, six words at most).
+Mail senders put the fill on a table cell that holds only the link: the cell (up to two levels up,
+same text, one link inside) counts as the link's box. Ordinary links stay links. Every `button` item
+with a fill carries `color`, one plain English word from its background (black, white, gray, red,
+orange, yellow, green, blue, purple, pink; `colorName`), and the model's user turn shows it as
+`12. [button, black] Verify email address`, so "vajuta musta nuppu" names it. `kinnita` is Enter
+only in a one-line field he armed (round 5, `FORM_KEYS`); everywhere else it goes to the model, which
+clicks the page's confirming button (it was a global Enter rule, which never reached the button).
+
+### 34.2 The model hears his last three commands
+
+`IntentRequest.recent` was the last three strip lines; it is now `RecentCommand[]`, oldest first, at
+most three: `{ utterance, ran, ok, from? }`. `ran` is what ran on the page (`meant.ts ranOf`:
+`newTab https://mail.google.com/`, `clickItem 13 "Anthropic · Verify…"`, `history back`, `typed into
+the box`; with nothing to run, `nothing; said "<strip line>"`), `ok` whether it worked (an unclear is
+not ok), `from` the tab in front before a command that opened, switched or closed a tab
+(`2 "Log in | Anthropic Console"`). The engine records each job's steps in `perform` and adds the entry
+when the job ends (`remember`); a type-first dictation is remembered once, by its verification. The
+user turn lists them as `recent 1: "ava email" -> newTab https://mail.google.com/ -> ok (from tab 2
+"…")`. A plain string in `recent` (an extension older than this) is accepted as `{ utterance: '', ran:
+<line>, ok: true }` and shown as `recent 1: shown "<line>"`, so an old extension against a new server
+still gets its answer. The prompt (section "What he did just before"): "ava see uues vahelehes" is
+newTab of the address the newest command opened, else the page's own url, never switchTab; "mine
+tagasi sinna kus ma olin" is switchTab to the `from` tab when one is there, else history back.
+
+### 34.3 Open beside a login in progress
+
+`formInProgress(page)`: the url or title says login, log in, sign in, sign up, verify, verification,
+confirm, logi sisse, sisene, sisselogimine, kinnita or registreeru; or the box is a password or code
+field; or the box (not a search box) holds words not sent. Then every goTo becomes newTab with the same
+address (`besideCommands`) and the strip adds "Uues vahelehes, see leht jääb alles." The engine does
+it for every path that can open a site: the place rule ("ava email" is his mail place, 29.4, and never
+reached the model), the site rules ("ava gmail"), and the model's goTo and place. The rules' path reads
+the page first, only when its step has a goTo (one readPage), with the box as it was before the
+utterance: the preview of his own command is not words he has not sent. The prompt says the same ("Open
+beside"), so the model answers newTab itself.
+
+### 34.4 A tie is one question with two numbers
+
+A new intent, `{ kind: 'choose', ids: [a, b] }`: two items of the page that match his words equally
+well, with nothing (his words, an ordinal, the recent commands) to tell them apart. `pageIntentFrom`
+takes two different ids of the page only; the server lifts a choose the model wrapped in a command, as
+it does a place (30.5.6). `applyIntent` runs nothing, keeps the ids on the session (`choosingItems`)
+and the bar asks "Kumb: 1 Ava, 2 Ava kiri?" (en "Which one: 1 …, 2 …?"); the engine's loop stops there
+(one ask). The next utterance alone answers: üks, kaks, esimene, teine (and esimest, teist, number üks,
+1, 2, one, two, first, second) is clickItem of that item, before the numbered labels; anything else
+ends the question and is heard as it always is. "Ei saanud aru" is never the answer to a tie. Not a
+tie (prompt): an ordinal, a word only one has, a dialog over the page, the button in an open mail's
+body against the site's own, a field already open for what he asked.
+
+### 34.5 Proof
+
+`extension/src/buttonLook.test.ts`, `src/core/meant.test.ts`, the round 10 blocks of
+`src/core/pageIntent.test.ts`, `server/intent.test.ts` and `extension/src/engine.test.ts`; the suite's
+round 10 section on `extension/test/fixtures/gmail-verify.html` (the verify link by name and by
+"näita numbreid", the tie through the real core); `scripts/intent-eval.ts` cases (a) to (e) and the tie
+on fake pages typed from the session (HANDOFF 1p has the before and after tables). Not verified: the
+real Gmail and the real console (logged in), a real voice.

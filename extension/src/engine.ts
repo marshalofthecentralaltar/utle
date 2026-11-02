@@ -5,7 +5,9 @@
 import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
 import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
 import { chainLine, firstGoal, hasConnective } from '../../src/core/chain.ts'
-import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, PageIntent, TabSummary } from '../../src/core/pageIntent.ts'
+import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, PageIntent, RecentCommand, TabSummary } from '../../src/core/pageIntent.ts'
+// Round 10 (#5, ARCHITECTURE 34): the recent commands, open beside a login in progress.
+import { RECENT_COMMANDS, besideCommands, ranOf, recentFrom } from '../../src/core/meant.ts'
 import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
 import { savedNames } from '../../src/core/saved.ts'
 import type { SpendOutcome, SpendRecord } from '../../src/core/spend.ts'
@@ -194,8 +196,6 @@ export const BUSY_FROM_S = 3
  * done:false, so they still run.
  */
 export const LONG_COMMAND_WORDS = 14
-/** How many strip lines the model is told about, and how long each may be (IntentRequestSchema: 200). */
-const RECENT_LINES = 3
 /** M7.2: a multi-step utterance gets no further step once this long has passed since it arrived. */
 export const INTENT_LOOP_BUDGET_MS = 15_000
 /**
@@ -220,7 +220,6 @@ const GOAL_CHARS = 200
 const UTTERANCE_CHARS = 500
 /** Round 4 (review): an enrolment with no answer from the server ends after this many times its seconds. */
 export const ENROL_TIMEOUT_FACTOR = 5
-const RECENT_LINE_CHARS = 200
 /** The request's limits in IntentRequestSchema: a page beyond them would be a 400, and the model never asked. */
 const URL_CHARS = 2000
 const TITLE_CHARS = 300
@@ -257,8 +256,8 @@ export function createEngine(deps: EngineDeps): Engine {
   let listening = false
   let queue: Promise<void> = Promise.resolve()
   let live: Live | null = null
-  /** The last lines the strip showed about utterances, newest last. */
-  let recent: string[] = []
+  /** Round 10 (#5, 34.2): his last commands, what ran and whether it worked, oldest first (at most RECENT_COMMANDS). */
+  let recent: RecentCommand[] = []
   /** The server has said it has no model. A standing state: published on change only. */
   let modelOff = false
   /** 27.3: the server refused the token. The standing line and the socket's failure name it. */
@@ -278,9 +277,8 @@ export function createEngine(deps: EngineDeps): Engine {
     deps.publish({ modelProblem: off ? inpageText.modelOff : '' })
   }
 
-  /** Publishes a line about an utterance and remembers it for the model. */
+  /** Publishes a line about an utterance. */
   const say = (line: string): void => {
-    if (line !== '') recent = [...recent, line.slice(0, RECENT_LINE_CHARS)].slice(-RECENT_LINES)
     deps.publish({ line, resting: session.asleep })
   }
 
@@ -408,6 +406,11 @@ export function createEngine(deps: EngineDeps): Engine {
     timedOut: boolean
     /** Round 9: a type-first job whose utterance a verification took over; the verification's job reports. */
     handedOff: boolean
+    /** Round 10 (#5, 34.2): what each step ran (meant.ts ranOf), and whether the last one worked. */
+    ran: string[]
+    ok: boolean
+    /** Round 10: the tab in front before it opened, switched or closed a tab: `2 "title"`. */
+    from?: string
   }
 
   /** Every job not finished: the one in its turn of the queue, those waiting for it, the verifications. */
@@ -469,7 +472,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // ---- end of busy seconds ----
 
   const newJob = (utterance: string, send: boolean): Job => {
-    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false, started: null, watchdog: null, dropped: false, spend: { asks: 0, input: 0, output: 0, cacheRead: 0, ms: 0, provider: '', model: '', steps: 0, goals: 1 }, ending: null, timedOut: false, handedOff: false }
+    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false, started: null, watchdog: null, dropped: false, spend: { asks: 0, input: 0, output: 0, cacheRead: 0, ms: 0, provider: '', model: '', steps: 0, goals: 1 }, ending: null, timedOut: false, handedOff: false, ran: [], ok: true }
     jobs.add(job)
     return job
   }
@@ -530,11 +533,19 @@ export function createEngine(deps: EngineDeps): Engine {
     const { asks, steps, goals, input, cacheRead, output, ms, provider, model } = job.spend
     deps.spend({ outcome: outcomeOf(job), asks, steps, goals, input, cacheRead, output, ms, provider, model })
   }
+  /** Round 10 (#5, 34.2): the job's command joins the recent ones the model hears; a type-first job's verification reports instead. */
+  const remember = (job: Job): void => {
+    if (job.handedOff || job.ran.length === 0) return
+    recent = [...recent, recentFrom(job.utterance, job.ran, job.ok && job.ending !== 'unclear', job.from)].slice(-RECENT_COMMANDS)
+  }
   /** The job is over, however it ended. */
   const endWork = (job: Job): void => {
     unwatch(job)
     job.started = null
-    if (jobs.delete(job)) reportSpend(job)
+    if (jobs.delete(job)) {
+      reportSpend(job)
+      remember(job)
+    }
     busyCheck()
   }
   // ---- end of the watchdog ----
@@ -647,7 +658,7 @@ export function createEngine(deps: EngineDeps): Engine {
    * for it. Null when the model gave no answer (the caller keeps what the rules did), or when the
    * job was cancelled by a later utterance.
    */
-  const askOnce = async (job: Job, box: BoxState, baseText: string | null, recentBefore: string[], steps: IntentStep[]): Promise<Heard | null> => {
+  const askOnce = async (job: Job, box: BoxState, baseText: string | null, recentBefore: RecentCommand[], steps: IntentStep[]): Promise<Heard | null> => {
     if (job.cancelled) return null
     // Review R3 M3: the controller is set before the page is read, so a barge-in while the page
     // is read counts this as model work begun and cancels it.
@@ -704,7 +715,7 @@ export function createEngine(deps: EngineDeps): Engine {
    * may still be in the box; a step without a setText puts the base back first. suffix: added to
    * both lines (round 3: "Jõuan järele…" on a stale utterance).
    */
-  const perform = async (step: InpageStep, u: Live | null, suffix = '', job: Job | null = null): Promise<Outcome> => {
+  const perform = async (step: InpageStep, u: Live | null, suffix = '', job: Job | null = null, page: PageContext | null = null): Promise<Outcome> => {
     const withSuffix = (line: string): string => (suffix === '' || line === '' ? line : `${line} ${suffix}`)
     session = step.session
     say(withSuffix(step.line))
@@ -712,7 +723,18 @@ export function createEngine(deps: EngineDeps): Engine {
     if (step.speak !== undefined) speakAloud(step.speak)
     // A command, or nothing at all: the preview must not stay in the box.
     if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
-    if (step.commands.length === 0) return { ok: true, line: step.line }
+    if (step.commands.length === 0) {
+      if (job !== null) {
+        job.ran.push(ranOf([], step.line))
+        job.ok = true
+      }
+      return { ok: true, line: step.line }
+    }
+    // Round 10 (#5, 34.2): a command that opens, switches or closes a tab remembers the tab he was on.
+    if (job !== null && job.from === undefined && step.commands.some((c) => c.kind === 'newTab' || c.kind === 'switchTab' || c.kind === 'closeTab')) {
+      const front = (await deps.tabs().catch((): TabSummary[] => [])).find((t) => t.active)
+      if (front !== undefined) job.from = `${front.index} ${JSON.stringify(front.title)}`
+    }
     let last: BrowserResult = { ok: true }
     for (const command of step.commands) {
       last = await runSafe(command)
@@ -721,6 +743,10 @@ export function createEngine(deps: EngineDeps): Engine {
     const after = deps.logic.inpageResult(session, step.commands, last)
     session = after.session
     const line = after.line !== '' ? after.line : step.line
+    if (job !== null) {
+      job.ran.push(ranOf(step.commands, line, page?.items))
+      job.ok = last.ok
+    }
     // Round 5: a job given up meanwhile ("katkesta", the watchdog) keeps that line, not this late result.
     if (job?.dropped !== true) say(withSuffix(line))
     return { ok: last.ok, line }
@@ -743,6 +769,19 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
+
+  /**
+   * Round 10 (#5, 34.3): a site opened while a login or form is in progress opens beside it (goTo
+   * becomes newTab), so the tab in front is never lost; the strip says so. The page is read only
+   * when the step has a goTo and the caller has not read it.
+   */
+  const beside = async (step: InpageStep, box: BoxState, page: PageContext | null): Promise<InpageStep> => {
+    if (!step.commands.some((c) => c.kind === 'goTo')) return step
+    // The box as it was before the utterance: a preview of his own words is not words he has not sent.
+    const front = page ?? (await readPage(box, box.text))
+    const commands = besideCommands(step.commands, front)
+    return commands === step.commands ? step : { ...step, commands, line: `${step.line} ${inpageText.beside}`.trim() }
+  }
 
   /**
    * Round 4: the model planned goals after the one its action serves. With no chain yet, the
@@ -782,17 +821,21 @@ export function createEngine(deps: EngineDeps): Engine {
    * through perform, so the session stays true. Round 4: an unclear after a good step ("Valmis")
    * ends the goal as done; `taken` counts the steps run, for the chain's total.
    */
-  const runGoal = async (job: Job, box: BoxState, recentBefore: string[], first: Heard, u: Live | null, since: number, maxSteps: number, taken: { n: number }): Promise<GoalEnd> => {
+  const runGoal = async (job: Job, box: BoxState, recentBefore: RecentCommand[], first: Heard, u: Live | null, since: number, maxSteps: number, taken: { n: number }): Promise<GoalEnd> => {
     let heard = first
     let steps: IntentStep[] = []
     let failures = 0
     for (;;) {
       planChain(job, heard, steps.length === 0)
       // Round 8 (29.4.2): a place is resolved here, from his own list; applyIntent never sees it.
-      const step = heard.intent.kind === 'place' ? placeStep(heard.intent.noun) : deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
-      const outcome = await perform(step, u, '', job)
+      const planned = heard.intent.kind === 'place' ? placeStep(heard.intent.noun) : deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
+      // Round 10 (#5, 34.3): beside a login in progress, a site or place opens in a new tab.
+      const step = await beside(planned, box, heard.page)
+      const outcome = await perform(step, u, '', job, heard.page)
       u = null
       if (job.dropped) return 'stopped'
+      // Round 10 (#5, 34.4): a tie asked its question; his next utterance answers it.
+      if (heard.intent.kind === 'choose') return 'stopped'
       if (heard.intent.kind === 'unclear') {
         if (steps.some((s) => s.ok)) return 'done'
         // Round 9: an unclear with no step of it run is its own ending.
@@ -828,7 +871,7 @@ export function createEngine(deps: EngineDeps): Engine {
    * reached, and on barge-in (a later utterance; a plain send only waits). The chain line on the
    * strip is published on every shift and cleared when the chain ends, however it ends.
    */
-  const follow = async (job: Job, box: BoxState, recentBefore: string[], first: Heard, u: Live | null): Promise<void> => {
+  const follow = async (job: Job, box: BoxState, recentBefore: RecentCommand[], first: Heard, u: Live | null): Promise<void> => {
     const started = job.arrived
     const taken = { n: 0 }
     let heard = first
@@ -882,8 +925,11 @@ export function createEngine(deps: EngineDeps): Engine {
    * command runs; when the box has changed since (more was typed, or the page changed it), nothing
    * is touched and the strip says the words were a command.
    */
-  const verify = (from: Job, box: BoxState, before: InpageSession, typedSession: InpageSession, typed: Outcome, expected: string | null, recentBefore: string[]): void => {
+  const verify = (from: Job, box: BoxState, before: InpageSession, typedSession: InpageSession, typed: Outcome, expected: string | null, recentBefore: RecentCommand[]): void => {
     const job = newJob(from.utterance, false)
+    // Round 10 (#5, 34.2): the typing is this utterance's command until a verdict takes it back.
+    job.ran = [...from.ran]
+    job.ok = from.ok
     job.verifying = true
     job.chain = from.chain
     job.continued = from.continued
@@ -922,6 +968,7 @@ export function createEngine(deps: EngineDeps): Engine {
         // moved the session on), and the base in the box.
         if (session === typedSession) session = before
         if (typed.ok) await runSafe({ kind: 'setText', text: box.text })
+        job.ran = []
         await follow(job, box, recentBefore, heard, null)
       } finally {
         think(false)
@@ -972,7 +1019,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // Round 8: "vaata uudiseid" opens his place, before the rules; never in an armed box (it may be a message).
       const place = box.armed ? null : placeCommand(job.utterance, places)
       if (place !== null) {
-        await perform({ session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.place.label) }, u, '', job)
+        await perform(await beside({ session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.place.label) }, box, null), u, '', job)
         lastDone = clipGoals([job.utterance])
         return
       }
@@ -988,7 +1035,7 @@ export function createEngine(deps: EngineDeps): Engine {
       // Dictation by the rules: a short utterance, or one with no armed box, may mean something else.
       const shouldAsk = rules.ask === true && (!box.armed || wordCount(job.utterance) < LONG_UTTERANCE_WORDS) && !stale && !job.cancelled
       if (!shouldAsk) {
-        await perform(rules, u, stale ? inpageText.catchingUp : '', job)
+        await perform(await beside(rules, box, null), u, stale ? inpageText.catchingUp : '', job)
         lastDone = clipGoals([job.utterance])
         return
       }
@@ -999,7 +1046,7 @@ export function createEngine(deps: EngineDeps): Engine {
         // Type first, verify after: the words are in the box at once, and the model only takes
         // them back when it is sure they were something else. The verification does not hold the
         // queue (round 3).
-        const typed = await perform(rules, u)
+        const typed = await perform(rules, u, '', job)
         const typedSession = session
         const expected = rules.commands.reduce<string | null>((text, c) => (c.kind === 'setText' ? c.text : text), null)
         if (!job.cancelled) {
@@ -1026,7 +1073,7 @@ export function createEngine(deps: EngineDeps): Engine {
             say(inpageText.fieldUnverified)
             return
           }
-          await perform(rules, u)
+          await perform(await beside(rules, box, null), u, '', job)
           return
         }
         // Review of round 5: in a field he armed himself, a model that cannot tell leaves the

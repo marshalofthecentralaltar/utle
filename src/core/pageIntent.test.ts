@@ -157,3 +157,49 @@ describe('round 9 (30.5.3): the answer may carry usage', () => {
     expect(IntentAnswerSchema.safeParse({ ...ANSWER, usage: noProvider }).success).toBe(false)
   })
 })
+
+describe('round 10 (#5, 34.2): recent is the last three commands and how they went', () => {
+  const base: IntentRequest = { lang: 'et', utterance: 'ava see uues vahelehes', page: PAGE, tabs: [], recent: [] }
+  it('accepts entries of utterance, what ran, ok, and the tab it came from', () => {
+    const recent = [
+      { utterance: 'ava email', ran: 'newTab https://mail.google.com/', ok: true, from: '2 "Log in | Anthropic Console"' },
+      { utterance: 'ava esimene kiri', ran: 'clickItem 13 "Anthropic"', ok: true },
+      { utterance: 'vajuta musta nuppu', ran: 'nothing; said "Ei saanud aru."', ok: false },
+    ]
+    const parsed = IntentRequestSchema.safeParse({ ...base, recent })
+    expect(parsed.success).toBe(true)
+    expect(parsed.data?.recent).toEqual(recent)
+  })
+  it('refuses a fourth entry, or one too long', () => {
+    const entry = { utterance: 'a', ran: 'history back', ok: true }
+    expect(IntentRequestSchema.safeParse({ ...base, recent: [entry, entry, entry, entry] }).success).toBe(false)
+    expect(IntentRequestSchema.safeParse({ ...base, recent: [{ ...entry, ran: 'x'.repeat(201) }] }).success).toBe(false)
+    expect(IntentRequestSchema.safeParse({ ...base, recent: [{ ...entry, ok: 'yes' }] }).success).toBe(false)
+  })
+  it('an extension from before round 10 sends strip lines: each becomes an entry with what ran, so the ask still goes', () => {
+    const parsed = IntentRequestSchema.safeParse({ ...base, recent: ['Avan: Gmail.'] })
+    expect(parsed.data?.recent).toEqual([{ utterance: '', ran: 'Avan: Gmail.', ok: true }])
+  })
+})
+
+describe('round 10 (#5, 34.1): an item may carry its colour', () => {
+  it('the request keeps a button\'s colour, and refuses a long one', () => {
+    const page: PageContext = { ...PAGE, items: [{ id: 12, role: 'button', text: 'Verify email address', color: 'black' }] }
+    const parsed = IntentRequestSchema.safeParse({ lang: 'et', utterance: 'vajuta musta nuppu', page, tabs: [], recent: [] })
+    expect(parsed.data?.page.items[0]).toEqual({ id: 12, role: 'button', text: 'Verify email address', color: 'black' })
+    expect(IntentRequestSchema.safeParse({ lang: 'et', utterance: 'x', page: { ...page, items: [{ id: 1, role: 'button', text: 'a', color: 'c'.repeat(21) }] }, tabs: [], recent: [] }).success).toBe(false)
+  })
+})
+
+describe('round 10 (#5, 34.4): choose, the tie, is two different items of the page', () => {
+  const tie: PageContext = { ...PAGE, items: [{ id: 4, role: 'button', text: 'Lisa korvi' }, { id: 6, role: 'button', text: 'Lisa korvi' }] }
+  it('two ids of the page pass', () => {
+    expect(pageIntentFrom({ kind: 'choose', ids: [4, 6] }, request(tie))).toEqual({ kind: 'choose', ids: [4, 6] })
+  })
+  it('an id not on the page, the same id twice, one id or three are rejected', () => {
+    expect(pageIntentFrom({ kind: 'choose', ids: [4, 9] }, request(tie))).toBeNull()
+    expect(pageIntentFrom({ kind: 'choose', ids: [4, 4] }, request(tie))).toBeNull()
+    expect(pageIntentFrom({ kind: 'choose', ids: [4] }, request(tie))).toBeNull()
+    expect(pageIntentFrom({ kind: 'choose', ids: [4, 6, 1] }, request(tie))).toBeNull()
+  })
+})

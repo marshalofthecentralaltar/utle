@@ -666,6 +666,39 @@ shown or typed and never touches a running chain. Verified with tests, 16 eval c
 and synthetic voices through the real models (voice.ts section 8). Not verified: real voices, a real
 room, a TV; the false-wake rate on room speech that contains "ütle" (only the owner's gate guards it).
 
+## 1p. Round 10, prompt 3, lane AMBIGUITY (2026-11-02): what he meant, on the page he is on (#5)
+
+Branch `r10-ambig`. ARCHITECTURE 34. From Ralf's session of 2026-10-27 (logging into the Anthropic
+console): "ava email" now opens his mail beside a login or form in progress, never over it (it was the
+place rule, which never asked the model; the engine now turns every goTo into newTab while the page in
+front is a login, a verification, a password or code field, or unsent words); the model hears his last
+three commands, what ran and whether it worked, and the tab he came from, so "ava see uues vahelehes"
+opens the thing just opened and "mine tagasi sinna kus ma olin" goes back to that tab; readPage lists a
+link styled as a button as a button, with its colour ("vajuta musta nuppu"); "kinnita" outside a
+one-line field is the page's confirming button, not Enter; a tie asks "Kumb: 1 …, 2 …?" and "üks" or
+"kaks" answers it.
+
+Intent eval, `anthropic:claude-sonnet-5-5` (the default), 89 intent cases (78 old, 11 new) and 16
+addressee cases, each run twice:
+
+| run | pass | asks per task | $ per completed task | p50 / p95 ms |
+|---|---|---|---|---|
+| before 1 (new cases, old prompt) | 99/105 | 1.15 | $0.00521 | 1995 / 4200 |
+| before 2 | 99/105 | 1.15 | $0.00493 | 1968 / 3410 |
+| after 1 | 103/105 | 1.14 | $0.00495 | 1905 / 3135 |
+| after 2 | 105/105 | 1.15 | $0.00497 | 1872 / 2972 |
+
+Before, in both runs, six new cases missed: "ava gmail" on the console's login (goTo, the login lost),
+"ava see uues vahelehes" twice (unclear), "vajuta musta nuppu" (showHints), "mine tagasi sinna kus ma
+olin" after a tab change (history back), "lisa korvi" with two equal buttons (clicked the first); the old
+94 passed, "puhka" included. After: all 11 new cases pass in both runs; the old ones 94/94 and 92/94,
+the two misses in one run only (noise): "ava sport" (the model took over 7 s, a timeout) and "täida
+telefon" step 1 (done true where false was wanted). Logs: `artifacts/eval-before-*.txt`,
+`artifacts/eval-after-*.txt` (untracked).
+
+Not verified: the real Gmail and the real console logged in (why "ava esimene kiri" took two tries on
+the real Gmail is not known; on the stand-in and in the eval it is one click), a real voice.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

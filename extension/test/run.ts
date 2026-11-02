@@ -20,6 +20,8 @@ import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
 import { inpageResult } from '../../src/core/inpage.ts'
+// Round 10 (#5, 34.4): the tie, through the real core.
+import { applyIntent } from '../../src/core/inpage.ts'
 import type { BoxState, BrowserResult } from '../../src/browser/protocol.ts'
 import { copyFileSync } from 'node:fs'
 // ---------- wake word and places (29.4) ----------
@@ -49,7 +51,7 @@ const SERVE_TOKEN = 't1'
 const headed = true
 
 type BoxInfo = { present: boolean; text: string; armed: boolean; kind?: string; label?: string; fieldKind?: string; single?: boolean; mail?: boolean }
-type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean; contacts?: { kind: string; value: string; label: string }[] }
+type PageInfo = { url: string; title: string; box: BoxInfo; items: { id: number; role: string; text: string; color?: string }[]; media: { playing: boolean; muted: boolean; volume: number; fullscreen: boolean } | null; hints: boolean; contacts?: { kind: string; value: string; label: string }[] }
 type Result = { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxInfo; page?: PageInfo } | { ok: false; code: string; message: string }
 
 const kindsSeen = new Set<string>()
@@ -1624,6 +1626,53 @@ async function main(): Promise<void> {
       const delfiItems = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
       const delfiDialog = delfiItems.filter((i) => i.text.startsWith('[dialog] '))
       line('readPage', 'delfi.ee: a page-covering banner lists only its own items', delfiDialog.length === 3 && delfiItems.filter((i) => i.role !== 'text').length === 3 && delfiDialog.some((i) => i.text === '[dialog] Nõustun kõigiga'), `items=${JSON.stringify(delfiItems.map((i) => i.text))}`)
+    }
+
+    // ---------- round 10 (#5, ARCHITECTURE 34): a link styled as a button, by its name and by its number; the tie ----------
+    {
+      await send({ kind: 'goTo', url: `${T}/gmail-verify.html` })
+      const verifyPage = pageAt(`${T}/gmail-verify.html`)
+      if (!verifyPage) throw new Error('gmail-verify page not found')
+      const clicked = async (): Promise<string[]> => verifyPage.evaluate(() => (window as unknown as { clicks: string[] }).clicks.slice())
+      const forget = async (): Promise<void> => verifyPage.evaluate(() => {
+        ;(window as unknown as { clicks: string[] }).clicks.length = 0
+      })
+      r = await send({ kind: 'readPage' })
+      const vItems = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+      const named = (text: string) => vItems.find((i) => i.text === text)
+      const verifyItem = named('Verify email address')
+      line(
+        'readPage',
+        'a link styled as a button: role button, its text, black; ordinary links stay links',
+        verifyItem?.role === 'button' && verifyItem.color === 'black' && named('Saada uuesti')?.role === 'button' && named('Abikeskus')?.role === 'button' && named('Privacy Policy')?.role === 'link' && named('Anthropic PBC')?.role === 'link' && named('Ava kiri')?.role === 'link',
+        JSON.stringify(vItems),
+      )
+      r = await send({ kind: 'clickItem', id: verifyItem?.id ?? -1 })
+      line('clickItem', 'the verify button styled as a link, clicked by its name', r !== 'timeout' && r.ok && JSON.stringify(await clicked()) === '["verify"]', `${describe(r)} clicks=${JSON.stringify(await clicked())}`)
+      // "näita numbreid" and its number, through the real rules: the labels number the visible items as readPage's ids.
+      await forget()
+      const noBox: BoxState = { present: false, text: '', armed: false }
+      const shown = inpageStep(initialInpage('et'), 'näita numbreid', noBox)
+      r = await send(shown.commands[0])
+      const withHints = inpageResult(shown.session, shown.commands, r === 'timeout' ? { ok: false, code: 'failed', message: 'timeout' } : (r as BrowserResult)).session
+      const pick = inpageStep(withHints, String(verifyItem?.id ?? 0), noBox)
+      r = await send(pick.commands[0])
+      line('clickHint', 'the verify button by "näita numbreid" and its number', JSON.stringify(shown.commands) === '[{"kind":"showHints"}]' && pick.commands[0]?.kind === 'clickHint' && r !== 'timeout' && r.ok && JSON.stringify(await clicked()) === '["verify"]', `${JSON.stringify(pick.commands)} ${describe(r)} clicks=${JSON.stringify(await clicked())}`)
+      // The tie (34.4): "Ava" and "Ava kiri" both match; the model's choose asks with two numbers, "kaks" clicks the second.
+      await forget()
+      r = await send({ kind: 'readPage' })
+      const tItems = r !== 'timeout' && r.ok ? r.page?.items ?? [] : []
+      const avaId = tItems.find((i) => i.text === 'Ava')?.id ?? -1
+      const avaKiriId = tItems.find((i) => i.text === 'Ava kiri')?.id ?? -1
+      const asked = applyIntent(initialInpage('et'), { kind: 'choose', ids: [avaId, avaKiriId] }, { url: '', title: '', box: noBox, items: tItems, media: null, hints: false })
+      const answered = inpageStep(asked.session, 'kaks', noBox)
+      r = await send(answered.commands[0])
+      line(
+        'clickItem',
+        'tie: "Kumb: 1 Ava, 2 Ava kiri?", then "kaks" clicks Ava kiri',
+        asked.line === 'Kumb: 1 Ava, 2 Ava kiri?' && asked.commands.length === 0 && JSON.stringify(answered.commands) === JSON.stringify([{ kind: 'clickItem', id: avaKiriId }]) && r !== 'timeout' && r.ok && JSON.stringify(await clicked()) === '["ava-kiri"]',
+        `${asked.line} ${JSON.stringify(answered.commands)} ${describe(r)} clicks=${JSON.stringify(await clicked())}`,
+      )
     }
 
     // ---------- the first run (30.1, ONBOARD lane): the welcome page, its server step, the demo box, the dot, the menu ----------

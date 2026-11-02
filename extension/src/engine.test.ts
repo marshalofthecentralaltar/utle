@@ -705,7 +705,7 @@ describe('understanding by meaning (M7)', () => {
     expect(texts(t.ran)).toEqual(['Tere. tulen', 'Tere.tulen', 'readPage'])
   })
 
-  it('tells the model the last three lines, from before the utterance', async () => {
+  it('tells the model the last three commands, what ran and whether it worked, from before the utterance (round 10, 34.2)', async () => {
     const t = setup({ logic: asking, box: { present: true, text: '', armed: false }, ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })) })
     t.engine.start()
     for (const word of ['a', 'b', 'c']) {
@@ -714,17 +714,45 @@ describe('understanding by meaning (M7)', () => {
     }
     t.say('d')
     await t.engine.idle()
-    expect(t.asked.map((r) => r.recent)).toEqual([[], ['ei saanud aru'], ['ei saanud aru', 'ei saanud aru'], ['ei saanud aru', 'ei saanud aru', 'ei saanud aru']])
+    const unclear = (utterance: string) => ({ utterance, ran: 'nothing; said "ei saanud aru"', ok: false })
+    expect(t.asked.map((r) => r.recent)).toEqual([[], [unclear('a')], [unclear('a'), unclear('b')], [unclear('a'), unclear('b'), unclear('c')]])
   })
 
-  it('type-first: the lines the model hears are those from before the utterance, not its own typing', async () => {
+  it('a command of the rules is remembered with what ran and how it went (round 10, 34.2)', async () => {
+    const t = setup({ logic: asking, box: { present: true, text: '', armed: false }, answers: (c) => (c.kind === 'goTo' ? { ok: false, code: 'failed', message: 'no' } : { ok: true }), ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })) })
+    t.engine.start()
+    t.say('mine')
+    await t.engine.idle()
+    t.say('a')
+    await t.engine.idle()
+    expect(t.asked[0]?.recent).toEqual([{ utterance: 'mine', ran: 'goTo https://a.ee/', ok: false }])
+  })
+
+  it('a click the model chose is named by the item\'s text; a tab opened carries the tab he was on (round 10, 34.2)', async () => {
+    const t = setup({
+      logic: asking,
+      box: { present: true, text: '', armed: false },
+      ask: (request) => Promise.resolve(request.utterance === 'ava vaata hiljem' ? answer({ kind: 'command', command: { kind: 'clickItem', id: 3 } }) : request.utterance === 'ava mail' ? answer({ kind: 'command', command: { kind: 'newTab', url: 'https://mail.google.com/' } }) : answer({ kind: 'unclear', say: '' })),
+    })
+    t.engine.start()
+    for (const words of ['ava vaata hiljem', 'ava mail', 'mine tagasi sinna kus ma olin']) {
+      t.say(words)
+      await t.engine.idle()
+    }
+    expect(t.asked[2]?.recent).toEqual([
+      { utterance: 'ava vaata hiljem', ran: 'clickItem 3 "Vaata hiljem"', ok: true },
+      { utterance: 'ava mail', ran: 'newTab https://mail.google.com/', ok: true, from: '1 "YouTube"' },
+    ])
+  })
+
+  it('type-first: the commands the model hears are those from before the utterance; the typing is remembered once (round 10)', async () => {
     const t = setup({ logic: asking, box: armed, ask: () => Promise.resolve(answer({ kind: 'dictate', text: 'a' })) })
     t.engine.start()
     t.say('a')
     await t.engine.idle()
     t.say('b')
     await t.engine.idle()
-    expect(t.asked.map((r) => r.recent)).toEqual([[], ['kirjutan', 'tehtud']])
+    expect(t.asked.map((r) => r.recent)).toEqual([[], [{ utterance: 'a', ran: 'typed into the box', ok: true }]])
   })
 
   it('builds the page from the box when readPage fails', async () => {
@@ -741,17 +769,18 @@ describe('understanding by meaning (M7)', () => {
     expect(texts(t.ran)).toEqual(['Tere.saada ära', 'readPage', 'Tere.', 'pressSend'])
   })
 
-  it('clips the lines it tells the model, so a long line never makes the request a 400', async () => {
+  it('clips what it tells the model of the recent commands, so a long one never makes the request a 400', async () => {
     const long = 'x'.repeat(260)
     const wordy: InpageLogic = { ...asking, applyIntent: (session) => ({ session, commands: [], line: long }) }
-    // An unarmed box: the model's line is shown (with an armed box the typed words stay and so does their line).
     const t = setup({ logic: wordy, box: { present: true, text: '', armed: false }, ask: () => Promise.resolve(answer({ kind: 'unclear', say: '' })) })
     t.engine.start()
-    t.say('a')
+    t.say('y'.repeat(300))
     await t.engine.idle()
     t.say('b')
     await t.engine.idle()
-    expect(t.asked[1]?.recent).toEqual([long.slice(0, 200)])
+    const [entry] = t.asked[1]?.recent ?? []
+    expect(entry?.utterance).toHaveLength(200)
+    expect(entry?.ran.length).toBeLessThanOrEqual(200)
   })
 
   it('clips the page to what the request schema takes', async () => {
@@ -1079,7 +1108,8 @@ describe('the queue keeps up (round 3)', () => {
     t.say('vaikus')
     await vi.advanceTimersByTimeAsync(2000)
     expect(t.asked.map((r) => r.utterance)).toEqual(['otsi ilm'])
-    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'goTo', 'readBox', 'readPage', 'scroll', 'readBox'])
+    // Round 10 (#5, 34.3): the rules' goTo reads the page first (a login in progress opens beside).
+    expect(t.ran.map((c) => c.kind)).toEqual(['readBox', 'readPage', 'goTo', 'readBox', 'readPage', 'scroll', 'readBox'])
     expect(t.signals[0]?.aborted).toBe(false)
   })
 
@@ -3132,5 +3162,81 @@ describe('criterion 6 (round 10, 31.7): a short word without enough owner audio 
     expect(quickReply('jah, kinnitan')).toEqual({ kind: 'yes' })
     expect(quickReply('kinnitan')).toEqual({ kind: 'yes' })
     expect(messageCommand('saada sõnum')?.kind).toBe('send')
+  })
+})
+
+describe('round 10 (#5, ARCHITECTURE 34): what he meant', () => {
+  const real: InpageLogic = { initialInpage, inpageStep, inpageResult, inpageInstant, inpagePreview, applyIntent, pageIntentFrom }
+  const unarmed: BoxState = { present: false, text: '', armed: false }
+  const LOGIN = (box: BoxState): PageContext => ({ url: 'https://console.anthropic.com/login', title: 'Log in | Anthropic Console', box, items: ITEMS, media: null, hints: false })
+
+  it('34.3: a site the rules open while a login is in progress opens in a new tab, and the strip says so', async () => {
+    const t = setup({ logic: real, box: unarmed, page: LOGIN })
+    t.engine.start()
+    t.say('ava gmail')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'goTo' || c.kind === 'newTab')).toEqual([{ kind: 'newTab', url: 'https://mail.google.com/' }])
+    expect(t.lines.some((line) => line.includes(STRINGS.et.inpage.beside))).toBe(true)
+  })
+
+  it('34.3: the preview of his own command in the box is not unsent words: the site opens in the tab', async () => {
+    const preview: InpageLogic = { ...logic, inpagePreview: (_session, partial) => partial }
+    const t = setup({ logic: preview, box: { present: true, text: '', armed: true, kind: 'composer' } })
+    t.engine.start()
+    t.partial('mine')
+    await t.engine.idle()
+    t.say('mine')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'goTo' || c.kind === 'newTab')).toEqual([{ kind: 'goTo', url: 'https://a.ee/' }])
+  })
+
+  it('34.3: his mail place ("ava email") on the login page opens beside it too', async () => {
+    const t = setup({ logic: real, box: unarmed, page: LOGIN })
+    t.engine.setPlaces([{ noun: 'mail', url: 'https://mail.google.com/', label: 'Gmail', aliases: ['email'] }])
+    t.engine.start()
+    t.say('ava email')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'goTo' || c.kind === 'newTab')).toEqual([{ kind: 'newTab', url: 'https://mail.google.com/' }])
+  })
+
+  it('34.3: the model\'s goTo on the login page opens beside; on an ordinary page it stays a goTo', async () => {
+    const go = () => Promise.resolve(answer({ kind: 'command', command: { kind: 'goTo', url: 'https://www.youtube.com/' } }))
+    const t = setup({ logic: asking, box: unarmed, page: LOGIN, ask: go })
+    t.engine.start()
+    t.say('pane mulle videod')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'goTo' || c.kind === 'newTab')).toEqual([{ kind: 'newTab', url: 'https://www.youtube.com/' }])
+    const plain = setup({ logic: asking, box: unarmed, ask: go })
+    plain.engine.start()
+    plain.say('pane mulle videod')
+    await plain.engine.idle()
+    expect(plain.ran.filter((c) => c.kind === 'goTo' || c.kind === 'newTab')).toEqual([{ kind: 'goTo', url: 'https://www.youtube.com/' }])
+  })
+
+  it('34.4: a tie asks one question with two numbers, in one ask; "kaks" clicks the second; never "ei saanud aru"', async () => {
+    const page = (box: BoxState): PageContext => ({ url: 'https://pood.ee/', title: 'Pood', box, items: [{ id: 4, role: 'link', text: 'Ava' }, { id: 7, role: 'link', text: 'Ava kiri' }], media: null, hints: false })
+    const t = setup({ logic: real, box: unarmed, page, ask: () => Promise.resolve(answer({ kind: 'choose', ids: [4, 7] })) })
+    t.engine.start()
+    t.say('ava see asi')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.state.line).toBe('Kumb: 1 Ava, 2 Ava kiri?')
+    expect(t.ran.some((c) => c.kind === 'clickItem')).toBe(false)
+    t.say('kaks')
+    await t.engine.idle()
+    expect(t.asked).toHaveLength(1)
+    expect(t.ran.filter((c) => c.kind === 'clickItem')).toEqual([{ kind: 'clickItem', id: 7 }])
+    expect(t.lines.some((line) => line.startsWith('Ei saanud aru'))).toBe(false)
+  })
+
+  it('34.4: anything else after the question cancels it and is heard as usual', async () => {
+    const page = (box: BoxState): PageContext => ({ url: 'https://pood.ee/', title: 'Pood', box, items: [{ id: 4, role: 'link', text: 'Ava' }, { id: 7, role: 'link', text: 'Ava kiri' }], media: null, hints: false })
+    const t = setup({ logic: real, box: unarmed, page, ask: () => Promise.resolve(answer({ kind: 'choose', ids: [4, 7] })) })
+    t.engine.start()
+    t.say('ava see asi')
+    await t.engine.idle()
+    t.say('uus leht')
+    await t.engine.idle()
+    expect(t.ran.filter((c) => c.kind === 'clickItem' || c.kind === 'newTab')).toEqual([{ kind: 'newTab' }])
   })
 })

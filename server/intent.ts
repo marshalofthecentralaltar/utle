@@ -117,6 +117,8 @@ export function liftWrapped(intent: unknown): unknown {
   const inner = outer.command as Record<string, unknown>
   if (inner.kind === 'place') return { kind: 'place', noun: inner.noun }
   if (inner.kind === 'insertSaved') return { kind: 'insertSaved', name: inner.name }
+  // Round 10 (#5, 34.4): the tie, seen wrapped the same way in the eval (2026-11-02, both runs).
+  if (inner.kind === 'choose') return { kind: 'choose', ids: inner.ids }
   return intent
 }
 

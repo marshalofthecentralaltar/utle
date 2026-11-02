@@ -18,7 +18,7 @@
  */
 import { writeFileSync } from 'node:fs'
 import { firstGoal, hasConnective } from '../src/core/chain.ts'
-import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, TabSummary } from '../src/core/pageIntent.ts'
+import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, RecentCommand, TabSummary } from '../src/core/pageIntent.ts'
 // ---------- wake word and places (29.4) ----------
 import { DEFAULT_PLACES, placeNouns } from '../src/core/places.ts'
 // ---------- end of wake word and places ----------
@@ -440,13 +440,13 @@ interface Case {
   name: string
   utterance: string
   lang?: Lang
-  recent?: string[]
+  recent?: RecentCommand[]
   steps: Step[]
 }
 
 interface OneOptions {
   lang?: Lang
-  recent?: string[]
+  recent?: RecentCommand[]
   tabs?: TabSummary[]
   done?: boolean
   plan?: number
@@ -539,7 +539,7 @@ const GMAIL_REAL: PageContext = {
   media: null,
   hints: false,
 }
-/** (d) The verification mail open in Gmail; its verify link is styled as a black button (readPage before round 10: a link). */
+/** (d) The verification mail open in Gmail; its verify link is styled as a black button, which readPage lists as one (34.1). */
 const GMAIL_VERIFY_MAIL: PageContext = {
   url: 'https://mail.google.com/mail/u/0/#inbox/FMfcgzQXJkVerify',
   title: 'Verify your email address - ralf@example.ee - Gmail',
@@ -556,7 +556,7 @@ const GMAIL_VERIFY_MAIL: PageContext = {
     { id: 9, role: 'button', text: 'Märgi lugemata' },
     { id: 10, role: 'button', text: 'Rohkem' },
     { id: 11, role: 'button', text: 'Vasta' },
-    { id: 12, role: 'link', text: 'Verify email address' },
+    { id: 12, role: 'button', text: 'Verify email address', color: 'black' },
     { id: 13, role: 'link', text: 'Privacy Policy' },
     { id: 14, role: 'link', text: 'Anthropic PBC' },
     { id: 15, role: 'button', text: 'Vasta' },
@@ -599,8 +599,9 @@ const SHOP: PageContext = {
   media: null,
   hints: false,
 }
-/** What the strip showed after "ava email" opened his mail place (the engine's recent before round 10: strip lines). */
-const OPENED_MAIL = ['Avan: Gmail.', 'Avan: Gmail.']
+/** His mail place opened in the tab in front, and opened beside the console's login (34.2: what ran, ok, the tab he was on). */
+const OPENED_MAIL: RecentCommand[] = [{ utterance: 'ava email', ran: 'goTo https://mail.google.com/', ok: true }]
+const OPENED_MAIL_BESIDE: RecentCommand[] = [{ utterance: 'ava email', ran: 'newTab https://mail.google.com/', ok: true, from: `2 ${JSON.stringify(CONSOLE_LOGIN.title)}` }]
 // ---------- end of what he meant ----------
 
 const CASES: Case[] = [
@@ -787,7 +788,7 @@ const CASES: Case[] = [
   one('ava gmail', CONSOLE_LOGIN_NO_PLACES, { kind: 'command', command: 'newTab', url: 'mail.google' }, { tabs: CONSOLE_TABS }),
   // (b) "uues vahelehes" is the thing just opened, never another open tab.
   one('ava see uues vahelehes', GMAIL_REAL, { kind: 'command', command: 'newTab', url: 'mail.google' }, { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: GMAIL_REAL.title, active: true }], recent: OPENED_MAIL }),
-  one('ava see uues vahelehes', YOUTUBE_HOME, { kind: 'command', command: 'newTab', url: 'youtube' }, { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: YOUTUBE_HOME.title, active: true }], recent: ['Avan: www.youtube.com'] }),
+  one('ava see uues vahelehes', YOUTUBE_HOME, { kind: 'command', command: 'newTab', url: 'youtube' }, { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: YOUTUBE_HOME.title, active: true }], recent: [{ utterance: "mine youtube'i", ran: 'goTo https://www.youtube.com/', ok: true }] }),
   // (c) The first mail of the list, in one ask.
   one('ava esimene kiri', GMAIL_REAL, click(13), { done: true }),
   // (d) A link styled as a button, by its colour, by "kinnita", by "ava link".
@@ -795,8 +796,8 @@ const CASES: Case[] = [
   one('kinnita', GMAIL_VERIFY_MAIL, click(12)),
   one('ava link', GMAIL_VERIFY_MAIL, click(12)),
   // (e) Back to where he was: the tab he came from after a tab change, else the page before.
-  one('mine tagasi sinna kus ma olin', GMAIL_REAL, [{ kind: 'command', command: 'switchTab', to: { index: 2 } }, { kind: 'command', command: 'switchTab', to: 'previous' }, { kind: 'command', command: 'switchTab', query: 'console' }, { kind: 'command', command: 'switchTab', query: 'anthropic' }], { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: CONSOLE_LOGIN.title, active: false }, { index: 3, title: GMAIL_REAL.title, active: true }], recent: OPENED_MAIL }),
-  one('mine tagasi sinna kus ma olin', NEWS_SPORT, { kind: 'command', command: 'history', direction: 'back' }, { recent: ['Sain aru: „ava Sport“. Tehtud.'] }),
+  one('mine tagasi sinna kus ma olin', GMAIL_REAL, [{ kind: 'command', command: 'switchTab', to: { index: 2 } }, { kind: 'command', command: 'switchTab', to: 'previous' }, { kind: 'command', command: 'switchTab', query: 'console' }, { kind: 'command', command: 'switchTab', query: 'anthropic' }], { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: CONSOLE_LOGIN.title, active: false }, { index: 3, title: GMAIL_REAL.title, active: true }], recent: OPENED_MAIL_BESIDE }),
+  one('mine tagasi sinna kus ma olin', NEWS_SPORT, { kind: 'command', command: 'history', direction: 'back' }, { recent: [{ utterance: 'ava sport', ran: 'clickItem 4 "Sport"', ok: true }] }),
   // A tie: two equal candidates ask one question with two numbers.
   one('lisa korvi', SHOP, { kind: 'choose', ids: [4, 6] }),
   // ---------- end of what he meant ----------

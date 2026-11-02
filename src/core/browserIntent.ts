@@ -212,7 +212,8 @@ phrases(
   'clear the box',
 )
 phrases({ kind: 'pressKey', key: 'Escape' }, 'sulge aken', 'pane kinni', 'välja', 'escape', 'close this', 'close the window')
-phrases({ kind: 'pressKey', key: 'Enter' }, 'enter', 'sisesta', 'kinnita')
+// Round 10 (#5, 34.1): "kinnita" is Enter only in a one-line field he armed (inpage.ts FORM_KEYS); elsewhere the model clicks the page's confirming button.
+phrases({ kind: 'pressKey', key: 'Enter' }, 'enter', 'sisesta')
 phrases({ kind: 'media', action: 'play' }, 'mängi', 'esita', 'play', 'play the video', 'jätka videot')
 phrases({ kind: 'media', action: 'pause' }, 'paus', 'peata', 'peata video', 'pause', 'stop the video', 'pause the video')
 phrases({ kind: 'media', action: 'mute' }, 'vaigista', 'heli maha', 'heli välja', 'mute')

@@ -12,6 +12,7 @@ import type { SavedItem } from './saved.ts'
 import { spokenValueOnly, typedFromSpoken } from './spelling.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
+import { choiceName, choicePick } from './meant.ts'
 
 /**
  * In-page mode (docs/ARCHITECTURE.md section 21): the user stays on the site he is writing in.
@@ -44,6 +45,8 @@ export interface InpageSession {
   saved?: readonly SavedItem[]
   /** Round 6 (26.2): the ids of the saved items the bar just asked about ("Kumb: a või b?"), or null. */
   choosing?: readonly string[] | null
+  /** Round 10 (#5, 34.4): the two page items the bar just asked about ("Kumb: 1 …, 2 …?"), by readPage id, or null. */
+  choosingItems?: readonly number[] | null
   /**
    * Review R3 M6: the last commands that ran ended with a select, so "kustuta see" deletes the
    * selection (Backspace); otherwise it takes back the last utterance. Set by inpageResult.
@@ -87,6 +90,16 @@ export function initialInpage(lang: Lang): InpageSession {
  * one the page focused by itself, where nothing is typed, M7).
  */
 export function inpageStep(previous: InpageSession, utterance: string, box: BoxState): InpageStep {
+  // Round 10 (#5, 34.4): the tie's question lasts one utterance. "üks" / "kaks" (and the like) clicks
+  // that item; anything else ends the question and is heard as it always is.
+  const tied = previous.choosingItems ?? null
+  if (tied !== null) {
+    const cleared: InpageSession = { ...previous, choosingItems: null }
+    const pick = choicePick(utterance)
+    const id = pick === null ? undefined : tied[pick]
+    if (id !== undefined) return act(cleared, { kind: 'browser', command: { kind: 'clickItem', id } }, box)
+    return inpageStep(cleared, utterance, box)
+  }
   // Round 6 (26.2): a question about two saved values lasts one utterance.
   const session: InpageSession = (previous.choosing ?? null) === null ? previous : { ...previous, choosing: null }
   const saved = savedAction(previous, utterance, box)
@@ -138,6 +151,11 @@ export function applyIntent(session: InpageSession, intent: PageIntent, page: Pa
     const step = item === undefined ? { session, commands: [], line: s.inpage.savedMissing } : act(session, { kind: 'insertSaved', item }, box)
     return say === '' ? step : { ...step, line: `${s.inpage.understood(say)} ${step.line}` }
   }
+  // Round 10 (#5, 34.4): a tie runs nothing; the bar asks which, and the next utterance answers.
+  if (intent.kind === 'choose') {
+    const names = intent.ids.map((id) => choiceName(page.items.find((item) => item.id === id)?.text ?? String(id)))
+    return { session: { ...session, choosingItems: [...intent.ids] }, commands: [], line: s.inpage.whichItem(names) }
+  }
   const action = intentAction(intent)
   const step = action === null ? { session, commands: [], line: intent.kind === 'unclear' ? intent.say || s.inpage.notUnderstood : s.inpage.notUnderstood } : act(session, action, box)
   return say === '' ? step : { ...step, line: `${s.inpage.understood(say)} ${step.line}` }
@@ -157,6 +175,7 @@ function intentAction(intent: PageIntent): Action | null {
       return { kind: 'wake' }
     case 'unclear':
     case 'insertSaved':
+    case 'choose':
       return null
     case 'edit': {
       const e = intent.edit

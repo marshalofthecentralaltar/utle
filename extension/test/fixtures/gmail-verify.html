@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>Verify your email address - Gmail</title>
+    <style>
+      /* Round 10 (#5, ARCHITECTURE 34): a mail open in a Gmail-like reading pane. Its verify link is
+         styled as a button the way mail senders do it: a black table cell with the link inside. Two
+         more links look like buttons by role and by class; the footer links are ordinary links.
+         "Ava" and "Ava kiri" are the tie: both match "ava". Everything sits above the Ütle strip. */
+      body { margin: 0; font: 15px system-ui, sans-serif; }
+      header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ddd; }
+      header button { border: 0; background: none; font: inherit; color: #444; padding: 4px 8px; }
+      main { padding: 12px 24px; width: 560px; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { margin: 6px 0; }
+      td.cta { background-color: #000; border-radius: 6px; padding: 12px 24px; }
+      td.cta a { color: #fff; text-decoration: none; font-weight: 600; }
+      a.mail-btn { display: inline-block; border: 1px solid #0b57d0; color: #0b57d0; text-decoration: none; padding: 2px 6px; }
+      footer { margin-top: 10px; font-size: 13px; color: #666; }
+      .attachment { margin-top: 10px; display: flex; gap: 16px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button type="button" id="back">Tagasi postkasti</button>
+      <button type="button" id="archive">Arhiveeri</button>
+      <button type="button" id="delete">Kustuta</button>
+    </header>
+    <main role="main">
+      <h1>Verify your email address</h1>
+      <p>Click the button below to verify your email address and finish logging in.</p>
+      <table role="presentation" cellspacing="0" cellpadding="0"><tr><td class="cta"><a id="verify" href="#verify">Verify email address</a></td></tr></table>
+      <p>No mail? <a class="mail-btn" id="resend" href="#resend">Saada uuesti</a> <a role="button" id="help" href="#help">Abikeskus</a></p>
+      <div class="attachment"><a id="ava" href="#ava">Ava</a> <a id="ava-kiri" href="#ava-kiri">Ava kiri</a></div>
+      <footer>If you did not request this, ignore this email. <a id="privacy" href="#privacy">Privacy Policy</a> · <a id="pbc" href="#pbc">Anthropic PBC</a></footer>
+    </main>
+    <script>
+      // What the suite reads back: the id of every link or button clicked, in order. Nothing navigates.
+      window.clicks = []
+      for (const el of document.querySelectorAll('a, button')) {
+        el.addEventListener('click', (event) => {
+          event.preventDefault()
+          window.clicks.push(el.id)
+        })
+      }
+    </script>
+  </body>
+</html>

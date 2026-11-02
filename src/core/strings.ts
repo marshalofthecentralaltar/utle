@@ -145,6 +145,10 @@ export interface Strings {
     insertedSaved(text: string, name: string): string
     /** "Kumb: a või b?" (two), "Milline: a, b või c?" (more). */
     whichSaved(names: readonly string[]): string
+    /** Round 10 (#5, 34.4): the tie: "Kumb: 1 Ava, 2 Ava kiri?". */
+    whichItem(names: readonly string[]): string
+    /** Round 10 (#5, 34.3): added to the line when a site opened beside a login in progress. */
+    beside: string
     savedMissing: string
     /** Added to the line when an armed field has a saved value of its kind: " Või ütle „minu e-post“." */
     savedHint(names: readonly string[]): string
@@ -917,6 +921,8 @@ const ET: Strings = {
     fieldUnverified: 'Abiline ei vastanud, välja ei kirjutanud.',
     insertedSaved: (text, name) => `Kirjutasin: ${text} (${name}). Ütle „valmis“ või „edasi“.`,
     whichSaved: (names) => (names.length <= 2 ? `Kumb: ${names.join(' või ')}?` : `Milline: ${names.slice(0, -1).join(', ')} või ${names.at(-1) ?? ''}?`),
+    whichItem: (names) => `Kumb: ${names.map((name, i) => `${i + 1} ${name}`).join(', ')}?`,
+    beside: 'Uues vahelehes, see leht jääb alles.',
     savedMissing: 'Seda pole enam salvestatud. Ütle „minu andmed“.',
     savedHint: (names) => ` Või ütle ${names.map((n) => `„${n}“`).join(' või ')}.`,
     entryGone: 'Minu andmete leht pole ees. Ütle „minu andmed“.',
@@ -1550,6 +1556,8 @@ const EN: Strings = {
     fieldUnverified: 'The assistant did not answer; nothing was typed into the field.',
     insertedSaved: (text, name) => `Typed: ${text} (${name}). Say "done" or "next".`,
     whichSaved: (names) => (names.length <= 2 ? `Which one: ${names.join(' or ')}?` : `Which one: ${names.slice(0, -1).join(', ')} or ${names.at(-1) ?? ''}?`),
+    whichItem: (names) => `Which one: ${names.map((name, i) => `${i + 1} ${name}`).join(', ')}?`,
+    beside: 'In a new tab; this page stays.',
     savedMissing: 'That is no longer saved. Say "my details".',
     savedHint: (names) => ` Or say ${names.map((n) => `"${n}"`).join(' or ')}.`,
     entryGone: 'The My details page is not in front. Say "my details".',
