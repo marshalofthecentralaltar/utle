@@ -215,5 +215,7 @@ describe('the model in /api/status (round 9, 30.5.2)', () => {
   it('round 10 (#7): a careful slot with an unknown provider or without its key stops the server at start, naming UTLE_MODEL_CAREFUL', () => {
     expect(() => createUtleServer({ root: '.', env: { ANTHROPIC_API_KEY: 'k', UTLE_MODEL_CAREFUL: 'deepseek:deepseek-flash' }, asr: false })).toThrow('UTLE_MODEL_CAREFUL=deepseek:deepseek-flash needs DEEPSEEK_API_KEY')
     expect(() => createUtleServer({ root: '.', env: { ANTHROPIC_API_KEY: 'k', UTLE_MODEL_CAREFUL: 'gemini:x' }, asr: false })).toThrow('UTLE_MODEL_CAREFUL=gemini:x: unknown provider "gemini"')
+    // The quick slot has its key, the careful one (Anthropic) has none: every careful ask would fail at run time.
+    expect(() => createUtleServer({ root: '.', env: { UTLE_MODEL: 'deepseek:deepseek-flash', DEEPSEEK_API_KEY: 'dk', UTLE_MODEL_CAREFUL: 'anthropic:claude-opus-5-5' }, asr: false })).toThrow('UTLE_MODEL_CAREFUL=anthropic:claude-opus-5-5 needs ANTHROPIC_API_KEY')
   })
 })

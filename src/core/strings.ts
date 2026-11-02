@@ -136,6 +136,8 @@ export interface Strings {
     tookTooLong: string
     /** "katkesta": every job, chain and verification was dropped. */
     cancelled: string
+    /** Round 10 (33.4): a timed slow scroll ran its time out. */
+    scrollEnded: string
     /** A long sentence typed into the box was judged a single command: the words stay, nothing runs. */
     keptWords: string
     /** A single-line field waits for the model; it did not answer, so nothing was typed. */
@@ -646,15 +648,22 @@ const MEDIA_EN: Record<MediaAction, string> = {
   back: 'Back ten seconds.',
 }
 
+/** An amount of time as the lines say it: "üks minut", "2 minutit", "90 sekundit" (a seek, 29.1; a timed scroll, 33.4). */
+function amountEt(seconds: number): string {
+  return seconds === 60 ? 'üks minut' : seconds % 60 === 0 ? `${seconds / 60} minutit` : seconds === 1 ? 'üks sekund' : `${seconds} sekundit`
+}
+
+function amountEn(seconds: number): string {
+  return seconds === 60 ? 'one minute' : seconds % 60 === 0 ? `${seconds / 60} minutes` : seconds === 1 ? 'one second' : `${seconds} seconds`
+}
+
 /** Round 8 (29.1): the line for a seek by an amount, "Edasi üks minut.", "Tagasi 90 sekundit.". */
 function seekEt(action: MediaAction, seconds: number): string {
-  const amount = seconds === 60 ? 'üks minut' : seconds % 60 === 0 ? `${seconds / 60} minutit` : seconds === 1 ? 'üks sekund' : `${seconds} sekundit`
-  return `${action === 'back' ? 'Tagasi' : 'Edasi'} ${amount}.`
+  return `${action === 'back' ? 'Tagasi' : 'Edasi'} ${amountEt(seconds)}.`
 }
 
 function seekEn(action: MediaAction, seconds: number): string {
-  const amount = seconds === 60 ? 'one minute' : seconds % 60 === 0 ? `${seconds / 60} minutes` : seconds === 1 ? 'one second' : `${seconds} seconds`
-  return `${action === 'back' ? 'Back' : 'Forward'} ${amount}.`
+  return `${action === 'back' ? 'Back' : 'Forward'} ${amountEn(seconds)}.`
 }
 
 const ET: Strings = {
@@ -722,6 +731,8 @@ const ET: Strings = {
         return 'Laadin lehe uuesti.'
       case 'scroll':
         if (command.mode === 'stop') return 'Kerimine seis.'
+        // Round 10 (33.4): a timed one says how long and the word that stops it, for as long as it runs.
+        if (command.mode === 'slow' && command.seconds !== undefined) return `Kerin aeglaselt ${command.direction === 'up' ? 'üles' : 'alla'} ${amountEt(command.seconds)}. „Stopp“ lõpetab.`
         if (command.mode === 'slow') return command.direction === 'up' ? 'Kerin aeglaselt üles.' : 'Kerin aeglaselt alla.'
         return { down: 'Kerin alla.', up: 'Kerin üles.', top: 'Lehe algusesse.', bottom: 'Lehe lõppu.' }[command.direction]
       case 'showHints':
@@ -913,6 +924,7 @@ const ET: Strings = {
     thinkingLong: 'Mõtlen pikemalt…',
     tookTooLong: 'Võttis liiga kaua, katkestasin.',
     cancelled: 'Katkestatud.',
+    scrollEnded: 'Kerimine lõppes.',
     keptWords: 'Pikk lause jäi kasti, käsku ei täitnud.',
     fieldUnverified: 'Abiline ei vastanud, välja ei kirjutanud.',
     insertedSaved: (text, name) => `Kirjutasin: ${text} (${name}). Ütle „valmis“ või „edasi“.`,
@@ -1355,6 +1367,7 @@ const EN: Strings = {
         return 'Reloading the page.'
       case 'scroll':
         if (command.mode === 'stop') return 'Scrolling stopped.'
+        if (command.mode === 'slow' && command.seconds !== undefined) return `Scrolling slowly ${command.direction === 'up' ? 'up' : 'down'} for ${amountEn(command.seconds)}. “Stop” ends it.`
         if (command.mode === 'slow') return command.direction === 'up' ? 'Scrolling slowly up.' : 'Scrolling slowly down.'
         return { down: 'Scrolling down.', up: 'Scrolling up.', top: 'To the top of the page.', bottom: 'To the end of the page.' }[command.direction]
       case 'showHints':
@@ -1546,6 +1559,7 @@ const EN: Strings = {
     thinkingLong: 'Thinking it through…',
     tookTooLong: 'It took too long, I stopped it.',
     cancelled: 'Cancelled.',
+    scrollEnded: 'Scrolling ended.',
     keptWords: 'The long sentence stays in the box; no command was run.',
     fieldUnverified: 'The assistant did not answer; nothing was typed into the field.',
     insertedSaved: (text, name) => `Typed: ${text} (${name}). Say "done" or "next".`,

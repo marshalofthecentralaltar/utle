@@ -45,7 +45,7 @@ unpacked.
 - `UTLE_MODEL_CAREFUL=provider:model` (ARCHITECTURE 33.1): the careful asks; `UTLE_MODEL` serves the quick asks and the addressee check. Unset: the quick model when `UTLE_MODEL` is set, else `anthropic:claude-sonnet-5-5`. `UTLE_FALLBACK` stands behind both; `openai:<model>` here takes `UTLE_MODEL_CAREFUL_URL` and `UTLE_MODEL_CAREFUL_KEY`.
 - `UTLE_FALLBACK=provider:model`: optional; asked only after a fast failure of the first (401, 403, 429, 5xx, unreachable, refusal), never after a timeout.
 - Keys, read from the environment only: `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `FIREWORKS_API_KEY`, `OPENROUTER_API_KEY`; `openai:<model>` takes `UTLE_MODEL_URL` and `UTLE_MODEL_KEY` (`UTLE_FALLBACK_URL`, `UTLE_FALLBACK_KEY` in the fallback slot).
-- An unknown provider or a missing non-Anthropic key stops the server at start with the variable named. Prices for the eval: `scripts/prices.ts`.
+- An unknown provider or a missing non-Anthropic key stops the server at start with the variable named; so does an Anthropic `UTLE_MODEL_CAREFUL` without `ANTHROPIC_API_KEY` while the quick slot can answer (no key anywhere still starts, rules only). Prices for the eval: `scripts/prices.ts`.
 
 ## Not verifiable without a person
 

@@ -1,5 +1,5 @@
 import { anthropicClient, anthropicModel } from './anthropic.ts'
-import { modelConfig, specLabel } from './config.ts'
+import { hasKey, modelConfig, specLabel } from './config.ts'
 import type { ModelSpec } from './config.ts'
 import { withFallback } from './fallback.ts'
 import type { Answered, FallbackModel } from './fallback.ts'
@@ -29,8 +29,6 @@ export function modelFromSpec(spec: ModelSpec, options: { fetch?: typeof fetch }
   if (spec.kind === 'anthropic') return anthropicModel(anthropicClient(spec.apiKey), spec.model)
   return openAiCompatModel({ provider: spec.provider, baseUrl: spec.baseUrl, apiKey: spec.apiKey, model: spec.model, ...(options.fetch ? { fetch: options.fetch } : {}) })
 }
-
-const hasKey = (spec: ModelSpec): boolean => (spec.kind === 'anthropic' ? Boolean(spec.apiKey) : true)
 
 export function modelFromEnv(env: NodeJS.ProcessEnv, options: { fetch?: typeof fetch } = {}): ConfiguredModel {
   const { primary, careful, fallback } = modelConfig(env)

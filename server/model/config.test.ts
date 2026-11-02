@@ -69,6 +69,17 @@ describe('round 10 (#7, 33.1): the careful slot', () => {
     expect(() => modelFromEnv({ ANTHROPIC_API_KEY: 'k', UTLE_MODEL_CAREFUL: 'openai:m', UTLE_MODEL_CAREFUL_KEY: 'k' })).toThrow('needs UTLE_MODEL_CAREFUL_URL')
   })
 
+  it('a careful slot without its key stops the start when the quick slot can answer; with no key at all the rules answer, as before', () => {
+    const env = { UTLE_MODEL: 'deepseek:deepseek-flash', DEEPSEEK_API_KEY: 'dk', UTLE_MODEL_CAREFUL: 'anthropic:claude-opus-5-5' }
+    expect(() => modelConfig(env)).toThrow(ModelConfigError)
+    expect(() => modelFromEnv(env)).toThrow("UTLE_MODEL_CAREFUL=anthropic:claude-opus-5-5 needs ANTHROPIC_API_KEY in the server's environment.")
+    expect(specLabel(modelConfig({ ...env, ANTHROPIC_API_KEY: 'k' }).careful)).toBe('anthropic:claude-opus-5-5')
+    // A fallback with its key answers for the careful slot as it does for the quick one (30.5).
+    expect(specLabel(modelConfig({ ...env, UTLE_FALLBACK: 'fireworks:f', FIREWORKS_API_KEY: 'fk' }).careful)).toBe('anthropic:claude-opus-5-5')
+    // No key anywhere: the server starts and only the rules answer.
+    expect(modelFromEnv({ UTLE_MODEL_CAREFUL: 'anthropic:claude-opus-5-5' }).ready).toBe(false)
+  })
+
   it('the status names both models; each has its own last', () => {
     const configured = modelFromEnv({ ANTHROPIC_API_KEY: 'k', UTLE_MODEL: 'anthropic:claude-haiku-5-5', UTLE_MODEL_CAREFUL: 'anthropic:claude-opus-5-5' })
     expect(modelStatus(configured)).toEqual({ primary: 'anthropic:claude-haiku-5-5', careful: 'anthropic:claude-opus-5-5', fallback: null, last: null, lastCareful: null })

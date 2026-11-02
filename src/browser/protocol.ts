@@ -27,8 +27,11 @@ export type BrowserCommand =
   | { kind: 'goTo'; url: string }
   | { kind: 'history'; direction: 'back' | 'forward' }
   | { kind: 'reload' }
-  /** mode page (default) is 80% of the view; little a third; slow a steady 90 px/s until stop or another scroll; stop ends a slow scroll. */
-  | { kind: 'scroll'; direction: 'up' | 'down' | 'top' | 'bottom'; mode?: ScrollMode }
+  /**
+   * mode page (default) is 80% of the view; little a third; slow a steady 90 px/s until stop or another scroll; stop ends a slow scroll.
+   * Round 10 (33.4): seconds, with slow only, ends the slow scroll by itself after that long ("keri alla kaks minutit").
+   */
+  | { kind: 'scroll'; direction: 'up' | 'down' | 'top' | 'bottom'; mode?: ScrollMode; seconds?: number }
   /** Puts a number on everything clickable or typeable that is visible. Answers with how many. */
   | { kind: 'showHints' }
   | { kind: 'hideHints' }

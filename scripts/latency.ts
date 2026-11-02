@@ -3,7 +3,7 @@
  * labelled clips through the real dev server and the real command logic.
  *
  *   npx vite --port 5393 --strictPort                      (in another shell, with ANTHROPIC_API_KEY set)
- *   npx tsx scripts/latency.ts --labels <labels.tsv> [--kind command,short] [--base http://localhost:5393] [--json <file>]
+ *   npx tsx scripts/latency.ts --labels <labels.tsv> [--kind command,short] [--base http://localhost:5393] [--json <file>] [--endpoint command|dictation]
  *
  * Per clip:
  *   1. speech end -> final   the clip is streamed to <base>/api/asr as the extension streams it
@@ -45,7 +45,7 @@ const value = (name: string): string | undefined => {
 }
 const labelsArg = value('--labels')
 if (labelsArg === undefined) {
-  console.error('usage: npx tsx scripts/latency.ts --labels <labels.tsv> [--kind command,short] [--base http://localhost:5393] [--json <file>]')
+  console.error('usage: npx tsx scripts/latency.ts --labels <labels.tsv> [--kind command,short] [--base http://localhost:5393] [--json <file>] [--endpoint command|dictation]')
   process.exit(2)
 }
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -54,6 +54,8 @@ const ASR = `${BASE.replace(/^http/, 'ws')}/api/asr`
 const PAGE_URL = `${BASE}/extension/test/fixtures/chat.html`
 const FRAME_MS = (ASR_FRAME_SAMPLES * 1000) / ASR_SAMPLE_RATE
 const TAIL_MS = 1500
+/** Round 10 (33.2): the endpoint mode told the server before each clip, as the extension tells it (--endpoint dictation for a box armed). */
+const ENDPOINT = value('--endpoint') === 'dictation' ? 'dictation' : 'command'
 /** Commands extension/src/background.ts runs itself rather than in the page. */
 const BROWSER_LEVEL = new Set<BrowserCommand['kind']>(['newTab', 'closeTab', 'switchTab', 'goTo', 'history', 'reload', 'bar', 'zoom', 'openSettings', 'openHelp', 'compose', 'composeTo', 'savePlace', 'removePlace', 'ping'])
 
@@ -97,6 +99,8 @@ async function recognise(samples: Float32Array): Promise<{ text: string; ms: num
     ws.once('error', j)
   })
   await Promise.race([isReady, sleep(30_000)])
+  // Round 10 (33.2): the extension says command when no box is armed; a client that says nothing gets dictation (1.0 s).
+  ws.send(JSON.stringify({ type: 'endpoint', mode: ENDPOINT }))
   const started = performance.now()
   for (const [i, frame] of frames.entries()) {
     await sleep(Math.max(0, started + i * FRAME_MS - performance.now()))

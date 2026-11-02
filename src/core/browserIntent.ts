@@ -517,6 +517,27 @@ function seekCommand(s: string): BrowserCommand | null {
   return null
 }
 
+const SCROLL_DIRECTION: Record<string, 'up' | 'down'> = { alla: 'down', allapoole: 'down', üles: 'up', ülespoole: 'up', down: 'down', up: 'up' }
+
+/**
+ * Round 10 (33.4): "keri alla kaks minutit", "keri üles 30 sekundit", "keri alla minut aega",
+ * "keri kaks minutit alla", "scroll down for two minutes": a slow scroll that ends by itself after
+ * that long. The amount is a seek's (seekSeconds, 1 s to an hour); without one it is never this.
+ */
+function timedScroll(s: string): BrowserCommand | null {
+  const timed = (direction: 'up' | 'down' | undefined, amount: string | undefined): BrowserCommand | null => {
+    const seconds = amount === undefined ? null : seekSeconds(amount.replace(/ aega$/, ''))
+    return direction === undefined || seconds === null ? null : { kind: 'scroll', direction, mode: 'slow', seconds }
+  }
+  let m = /^keri (?:aeglaselt |tasa )?(alla|allapoole|üles|ülespoole) (.+)$/.exec(s)
+  if (m?.[1]) return timed(SCROLL_DIRECTION[m[1]], m[2])
+  m = /^keri (?:aeglaselt |tasa )?(.+) (alla|allapoole|üles|ülespoole)$/.exec(s)
+  if (m?.[2]) return timed(SCROLL_DIRECTION[m[2]], m[1])
+  m = /^scroll (?:slowly )?(down|up) (?:slowly )?(?:for )?(.+)$/.exec(s)
+  if (m?.[1]) return timed(SCROLL_DIRECTION[m[1]], m[2])
+  return null
+}
+
 /** Every fixed phrase of the table, for the in-page command vocabulary (section 21.3). */
 export const BROWSER_PHRASES: readonly string[] = Object.keys(FIXED)
 
@@ -538,6 +559,8 @@ export function browserUnderstood(text: string): { command: BrowserCommand; unde
 
   const seek = seekCommand(s)
   if (seek) return plain(seek)
+  const scrolling = timedScroll(s)
+  if (scrolling) return plain(scrolling)
 
   const index = tabIndex(s)
   if (index !== null && index >= 1) return plain({ kind: 'switchTab', to: { index } })

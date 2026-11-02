@@ -3184,3 +3184,90 @@ describe('speed (round 10, #7)', () => {
     expect(t.ran.filter((c) => c.kind !== 'readBox')).toEqual([])
   })
 })
+
+describe('timed scroll in the engine (round 10, #7, 33.4)', () => {
+  const NONE: BoxState = { present: false, text: '', armed: false }
+  const TIMED: BrowserCommand = { kind: 'scroll', direction: 'down', mode: 'slow', seconds: 120 }
+  const STOP: BrowserCommand = { kind: 'scroll', direction: 'down', mode: 'stop' }
+  const scrolls = (ran: BrowserCommand[]): BrowserCommand[] => ran.filter((c) => c.kind === 'scroll')
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('"keri alla kaks minutit" starts it, the strip says so while it runs, and says it ended when the time is up', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: REAL, box: NONE })
+    t.engine.start()
+    t.say('keri alla kaks minutit')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(scrolls(t.ran)).toEqual([TIMED])
+    expect(t.state.line).toBe('Kerin aeglaselt alla 2 minutit. „Stopp“ lõpetab.')
+    await vi.advanceTimersByTimeAsync(110_000)
+    expect(t.state.line).toBe('Kerin aeglaselt alla 2 minutit. „Stopp“ lõpetab.')
+    await vi.advanceTimersByTimeAsync(11_000)
+    expect(t.state.line).toBe(STRINGS.et.inpage.scrollEnded)
+    // The page ends the scroll itself; the engine sends nothing more.
+    expect(scrolls(t.ran)).toEqual([TIMED])
+  })
+
+  it.each(['stopp', 'aitab'])('"%s" ends it at once, and the strip does not later say it ended', async (word) => {
+    vi.useFakeTimers()
+    const t = setup({ logic: REAL, box: NONE })
+    t.engine.start()
+    t.say('keri alla kaks minutit')
+    await vi.advanceTimersByTimeAsync(5_000)
+    t.say(word)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(scrolls(t.ran)).toEqual([TIMED, STOP])
+    expect(t.state.line).toBe('Kerimine seis.')
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(t.state.line).toBe('Kerimine seis.')
+  })
+
+  it('"katkesta" stops it at once (a stop for the page, outside the queue), and the strip keeps "Katkestatud."', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: REAL, box: NONE })
+    t.engine.start()
+    t.say('keri alla kaks minutit')
+    await vi.advanceTimersByTimeAsync(5_000)
+    t.say('katkesta')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(scrolls(t.ran)).toEqual([TIMED, STOP])
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
+  })
+
+  it('"katkesta" stops an untimed slow scroll too, and sends nothing when no scroll runs', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: REAL, box: NONE })
+    t.engine.start()
+    t.say('katkesta')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(scrolls(t.ran)).toEqual([])
+    t.say('keri aeglaselt alla')
+    await vi.advanceTimersByTimeAsync(10)
+    t.say('katkesta')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(scrolls(t.ran)).toEqual([{ kind: 'scroll', direction: 'down', mode: 'slow' }, STOP])
+    // Once stopped, a second cancel has nothing to stop.
+    t.say('katkesta')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(scrolls(t.ran)).toHaveLength(2)
+  })
+
+  it('another scroll replaces it: the old timer never says it ended over the new one', async () => {
+    vi.useFakeTimers()
+    const t = setup({ logic: REAL, box: NONE })
+    t.engine.start()
+    t.say('keri alla kaks minutit')
+    await vi.advanceTimersByTimeAsync(5_000)
+    t.say('keri üles kolm minutit')
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(t.state.line).toBe('Kerin aeglaselt üles 3 minutit. „Stopp“ lõpetab.')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(t.state.line).toBe(STRINGS.et.inpage.scrollEnded)
+  })
+})

@@ -23,7 +23,8 @@ export const INSTANT_SETTLE_MS = 650
  * Round 10 (#7, ARCHITECTURE 33.2): how long the recogniser waits after the last word before it ends
  * the utterance. A command ends at 0.6 s; dictation (a box armed, or the entry flow) keeps 1.0 s, so a
  * thinking pause in a sentence does not cut it. The client says which; a client that never says gets
- * command.
+ * dictation (the 1.0 s of before round 10: the dev page, `npm run smoke`, an older client). The
+ * extension always says.
  */
 export type EndpointMode = 'command' | 'dictation'
 export const ENDPOINT_TRAILING_MS: Readonly<Record<EndpointMode, number>> = { command: 600, dictation: 1000 }

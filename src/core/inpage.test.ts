@@ -2455,3 +2455,58 @@ describe('F2 (30.3): a long box with a send button is never a document', () => {
     expect(inpageStep(session(), 'saada', essay).line).toBe(ET.inpage.documentNoSend)
   })
 })
+
+describe('timed scroll (round 10, #7, ARCHITECTURE 33.4)', () => {
+  const ROWS: Array<[string, 'up' | 'down', number]> = [
+    ['keri alla kaks minutit', 'down', 120],
+    ['Keri alla 2 minutit.', 'down', 120],
+    ['keri üles 30 sekundit', 'up', 30],
+    ['keri alla kümme sekundit', 'down', 10],
+    ['keri alla minut aega', 'down', 60],
+    ['keri alla üks minut', 'down', 60],
+    ['keri alla pool minutit', 'down', 30],
+    ['keri allapoole kolm minutit', 'down', 180],
+    ['keri ülespoole poolteist minutit', 'up', 90],
+    ['keri aeglaselt alla viis minutit', 'down', 300],
+    ['keri kaks minutit alla', 'down', 120],
+    ['keri minut aega üles', 'up', 60],
+    ['scroll down for two minutes', 'down', 120],
+    ['scroll up 20 seconds', 'up', 20],
+  ]
+  it.each(ROWS)('"%s" scrolls slowly %s for %d s', (u, direction, seconds) => {
+    const step = inpageStep(session(), u, NO_BOX)
+    expect(step.commands).toEqual(only({ kind: 'scroll', direction, mode: 'slow', seconds }))
+    expect(step.ask).toBeUndefined()
+  })
+
+  it('is a command whatever the box holds, and needs no more words', () => {
+    expect(inpageStep(session(), 'keri alla kaks minutit', box('Tulen homme')).commands).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'slow', seconds: 120 }))
+    expect(inpageInstant(session(), 'keri alla kaks minutit')).toBe(true)
+  })
+
+  it('the strip says so while it runs: the direction, how long, and the word that stops it', () => {
+    const step = inpageStep(session(), 'keri alla kaks minutit', NO_BOX)
+    expect(step.line).toBe('Kerin aeglaselt alla 2 minutit. „Stopp“ lõpetab.')
+    expect(inpageResult(step.session, step.commands, { ok: true }).line).toBe('Kerin aeglaselt alla 2 minutit. „Stopp“ lõpetab.')
+    expect(inpageStep(session(), 'keri üles minut aega', NO_BOX).line).toBe('Kerin aeglaselt üles üks minut. „Stopp“ lõpetab.')
+    expect(inpageStep(session({ lang: 'en' }), 'scroll down for two minutes', NO_BOX).line).toBe('Scrolling slowly down for 2 minutes. “Stop” ends it.')
+    expect(ET.inpage.scrollEnded).toBe('Kerimine lõppes.')
+    expect(EN.inpage.scrollEnded).toBe('Scrolling ended.')
+  })
+
+  it('"stopp", "aitab" and "seis" stop it; "katkesta" is the cancel (the engine stops the scroll)', () => {
+    for (const u of ['stopp', 'aitab', 'seis']) expect(inpageStep(session(), u, NO_BOX).commands, u).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'stop' }))
+    expect(inpageStep(session(), 'katkesta', NO_BOX).cancel).toBe(true)
+  })
+
+  it('without an amount, or with one that is not a time, it stays what it was', () => {
+    expect(inpageStep(session(), 'keri alla', NO_BOX).commands).toEqual(only({ kind: 'scroll', direction: 'down' }))
+    expect(inpageStep(session(), 'keri aeglaselt alla', NO_BOX).commands).toEqual(only({ kind: 'scroll', direction: 'down', mode: 'slow' }))
+    for (const u of ['keri alla kolm korda', 'keri alla null sekundit', 'keri alla kiiresti', 'ma kerin alla kaks minutit']) {
+      const c = inpageStep(session(), u, NO_BOX).commands[0]
+      expect(c?.kind === 'scroll' && c.seconds !== undefined, u).toBe(false)
+    }
+    // A seek stays a seek.
+    expect(inpageStep(session(), 'keri edasi kaks minutit', NO_BOX).commands).toEqual(only({ kind: 'media', action: 'forward', seconds: 120 }))
+  })
+})

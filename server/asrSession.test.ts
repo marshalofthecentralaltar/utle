@@ -81,6 +81,8 @@ const setup = (): { recognizer: FakeRecognizer; sent: AsrServerMessage[]; loop: 
   const loop = new Loop()
   const clock = { now: 1000 }
   const session = createAsrSession(decoderInThread(recognizer), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now })
+  // The extension always says its mode (33.2); these tests take the endpoint where the recogniser's rule fires.
+  session.endpointMode('command')
   return { recognizer, sent, loop, clock, session }
 }
 
@@ -419,6 +421,7 @@ const setupWithGate = (): ReturnType<typeof setup> & { gate: FakeGate } => {
   const loop = new Loop()
   const clock = { now: 1000 }
   const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now })
+  session.endpointMode('command')
   return { recognizer, gate, sent, loop, clock, session }
 }
 
@@ -628,6 +631,7 @@ const setupWithVad = (lag = 1, gate: FakeGate | null = null, capture: Capture | 
   const loop = new Loop()
   const clock = { now: 1000 }
   const session = createAsrSession(decoderInThread(recognizer, gate, { vad: () => new FakeVad(lag), capture }), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now })
+  session.endpointMode('command')
   return { recognizer, sent, loop, clock, session }
 }
 
@@ -723,6 +727,7 @@ describe('no continuity (round 10, issue #3 B3): each final is verified on its o
     const loop = new Loop()
     const clock = { now: 1000 }
     const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now, onJudged: (judgement) => judged.push(judgement), sessionId: 's-1' })
+    session.endpointMode('command')
     session.onlyOwner(true)
     return { recognizer, gate, sent, loop, clock, session, judged }
   }
@@ -773,6 +778,7 @@ describe('the fail-closed decision on the server (round 10, 31.2)', () => {
     const loop = new Loop()
     const clock = { now: 1000 }
     const session = createAsrSession(decoderInThread(recognizer, gate), (message) => sent.push(message), { schedule: loop.schedule, now: () => clock.now, sessionId: 'session-A' })
+    session.endpointMode('command')
     session.onlyOwner(true)
     return { recognizer, gate, sent, loop, clock, session }
   }
@@ -1238,14 +1244,22 @@ describe('endpointing per mode (round 10, #7, 33.2)', () => {
     expect(ENDPOINT_TRAILING_MS).toEqual({ command: 600, dictation: 1000 })
   })
 
-  it('command mode (the default, and when the client says so) ends the utterance at the recogniser rule: 0.6 s of silence', () => {
-    for (const told of [false, true]) {
-      const { session, sent, feed } = ruleSetup()
-      if (told) session.endpointMode('command')
-      // Two words, then silence: the 6th silent frame is 600 ms after the last word.
-      expect(feed([1, 2, ...silence(12)])).toBe(1 + 6)
-      expect(finals(sent)).toEqual(['ava uus'])
-    }
+  it('command mode (when the client says so) ends the utterance at the recogniser rule: 0.6 s of silence', () => {
+    const { session, sent, feed } = ruleSetup()
+    session.endpointMode('command')
+    // Two words, then silence: the 6th silent frame is 600 ms after the last word.
+    expect(feed([1, 2, ...silence(12)])).toBe(1 + 6)
+    expect(finals(sent)).toEqual(['ava uus'])
+  })
+
+  it('a client that never says a mode (the dev page, npm run smoke, an older client) keeps dictation: 1.0 s, as before round 10', () => {
+    const { sent, feed } = ruleSetup()
+    expect(feed([1, 2, ...silence(12)])).toBe(1 + 10)
+    expect(finals(sent)).toEqual(['ava uus'])
+    // 0.8 s of silence, then a word: still one utterance.
+    const again = ruleSetup()
+    again.feed([1, ...silence(8), 3, ...silence(12)])
+    expect(finals(again.sent)).toEqual(['ava vaheleht'])
   })
 
   it('dictation keeps 1.0 s: the final comes 400 ms later, and words in between continue the same utterance', () => {
@@ -1273,7 +1287,8 @@ describe('endpointing per mode (round 10, #7, 33.2)', () => {
   it('never cuts inside a word still being decoded: when the words changed in the frame the rule fired on, it waits for a frame that changes nothing', () => {
     const recognizer = new RuleRecognizer()
     recognizer.rerank.set(9, 'uusi')
-    const { sent, feed } = ruleSetup(recognizer)
+    const { sent, session, feed } = ruleSetup(recognizer)
+    session.endpointMode('command')
     // "ava uus", five silent frames, then a frame that rewrites "uus" to "uusi" as the rule fires.
     expect(feed([1, 2, ...silence(5), 9, ...silence(6)])).toBe(1 + 5 + 1 + 1)
     expect(finals(sent)).toEqual(['ava uusi'])

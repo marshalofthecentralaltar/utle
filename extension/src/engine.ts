@@ -250,7 +250,16 @@ interface Live {
   paused?: boolean
 }
 
-export function createEngine(deps: EngineDeps): Engine {
+export function createEngine(given: EngineDeps): Engine {
+  /** Round 10 (33.4): the line the strip shows now, so the end of a timed scroll never writes over a newer one. */
+  let shownLine = ''
+  const deps: EngineDeps = {
+    ...given,
+    publish: (patch) => {
+      if (patch.line !== undefined) shownLine = patch.line
+      given.publish(patch)
+    },
+  }
   const text = STRINGS[deps.lang].strip
   const inpageText = STRINGS[deps.lang].inpage
   let session = deps.logic.initialInpage(deps.lang)
@@ -298,6 +307,38 @@ export function createEngine(deps: EngineDeps): Engine {
       if (timer !== null) clearTimeout(timer)
     }
   }
+
+  // ---------- round 10 (#7, ARCHITECTURE 33.4): the timed scroll ----------
+  /** A slow scroll this engine started may still run ("katkesta" stops it); the page also ends one by itself. */
+  let scrolling = false
+  let scrollTimer: ReturnType<typeof setTimeout> | null = null
+  const endScrollTimer = (): void => {
+    if (scrollTimer !== null) clearTimeout(scrollTimer)
+    scrollTimer = null
+  }
+  /**
+   * After a step ran: a slow scroll that started is remembered, any other scroll forgets it. A timed
+   * one says it ended when its time is up, if its line is still the one shown (the page stops it itself).
+   */
+  const scrollRan = (command: BrowserCommand | undefined, result: BrowserResult, line: string): void => {
+    if (command?.kind !== 'scroll') return
+    endScrollTimer()
+    scrolling = result.ok && command.mode === 'slow'
+    if (!scrolling || command.seconds === undefined) return
+    scrollTimer = setTimeout(() => {
+      scrollTimer = null
+      scrolling = false
+      if (shownLine === line) say(inpageText.scrollEnded)
+    }, command.seconds * 1000)
+  }
+  /** "katkesta": a slow scroll still running is stopped at once, outside the queue. */
+  const stopScroll = (): void => {
+    endScrollTimer()
+    if (!scrolling) return
+    scrolling = false
+    void runSafe({ kind: 'scroll', direction: 'down', mode: 'stop' })
+  }
+  // ---------- end of the timed scroll ----------
 
   // ---------- round 10 (#7, ARCHITECTURE 33.2): the endpoint mode ----------
   /** The last box read, and where the mode goes once the recogniser is made. */
@@ -573,6 +614,7 @@ export function createEngine(deps: EngineDeps): Engine {
    * preview is taken back, and the strip's dots, seconds and chain line go. The model is not asked.
    */
   const cancelAll = (): void => {
+    stopScroll()
     for (const job of jobs) {
       job.dropped = true
       giveUp(job)
@@ -734,6 +776,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const line = after.line !== '' ? after.line : step.line
     // Round 5: a job given up meanwhile ("katkesta", the watchdog) keeps that line, not this late result.
     if (job?.dropped !== true) say(withSuffix(line))
+    scrollRan(step.commands.at(-1), last, withSuffix(line))
     return { ok: last.ok, line }
   }
 

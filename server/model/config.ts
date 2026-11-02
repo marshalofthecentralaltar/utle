@@ -65,14 +65,27 @@ export function parseModelSpec(value: string, slot: Slot, env: NodeJS.ProcessEnv
   throw new ModelConfigError(`${slot}=${value}: unknown provider "${provider}" (known: ${names}).`)
 }
 
+/** Whether a slot has its key: an Anthropic slot may lack one (the server then answers by the rules only). */
+export function hasKey(spec: ModelSpec): boolean {
+  return spec.kind === 'anthropic' ? Boolean(spec.apiKey) : true
+}
+
 /**
  * Every slot. UTLE_MODEL unset is the default; UTLE_FALLBACK unset or empty is none. Round 10 (33.1):
  * UTLE_MODEL_CAREFUL unset is the quick model when UTLE_MODEL is set, else DEFAULT_CAREFUL_MODEL.
+ * A careful slot that cannot answer (Anthropic without ANTHROPIC_API_KEY, no fallback with a key)
+ * while the quick slot can stops the start: every careful ask would fail at run time. With no key
+ * anywhere the server still starts, rules only.
  */
 export function modelConfig(env: NodeJS.ProcessEnv): { primary: ModelSpec; careful: ModelSpec; fallback: ModelSpec | null } {
   const quickSet = Boolean(env.UTLE_MODEL?.trim())
   const primary = parseModelSpec(quickSet && env.UTLE_MODEL ? env.UTLE_MODEL : DEFAULT_MODEL, 'UTLE_MODEL', env)
-  const careful = env.UTLE_MODEL_CAREFUL?.trim() ? parseModelSpec(env.UTLE_MODEL_CAREFUL, 'UTLE_MODEL_CAREFUL', env) : quickSet ? primary : parseModelSpec(DEFAULT_CAREFUL_MODEL, 'UTLE_MODEL_CAREFUL', env)
+  const carefulSet = env.UTLE_MODEL_CAREFUL?.trim() ? env.UTLE_MODEL_CAREFUL : null
+  const careful = carefulSet !== null ? parseModelSpec(carefulSet, 'UTLE_MODEL_CAREFUL', env) : quickSet ? primary : parseModelSpec(DEFAULT_CAREFUL_MODEL, 'UTLE_MODEL_CAREFUL', env)
   const fallback = env.UTLE_FALLBACK?.trim() ? parseModelSpec(env.UTLE_FALLBACK, 'UTLE_FALLBACK', env) : null
+  const answers = (spec: ModelSpec): boolean => hasKey(spec) || (fallback !== null && hasKey(fallback))
+  if (carefulSet !== null && answers(primary) && !answers(careful)) {
+    throw new ModelConfigError(`UTLE_MODEL_CAREFUL=${carefulSet} needs ANTHROPIC_API_KEY in the server's environment.`)
+  }
   return { primary, careful, fallback }
 }

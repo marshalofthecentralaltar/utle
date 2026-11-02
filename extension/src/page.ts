@@ -1057,15 +1057,23 @@ function nothingScrolled(direction: string): BrowserResult {
   return fail('failed', direction === 'down' || direction === 'bottom' ? 'Nothing scrolled: the page is already at the end, or it does not scroll.' : 'Nothing scrolled: the page is already at the top.')
 }
 
-/** Starts a steady scroll on the first container that can move. It ends on stop, on another scroll, on a navigation, or at the end of the container. */
-function startSlowScroll(direction: 'up' | 'down'): BrowserResult {
+/**
+ * Starts a steady scroll on the first container that can move. It ends on stop, on another scroll,
+ * on a navigation, at the end of the container, or (round 10, 33.4) once seconds have passed.
+ */
+function startSlowScroll(direction: 'up' | 'down', seconds?: number): BrowserResult {
   const el = scrollables().find((e) => canScroll(e, direction))
   if (el === undefined) return nothingScrolled(direction)
   const sign = direction === 'down' ? 1 : -1
   let last = performance.now()
+  const until = seconds === undefined ? Infinity : last + seconds * 1000
   let owed = 0
   const step = (now: number): void => {
     if (slowScroll === null || slowScroll.el !== el) return
+    if (now >= until) {
+      slowScroll = null
+      return
+    }
     owed += ((now - last) / 1000) * SLOW_SCROLL_PX_PER_S
     last = now
     const whole = Math.floor(owed)
@@ -1107,11 +1115,11 @@ async function scrollSettled(el: Element, before: number): Promise<boolean> {
  * else. page (the default) and little scroll smoothly and answer once the scroll has settled; slow
  * starts a steady scroll and answers at once; stop ends it (ok even when nothing was moving).
  */
-async function scroll(direction: string, mode: ScrollMode = 'page'): Promise<BrowserResult> {
+async function scroll(direction: string, mode: ScrollMode = 'page', seconds?: number): Promise<BrowserResult> {
   stopSlowScroll()
   if (mode === 'stop') return ok()
   if (!['down', 'up', 'top', 'bottom'].includes(direction)) return fail('failed', `Unknown scroll direction "${direction}".`)
-  if (mode === 'slow' && (direction === 'up' || direction === 'down')) return startSlowScroll(direction)
+  if (mode === 'slow' && (direction === 'up' || direction === 'down')) return startSlowScroll(direction, seconds !== undefined && seconds > 0 ? seconds : undefined)
   const share = mode === 'little' ? LITTLE_SCROLL_SHARE : PAGE_SCROLL_SHARE
   for (const el of scrollables()) {
     if (!canScroll(el, direction)) continue
@@ -2903,7 +2911,7 @@ async function run(command: PageCommand): Promise<PageResult> {
   try {
     switch (command.kind) {
       case 'scroll':
-        return await scroll(command.direction, command.mode)
+        return await scroll(command.direction, command.mode, command.seconds)
       case 'showHints':
         return showHints(site)
       case 'hideHints':

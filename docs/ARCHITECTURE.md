@@ -2854,7 +2854,9 @@ asks (`care: 'careful'`, set by the engine's `careOf`). Unset: the quick model w
 `DEFAULT_CAREFUL_MODEL`. `UTLE_FALLBACK` stands behind each slot with the rules of 30.5 (fast failures only, never a
 timeout); each slot has its own instance, so `/api/status` reports `primary`, `careful`, `fallback`, `last` and
 `lastCareful`. An unknown provider or a missing non-Anthropic key in the careful slot stops the server at start,
-naming `UTLE_MODEL_CAREFUL`. The eval (`scripts/intent-eval.ts`) runs each case on the model its care selects and
+naming `UTLE_MODEL_CAREFUL`; so does an Anthropic careful slot without `ANTHROPIC_API_KEY` (and no fallback with a key)
+while the quick slot can answer, since every careful ask would fail at run time. With no key anywhere the server
+starts as before and the rules answer. The eval (`scripts/intent-eval.ts`) runs each case on the model its care selects and
 prints one row per model.
 
 Defaults stay Sonnet 5.5 for both slots. Haiku 5.5 quick + Opus 5.5 careful scored 88/94 and 89/94 against
@@ -2876,7 +2878,10 @@ never wall time, so a backlog cannot cut an utterance.
 The client says which on the wire: `{ type: 'endpoint', mode: 'command' | 'dictation' }`. The engine sends dictation
 when the last box it read was armed or the entry flow is on, command otherwise (`tellEndpoint` beside `readBox`);
 the local recogniser sends the newest mode at once and again after every `ready`. A client that never says gets
-command.
+dictation, the 1.0 s it had before round 10 (ruled 2026-11-02): the dev page, `npm run smoke` and any older client
+keep what they had; only the extension, which always says, gets the shorter command endpoint. `scripts/latency.ts`
+streams clips itself, so it says `command` before each clip as the extension does with no box armed
+(`--endpoint dictation` for the other).
 
 ### 33.3 Acting on a partial (`server/asrSession.ts` `PAUSE_MS`, `src/speech/local.ts` `onPause`)
 
@@ -2889,6 +2894,27 @@ With only the owner on (31), nothing of this runs: the server sends no partial a
 never settles a partial and ignores a pause, and the engine's `ownerOnly` wrapper drops any utterance without a
 `verified_owner` decision. Never "run then undo".
 
-### 33.4 Timed scroll: NOT BUILT
+### 33.4 Timed scroll (`src/core/browserIntent.ts` `timedScroll`, `extension/src/page.ts` `startSlowScroll`, `extension/src/engine.ts` `scrollRan`)
 
-"keri alla N minutit" (issue #5 point 5, the plan's P6) was in this lane's brief and is not built.
+"keri alla kaks minutit", "keri üles 30 sekundit", "keri alla minut aega", "keri aeglaselt alla viis minutit",
+"keri kaks minutit alla", "scroll down for two minutes" are the slow scroll of 23.4 for that long:
+`{ kind: 'scroll', direction, mode: 'slow', seconds }`. The amount is a seek's (29.1: digits or words, "pool",
+"poolteist", "kaks ja pool", 1 s to an hour; a trailing "aega" is dropped); without one, or with "edasi" / "tagasi"
+(the video's seek), it is not this. A rule, never the model (the model's `scroll` has no seconds).
+
+The page ends the scroll by itself once `seconds` have passed (the same `requestAnimationFrame` loop, with a deadline),
+as well as on every way 23.4 ends one. While it runs the strip says so: "Kerin aeglaselt alla 2 minutit. „Stopp“
+lõpetab." When the time is up the engine says "Kerimine lõppes.", only if that line is still the one shown.
+"stopp", "seis", "aitab" (no words in an armed box, 22) and every two-word stop end it at once, as for any slow
+scroll. "katkesta" ends it too: the engine remembers a slow scroll it started (`scrolling`, until a stop, another
+scroll, a failure or the time) and, on the cancel, sends a stop to the page at once, outside the queue; with no
+scroll running the cancel sends nothing to the page. While the labels show, "stopp" hides them first (23.4).
+
+Partials: "keri alla" is a command by itself, so with only-owner off (33.3) a pause of 300 ms after it runs the
+page scroll before "kaks minutit" is heard. Saying it in one breath, or the other order ("keri kaks minutit alla",
+whose first words are no command), avoids that. With only-owner on nothing runs before the verified final.
+
+Tests: `src/core/inpage.test.ts` "timed scroll" (the forms, the line, the stops, what is not one),
+`extension/src/engine.test.ts` "timed scroll in the engine" (the line while it runs and at the end, "stopp",
+"aitab", "katkesta" with and without a scroll, a newer scroll's line kept), `extension/test/run.ts` (a 1 s scroll
+moves and stops by itself; a 30 s one stops at once on stop).

@@ -195,8 +195,12 @@ export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRe
   }
 
   // ---------- round 10 (#7, ARCHITECTURE 33.2 and 33.3): endpointing per mode, the quiet after words ----------
-  /** The mode the client last asked for. The recogniser's own rule 2 is the command one (asrModel). */
-  let mode: EndpointMode = 'command'
+  /**
+   * The mode the client last asked for. The recogniser's own rule 2 is the command one (asrModel).
+   * A client that never says (the dev page, `npm run smoke`, an older client) keeps dictation, the
+   * 1.0 s it had before round 10; the extension always says.
+   */
+  let mode: EndpointMode = 'dictation'
   /** Audio decoded since the recogniser's rule first said the utterance ended; null while it has not. */
   let pastRuleMs: number | null = null
   /** The words after the frame before. */
