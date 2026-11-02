@@ -835,7 +835,7 @@ interface WakeTrace {
   states: Array<[string, 'ACTIVE' | 'PASSIVE']>
   seen: Array<[string, string]>
   ran: Array<[string, string]>
-  wakes: Array<[string, number, number]>
+  wakes: Array<[string, number]>
   /** What the engine asked the model (the rules did not know it). */
   asked: Array<[string, string]>
   /** The largest lag the server reported (ms): above a second, audio was dropped and the clips blur. */
@@ -901,8 +901,8 @@ async function wakeSession(asr: string, clips: readonly string[], onlyOwner: boo
           ws.onmessage = (event) => {
             // The wire's wake events, for the report (the recogniser takes them itself).
             if (typeof event.data === 'string' && event.data.includes('"type":"wake"')) {
-              const w = JSON.parse(event.data) as { startMs: number; endMs: number }
-              trace.wakes.push([playing, w.startMs, w.endMs])
+              const w = JSON.parse(event.data) as { endMs: number }
+              trace.wakes.push([playing, w.endMs])
             }
             if (typeof event.data === 'string' && event.data.includes('"type":"lag"')) trace.maxLag = Math.max(trace.maxLag, (JSON.parse(event.data) as { ms: number }).ms)
             events.message(event.data)
@@ -956,7 +956,7 @@ async function wakeReal(): Promise<void> {
     // Part A: only-owner off.
     const a = await wakeSession(asr, ['owner-utlen', 'owner-literal', 'owner-bare', 'owner-bare', 'owner-lead-youtube', 'owner-literal', 'owner-bare', 'owner-pause-gmail'], false)
     console.log(`      A states ${JSON.stringify(a.states)}`)
-    console.log(`      A wakes on the wire (clip, startMs, endMs) ${JSON.stringify(a.wakes)}`)
+    console.log(`      A wakes on the wire (clip, endMs) ${JSON.stringify(a.wakes)}`)
     console.log(`      A rules got ${JSON.stringify(a.seen)}; asked ${JSON.stringify(a.asked)}; page commands ${JSON.stringify(a.ran)}; max lag ${a.maxLag} ms`)
     const statesOf = (t: WakeTrace, clip: string): string[] => t.states.filter(([c]) => c === clip).map(([, s]) => s)
     // The clips repeat; the trace keeps the order, so walk it.

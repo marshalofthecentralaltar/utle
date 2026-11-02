@@ -3159,17 +3159,28 @@ those seconds, so the first clips never reached the recogniser. `UTLE_SPOTTER=of
 (about 200 MB less; wake mode then decides on the text, LIMITED).
 
 The client asks with `{ type: 'spotter', on }` (wake mode, every connection); the session answers
-`{ type: 'spotter', on }` with whether it runs. `decoderInThread` feeds the spotter each frame the
+`{ type: 'spotter', on }` with whether it runs. The offscreen document asks only when the wake word is
+"Ütle" (`spotterHears`), and the engine ignores what the spotter heard for any other word (review 1:
+the spotter knows one word; "Arvuti" would never have woken). `decoderInThread` feeds the spotter each frame the
 recogniser gets, in the same order (the speech detector's output, the carry after an endpoint
 included), from the accept loop beside `decodeOne`; `ends` and `decodeOne` are unchanged. A hit on a
 decoy resets the spotter's stream and is dropped. A hit on the wake word goes into the frame's
-`DecodeResult.wake` (`endMs` exact: the audio time of the hit, ms since the stream opened, about 1 s
-after the word ends; `startMs` NOT reliable: derived from sherpa's token times, which are not on the
-stream's clock, it came out 4 to 13 s before `endMs` in voice.ts section 9; nothing reads it, and it
-needs fixing before anything does; `score`: the threshold passed, sherpa-onnx does not report the
-probability).
+`DecodeResult.wake` (`endMs`: the session's audio, ms the client sent since the stream opened, when
+the spotter confirmed the word, about 1 s after it). Review 1 dropped two fields: `startMs` came from
+sherpa's token times, which are not on the stream's clock (4 to 13 s before `endMs` in voice.ts
+section 9), and `score` was the constant threshold (sherpa-onnx 1.13.8 reports no probability).
 
-The session sends `{ type: 'wake', segment, startMs, endMs, score }` at once, before anything else of
+**The end flush** (review 1). The spotter confirms a word about 1 s of audio after it, and since
+lane LATE (33.2) the speech detector ends a command 640 to 880 ms after the speech, handing the
+recogniser hiss that never reaches the spotter. Left alone, a word at the end of an utterance ("Ütle."
+alone) would be confirmed in the next utterance, under its segment. So at every endpoint, when the
+recogniser's text has the word (`wakeMentioned`) and the spotter has not answered in this utterance,
+the spotter is handed hiss (the detector's, else zeros), at most `SPOT_FLUSH_MS` 1200 ms, until it
+answers; a hit there belongs to this utterance. Then its stream starts over either way, at every
+endpoint and every flush, so no hit lands on the next utterance. Utterances without the word pay
+nothing; one with it pays at most 1.2 s of spotter decoding (about 160 ms).
+
+The session sends `{ type: 'wake', segment, endMs }` at once, before anything else of
 that frame. `segment` is the id the final (or rejection) of the same utterance will carry: the
 session's segment counter plus one. A final with only the owner off carries `segment` only when a
 wake was sent for it (every other final is byte for byte as before); with the owner on it carries

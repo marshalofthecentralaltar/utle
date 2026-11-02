@@ -964,6 +964,23 @@ reliable (sherpa's token times are not on the stream's clock: it came out 4 to 1
 Gate: `npm run check` 59 files, 4241 tests, green; browser suite (`npx tsx extension/test/run.ts`, under the lock) 330
 PASS, ALL PASS.
 
+Review round 1 (rebased on lane LATE's 64a97e5). (1) LATE's detector ends a command 640 to 880 ms after the speech,
+before the spotter's hit (about 1 s): at every endpoint whose text has the word and whose spotter has not answered, the
+spotter now gets up to 1.2 s of hiss and answers inside the utterance; its stream starts over at every endpoint and
+flush, so no hit lands on the next one (`server/asrSession.test.ts` "review 1", red without the flush in
+`artifacts/red-review1.log`). Wake mode off on the rebased branch, `latency.ts --why --asr-only --tail 3000 --endpoint
+command`, 18 clips: speech end to final p50 851 / p95 906 ms, final in audio p50 800, causes detector 15 / rule2 3 (as in
+1q). voice.ts section 9 on the rebased branch: ALL PASS. (2) The spotter knows only "ütle": wake mode asks for it, and
+the engine believes it, only when the wake word is Ütle (`spotterHears`); "Arvuti" runs on the text. (3) The wire's
+`wake` is `{ segment, endMs }`: `startMs` (off the stream's clock) and `score` (a constant) are gone. (4) Start-up of a
+fresh decode worker (`artifacts/startup.ts`, the machine was NOT idle: 29 to 58 % CPU before each start):
+
+| run | CPU before | spotter on: to loaded, RSS | `UTLE_SPOTTER=off`: to loaded, RSS |
+|---|---|---|---|
+| 1 | 58 % / 43 % | 11678 ms, 617 MB | 5861 ms, 423 MB |
+| 2 | 32 % / 32 % | 11764 ms, 615 MB | 5929 ms, 423 MB |
+| 3 | 29 % / 56 % | 12872 ms, 617 MB | 7639 ms, 423 MB |
+
 Not verified: a real voice (every number above is SYNTHETIC), a real room or microphone, false wakes per hour (4.5
 minutes of negative audio is far from the hours a 0.1 per hour claim needs), the extension in Chrome end to end with
 the spotter (section 9 has no browser), the confirmation time target (p95 1.1 s from the speech end against the issue's

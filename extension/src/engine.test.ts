@@ -3446,3 +3446,24 @@ describe('round 10 (#2, ARCHITECTURE 35): the wake word heard in the audio (the 
     expect(seen).toEqual(['keri alla'])
   })
 })
+
+describe('review 1: a wake word other than Ütle runs on the text (the spotter knows only "ütle")', () => {
+  it('wakeWord "Arvuti": a final with the word wakes even when the recogniser says the spotter heard nothing', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Arvuti' })
+    t.engine.start()
+    t.handlers()?.onUtterance('Arvuti, keri alla', undefined, { spotted: false })
+    await t.engine.idle()
+    expect(seen).toEqual(['keri alla'])
+    expect(t.state.wakeOpen).toBe(true)
+  })
+
+  it('wakeWord "ütle" in any case is the spotter\'s word: not heard, no wake', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'ÜTLE' })
+    t.engine.start()
+    t.handlers()?.onUtterance('Ütle, keri alla', undefined, { spotted: false })
+    await t.engine.idle()
+    expect(seen).toEqual([])
+  })
+})

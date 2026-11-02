@@ -1360,7 +1360,7 @@ describe('the keyword spotter on the wire (round 10, #2, 35)', () => {
   it('the spotter runs: an utterance whose final carries the segment of a wake was heard; one without was not', () => {
     const { socket, utterances } = setup({ spotter: true })
     socket().says({ type: 'spotter', on: true })
-    socket().says({ type: 'wake', segment: 3, startMs: 1200, endMs: 1900, score: 0.25 })
+    socket().says({ type: 'wake', segment: 3, endMs: 1900 })
     socket().says({ type: 'final', text: 'no nii ütle ava youtube', segment: 3 })
     vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
     socket().says({ type: 'final', text: 'ma ütlen sulle homme' })
@@ -1374,7 +1374,7 @@ describe('the keyword spotter on the wire (round 10, #2, 35)', () => {
   it('a wake whose utterance sent no final never carries over to the next one', () => {
     const { socket, utterances } = setup({ spotter: true })
     socket().says({ type: 'spotter', on: true })
-    socket().says({ type: 'wake', segment: 1, startMs: 0, endMs: 700, score: 0.25 })
+    socket().says({ type: 'wake', segment: 1, endMs: 700 })
     // The server burnt segment 1 (no words); the next final has none of its own.
     socket().says({ type: 'final', text: 'kas sa tuled ka poodi' })
     vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
@@ -1393,7 +1393,7 @@ describe('the keyword spotter on the wire (round 10, #2, 35)', () => {
     const { socket, utterances } = setup({ spotter: true, onlyOwner: true })
     socket().says({ type: 'spotter', on: true })
     socket().says({ type: 'speakerSession', sessionId: 's1', profileVersion: 'v1' })
-    socket().says({ type: 'wake', segment: 1, startMs: 0, endMs: 700, score: 0.25 })
+    socket().says({ type: 'wake', segment: 1, endMs: 700 })
     socket().says({ type: 'rejected', decision: stranger(1) })
     vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
     expect(utterances).toEqual([])
@@ -1401,7 +1401,7 @@ describe('the keyword spotter on the wire (round 10, #2, 35)', () => {
     socket().says({ type: 'final', text: 'ava youtube', speaker: 'owner', segment: 2, decision: owner(2) })
     vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
     expect(utterances).toEqual([['ava youtube', owner(2), { spotted: false }]])
-    socket().says({ type: 'wake', segment: 3, startMs: 5000, endMs: 5700, score: 0.25 })
+    socket().says({ type: 'wake', segment: 3, endMs: 5700 })
     socket().says({ type: 'final', text: 'ütle', speaker: 'owner', segment: 3, decision: owner(3) })
     vi.advanceTimersByTime(LOCAL_HOLD_MS + 50)
     expect(utterances.at(-1)).toEqual(['ütle', owner(3), { spotted: true }])

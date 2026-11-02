@@ -25,7 +25,7 @@ import type { StripState } from './messages.ts'
 // ---------- wake word and places (29.4) ----------
 import { placeByNoun, placeCommand, placeHost, placeNounSaid, placeNouns, placeVoice } from '../../src/core/places.ts'
 import type { Place } from '../../src/core/places.ts'
-import { createWake, wakeFind, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
+import { createWake, spotterHears, wakeFind, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
 import type { WakeState } from '../../src/core/wake.ts'
 // ---------- round 10: addressed speech (32) ----------
 import { createListen, listenActive, listenBusy, listenFinal, listenHeard, listenOff, listenOn, listenSleep, listenTick, listenWake } from '../../src/core/listen.ts'
@@ -1253,6 +1253,8 @@ export function createEngine(given: EngineDeps): Engine {
   }
   /** Round 8 (29.4.1): the wake word while listenMode is wake, else null. */
   const wake: WakeState | null = deps.wakeWord === undefined ? null : createWake(deps.wakeWord)
+  /** Round 10 (#2, 35, review 1): the spotter knows only "ütle"; for any other word what it heard is ignored and the text decides. */
+  const spotterWord = spotterHears(deps.wakeWord)
   /** Round 10 (32.1): PASSIVE, ACTIVE or HARD_OFF (src/core/listen.ts). */
   let listen: ListenState = createListen()
   /** What the strip was last told (wakeOpen = ACTIVE), so it is told on change only. */
@@ -1291,7 +1293,7 @@ export function createEngine(given: EngineDeps): Engine {
    * strip). Round 10 (35): heard is what the local keyword spotter heard in it; absent, the text decides (LIMITED).
    */
   const wakeFilter = (word: WakeState, utterance: string, heard?: HeardWake): string | null => {
-    const r = listenFinal(listen, word, utterance, Date.now(), heard)
+    const r = listenFinal(listen, word, utterance, Date.now(), spotterWord ? heard : undefined)
     listen = r.state
     lastPassed = r.utterance !== null
     if (r.event === 'ignored') deps.publish({ ignored: wakeText.notForMe(listen.ignored) })
@@ -1483,7 +1485,7 @@ export function createEngine(given: EngineDeps): Engine {
       if (!gated()) return ungated.onUtteranceContinued(text, added)
       if (lastPassed && windowOpen()) {
         // Round 10 (35): with the spotter, a leading word it did not hear is his text.
-        const rest = heard?.spotted === false ? null : wakeStarts(word, added)
+        const rest = spotterWord && heard?.spotted === false ? null : wakeStarts(word, added)
         listen = listenHeard(listen, Date.now())
         showWake(true)
         return ungated.onUtteranceContinued(text, rest === null || rest === '' ? added : rest)

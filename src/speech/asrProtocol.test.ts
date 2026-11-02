@@ -84,3 +84,12 @@ describe("a final's why (round 10, #7, lane LATE)", () => {
     expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, audioMs: 'late' } }))).toEqual({ type: 'final', text: 'keri alla' })
   })
 })
+
+describe('review 1 (#2, 35): the wake message on the wire', () => {
+  it('carries a segment and the audio time only; anything else is not a wake', () => {
+    expect(parseAsrMessage(JSON.stringify({ type: 'wake', segment: 2, endMs: 1900 }))).toEqual({ type: 'wake', segment: 2, endMs: 1900 })
+    expect(parseAsrMessage(JSON.stringify({ type: 'wake', segment: 2, endMs: 1900, startMs: 10, score: 0.1 }))).toEqual({ type: 'wake', segment: 2, endMs: 1900 })
+    expect(parseAsrMessage(JSON.stringify({ type: 'wake', segment: 0, endMs: 1900 }))).toBeNull()
+    expect(parseAsrMessage(JSON.stringify({ type: 'wake', segment: 2 }))).toBeNull()
+  })
+})

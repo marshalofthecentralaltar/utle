@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createWake, wakeFind, wakeMentioned, wakeStarts, wakeWordFrom } from './wake.ts'
+import { createWake, spotterHears, wakeFind, wakeMentioned, wakeStarts, wakeWordFrom } from './wake.ts'
 
 /** Twenty finals without the word: room talk, dictation, commands said to someone else. */
 const WITHOUT_WORD = [
@@ -141,5 +141,16 @@ describe('round 10 (#2, 35): the word written anywhere, literal or not (wakeMent
     expect(wakeMentioned(W2, 'Ma ütlen sulle homme.')).toBe(false)
     expect(wakeMentioned(W2, 'ütlemine on hõbe')).toBe(false)
     expect(wakeMentioned(W2, 'Kõik, ava YouTube')).toBe(false)
+  })
+})
+
+describe('review 1: the word the keyword spotter knows (spotterHears)', () => {
+  it('is "ütle" in any case; every other word, and none, is not', () => {
+    expect(spotterHears('Ütle')).toBe(true)
+    expect(spotterHears('ütle')).toBe(true)
+    expect(spotterHears(' ÜTLE ')).toBe(true)
+    expect(spotterHears('Arvuti')).toBe(false)
+    expect(spotterHears('hei ütle')).toBe(false)
+    expect(spotterHears(undefined)).toBe(false)
   })
 })
