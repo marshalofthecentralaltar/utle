@@ -735,6 +735,16 @@ sibling with text or a link, and an unfilled link skips its innerText. After, me
 On the two small fixtures the difference is about half a millisecond, inside the run-to-run spread
 (five-run medians of the same code gave 1.10 to 1.58 on Delfi). Logs: `artifacts/readpage-timing-*.txt`.
 
+Defect after integration (round 2): on the merged main "kommenteeri" on the Facebook stand-in came back
+as a choose (the tie question) in 2 of 5 runs, a question where the comment field was wanted. A tie is
+now two items of the same kind by rule in `pageIntentFrom` (ARCHITECTURE 34.4): a choose over two items
+of different roles runs the first id, focusItem for a field and clickItem otherwise, and asks nothing;
+two buttons ("lisa korvi") or two links ("Kumb: 1 Ava, 2 Ava kiri?") still ask. The prompt's tie line
+says the same. Eval on r10-ambig, Sonnet, 106 cases: 105/106 ($0.00538 per completed task, p50/p95
+1890/3036 ms) and 106/106 ($0.00504, 1909/3289 ms); "kommenteeri" focusItem 6 in both. The one miss,
+run 1 only: "recovery: not on the page, scroll once, then search [2/2]" on YouTube answered scroll down
+where siteSearch was wanted (2 of 7 runs since the round 10 prompt). Logs: `artifacts/eval-round2-*.txt`.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

@@ -2920,6 +2920,14 @@ ends the question and is heard as it always is. "Ei saanud aru" is never the ans
 tie (prompt): an ordinal, a word only one has, a dialog over the page, the button in an open mail's
 body against the site's own, a field already open for what he asked.
 
+A tie is two items of the same kind (the same readPage role: two buttons, two links, two rows). This
+is a rule in `pageIntentFrom`, not only prompt words: a choose over two items of different roles (the
+Kommenteeri button and the comment field it opens, a link and a field) is no tie, and the first id, the
+model's likelier, runs as focusItem when it is a field and clickItem otherwise; nothing is asked.
+"lisa korvi" with two buttons and the suite's "Kumb: 1 Ava, 2 Ava kiri?" (two links) still ask. (Round
+10, defect after integration: on the merged main "kommenteeri" on Facebook came back as a choose in 2
+of 5 eval runs, a question where the comment field was wanted; prompt words alone left it to sampling.)
+
 ### 34.5 Proof
 
 `extension/src/buttonLook.test.ts`, `src/core/meant.test.ts`, the round 10 blocks of

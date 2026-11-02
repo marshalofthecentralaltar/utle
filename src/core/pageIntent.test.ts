@@ -202,4 +202,26 @@ describe('round 10 (#5, 34.4): choose, the tie, is two different items of the pa
     expect(pageIntentFrom({ kind: 'choose', ids: [4] }, request(tie))).toBeNull()
     expect(pageIntentFrom({ kind: 'choose', ids: [4, 6, 1] }, request(tie))).toBeNull()
   })
+
+  // Round 10, defect after integration: "kommenteeri" on Facebook came back as a choose between the
+  // Kommenteeri button and the comment field it opens (2 of 5 runs). Two items of different kinds are
+  // not a tie: the first id runs, by its role, and nothing is asked.
+  const facebook: PageContext = {
+    ...PAGE,
+    items: [
+      { id: 5, role: 'button', text: 'Kommenteeri' },
+      { id: 6, role: 'field', text: 'Kirjuta kommentaar…' },
+      { id: 7, role: 'link', text: 'Ava' },
+      { id: 8, role: 'link', text: 'Ava kiri' },
+    ],
+  }
+  it('a choose over a button and a field is no tie: the first runs (clickItem or focusItem by its role)', () => {
+    expect(pageIntentFrom({ kind: 'choose', ids: [5, 6] }, request(facebook))).toEqual({ kind: 'command', command: { kind: 'clickItem', id: 5 } })
+    expect(pageIntentFrom({ kind: 'choose', ids: [6, 5] }, request(facebook))).toEqual({ kind: 'command', command: { kind: 'focusItem', id: 6 } })
+    expect(pageIntentFrom({ kind: 'choose', ids: [7, 6] }, request(facebook))).toEqual({ kind: 'command', command: { kind: 'clickItem', id: 7 } })
+  })
+  it('two items of the same kind are still a tie: two buttons, two links', () => {
+    expect(pageIntentFrom({ kind: 'choose', ids: [4, 6] }, request(tie))).toEqual({ kind: 'choose', ids: [4, 6] })
+    expect(pageIntentFrom({ kind: 'choose', ids: [7, 8] }, request(facebook))).toEqual({ kind: 'choose', ids: [7, 8] })
+  })
 })
