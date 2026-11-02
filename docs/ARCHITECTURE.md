@@ -2890,6 +2890,19 @@ When the speech detector has heard 300 ms of silence after the words of the utte
 quick-reply release of round 3) that is settling on exactly those words is released at once instead of after
 `INSTANT_SETTLE_MS`; its final is swallowed as for any released reply, so the command runs once.
 
+A command that a longer command starts with is never released from a partial, neither on the pause nor on the
+settle (`src/core/commandPrefix.ts` `extendsCommand`, used in `src/speech/local.ts` beside `isInstant`): "keri" and a
+direction (a timed scroll, 33.4, or a seek by an amount, 29.1, may follow), and every Estonian form of the help
+page (`COMMAND_FORMS`, from `src/core/phrases.ts`) whose words start with the partial's and go on ("saada" before
+"saada meil Jaanile", "abi" before "abi kerimine", "kirjuta Marile" before "kirjuta Marile, et ..."). A phrase added
+to the help page is covered with no more code. Such a partial waits for its final, and the final is never held (the
+assembler still takes it as instant), so "keri alla" said alone runs when its final comes. Released early, "keri
+alla" would scroll a page and "kaks minutit" would arrive alone as the next utterance (a final more than one word
+longer than what was released keeps only its new words). Nothing is slower than before round 10: the final comes
+at the 0.6 s command endpoint after the last word, about when the old 650 ms settle released the partial (the settle
+counts from the last change of the partial, which comes a little after the last word, and before round 10 the final
+needed 1.0 s). These commands lose only the pause's head start, about 300 ms.
+
 With only the owner on (31), nothing of this runs: the server sends no partial and no pause, the client's strict mode
 never settles a partial and ignores a pause, and the engine's `ownerOnly` wrapper drops any utterance without a
 `verified_owner` decision. Never "run then undo".
@@ -2910,11 +2923,7 @@ scroll. "katkesta" ends it too: the engine remembers a slow scroll it started (`
 scroll, a failure or the time) and, on the cancel, sends a stop to the page at once, outside the queue; with no
 scroll running the cancel sends nothing to the page. While the labels show, "stopp" hides them first (23.4).
 
-Partials: "keri alla" is a command by itself, so with only-owner off (33.3) a pause of 300 ms after it runs the
-page scroll before "kaks minutit" is heard. Saying it in one breath, or the other order ("keri kaks minutit alla",
-whose first words are no command), avoids that. With only-owner on nothing runs before the verified final.
-
 Tests: `src/core/inpage.test.ts` "timed scroll" (the forms, the line, the stops, what is not one),
 `extension/src/engine.test.ts` "timed scroll in the engine" (the line while it runs and at the end, "stopp",
 "aitab", "katkesta" with and without a scroll, a newer scroll's line kept), `extension/test/run.ts` (a 1 s scroll
-moves and stops by itself; a 30 s one stops at once on stop).
+moves and stops by itself; a 30 s one stops at once on stop). A pause after "keri alla" runs nothing early (33.3).

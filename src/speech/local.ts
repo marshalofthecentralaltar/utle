@@ -1,4 +1,5 @@
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
+import { COMMAND_FORMS, extendsCommand } from '../core/commandPrefix.ts'
 import { createAssembler } from './assembler.ts'
 import type { AssemblerOptions } from './assembler.ts'
 import { ASR_PATH, ASR_SAMPLE_RATE, INSTANT_SETTLE_MS, LOCAL_HOLD_MS, authorizes, parseAsrMessage } from './asrProtocol.ts'
@@ -47,6 +48,11 @@ export interface LocalOptions {
    * Chrome's recogniser. A server message `unavailable` (no model) gives up either way.
    */
   keepTrying?: boolean
+  /**
+   * Round 10 (33.3): the commands a partial may be the start of; a partial that starts a longer one
+   * is never released early. Default: every Estonian form of the help page (COMMAND_FORMS).
+   */
+  longerCommands?: readonly string[]
 }
 
 /** Round 9 (30.1): the waits before each new try in an outage; the last one repeats. */
@@ -147,6 +153,9 @@ export function createLocalRecognizer(
   // Round 10 (31.3): with only the owner obeyed, only authorized finals enter the assembler, and
   // what it delivers carries the decision of the newest of them.
   const strict = options.onlyOwner === true
+  /** Round 10 (33.3): a quick reply may go from a partial, unless a longer command starts with its words. */
+  const longer = options.longerCommands ?? COMMAND_FORMS
+  const releasable = (text: string): boolean => isInstant(text) && !extendsCommand(text, longer)
   /** The decision of the newest authorized final; null when none (or after a lost connection). */
   let authorized: SpeakerDecision | null = null
   const continuedWith = (text: string, added: string): void => {
@@ -233,7 +242,7 @@ export function createLocalRecognizer(
     handlers.onInterim(text)
     if (text === settling) return
     cancelSettle()
-    if (text === '' || !assembler.idle() || !isInstant(text)) return
+    if (text === '' || !assembler.idle() || !releasable(text)) return
     settling = text
     settle = setTimeout(() => {
       settle = null

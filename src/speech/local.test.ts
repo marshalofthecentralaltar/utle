@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONNECTIVE_HOLD_MS } from '../core/chain.ts'
+import { COMMAND_FORMS } from '../core/commandPrefix.ts'
 import { INSTANT_SETTLE_MS, LOCAL_HOLD_MS, SPEAKER_REASONS, verdictFor } from './asrProtocol.ts'
 import type { PhraseProblem, SpeakerDecision, SpeakerReadiness, SpeakerReason, SpeakerTestResult } from './asrProtocol.ts'
 import { MAX_BUFFERED_BYTES, RECONNECT_MS, RETRAIN_AFTER_DROPS, STRICT_FLUSH_WAIT_MS, createLocalRecognizer, dropsFinal, retrainDue } from './local.ts'
@@ -1165,12 +1166,19 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
-  const setup = (options: { onlyOwner?: boolean } = {}) => {
+  const setup = (options: { onlyOwner?: boolean; longerCommands?: readonly string[] } = {}) => {
     const utterances: Array<[string, SpeakerDecision | undefined]> = []
     const r = createLocalRecognizer(
       { onUtterance: (text, decision) => utterances.push([text, decision]), onInterim: () => undefined, onError: () => undefined },
-      (text) => text === 'keri alla' || text === 'saada',
-      { onUnavailable: () => undefined, connect: (events) => new FakeSocket(events), audio: () => new FakeAudio(), keepTrying: true, ...(options.onlyOwner === true ? { onlyOwner: true } : {}) },
+      (text) => ['keri alla', 'saada', 'vaigista', 'mine tagasi'].includes(text),
+      {
+        onUnavailable: () => undefined,
+        connect: (events) => new FakeSocket(events),
+        audio: () => new FakeAudio(),
+        keepTrying: true,
+        ...(options.onlyOwner === true ? { onlyOwner: true } : {}),
+        ...(options.longerCommands === undefined ? {} : { longerCommands: options.longerCommands }),
+      },
     )
     const socket = (): FakeSocket => {
       const s = FakeSocket.made.at(-1)
@@ -1198,16 +1206,55 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
     expect(endpoints(socket())).toEqual([{ type: 'endpoint', mode: 'command' }])
   })
 
-  it('a partial a rule knows, then the pause for the same words: run at once, and its final is not run again', () => {
+  it('a partial a rule knows that no longer command goes on from, then the pause for the same words: run at once, and its final is not run again', () => {
+    const { r, socket, utterances } = setup()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'vaigista' })
+    socket().says({ type: 'pause', text: 'vaigista' })
+    expect(utterances).toEqual([['vaigista', undefined]])
+    socket().says({ type: 'final', text: 'vaigista' })
+    vi.advanceTimersByTime(5000)
+    expect(utterances).toEqual([['vaigista', undefined]])
+  })
+
+  it('"keri alla", then a pause mid-command: nothing runs early; the final "keri alla kaks minutit" is one utterance', () => {
     const { r, socket, utterances } = setup()
     r.start()
     socket().says({ type: 'ready' })
     socket().says({ type: 'partial', text: 'keri alla' })
     socket().says({ type: 'pause', text: 'keri alla' })
-    expect(utterances).toEqual([['keri alla', undefined]])
-    socket().says({ type: 'final', text: 'keri alla' })
+    expect(utterances).toEqual([])
+    // Nor on the settle of round 3.
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS * 2)
+    expect(utterances).toEqual([])
+    socket().says({ type: 'partial', text: 'keri alla kaks minutit' })
+    socket().says({ type: 'final', text: 'keri alla kaks minutit' })
     vi.advanceTimersByTime(5000)
+    expect(utterances).toEqual([['keri alla kaks minutit', undefined]])
+  })
+
+  it('"keri alla" said alone still runs as soon as its final comes (the final is never held)', () => {
+    const { r, socket, utterances } = setup()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'keri alla' })
+    socket().says({ type: 'pause', text: 'keri alla' })
+    socket().says({ type: 'final', text: 'keri alla' })
     expect(utterances).toEqual([['keri alla', undefined]])
+  })
+
+  it('a phrase added to the help page that goes on from a command ("mine tagasi sinna kus ma olin") keeps "mine tagasi" from running early', () => {
+    const { r, socket, utterances } = setup({ longerCommands: [...COMMAND_FORMS, 'mine tagasi sinna kus ma olin'] })
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'mine tagasi' })
+    socket().says({ type: 'pause', text: 'mine tagasi' })
+    vi.advanceTimersByTime(INSTANT_SETTLE_MS * 2)
+    expect(utterances).toEqual([])
+    socket().says({ type: 'final', text: 'mine tagasi sinna kus ma olin' })
+    vi.advanceTimersByTime(5000)
+    expect(utterances).toEqual([['mine tagasi sinna kus ma olin', undefined]])
   })
 
   it('a pause for words no rule knows, or for words that are no longer the partial, runs nothing early', () => {
