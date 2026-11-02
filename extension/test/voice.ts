@@ -4,7 +4,8 @@
 // local recogniser.
 //
 // Expects the dev server in this worktree: npx vite --port 5193 --strictPort (UTLE_PORT=5194 for another port)
-//   npx tsx extension/test/voice.ts           dictation with live words and send, scroll and tab, the new-tab page
+//   npx tsx extension/test/voice.ts           dictation (live words on the strip, 32.3) and send, scroll and tab, the new-tab page
+//   UTLE_ONLY=dictate                          only section 1: dictation and "saada" (also scroll, newtab for sections 2, 3)
 //   npx tsx extension/test/voice.ts baseline  the dictation timings as main b901d29 behaved (no previews, 700 ms hold)
 //   npx tsx extension/test/voice.ts down      start with the dev server STOPPED; start it when told
 //   UTLE_ONLY=onlyowner                        only section 7: only the owner with the real models (a server of its own)
@@ -240,7 +241,8 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
         const b = await lexical().catch(() => '')
         const shown = await measure(s.sw, CHAT).catch(() => null)
         samples.push({ t, box: b, heard: shown?.heard ?? '' })
-        const distinct = new Set(samples.map((x) => x.box).filter((x) => x.trim() !== ''))
+        // 32.3: the live words are on the strip; the box gets the sentence with its verdict.
+        const distinct = new Set(samples.map((x) => x.heard).filter((x) => x.trim() !== ''))
         if (!baseline && !shot && distinct.size >= 2) {
           shot = true
           await page.screenshot({ path: proof('inpage-live.png') })
@@ -252,10 +254,27 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
     // Hover the microphone 1.3 s with no click: listening turns on.
     const cx = m.mic.left + m.mic.width / 2
     const cy = m.mic.top + m.mic.height / 2
+    const docsBefore = await offscreenCreated(s.sw)
     await page.mouse.move(cx, cy, { steps: 4 })
-    await sleep(1300)
+    // Round 10 prompt 5 (LIVE, criterion 5): when listening came on, in ms after the pointer reached the
+    // microphone (the dwell is 1000 ms), so a miss at 1.3 s says by how much.
+    const hoverAt = Date.now()
+    let onAfter = NaN
+    while (Date.now() - hoverAt < 1300) {
+      if ((await state(s.sw).catch(() => null))?.listening === true) {
+        onAfter = Date.now() - hoverAt
+        break
+      }
+      await sleep(50)
+    }
+    await sleep(Math.max(0, 1300 - (Date.now() - hoverAt)))
     const afterHover = await state(s.sw)
-    check('4. hovering the microphone 1.3 s turns listening on, no click', afterHover?.listening === true, `listening=${afterHover?.listening}`)
+    if (afterHover?.listening !== true) {
+      await waitUntil(async () => (await state(s.sw).catch(() => null))?.listening === true, 5000)
+      onAfter = Date.now() - hoverAt
+    }
+    console.log(`      HOVER: listening on ${onAfter} ms after the pointer reached the microphone (dwell 1000 ms); offscreen documents made before ${docsBefore}, after ${await offscreenCreated(s.sw)}`)
+    check('4. hovering the microphone 1.3 s turns listening on, no click', afterHover?.listening === true, `listening=${afterHover?.listening} (on after ${onAfter} ms)`)
     await sleep(800)
     const still = await state(s.sw)
     check('4. no refire while the pointer stays', still?.listening === true)
@@ -288,7 +307,8 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
     }
     const firstAt = samples.find((x) => x.box.trim() !== '')?.t ?? NaN
     const finalAt = samples.find((x) => x.box.trim() === final && final !== '')?.t ?? NaN
-    console.log(`      TIMING${baseline ? ' (baseline)' : ''}: end of the sentence at ${sentenceEnd - speechStart} ms; first words in the box ${firstAt - sentenceEnd} ms after it; final text in the box ${finalAt - sentenceEnd} ms after it (negative: while still speaking)`)
+    const firstHeardAt = samples.find((x) => x.t >= speechStart && x.heard.trim() !== '')?.t ?? NaN
+    console.log(`      TIMING${baseline ? ' (baseline)' : ''}: end of the sentence at ${sentenceEnd - speechStart} ms; first words on the strip ${firstHeardAt - sentenceEnd} ms after it; first words in the box ${firstAt - sentenceEnd} ms after it; final text in the box ${finalAt - sentenceEnd} ms after it (negative: while still speaking)`)
 
     const valuesBefore: string[] = []
     for (const x of samples) {
@@ -299,8 +319,11 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
     check('1. "saada" sends exactly the sentence, once, and empties the box', delivered && list.length === 1 && final.length > 10 && (await lexical()) === '', `sent=${JSON.stringify(list)}`)
     check('2. no sampled box value contains "saada"', samples.every((x) => !plain(x.box).split(' ').some((w) => w.startsWith('saada'))))
     if (!baseline) {
-      check('1. at least 3 distinct box texts before the final one', valuesBefore.length >= 3, `${valuesBefore.length}: ${JSON.stringify(valuesBefore)}`)
-      check('5. first words visible while speech is still playing', firstAt < sentenceEnd, `${firstAt - sentenceEnd} ms`)
+      // Round 10 (32.3, lane LISTEN review 1, b052456): the toggle mode asks the addressee check before
+      // anything is typed, so his live words are on the strip and the box gets the whole sentence with
+      // its verdict. Until round 9 (7a5ce7c) the box showed the words as he spoke them.
+      check('1. no words previewed into the box: its first text is the whole sentence (32.3)', Number.isFinite(finalAt) && valuesBefore.length === 0, `${valuesBefore.length}: ${JSON.stringify(valuesBefore)}`)
+      check('5. first words on the strip while speech is still playing (32.3)', firstHeardAt < sentenceEnd, `${firstHeardAt - sentenceEnd} ms`)
       check('8. heard line font size >= 24 px', (late?.heardPx ?? 0) >= 24, `${late?.heardPx} px`)
       check('8. strip heard text changed at least 3 times during the sentence', heardDuring.size >= 3, `${heardDuring.size}: ${JSON.stringify([...heardDuring])}`)
       check('8. 5 s after speech ends the strip still shows the last words', (late?.heard ?? '') !== '', `${Math.round(Date.now() - saadaEnd)} ms after: ${JSON.stringify(late?.heard)}`)
