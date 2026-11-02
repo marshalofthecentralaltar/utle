@@ -287,8 +287,13 @@ itself within a second. A fold he asked for ("peida riba") never comes back by i
   nothing in this mode. The folded pill is a gaze target too (resting on it for two seconds no
   longer unfolds the bar in this mode; use **Näita**). When a page swallows the pointer-leave
   event, a one-second poll of the pointer's last position ends listening instead.
-- **Wake word** (`listenMode: wake`, round 8; round 10: ARCHITECTURE 32.1, LIMITED: on the
-  recogniser's text, not an acoustic keyword spotter): listening starts by itself and stays on; the
+- **Wake word** (`listenMode: wake`, round 8; round 10: ARCHITECTURE 32.1 and 35): with the local
+  server the wake is heard in the audio: the server runs sherpa-onnx's keyword spotter over TalTech's
+  model beside the recogniser (loaded with the recogniser at the server's start, about 200 MB more
+  memory, about 13 % of one core while wake mode listens; `UTLE_SPOTTER=off` leaves it out), and a
+  sentence wakes only when the spotter heard "Ütle" and the recogniser
+  wrote it where a wake can be. Without the spotter (it did not load, Chrome's engine) the text alone
+  decides, LIMITED (32). No new setting. Listening starts by itself and stays on; the
   microphone button turns it off (HARD_OFF). PASSIVE: nothing anyone says reaches the bar, the box or
   the model; the strip shows only a quiet count ("3 lauset ei olnud mulle"). The word wakes it anywhere
   in a sentence: "No nii, ütle, mine youtube'i" runs "mine youtube'i" and drops "No nii"; the

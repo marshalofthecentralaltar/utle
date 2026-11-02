@@ -117,3 +117,75 @@ describe('round 10 (#2, limited): PASSIVE / ACTIVE / HARD_OFF', () => {
     expect(listenSleep(s).mode).toBe('passive')
   })
 })
+
+describe('round 10 (#2, 35): the wake word heard in the audio (the keyword spotter)', () => {
+  const heard = { spotted: true }
+  const notHeard = { spotted: false }
+  const step = (state: ListenState, final: string, wake: { spotted: boolean }, now = T0) => listenFinal(state, W, final, now, wake)
+
+  it('PASSIVE: the spotter is the signal; the text alone never wakes ("ütle" written, not heard)', () => {
+    const r = step(passive(), 'Ütle, ava YouTube', notHeard)
+    expect([r.state.mode, r.utterance, r.event]).toEqual(['passive', null, 'ignored'])
+  })
+
+  it('PASSIVE "Ütle." heard: ACTIVE, nothing to run', () => {
+    const r = step(passive(), 'Ütle.', heard)
+    expect([r.state.mode, r.utterance, r.event]).toEqual(['active', null, 'woke'])
+  })
+
+  it('PASSIVE "No nii, Ütle, ava YouTube." heard: the lead-in is dropped, only "ava YouTube." runs', () => {
+    const r = step(passive(), 'No nii, Ütle, ava YouTube.', heard)
+    expect([r.state.mode, r.utterance]).toEqual(['active', 'ava YouTube.'])
+  })
+
+  it('PASSIVE: the spotter heard the sound, the words say it was literal ("kirjuta sõna ütle"): no wake', () => {
+    const r = step(passive(), 'Kirjuta siia sõna ütle.', heard)
+    expect([r.state.mode, r.utterance, r.event]).toEqual(['passive', null, 'ignored'])
+  })
+
+  it('PASSIVE: heard, but the recogniser wrote no form of the word (a relative the spotter took for it, a misheard wake): no wake', () => {
+    expect(step(passive(), 'Ta ütles, et tuleb.', heard).state.mode).toBe('passive')
+    const r = step(passive(), 'Kõik, ava YouTube', heard)
+    expect([r.state.mode, r.utterance, r.event]).toEqual(['passive', null, 'ignored'])
+  })
+
+  it('PASSIVE "Ma ütlen sulle homme." with no wake heard: nothing', () => {
+    const r = step(passive(), 'Ma ütlen sulle homme.', notHeard)
+    expect([r.state.mode, r.utterance]).toEqual(['passive', null])
+  })
+
+  it('ACTIVE "Ütle." heard: PASSIVE (the toggle)', () => {
+    const on = step(passive(), 'Ütle.', heard).state
+    const r = step(on, 'Ütle.', heard, T0 + 5000)
+    expect([r.state.mode, r.utterance, r.event]).toEqual(['passive', null, 'slept'])
+  })
+
+  it('ACTIVE: a leading "Ütle" the spotter did not hear is his text, never a toggle', () => {
+    const on = step(passive(), 'Ütle.', heard).state
+    const r = step(on, 'Ütle', notHeard, T0 + 5000)
+    expect([r.state.mode, r.utterance, r.event]).toEqual(['active', 'Ütle', 'passed'])
+  })
+
+  it('ACTIVE "Ütle, keri alla." heard: the word is stripped, the command runs, still ACTIVE', () => {
+    const on = step(passive(), 'Ütle.', heard).state
+    const r = step(on, 'Ütle, keri alla.', heard, T0 + 5000)
+    expect([r.state.mode, r.utterance]).toEqual(['active', 'keri alla.'])
+  })
+
+  it('ACTIVE "Kirjuta siia sõna ütle." heard: literal, his text whole, no toggle', () => {
+    const on = step(passive(), 'Ütle.', heard).state
+    const r = step(on, 'Kirjuta siia sõna ütle.', heard, T0 + 5000)
+    expect([r.state.mode, r.utterance]).toEqual(['active', 'Kirjuta siia sõna ütle.'])
+  })
+
+  it('a stop word ends ACTIVE whether or not the spotter heard anything', () => {
+    const on = step(passive(), 'Ütle.', heard).state
+    expect(step(on, 'aitab', notHeard, T0 + 5000).state.mode).toBe('passive')
+  })
+
+  it('"Ütle" + a pause + "ava Gmail" (two finals, one wake heard): wakes and runs the second without a second word', () => {
+    const first = step(passive(), 'Ütle.', heard)
+    const second = step(first.state, 'ava Gmail.', notHeard, T0 + 900)
+    expect([first.utterance, second.utterance, second.state.mode]).toEqual([null, 'ava Gmail.', 'active'])
+  })
+})

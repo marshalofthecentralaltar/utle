@@ -29,7 +29,7 @@ import { createWake, wakeFind, wakeStarts, wakeWordFrom } from '../../src/core/w
 import type { WakeState } from '../../src/core/wake.ts'
 // ---------- round 10: addressed speech (32) ----------
 import { createListen, listenActive, listenBusy, listenFinal, listenHeard, listenOff, listenOn, listenSleep, listenTick, listenWake } from '../../src/core/listen.ts'
-import type { ListenState } from '../../src/core/listen.ts'
+import type { HeardWake, ListenState } from '../../src/core/listen.ts'
 import { recentFinals } from '../../src/core/addressee.ts'
 import type { AddresseeAnswer, AddresseeRequest, AddresseeVerdict } from '../../src/core/addressee.ts'
 // ---------- end of addressed speech ----------
@@ -62,7 +62,7 @@ export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' | 'aborted'
  */
 export type EngineHandlers = RecognizerHandlers & {
   onLag(ms: number): void
-  onUtteranceContinued(text: string, added: string, decision?: SpeakerDecision): void
+  onUtteranceContinued(text: string, added: string, decision?: SpeakerDecision, heard?: HeardWake): void
   /** Round 4 (review): a foreign final takes back the preview its partials typed. Round 10 (31.7): reason, when the recogniser knows it. */
   onForeign(reason?: SpeakerReason): void
   /** Round 4 (review): enrolment is over; utterances are handled again. */
@@ -1286,9 +1286,12 @@ export function createEngine(given: EngineDeps): Engine {
     listen = listenBusy(listen, jobs.size > 0, Date.now())
     showWake(true)
   }
-  /** One final through the machine: the words to act on, or null when they go nowhere (not even the strip). */
-  const wakeFilter = (word: WakeState, utterance: string): string | null => {
-    const r = listenFinal(listen, word, utterance, Date.now())
+  /**
+   * One final through the machine: the words to act on, or null when they go nowhere (not even the
+   * strip). Round 10 (35): heard is what the local keyword spotter heard in it; absent, the text decides (LIMITED).
+   */
+  const wakeFilter = (word: WakeState, utterance: string, heard?: HeardWake): string | null => {
+    const r = listenFinal(listen, word, utterance, Date.now(), heard)
     listen = r.state
     lastPassed = r.utterance !== null
     if (r.event === 'ignored') deps.publish({ ignored: wakeText.notForMe(listen.ignored) })
@@ -1457,11 +1460,11 @@ export function createEngine(given: EngineDeps): Engine {
     const word = wake
     const ungated = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
     const gated = (): boolean => !entry && !enrolling
-    handlers.onUtterance = (utterance) => {
+    handlers.onUtterance = (utterance, _decision, heard) => {
       // 29.5: while reading, the reading's filter comes before the gate: a stop word stops it without the wake word.
       if (!enrolling && whileReading(utterance)) return
       if (!gated()) return ungated.onUtterance(utterance)
-      const passed = wakeFilter(word, utterance)
+      const passed = wakeFilter(word, utterance, heard)
       if (passed === null) {
         // Round 10 (32.1): PASSIVE, a toggle or a stop word: nothing of it reaches the strip, the box or the queue.
         dropLive()
@@ -1475,17 +1478,18 @@ export function createEngine(given: EngineDeps): Engine {
         showWake(true)
       }
     }
-    handlers.onUtteranceContinued = (text, added) => {
+    handlers.onUtteranceContinued = (text, added, _decision, heard) => {
       if (!enrolling && whileReading(added)) return
       if (!gated()) return ungated.onUtteranceContinued(text, added)
       if (lastPassed && windowOpen()) {
-        const rest = wakeStarts(word, added)
+        // Round 10 (35): with the spotter, a leading word it did not hear is his text.
+        const rest = heard?.spotted === false ? null : wakeStarts(word, added)
         listen = listenHeard(listen, Date.now())
         showWake(true)
         return ungated.onUtteranceContinued(text, rest === null || rest === '' ? added : rest)
       }
       // What it continues was dropped: these words are a final of their own.
-      handlers.onUtterance(added)
+      handlers.onUtterance(added, undefined, heard)
     }
     handlers.onInterim = (interim) => {
       if (deps.reading?.() === true) return
@@ -1606,12 +1610,13 @@ export function createEngine(given: EngineDeps): Engine {
     onInterim() {
       // Unverified words: never typed into the box, never shown on the strip.
     },
-    onUtterance(utterance, decision) {
-      if (verifiedOwner(decision)) inner.onUtterance(utterance)
+    // Round 10 (35): what the spotter heard goes in only with the owner's decision; a wake is never one.
+    onUtterance(utterance, decision, heard) {
+      if (verifiedOwner(decision)) inner.onUtterance(utterance, undefined, heard)
       else dropLive()
     },
-    onUtteranceContinued(text, added, decision) {
-      if (verifiedOwner(decision)) inner.onUtteranceContinued(text, added)
+    onUtteranceContinued(text, added, decision, heard) {
+      if (verifiedOwner(decision)) inner.onUtteranceContinued(text, added, undefined, heard)
       else dropLive()
     },
   })

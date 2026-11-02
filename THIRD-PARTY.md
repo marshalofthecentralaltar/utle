@@ -38,6 +38,7 @@ runs. Each carries its own licence in `node_modules/<name>/`; they were not chec
 | `scripts/fixtures/*.wav` (five short Estonian recordings used by the tests) | Synthetic speech made with the TartuNLP text-to-speech service (`https://api.tartunlp.ai/text-to-speech/v2`, voice "mari"), then resampled by `scripts/fixture.ts` | **Not confirmed.** The TartuNLP service's code is MIT (https://raw.githubusercontent.com/TartuNLP/text-to-speech-api/main/LICENSE: "MIT License, Copyright (c) 2021 University of Tartu"), but no licence or terms of use for the audio the service produces, or for the voice, was found. | See `docs/PUBLISHING.md`, item 3 of the checklist. |
 
 | `scripts/fixtures/speaker-set/*.wav` (round 7: the speaker gate's calibration set, made by `scripts/speaker-set.ts`) | The five fixtures above cut into utterances, and synthetic speech from the same TartuNLP service (voices albert, kalev, meelis, kylli, vesta, liivika) | **Not confirmed**, as the row above. | As the row above. |
+| `scripts/fixtures/wake-set/*.wav` (round 10, #2: voice.ts section 9, made by `scripts/kws-set.ts --voice`; the keyword spotter's evaluation set of the same script goes to `artifacts/kws-set/` and is never committed) | Synthetic speech from the same TartuNLP service (voices mari, kalev; the evaluation set albert, kalev, meelis, kylli, vesta, liivika) | **Not confirmed**, as the rows above. | As the rows above. |
 
 `public/favicon.svg` is ours (drawn for Ütle). The screenshots in `docs/proof/` are ours and show
 only test pages and invented names.

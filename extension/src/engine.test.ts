@@ -15,6 +15,7 @@ import type { StripState } from './messages.ts'
 import type { AddresseeAnswer, AddresseeRequest } from '../../src/core/addressee.ts'
 import { SPEAKER_REASONS, verdictFor } from '../../src/speech/asrProtocol.ts'
 import type { SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
+import { WAKE_REPEAT_MS } from '../../src/core/listen.ts'
 
 const logic: InpageLogic = {
   initialInpage: (lang) => ({ lang, asleep: false, hints: false, undo: [] }),
@@ -3375,5 +3376,73 @@ describe('round 10 (#5, ARCHITECTURE 34): what he meant', () => {
     t.say('uus leht')
     await t.engine.idle()
     expect(t.ran.filter((c) => c.kind === 'clickItem' || c.kind === 'newTab')).toEqual([{ kind: 'newTab' }])
+  })
+})
+
+describe('round 10 (#2, ARCHITECTURE 35): the wake word heard in the audio (the local keyword spotter)', () => {
+  const heard = { spotted: true }
+  const notHeard = { spotted: false }
+  const owner: SpeakerDecision = { segmentId: 1, sessionId: 's', profileVersion: 'v1-x', verdict: verdictFor('verified_owner'), reason: 'verified_owner', timings: { judgeMs: 10 } }
+  const stranger: SpeakerDecision = { ...owner, verdict: verdictFor('rejected_other'), reason: 'rejected_other' }
+
+  it('PASSIVE: the text says "Ütle" but the spotter did not hear it: nothing; heard: the words after it run once', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.handlers()?.onUtterance('Ütle, keri alla', undefined, notHeard)
+    await t.engine.idle()
+    expect(seen).toEqual([])
+    expect(t.state.wakeOpen ?? false).toBe(false)
+    t.handlers()?.onUtterance('No nii, Ütle, ava YouTube.', undefined, heard)
+    await t.engine.idle()
+    expect(seen).toEqual(['ava YouTube.'])
+    expect(t.state.wakeOpen).toBe(true)
+  })
+
+  it('"Ma ütlen sulle homme." no wake; "Kirjuta siia sõna ütle." heard in PASSIVE: literal, no wake', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.handlers()?.onUtterance('Ma ütlen sulle homme.', undefined, notHeard)
+    t.handlers()?.onUtterance('Kirjuta siia sõna ütle.', undefined, heard)
+    await t.engine.idle()
+    expect(seen).toEqual([])
+    expect(t.state.wakeOpen ?? false).toBe(false)
+  })
+
+  it('ACTIVE "Ütle." heard toggles to PASSIVE; ACTIVE "Kirjuta siia sõna ütle." stays his text', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle' })
+    t.engine.start()
+    t.handlers()?.onUtterance('Ütle.', undefined, heard)
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(true)
+    t.handlers()?.onUtterance('Kirjuta siia sõna ütle.', undefined, heard)
+    await t.engine.idle()
+    expect(seen).toEqual(['Kirjuta siia sõna ütle.'])
+    await new Promise((resolve) => setTimeout(resolve, WAKE_REPEAT_MS + 50))
+    t.handlers()?.onUtterance('Ütle.', undefined, heard)
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(false)
+  })
+
+  it('only the owner on: a wake heard in a stranger\'s voice wakes nothing; the command after it still needs the owner', async () => {
+    const seen: string[] = []
+    const t = setup({ logic: recording(seen), box: { present: true, text: '', armed: false }, wakeWord: 'Ütle', onlyOwner: true })
+    t.engine.start()
+    t.handlers()?.onUtterance('Ütle, keri alla', stranger, heard)
+    t.handlers()?.onUtterance('keri alla', owner, notHeard)
+    await t.engine.idle()
+    expect(seen).toEqual([])
+    expect(t.state.wakeOpen ?? false).toBe(false)
+    // His wake opens ACTIVE; a stranger's command after it still runs nothing.
+    t.handlers()?.onUtterance('Ütle.', owner, heard)
+    t.handlers()?.onUtterance('keri alla', stranger, notHeard)
+    await t.engine.idle()
+    expect(t.state.wakeOpen).toBe(true)
+    expect(seen).toEqual([])
+    t.handlers()?.onUtterance('keri alla', owner, notHeard)
+    await t.engine.idle()
+    expect(seen).toEqual(['keri alla'])
   })
 })

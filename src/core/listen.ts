@@ -100,10 +100,33 @@ export function listenWake(state: ListenState, now: number): ListenState {
 const woke = (state: ListenState, now: number): ListenState => ({ ...state, mode: 'active', until: now + ACTIVE_IDLE_MS, wokeAt: now, ignored: 0 })
 const slept = (state: ListenState): ListenState => ({ ...state, mode: 'passive', ignored: 0 })
 
-/** One final (after the speaker gate) through the machine. */
-export function listenFinal(previous: ListenState, wake: WakeState, final: string, now: number): ListenStep {
+/**
+ * Round 10 (#2, ARCHITECTURE 35): what the keyword spotter heard in the audio of the utterance. Absent
+ * when there is no spotter (Chrome's engine, Soniox, a hosted server, a spotter that did not load):
+ * the text alone decides, LIMITED (32).
+ */
+export interface HeardWake {
+  /** The spotter heard the wake word in this utterance's audio. */
+  spotted: boolean
+}
+
+/**
+ * One final (after the speaker gate) through the machine. Round 10 (35): with `heard` (the spotter
+ * runs), the wake is the spotter's: a final it did not hear the word in never wakes and never
+ * toggles, whatever the text says; the text places the boundary (the lead-in dropped, the words
+ * after it run) and keeps a literal use literal. Both must agree: heard, with no form of the word
+ * where a wake can be in the text (a relative the spotter took for the word, "ta ütles"; a wake the
+ * recogniser misheard), is no wake (35.1: a false wake costs more than a repeated word). Without
+ * `heard`, the text decides as in 32 (LIMITED).
+ */
+export function listenFinal(previous: ListenState, wake: WakeState, final: string, now: number, heard?: HeardWake): ListenStep {
   const state = listenTick(previous, now)
   if (state.mode === 'off') return { state, utterance: null, event: 'off' }
+  if (heard !== undefined && !heard.spotted) {
+    if (state.mode === 'passive') return { state: { ...state, ignored: state.ignored + 1 }, utterance: null, event: 'ignored' }
+    if (isStopWord(final)) return { state: slept(state), utterance: null, event: 'slept' }
+    return { state: { ...state, until: now + ACTIVE_IDLE_MS, wokeAt: Number.NEGATIVE_INFINITY }, utterance: final, event: 'passed' }
+  }
   if (state.mode === 'passive') {
     const hit = wakeFind(wake, final, true)
     if (hit === null) return { state: { ...state, ignored: state.ignored + 1 }, utterance: null, event: 'ignored' }

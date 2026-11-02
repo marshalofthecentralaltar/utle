@@ -413,6 +413,8 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
           address,
           holdMs: options.holdMs ?? INPAGE_HOLD_MS,
           onlyOwner,
+          // Round 10 (#2, 35): wake mode asks the local server for its keyword spotter (a hosted server never gets here in wake mode, 32.2).
+          ...(wakeWord === undefined ? {} : { spotter: true }),
           // Round 9 (30.1): wait for the server to come back; the strip says it once.
           keepTrying: true,
           connect: (events) => {

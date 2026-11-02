@@ -9,6 +9,7 @@
 //   npx tsx extension/test/voice.ts down      start with the dev server STOPPED; start it when told
 //   UTLE_ONLY=onlyowner                        only section 7: only the owner with the real models (a server of its own)
 //   UTLE_ONLY=listen                           only section 8: addressed speech, two synthetic voices, the real models, no browser
+//   UTLE_ONLY=wake                             only section 9: the wake word heard in the audio (the keyword spotter), the real models, no browser
 
 import { mkdtemp, rm, mkdir } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
@@ -819,6 +820,176 @@ async function listenReal(): Promise<void> {
   }
 }
 
+// ---------- round 10 (#2, ARCHITECTURE 35): the wake word heard in the audio, the real models ----------
+// SYNTHETIC voices (scripts/kws-set.ts --voice, TartuNLP: "mari" the stand-in owner, "kalev" a
+// stranger). The real server of this process (TalTech's recogniser, its keyword spotter over the same
+// model, TitaNet, Silero), the real recogniser client (src/speech/local.ts, spotter on) over a Node
+// WebSocket, the real engine and the real src/core/inpage.ts in wake mode. No browser: the page is a
+// stand-in that records commands. Part A: the behaviour matrix of #2 with only-owner off. Part B:
+// only-owner on: a stranger's wake wakes nothing that acts.
+
+const WAKE_SET = join(repoRoot, 'scripts/fixtures/wake-set')
+
+interface WakeTrace {
+  /** The clip being played (or in the quiet after it) when each thing happened. */
+  states: Array<[string, 'ACTIVE' | 'PASSIVE']>
+  seen: Array<[string, string]>
+  ran: Array<[string, string]>
+  wakes: Array<[string, number, number]>
+  /** What the engine asked the model (the rules did not know it). */
+  asked: Array<[string, string]>
+  /** The largest lag the server reported (ms): above a second, audio was dropped and the clips blur. */
+  maxLag: number
+}
+
+async function wakeSession(asr: string, clips: readonly string[], onlyOwner: boolean): Promise<WakeTrace> {
+  const { WebSocket } = await import('ws')
+  const { createLocalRecognizer } = await import('../../src/speech/local.ts')
+  const { createEngine, SEND_PROBE_BOX } = await import('../src/engine.ts')
+  const core = await import('../../src/core/inpage.ts')
+  const { pageIntentFrom } = await import('../../src/core/pageIntent.ts')
+  const quiet = (n: number): Float32Array[] => Array.from({ length: n }, () => new Float32Array(1600))
+  const trace: WakeTrace = { states: [], seen: [], ran: [], wakes: [], asked: [], maxLag: 0 }
+  let playing = '(start)'
+  let fed = false
+  const audio = {
+    async start(onFrame: (samples: Float32Array<ArrayBuffer>) => void): Promise<void> {
+      void (async () => {
+        await sleep(1500)
+        for (const name of clips) {
+          playing = name
+          // 3.5 s of quiet after each clip: its final, and the state change, land before the next one.
+          for (const frame of [...wavFrames(join(WAKE_SET, `${name}.wav`)), ...quiet(35)]) {
+            onFrame(new Float32Array(frame))
+            await sleep(100)
+          }
+        }
+        fed = true
+      })()
+    },
+    stop(): void {},
+  }
+  const engine = createEngine({
+    logic: {
+      ...core,
+      pageIntentFrom,
+      inpageStep: (session, utterance, box) => {
+        if (box !== SEND_PROBE_BOX) trace.seen.push([playing, utterance])
+        return core.inpageStep(session, utterance, box)
+      },
+    },
+    lang: 'et',
+    run: async (command) => {
+      if (command.kind === 'readBox') return { ok: true, box: { present: false, text: '', armed: false } }
+      if (command.kind === 'readPage') return { ok: true, page: { url: 'chrome://newtab/', title: 'Uus vaheleht', box: { present: false, text: '', armed: false }, items: [], media: null, hints: false } }
+      trace.ran.push([playing, command.kind === 'goTo' ? `goTo ${command.url}` : command.kind])
+      return { ok: true }
+    },
+    publish: (patch) => {
+      if (patch.wakeOpen !== undefined) trace.states.push([playing, patch.wakeOpen ? 'ACTIVE' : 'PASSIVE'])
+    },
+    recognizer: (handlers, isInstant, onUnavailable) =>
+      createLocalRecognizer(handlers, isInstant, {
+        onUnavailable,
+        address: asr,
+        ...(onlyOwner ? { onlyOwner: true } : {}),
+        spotter: true,
+        audio: () => audio,
+        connect: (events) => {
+          const ws = new WebSocket(asr)
+          ws.binaryType = 'arraybuffer'
+          ws.onmessage = (event) => {
+            // The wire's wake events, for the report (the recogniser takes them itself).
+            if (typeof event.data === 'string' && event.data.includes('"type":"wake"')) {
+              const w = JSON.parse(event.data) as { startMs: number; endMs: number }
+              trace.wakes.push([playing, w.startMs, w.endMs])
+            }
+            if (typeof event.data === 'string' && event.data.includes('"type":"lag"')) trace.maxLag = Math.max(trace.maxLag, (JSON.parse(event.data) as { ms: number }).ms)
+            events.message(event.data)
+          }
+          ws.onclose = () => events.close()
+          return ws
+        },
+      }),
+    micBlocked: () => undefined,
+    // No model offline: what the rules do not know is recorded and answered unreachable.
+    ask: (request) => {
+      trace.asked.push([playing, request.utterance])
+      return Promise.resolve({ error: 'unreachable' })
+    },
+    tabs: () => Promise.resolve([]),
+    status: () => Promise.resolve('no_key'),
+    wakeWord: 'Ütle',
+    ...(onlyOwner ? { onlyOwner: true } : {}),
+  })
+  engine.start()
+  await waitUntil(async () => fed, 180_000)
+  await sleep(2000)
+  await engine.idle()
+  engine.stop()
+  return trace
+}
+
+async function wakeReal(): Promise<void> {
+  console.log('\n== 9. the wake word heard in the audio, the real models (SYNTHETIC voices): the keyword spotter beside the recogniser, the matrix of #2, only-owner ==')
+  const { createServer } = await import('node:http')
+  const { attachAsr } = await import('../../server/asr.ts')
+  const { createSpeakerGate, profilePath } = await import('../../server/speaker.ts')
+  const { loadSpeakerModel } = await import('../../server/speakerModel.ts')
+  const dataDir = await mkdtemp(join(tmpdir(), 'utle-wake-'))
+  const profile = profilePath(repoRoot, { UTLE_DATA_DIR: dataDir }, '')
+  const server = createServer((_req, res) => {
+    res.statusCode = 404
+    res.end()
+  })
+  try {
+    const model = loadSpeakerModel(repoRoot)
+    if (!model.ok) throw new Error(`speaker model: ${model.reason}`)
+    const maker = createSpeakerGate(model.extractor, { profilePath: profile, modelHash: model.hash })
+    const phrases = ENROL_CLIPS.map((name) => maker.phrase(wavFrames(join(ENROL_SET, `${name}.wav`)))).filter((p) => p !== null)
+    check('9. the stand-in owner’s profile is made (the clips under test are not in it)', maker.enrolPhrases(phrases))
+    attachAsr(server, repoRoot, { profileFor: () => profile })
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    const address = server.address()
+    const asr = `ws://localhost:${typeof address === 'object' && address !== null ? address.port : 0}/api/asr`
+
+    // Part A: only-owner off.
+    const a = await wakeSession(asr, ['owner-utlen', 'owner-literal', 'owner-bare', 'owner-bare', 'owner-lead-youtube', 'owner-literal', 'owner-bare', 'owner-pause-gmail'], false)
+    console.log(`      A states ${JSON.stringify(a.states)}`)
+    console.log(`      A wakes on the wire (clip, startMs, endMs) ${JSON.stringify(a.wakes)}`)
+    console.log(`      A rules got ${JSON.stringify(a.seen)}; asked ${JSON.stringify(a.asked)}; page commands ${JSON.stringify(a.ran)}; max lag ${a.maxLag} ms`)
+    const statesOf = (t: WakeTrace, clip: string): string[] => t.states.filter(([c]) => c === clip).map(([, s]) => s)
+    // The clips repeat; the trace keeps the order, so walk it.
+    const order = a.states.map(([clip, s]) => `${clip}:${s}`)
+    check('9a. PASSIVE "Ma ütlen sulle homme." wakes nothing (no state change, nothing reaches the rules)', statesOf(a, 'owner-utlen').length === 0 && !a.seen.some(([c]) => c === 'owner-utlen'), JSON.stringify(order))
+    check('9a. PASSIVE "Kirjuta siia sõna ütle." (literal) wakes nothing', order[0] === 'owner-bare:ACTIVE', JSON.stringify(order))
+    check('9a. PASSIVE "Ütle." -> ACTIVE, then ACTIVE "Ütle." -> PASSIVE (no text, no action)', order[0] === 'owner-bare:ACTIVE' && order[1] === 'owner-bare:PASSIVE' && !a.seen.some(([c]) => c === 'owner-bare'), JSON.stringify(order))
+    const youtube = a.seen.filter(([c]) => c === 'owner-lead-youtube').map(([, u]) => u)
+    check('9a. "No nii, Ütle, ava YouTube." -> ACTIVE, only "ava YouTube" reaches the rules, once (the lead-in dropped)', order[2] === 'owner-lead-youtube:ACTIVE' && youtube.length === 1 && /^ava\b/i.test(youtube[0] ?? '') && !/nii/i.test(youtube[0] ?? ''), JSON.stringify(youtube))
+    // TalTech's model writes "YouTube" as "jõudube" (scripts/kws-eval.ts --tokens): the rules do not know it, so it goes to the model (offline here) once.
+    check('9a. ... and nothing of it ran twice: one rules step, at most one ask, no page command from the lead-in', a.asked.filter(([c]) => c === 'owner-lead-youtube').length <= 1 && !a.ran.some(([c, r]) => c === 'owner-lead-youtube' && !/youtube\.com/.test(r)), `${JSON.stringify(a.asked)} ${JSON.stringify(a.ran)}`)
+    const literal = a.seen.filter(([c]) => c === 'owner-literal').map(([, u]) => u)
+    check('9a. ACTIVE "Kirjuta siia sõna ütle." stays his text (the word kept) and does not toggle', literal.length === 1 && /ütle/i.test(literal[0] ?? '') && order[3] === 'owner-bare:PASSIVE', `${JSON.stringify(literal)} ${JSON.stringify(order)}`)
+    check('9a. "Ütle" + a pause + "ava Gmail" -> ACTIVE and goTo mail.google.com without a second wake', order[4] === 'owner-pause-gmail:ACTIVE' && a.ran.filter(([c, r]) => c === 'owner-pause-gmail' && /mail\.google\.com/.test(r)).length === 1, `${JSON.stringify(order)} ${JSON.stringify(a.ran)}`)
+    check('9a. every wake on the wire came with a clip that says the word (none for "Ma ütlen sulle homme.")', !a.wakes.some(([c]) => c === 'owner-utlen'), JSON.stringify(a.wakes))
+
+    // Part B: only-owner on. The stranger says the wake word with a command; then the owner wakes; then the stranger commands.
+    const b = await wakeSession(asr, ['stranger-youtube', 'owner-scroll', 'owner-lead-youtube', 'stranger-scroll'], true)
+    console.log(`      B states ${JSON.stringify(b.states)}`)
+    console.log(`      B wakes on the wire ${JSON.stringify(b.wakes)}`)
+    console.log(`      B rules got ${JSON.stringify(b.seen)}; asked ${JSON.stringify(b.asked)}; page commands ${JSON.stringify(b.ran)}; max lag ${b.maxLag} ms`)
+    const fromStranger = b.ran.filter(([c]) => c.startsWith('stranger-')).length + b.seen.filter(([c]) => c.startsWith('stranger-')).length + b.asked.filter(([c]) => c.startsWith('stranger-')).length
+    check('9b. only-owner: the stranger’s "Ütle, ava YouTube." wakes nothing that acts (no state change, no rules, no command)', statesOf(b, 'stranger-youtube').length === 0 && fromStranger === 0, `${JSON.stringify(b.states)} ${JSON.stringify(b.ran)}`)
+    check('9b. only-owner: the owner’s "Keri alla." after it is still PASSIVE (the stranger’s wake opened nothing)', !b.ran.some(([c]) => c === 'owner-scroll'), JSON.stringify(b.ran))
+    const ownerWords = b.seen.filter(([c]) => c === 'owner-lead-youtube').map(([, u]) => u)
+    check('9b. only-owner: the owner’s "No nii, ütle, ava YouTube." wakes ACTIVE and only "ava …" reaches the rules, once', statesOf(b, 'owner-lead-youtube').includes('ACTIVE') && ownerWords.length === 1 && /^ava\b/i.test(ownerWords[0] ?? '') && !/nii/i.test(ownerWords[0] ?? ''), JSON.stringify(ownerWords))
+    check('9b. only-owner: the stranger’s "Keri alla." in ACTIVE runs nothing: 0 commands from the stranger', fromStranger === 0, JSON.stringify(b.ran))
+  } finally {
+    server.close()
+    await rm(dataDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function main(): Promise<void> {
   await mkdir(join(repoRoot, 'docs/proof'), { recursive: true })
   const mode = process.argv[2]
@@ -846,6 +1017,8 @@ async function main(): Promise<void> {
     if (!only || only === 'onlyowner') await onlyOwnerReal(extensionDir)
     // Round 10 (32.4): addressed speech, two synthetic voices through the real models, no browser.
     if (!only || only === 'listen') await listenReal()
+    // Round 10 (35): the wake word heard in the audio, the keyword spotter, through the real models, no browser.
+    if (!only || only === 'wake') await wakeReal()
   }
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
   process.exitCode = failures === 0 ? 0 : 1

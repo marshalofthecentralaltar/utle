@@ -12,6 +12,8 @@ import { captureFromEnv } from './capture.ts'
 import type { DecodeResult, Decoder, DecoderExtras, OnlineRecognizerLike, OnlineStreamLike, ScriptResult } from './asrSession.ts'
 import { NO_GATE_READINESS, decoderInThread } from './asrSession.ts'
 import { loadVad } from './vad.ts'
+import { loadSpotter } from './kws.ts'
+import type { KeywordSpotterLike } from './kws.ts'
 import { PROFILE_FILE, SPEAKER_DIR, speakerGates } from './speaker.ts'
 import type { Judgement, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import { loadSpeakerModel } from './speakerModel.ts'
@@ -23,6 +25,8 @@ export type ToWorker =
   | { type: 'reset'; id: number }
   /** Round 10 (#7, 33.2): the stream's endpoint mode from the next frame on. */
   | { type: 'endpoint'; id: number; mode: EndpointMode }
+  /** Round 10 (#2, 35): the keyword spotter on or off for the stream; answered with spotterSet. */
+  | { type: 'spotter'; id: number; seq: number; on: boolean }
   | { type: 'close'; id: number }
   | { type: 'judge'; id: number; seq: number }
   /** Round 10 (31.2): the fail-closed check with only the owner on, and the profile's version. */
@@ -54,6 +58,7 @@ export type FromWorker =
   | { type: 'judged'; id: number; seq: number; judgement: Judgement | null }
   | { type: 'verified'; id: number; seq: number; verification: SpeakerVerification }
   | { type: 'versioned'; id: number; seq: number; version: string }
+  | { type: 'spotterSet'; id: number; seq: number; on: boolean }
   | { type: 'enrolled'; id: number; seq: number; ok: boolean }
   | { type: 'enrolPhrase'; id: number; seq: number; count: number; problem?: PhraseProblem }
   | { type: 'spoke'; id: number; seq: number; readiness?: SpeakerReadiness; test?: SpeakerTest; deleted?: boolean }
@@ -99,7 +104,26 @@ export function openSpeakerGate(root: string): { gate: SpeakerGate; status: Spea
  */
 export function openDecoderExtras(root: string, env: NodeJS.ProcessEnv = process.env): DecoderExtras {
   const vad = loadVad(root)
-  return { vad: vad.ok ? vad.create : null, capture: captureFromEnv(env) }
+  // Round 10 (#2, 35): UTLE_SPOTTER=off keeps the keyword spotter out (wake mode then decides on the text, LIMITED).
+  return { vad: vad.ok ? vad.create : null, capture: captureFromEnv(env), spotter: env.UTLE_SPOTTER === 'off' ? null : lazySpotter(root) }
+}
+
+/**
+ * Round 10 (#2, 35): the keyword spotter, loaded once and shared by every stream; null, every time,
+ * once it failed. The worker loads it with the recogniser, before it says loaded: measured on
+ * 2026-11-02, a load at the first wake-mode ask held the decode thread 20.8 s on a busy machine and
+ * the backlog dropped the speech of those seconds. It holds a second copy of the zipformer (about
+ * 200 MB); UTLE_SPOTTER=off leaves it out.
+ */
+export function lazySpotter(root: string, load: typeof loadSpotter = loadSpotter): () => KeywordSpotterLike | null {
+  let loaded: ReturnType<typeof loadSpotter> | null = null
+  return () => {
+    if (loaded === null) {
+      loaded = load(root)
+      console.info(loaded.ok ? `[asr] keyword spotter loaded in ${loaded.ms} ms` : `[asr] keyword spotter unavailable: ${loaded.reason}`)
+    }
+    return loaded.ok ? loaded.spotter : null
+  }
 }
 
 /** The worker's side: one shared recogniser and speaker gate, one stream per session id. */
@@ -133,6 +157,15 @@ function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognize
       case 'endpoint':
         streams.get(message.id)?.endpointMode?.(message.mode)
         return
+      case 'spotter': {
+        const reply = (on: boolean): void => port.postMessage({ type: 'spotterSet', id: message.id, seq: message.seq, on } satisfies FromWorker)
+        try {
+          void Promise.resolve(streams.get(message.id)?.spotter?.(message.on) ?? false).then(reply, () => reply(false))
+        } catch {
+          reply(false)
+        }
+        return
+      }
       case 'close':
         streams.get(message.id)?.close()
         streams.delete(message.id)
@@ -231,6 +264,8 @@ if (!isMainThread && parentPort) {
   if (loaded.ok) {
     const speaker = openSpeakerGate(data.root)
     const extras = openDecoderExtras(data.root)
+    // Round 10 (#2, 35): the spotter now, not at the first ask, so no connection's audio waits behind its load.
+    extras.spotter?.()
     serve(parentPort, loaded.recognizer, speaker.gateFor, extras)
     parentPort.postMessage({ type: 'loaded', ms: loaded.ms, speaker: speaker.status, vad: extras.vad != null } satisfies FromWorker)
   } else {
@@ -270,6 +305,7 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
     const judging = new Map<string, { resolve(judgement: Judgement | null): void; reject(error: Error): void }>()
     const verifying = new Map<string, { resolve(verification: SpeakerVerification): void; reject(error: Error): void }>()
     const versioning = new Map<string, (version: string) => void>()
+    const spotting = new Map<string, (on: boolean) => void>()
     const enrolling = new Map<string, (ok: boolean) => void>()
     const scripting = new Map<string, { resolve(result: ScriptResult): void; onPhrase(count: number, problem?: PhraseProblem): void }>()
     const speaking = new Map<string, (body: { readiness?: SpeakerReadiness; test?: SpeakerTest; deleted?: boolean }) => void>()
@@ -320,6 +356,14 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           },
           endpointMode(mode) {
             worker.postMessage({ type: 'endpoint', id, mode } satisfies ToWorker)
+          },
+          spotter(on) {
+            seq += 1
+            const mine = seq
+            return new Promise<boolean>((resolveSpotter) => {
+              spotting.set(key(id, mine), resolveSpotter)
+              worker.postMessage({ type: 'spotter', id, seq: mine, on } satisfies ToWorker)
+            })
           },
           close() {
             worker.postMessage({ type: 'close', id } satisfies ToWorker)
@@ -424,6 +468,10 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
           versioning.get(key(message.id, message.seq))?.(message.version)
           versioning.delete(key(message.id, message.seq))
           return
+        case 'spotterSet':
+          spotting.get(key(message.id, message.seq))?.(message.on)
+          spotting.delete(key(message.id, message.seq))
+          return
         case 'judged':
           judging.get(key(message.id, message.seq))?.resolve(message.judgement)
           judging.delete(key(message.id, message.seq))
@@ -463,6 +511,8 @@ export function startWorkerHost(root: string, entry: string): Promise<HostStart>
       verifying.clear()
       for (const entry of versioning.values()) entry('')
       versioning.clear()
+      for (const entry of spotting.values()) entry(false)
+      spotting.clear()
       for (const entry of enrolling.values()) entry(false)
       enrolling.clear()
       for (const entry of scripting.values()) entry.resolve({ ok: false, phrases: 0, seconds: 0 })

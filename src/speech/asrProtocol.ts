@@ -85,8 +85,22 @@ export type AsrServerMessage =
    * local rule knows; the final for the same words is then not run again.
    */
   | { type: 'pause'; text: string }
-  /** Round 10 (#7, lane LATE): why, only to a client that asked with trace. */
+  /**
+   * Round 10 (#7, lane LATE): why, only to a client that asked with trace. Round 10 (#2, 35): segment
+   * is set with only the owner obeyed (with the decision), and on a final the keyword spotter heard
+   * the wake word in (the segment of its `wake`).
+   */
   | { type: 'final'; text: string; speaker?: Speaker; segment?: number; decision?: SpeakerDecision; why?: FinalWhy }
+  /**
+   * Round 10 (#2, ARCHITECTURE 35): the keyword spotter heard the wake word in the audio. No words:
+   * segment is the id the final (or rejection) of this utterance will carry; endMs is the session's
+   * audio (ms the client sent on this socket) when the spotter confirmed the word, about 1 s after it.
+   * Never a speaker decision: with only the owner obeyed it counts only once its segment's final is
+   * verified.
+   */
+  | { type: 'wake'; segment: number; endMs: number }
+  /** Round 10 (#2, 35): whether the keyword spotter runs for this socket (the answer to the client's `spotter`). */
+  | { type: 'spotter'; on: boolean }
   /** Round 10 (31.2): only the owner is obeyed and this utterance was not verified as his: no words, only why. */
   | { type: 'rejected'; decision: SpeakerDecision }
   /**
@@ -284,6 +298,8 @@ export type AsrClientMessage =
   | { type: 'profileDelete' }
   /** Round 10 (#7, lane LATE): attach each final's why (timings and a cause, no words) from now on; for measuring. */
   | { type: 'trace'; on: boolean }
+  /** Round 10 (#2, 35): run the keyword spotter for the wake word on this socket's audio (wake mode), or stop it. */
+  | { type: 'spotter'; on: boolean }
 
 const END_CAUSES: readonly EndCause[] = ['rule1', 'rule2', 'rule3', 'detector', 'flush']
 const msOrNull = (value: unknown): number | null | undefined => (value === null ? null : typeof value === 'number' && Number.isFinite(value) ? value : undefined)
@@ -338,6 +354,8 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
       const why = record.why === undefined ? null : parseWhy(record.why)
       const withWhy: AsrServerMessage = why === null ? final : { ...final, why }
       if (decision !== null && typeof record.segment === 'number') return { ...withWhy, segment: record.segment, decision }
+      // Round 10 (#2, 35): a final the spotter heard the wake word in carries its segment without a decision.
+      if (record.decision === undefined && typeof record.segment === 'number' && Number.isInteger(record.segment) && record.segment > 0) return { ...withWhy, segment: record.segment }
       return withWhy
     }
     case 'rejected': {
@@ -346,6 +364,14 @@ export function parseAsrMessage(raw: string): AsrServerMessage | null {
     }
     case 'activity':
       return record.onset === true ? { type: 'activity', onset: true } : { type: 'activity' }
+    case 'wake': {
+      const { segment, endMs } = record
+      if (typeof segment !== 'number' || !Number.isInteger(segment) || segment < 1) return null
+      if (typeof endMs !== 'number' || !(endMs >= 0)) return null
+      return { type: 'wake', segment, endMs }
+    }
+    case 'spotter':
+      return typeof record.on === 'boolean' ? { type: 'spotter', on: record.on } : null
     case 'speakerSession':
       return typeof record.sessionId === 'string' && typeof record.profileVersion === 'string' ? { type: 'speakerSession', sessionId: record.sessionId, profileVersion: record.profileVersion } : null
     case 'enrolled': {
