@@ -1198,8 +1198,9 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
   })
   const setup = (options: { onlyOwner?: boolean; longerCommands?: readonly string[] } = {}) => {
     const utterances: Array<[string, SpeakerDecision | undefined]> = []
+    const stable: Array<[string, SpeakerDecision | undefined]> = []
     const r = createLocalRecognizer(
-      { onUtterance: (text, decision) => utterances.push([text, decision]), onInterim: () => undefined, onError: () => undefined },
+      { onUtterance: (text, decision) => utterances.push([text, decision]), onInterim: () => undefined, onError: () => undefined, onStable: (text, decision) => stable.push([text, decision]) },
       (text) => ['keri alla', 'saada', 'vaigista', 'mine tagasi'].includes(text),
       {
         onUnavailable: () => undefined,
@@ -1216,7 +1217,7 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
       return s
     }
     const endpoints = (s: FakeSocket): unknown[] => s.sent.filter((d): d is string => typeof d === 'string').map((d) => JSON.parse(d) as { type: string }).filter((m) => m.type === 'endpoint')
-    return { r, utterances, socket, endpoints }
+    return { r, utterances, stable, socket, endpoints }
   }
 
   it('tells the server the mode: at once on an open socket, the newest one again after every ready', () => {
@@ -1234,6 +1235,35 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
     vi.advanceTimersByTime(RECONNECT_MS[0])
     socket().says({ type: 'ready' })
     expect(endpoints(socket())).toEqual([{ type: 'endpoint', mode: 'command' }])
+  })
+
+  it('round 10 prompt 6 (QUICK, 32.3): the stable words go to onStable at the pause and when the final arrives, before the hold delivers it; only the owner: never for a pause or an unauthorized final', () => {
+    const { r, socket, utterances, stable } = setup()
+    r.start()
+    socket().says({ type: 'ready' })
+    socket().says({ type: 'partial', text: 'jõuan kell viis' })
+    expect(stable).toEqual([])
+    socket().says({ type: 'pause', text: 'jõuan kell viis' })
+    expect(stable).toEqual([['jõuan kell viis', undefined]])
+    socket().says({ type: 'final', text: 'jõuan kell viis' })
+    expect(stable).toEqual([
+      ['jõuan kell viis', undefined],
+      ['jõuan kell viis', undefined],
+    ])
+    // The hold still holds the final: nothing delivered yet.
+    expect(utterances).toEqual([])
+    vi.advanceTimersByTime(5000)
+    expect(utterances).toEqual([['jõuan kell viis', undefined]])
+
+    FakeSocket.made = []
+    const owner = setup({ onlyOwner: true })
+    owner.r.start()
+    owner.socket().says({ type: 'ready' })
+    owner.socket().says({ type: 'pause', text: 'jõuan kell viis' })
+    owner.socket().says({ type: 'final', text: 'jõuan kell viis' })
+    vi.advanceTimersByTime(5000)
+    expect(owner.stable).toEqual([])
+    expect(owner.utterances).toEqual([])
   })
 
   it('a partial a rule knows that no longer command goes on from, then the pause for the same words: run at once, and its final is not run again', () => {
