@@ -2884,9 +2884,22 @@ tagasi sinna kus ma olin" is switchTab to the `from` tab when one is there, else
 
 ### 34.3 Open beside a login in progress
 
-`formInProgress(page)`: the url or title says login, log in, sign in, sign up, verify, verification,
-confirm, logi sisse, sisene, sisselogimine, kinnita or registreeru; or the box is a password or code
-field; or the box (not a search box) holds words not sent. Then every goTo becomes newTab with the same
+`formInProgress(page)` is true on one of four grounds. (1) The url: a host label that is a login
+service (login, signin, sign-in, signup, sign-up, auth, sso, accounts, account, verify: accounts.google.com,
+login.microsoftonline.com) or a whole path or hash segment that is a login word (login, log-in, logon,
+signin, sign-in, signup, sign-up, register, verify, verification, confirm, auth, sso, oauth, oauth2,
+authorize, 2fa, mfa, logi-sisse, sisene, sisselogimine, registreeru; a page extension is dropped, so
+/login.php counts, and #/signin counts). A word inside a slug never counts:
+/artikkel/120345/riigikogu-kinnitas-eelarve is a news article. (2) The title: one of its parts (split at
+" | ", " - ", " – ", " — ", " · ", " • " and ": ") starts with log in, sign in, sign up, verify,
+verification (also 2-step verification), confirm, logi sisse, sisselogimine, sisene, kinnita or
+registreeru as whole words: "Log in - Anthropic", "Facebook – log in or sign up", "Kinnita tellimus".
+The word inside a headline or a video title does not count, nor a longer word: "Riigikogu kinnitas
+eelarve | Delfi", "Officials confirm deal - ERR News", "How to sign up for a gym - YouTube", "Blogin
+igapäevaselt" are ordinary pages. (Round 10 defect 1: the first version matched these words anywhere in
+the url and title, inflections included, so every Estonian news page saying "kinnitas" opened his sites
+in new tabs that he cannot close by hand.) (3) The box is a password or code field. (4) The box (not a
+search box) holds words not sent. Then every goTo becomes newTab with the same
 address (`besideCommands`) and the strip adds "Uues vahelehes, see leht jääb alles." The engine does
 it for every path that can open a site: the place rule ("ava email" is his mail place, 29.4, and never
 reached the model), the site rules ("ava gmail"), and the model's goTo and place. The rules' path reads

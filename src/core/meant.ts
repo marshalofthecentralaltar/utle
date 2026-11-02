@@ -10,15 +10,50 @@ import { normalise } from './quickReply.ts'
 
 // ---------- 34.3: open beside a login or form in progress ----------
 
-/** Words of a login, a sign-up, a verification or a confirmation, in the address or the title. */
-const IN_PROGRESS = /log[ -]?in\b|sign[ -]?(?:in|up)\b|verif(?:y|ication)|confirm|logi sisse|sisselogimine|sisene\b|kinnita|registreeru/i
+/**
+ * A host label that is a login service (accounts.google.com, login.microsoftonline.com,
+ * auth.openai.com) or a whole path segment that is a login word (/login, /signin, /accounts/login/,
+ * /wp-admin/login.php, #/signin). A word inside a slug (/riigikogu-kinnitas-eelarve) never counts.
+ */
+const LOGIN_HOST_LABELS = new Set(['login', 'signin', 'sign-in', 'signup', 'sign-up', 'auth', 'sso', 'accounts', 'account', 'verify'])
+const LOGIN_SEGMENTS = new Set([
+  'login', 'log-in', 'logon', 'signin', 'sign-in', 'signup', 'sign-up', 'register', 'verify', 'verification', 'confirm',
+  'auth', 'sso', 'oauth', 'oauth2', 'authorize', '2fa', 'mfa', 'logi-sisse', 'sisene', 'sisselogimine', 'registreeru',
+])
+/** A page file's extension, so /login.php reads as /login. */
+const PAGE_EXTENSION = /\.(?:php|html?|aspx?|jsp|do)$/u
+
+/**
+ * A title says login only when one of its parts (split at " | ", " - ", " – ", " — ", " · ", " • ",
+ * ": ") STARTS with a login phrase as whole words: "Log in - Anthropic", "Facebook – log in or sign
+ * up", "Logi sisse | eesti.ee", "Kinnita tellimus". A headline that has the word inside it ("Officials
+ * confirm deal", "How to sign up for a gym", "Riigikogu kinnitas eelarve", "Blogin") does not.
+ */
+const TITLE_PARTS = /\s+[|\-–—·•]\s+|:\s+/u
+const LOGIN_TITLE = /^(?:log[ -]?(?:in|on)|sign[ -]?(?:in|up)|(?:2-step |two-step )?verif(?:y|ication)|confirm|logi sisse|sisselogimine|sisene|kinnita|registreeru)(?![\p{L}\p{N}])/iu
+
+function urlSaysLogin(address: string): boolean {
+  let url: URL
+  try {
+    url = new URL(address)
+  } catch {
+    return false
+  }
+  if (url.hostname.toLowerCase().split('.').slice(0, -1).some((label) => LOGIN_HOST_LABELS.has(label))) return true
+  const segments = `${url.pathname}/${url.hash.replace(/^#/u, '')}`.toLowerCase().split('/')
+  return segments.some((segment) => LOGIN_SEGMENTS.has(segment.replace(PAGE_EXTENSION, '')))
+}
+
+function titleSaysLogin(title: string): boolean {
+  return title.split(TITLE_PARTS).some((part) => LOGIN_TITLE.test(part.trim()))
+}
 
 /**
  * True when the page in front is a login or a form he is in the middle of: its address or title
- * says so, the box is a password or code field, or the box (not a search) holds words not sent.
+ * says so (above), the box is a password or code field, or the box (not a search) holds words not sent.
  */
 export function formInProgress(page: Pick<PageContext, 'url' | 'title' | 'box'>): boolean {
-  if (IN_PROGRESS.test(page.url) || IN_PROGRESS.test(page.title)) return true
+  if (urlSaysLogin(page.url) || titleSaysLogin(page.title)) return true
   const { box } = page
   if (!box.present) return false
   if (box.fieldKind === 'password' || box.fieldKind === 'code') return true

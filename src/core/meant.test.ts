@@ -34,6 +34,36 @@ describe('formInProgress (34.3): a login or a form he is in the middle of', () =
     expect(formInProgress(page({ box: { present: true, text: '', armed: false, kind: 'field', fieldKind: 'email', single: true } }))).toBe(false)
     expect(formInProgress(page({ url: 'https://www.youtube.com/', title: 'Logistika ja tarneahelad - YouTube' }))).toBe(false)
   })
+
+  // Round 10 defect 1: a word inside a slug or a headline is not a login. Empty box on every row.
+  it.each([
+    ['https://www.delfi.ee/artikkel/120345/riigikogu-kinnitas-eelarve', 'Riigikogu kinnitas eelarve | Delfi', false],
+    ['https://news.err.ee/1609/officials-confirm-deal', 'Officials confirm deal - ERR News', false],
+    ['https://www.postimees.ee/', 'Valitsus kinnitas uue ministri - Postimees', false],
+    ['https://www.youtube.com/watch?v=abc', 'How to sign up for a gym - YouTube', false],
+    ['https://www.blogger.com/', 'Blogin igapäevaselt', false],
+    ['https://www.youtube.com/watch?v=def', 'How to log in to Gmail - YouTube', false],
+    ['https://www.delfi.ee/artikkel/1/login-andmed-lekkisid', 'Pank: kliendid peavad parooli vahetama | Delfi', false],
+    ['https://console.anthropic.com/login', 'Log in - Anthropic', true],
+    ['https://accounts.google.com/v3/signin/identifier', 'Sign in - Google Accounts', true],
+    ['https://www.facebook.com/', 'Facebook – log in or sign up', true],
+    ['https://www.instagram.com/accounts/login/', 'Instagram', true],
+    ['https://example.ee/wp-admin/login.php', 'Example', true],
+    ['https://app.example.com/#/signin', 'Example', true],
+  ])('%s "%s" -> %s', (url, title, expected) => {
+    expect(formInProgress(page({ url, title }))).toBe(expected)
+  })
+
+  it('a page titled "Kinnita oma e-posti aadress" with a code box is in progress', () => {
+    const codeBox: BoxState = { present: true, text: '', armed: false, kind: 'field', fieldKind: 'code', single: true }
+    expect(formInProgress(page({ url: 'https://example.ee/', title: 'Kinnita oma e-posti aadress', box: codeBox }))).toBe(true)
+    expect(formInProgress(page({ url: 'https://example.ee/', title: 'Kinnita oma e-posti aadress' }))).toBe(true)
+  })
+
+  it('an address that is not a url is read by its title alone', () => {
+    expect(formInProgress(page({ url: '', title: 'Riigikogu kinnitas eelarve' }))).toBe(false)
+    expect(formInProgress(page({ url: 'not a url/login', title: 'Logi sisse' }))).toBe(true)
+  })
 })
 
 describe('besideCommands (34.3): a site opened while a login is in progress goes to a new tab', () => {
@@ -46,6 +76,8 @@ describe('besideCommands (34.3): a site opened while a login is in progress goes
     expect(besideCommands(click, login)).toBe(click)
     const go = [{ kind: 'goTo' as const, url: 'https://mail.google.com/' }]
     expect(besideCommands(go, page())).toBe(go)
+    const article = page({ url: 'https://www.delfi.ee/artikkel/120345/riigikogu-kinnitas-eelarve', title: 'Riigikogu kinnitas eelarve | Delfi' })
+    expect(besideCommands(go, article)).toBe(go)
   })
 })
 

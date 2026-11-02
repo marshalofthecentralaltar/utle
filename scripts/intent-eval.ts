@@ -582,6 +582,20 @@ const NEWS_SPORT: PageContext = {
   media: null,
   hints: false,
 }
+/** Round 10 defect 1: a news article whose slug and headline say "kinnitas"; not a login, so a site he asks for is goTo. */
+const DELFI_ARTICLE: PageContext = {
+  url: 'https://www.delfi.ee/artikkel/120345/riigikogu-kinnitas-eelarve',
+  title: 'Riigikogu kinnitas eelarve | Delfi',
+  box: NO_BOX,
+  items: [
+    { id: 1, role: 'link', text: 'Delfi' },
+    { id: 2, role: 'other', text: '[pealkiri] Riigikogu kinnitas eelarve' },
+    { id: 3, role: 'text', text: 'Riigikogu kinnitas kolmapäeval järgmise aasta riigieelarve.' },
+    { id: 4, role: 'link', text: 'Loe ka: valitsus kinnitas uue ministri' },
+  ],
+  media: null,
+  hints: false,
+}
 /** A tie: two products, each with its own "Lisa korvi", and nothing in "lisa korvi" to choose by. */
 const SHOP: PageContext = {
   url: 'https://kohvikuku.ee/kohvioad',
@@ -786,6 +800,8 @@ const CASES: Case[] = [
   // (a) A site or place while a login is in progress opens beside it; a place is opened beside by the engine.
   one('ava email', CONSOLE_LOGIN, [{ kind: 'command', command: 'newTab', url: 'mail.google' }, { kind: 'place', noun: 'mail' }], { tabs: CONSOLE_TABS }),
   one('ava gmail', CONSOLE_LOGIN_NO_PLACES, { kind: 'command', command: 'newTab', url: 'mail.google' }, { tabs: CONSOLE_TABS }),
+  // Round 10 defect 1: a news headline with "kinnitas" is not a login: the site opens in place, never beside.
+  one('ava youtube', DELFI_ARTICLE, [goTo('youtube'), { kind: 'place', noun: 'video' }], { tabs: oneTab(DELFI_ARTICLE) }),
   // (b) "uues vahelehes" is the thing just opened, never another open tab.
   one('ava see uues vahelehes', GMAIL_REAL, { kind: 'command', command: 'newTab', url: 'mail.google' }, { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: GMAIL_REAL.title, active: true }], recent: OPENED_MAIL }),
   one('ava see uues vahelehes', YOUTUBE_HOME, { kind: 'command', command: 'newTab', url: 'youtube' }, { tabs: [{ index: 1, title: UNICORNS_TITLE, active: false }, { index: 2, title: YOUTUBE_HOME.title, active: true }], recent: [{ utterance: "mine youtube'i", ran: 'goTo https://www.youtube.com/', ok: true }] }),

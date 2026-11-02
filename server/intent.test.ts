@@ -595,6 +595,11 @@ describe('round 10 (#5, ARCHITECTURE 34)', () => {
     expect(INTENT_SYSTEM_PROMPT).toContain('# What he did just before')
     expect(INTENT_SYSTEM_PROMPT).toContain('# Open beside')
     expect(INTENT_SYSTEM_PROMPT).toMatch(/login.*sign in.*verify.*logi sisse.*kinnita/s)
+    // Round 10 defect 1: the same narrowed rule as formInProgress, so a news page is not opened beside.
+    expect(INTENT_SYSTEM_PROMPT).toContain('a whole path segment')
+    expect(INTENT_SYSTEM_PROMPT).toContain('STARTS with')
+    expect(INTENT_SYSTEM_PROMPT).toContain('"Riigikogu kinnitas eelarve | Delfi"')
+    expect(INTENT_SYSTEM_PROMPT).toContain('"How to sign up for a gym - YouTube"')
     expect(INTENT_SYSTEM_PROMPT).toContain('"mine tagasi sinna kus ma olin"')
     expect(INTENT_SYSTEM_PROMPT).toContain('choose')
   })
