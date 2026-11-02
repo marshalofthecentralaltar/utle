@@ -699,6 +699,42 @@ telefon" step 1 (done true where false was wanted). Logs: `artifacts/eval-before
 Not verified: the real Gmail and the real console logged in (why "ava esimene kiri" took two tries on
 the real Gmail is not known; on the stand-in and in the eval it is one click), a real voice.
 
+Defect round 1 (review): open beside fired on ordinary pages. The first rule matched its words anywhere
+in the url and the title, inflections included, so a Delfi article "Riigikogu kinnitas eelarve", an ERR
+headline "Officials confirm deal", a YouTube video "How to sign up for a gym" and a blog "Blogin
+igapäevaselt" all turned "ava youtube" into a new tab he cannot close by hand. Now (ARCHITECTURE 34.3)
+the url counts only by a login host label (accounts., login., auth., sso.) or a whole path segment that
+is a login word (/login, /signin, /signup, /verify, /login.php, #/signin), never a word inside a slug;
+the title only when one of its parts starts with a whole-word login phrase ("Log in - Anthropic",
+"Facebook – log in or sign up", "Kinnita tellimus"). The prompt's "Open beside" says the same; a new
+eval case "ava youtube" on the Delfi article wants goTo (106 cases):
+
+| run | pass | asks per task | $ per completed task | p50 / p95 ms |
+|---|---|---|---|---|
+| after fix 1 | 106/106 | 1.15 | $0.00503 | 1824 / 2721 |
+| after fix 2 | 105/106 | 1.15 | $0.00506 | 1866 / 3047 |
+
+The one miss is in one run only: "kommenteeri" on the Facebook stand-in answered choose (the tie
+question) where focusItem of the comment field or clickItem of the Kommenteeri button was wanted. The
+old prompt already answered goTo on the Delfi page (2 of 2), so the fault was the engine's rewrite; the
+prompt change keeps the two in step. Logs: `artifacts/eval-defect1-run*.txt` (untracked).
+
+readPage cost (`scripts/readpage-timing.ts`, page.ts bundled at 2bb7398 and at the branch, timed inside
+Chromium, fresh load per run). The first version of the button rule read the whole textContent of a
+link's parent for every link, quadratic in a list: 2,000 links under one parent took 1,382 ms against
+189 ms (7.3x), 2,000 list rows 347 ms against 164 ms (2.1x). The parent walk now stops at the first
+sibling with text or a link, and an unfilled link skips its innerText. After, median of 15:
+
+| page | items | base ms | branch ms | branch / base |
+|---|---|---|---|---|
+| real-delfi.html | 4 | 2.9 | 3.5 | 1.21 |
+| real-postimees.html | 12 | 3.2 | 3.7 | 1.16 |
+| 2,000 links in one div | 120 | 183.2 | 202.3 | 1.10 |
+| 2,000 list rows | 80 | 161.6 | 164.0 | 1.01 |
+
+On the two small fixtures the difference is about half a millisecond, inside the run-to-run spread
+(five-run medians of the same code gave 1.10 to 1.58 on Delfi). Logs: `artifacts/readpage-timing-*.txt`.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

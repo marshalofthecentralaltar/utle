@@ -222,14 +222,32 @@ function roleOf(el: HTMLElement): string {
 function boxOfLink(a: HTMLElement): HTMLElement {
   const own = getComputedStyle(a)
   if (isFilled(own.backgroundColor, own.backgroundImage)) return a
-  const text = clean(a.textContent)
+  let inner: HTMLElement = a
   let node = a.parentElement
-  for (let depth = 0; node && node !== document.body && depth < 2; depth++, node = node.parentElement) {
-    if (clean(node.textContent) !== text || node.querySelectorAll('a[href]').length !== 1) break
+  for (let depth = 0; node && node !== document.body && depth < 2; depth++, inner = node, node = node.parentElement) {
+    if (!holdsOnly(node, inner)) break
     const s = getComputedStyle(node)
     if (isFilled(s.backgroundColor, s.backgroundImage)) return node
   }
   return a
+}
+
+/**
+ * True when nothing in `node` beside `inner` has text or a link, so its text is the link's and it
+ * holds one link. Stops at the first sibling that has either: on a list or a menu of many links that
+ * is the next one, so the walk costs the same per link however long the list is (round 10 defect 2:
+ * comparing the parent's whole textContent made readPage quadratic in the list).
+ */
+function holdsOnly(node: HTMLElement, inner: HTMLElement): boolean {
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child === inner) continue
+    if (child.nodeType === Node.TEXT_NODE) {
+      if ((child.textContent ?? '').trim() !== '') return false
+    } else if (child instanceof Element) {
+      if ((child.textContent ?? '').trim() !== '' || child.matches('a[href]') || child.querySelector('a[href]')) return false
+    }
+  }
+  return true
 }
 
 /** What looksLikeButton reads of a link: its role, its class and its box's, its name, the fill and padding of its box. */
@@ -241,7 +259,8 @@ function linkLook(a: HTMLAnchorElement): Parameters<typeof looksLikeButton>[0] {
   return {
     role: a.getAttribute('role'),
     className: `${a.getAttribute('class') ?? ''} ${box === a ? '' : (box.getAttribute('class') ?? '')}`.trim(),
-    text: firstLine(a.innerText || a.textContent || ''),
+    // The name only matters for a filled box (looksLikeButton's third rule); innerText costs a layout read per link.
+    text: isFilled(s.backgroundColor, s.backgroundImage) ? firstLine(a.innerText || a.textContent || '') : '',
     background: s.backgroundColor,
     backgroundImage: s.backgroundImage,
     padding: { top: px(s.paddingTop, inner?.paddingTop), right: px(s.paddingRight, inner?.paddingRight), bottom: px(s.paddingBottom, inner?.paddingBottom), left: px(s.paddingLeft, inner?.paddingLeft) },
