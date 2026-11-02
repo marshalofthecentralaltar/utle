@@ -2915,7 +2915,8 @@ time, and without the detector model nothing changes. Speech that starts after t
 utterance; the detector's pre-roll replays its onset, as at any onset. On the audio clock, command finals now come 640
 to 880 ms after the speech end (main: 780 to 1940), dictation finals 1040 to 1280 (main: 1180 to 2340). They are never
 less than the mode's silence after the detector's end. The hiss handed ahead costs one or two chunk decodes at the end
-of an utterance: 57 ms each on an idle machine, about 300 ms each under load. Wall time, three runs each: HANDOFF 1q.
+of an utterance: 57 ms p50 in one probe run, about 300 ms in another while another process loaded the CPU (an idle
+machine was not measured). It also shortens how long a command may pause inside itself: HANDOFF 1q. Wall time, three runs each: HANDOFF 1q.
 
 ### 33.3 Acting on a partial (`server/asrSession.ts` `PAUSE_MS`, `src/speech/local.ts` `onPause`)
 

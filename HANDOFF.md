@@ -788,8 +788,26 @@ silence. Tables per clip: `artifacts/late/three-runs-command.md`; runs: `artifac
 
 Not verified: a real voice and a real microphone (room noise that Silero takes for speech would cost up to 2 s of
 extra decoding once per utterance, never a final); dictation in wall time (audio clock only); an idle machine. The
-hiss decode costs one or two chunks at an utterance's end: 57 ms each idle, about 300 ms under this lane's load, and
-the gain above was measured under that load.
+hiss decode costs one or two chunk decodes at an utterance's end: 57 ms p50 in one probe run, about 300 ms in another
+while another process loaded the CPU. The three runs were measured under 26 to 77 % CPU from another process; an idle
+machine was not measured.
+
+**Pauses inside a command (review round 1).** `artifacts/late/splice.ts` puts 0.5, 0.7, 0.9 and 1.2 s of silence between
+two words of three clips (cut where the energy envelope is quiet), decodes them with the speech detector in command
+mode, passes the finals through the client's 700 ms hold (`LOCAL_HOLD_MS`: an instant final goes at once, any other
+waits for the next speech) and the real `inpageStep`. The hard splice makes some misreadings ("kerina Toom",
+"Järgmine vastu"); they are the same in both codes. Main gave one final up to 0.7 s. At 0.9 and 1.2 s it gave two
+finals, and the hold joined them again: its first final came about 1.2 s after the first piece, so the second piece's
+first partial fell inside the hold. The branch gave one final at 0.5 s. From 0.7 s it delivered two utterances: its
+first final now comes about 0.6 s sooner, while the second piece's first partial still lags its speech by about 0.6 s
+(the same chunk and token delay). On the rules alone, "keri", "keri natuke", "alla", "näita" and "numbreid" each go to
+the model, and "natuke alla" scrolls. So "keri | natuke alla" with a 0.7 to 1.2 s pause becomes a model question plus a
+scroll on the branch, where main makes one rule scroll. "keri natuke | alla" and "Näita | numbreid" become two model
+questions instead of one rule action. "järgmine" alone is instant in both codes (it switches tab), so main splits
+"Järgmine | vaheleht" too once the recogniser does. Not fixed in this round; a fix is proposed to the planner. Output:
+`artifacts/late/splice-main.txt`, `splice-branch.txt`, `pieces.txt` (not committed).
+
+**voice.ts on base and branch (review round 1).** Run back to back under the lock on vite 5194 (5193 was held by another lane's vite): base 2edb8b5 gave 52 PASS / 3 FAIL, the branch 51 PASS / 4 FAIL. The three section 1 FAILs ("hovering the microphone 1.3 s turns listening on", "at least 3 distinct box texts", "first words visible while speech is still playing") fail on base too: they predate this lane. Sections 7 and 8 passed 18 of 18 on both. The branch's fourth FAIL, section 6 "üks opens the first tile", came with the CPU at 100 % (model load 25.7 s). The server's backlog dropped 5 s of that session's audio, "üks" among it. Base, at 76 %, dropped 1 s and lost nothing; the branch's earlier run (18:07) dropped nothing and passed section 6. The hiss handed ahead is decoding on top of the real-time frames (up to 1.3 s of audio per utterance), so on a starved machine it can add to the backlog. Not fixed here; a fix is proposed to the planner. Logs: `artifacts/late/voice-base.log`, `voice-branch.log`, `voice.log`; the server's lines in `artifacts/late/vite-5193-base.log` and `vite-5193-branch.log` (not committed).
 
 ## 1p. Round 10, prompt 3, lane AMBIGUITY (2026-11-02): what he meant, on the page he is on (#5)
 
