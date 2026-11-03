@@ -39,4 +39,8 @@ describe('a command that a longer command starts with (round 10, #7, 33.3)', () 
     expect(extendsCommand('mine tagasi', withBack)).toBe(true)
     expect(extendsCommand('mine tagasi sinna kus ma olin', withBack)).toBe(false)
   })
+
+  it('round 11 (review 2): the bare undo word never waits for its final', () => {
+    expect(extendsCommand('tagasi')).toBe(false)
+  })
 })

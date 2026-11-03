@@ -2517,7 +2517,7 @@ describe('round 11 (F4, lane WORDS): the owner\'s own words for the core command
   const asks = (u: string, b: BoxState = NO_BOX): boolean => inpageStep(session(), u, b).ask === true
 
   it('back: "mine tagasi eelmisele lehele" and its kin, as the recogniser wrote them, also with words in the box', () => {
-    for (const u of ['mine tagasi eelmisele lehele', 'Mine tagasi eelmisele lehele?', 'tagasi eelmisele lehele', 'mine tagasi eelmisele leheküljele', 'mine tagasi', 'mine eelmisele lehele']) {
+    for (const u of ['mine tagasi eelmisele lehele', 'Mine tagasi eelmisele lehele?', 'mine tagasi eelmisele leheküljele', 'mine tagasi', 'mine eelmisele lehele']) {
       expect(first(u), u).toEqual({ kind: 'history', direction: 'back' })
       expect(first(u, box('Tulen homme')), u).toEqual({ kind: 'history', direction: 'back' })
       expect(asks(u), u).toBe(false)

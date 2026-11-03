@@ -109,8 +109,8 @@ phrases(
   'previous page',
   'browser back',
   // Round 11 (F4): his words in the demo of 2026-11-03 ("mine tagasi eelmisele lehele", twice).
+  // Not the bare "tagasi eelmisele lehele": the undo word "tagasi" stays instant (33.3, review ruling).
   'mine tagasi eelmisele lehele',
-  'tagasi eelmisele lehele',
   'mine tagasi eelmisele leheküljele',
 )
 phrases(
