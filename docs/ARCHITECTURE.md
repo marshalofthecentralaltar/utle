@@ -2855,18 +2855,15 @@ on, the recogniser names stable words only for an authorized final (the server s
 engine's `ownerOnly` wall drops any without a verified owner decision (31.2). Cost: one check per final as
 before; stable words the final does not keep cost one more.
 
-**The model warmed at start (round 10 prompt 6, lane QUICK review 1; `Model.warm`, `server/app.ts`).** The
-check's own call cannot be made faster by its shape: on the 16 addressee cases, back to back, the tool reply
-(49 output tokens), effort off, `max_tokens` 60, a one-word text reply (5 tokens) and a JSON reply (14 tokens)
-all answered 16/16 at p50 1.16 to 1.35 s; the output's length is not the time (HANDOFF 1u). What is slow is
-the first call of a server process: 1.55 to 2.62 s (p50 1.64 s, six fresh processes) against about 1.2 to 1.5 s
-for the same call later, idle gaps up to 45 s included; `voice.ts` section 1 starts a fresh server per run, so
-its check was always that first call. So the server warms its quick model once at start, when it has a key:
-the Anthropic adapter sends one free `count_tokens` request (no tokens billed, no verdict), which builds the
-client and its connection; a warmed first call answered in 1.30 to 1.86 s (p50 1.44 s, four fresh processes).
-A failed warm-up is logged and changes nothing (the first ask then pays as before). Other providers have no
-warm-up. The fallback wrapper warms its primary only. A person pays the first call once per server start, so
-this helps the first sentence after `npm run dev`, not the ones after it.
+**The check's call stays as it is (round 10 prompt 6, lane QUICK review 1; HANDOFF 1u).** Its shape does not
+make it faster: on the 16 addressee cases, back to back, the tool reply (49 output tokens), effort off,
+`max_tokens` 60, a one-word text reply (5 tokens) and a JSON reply (14 tokens) all answered 16/16 at p50 1.16
+to 1.35 s; the output's length is not the time. Outside the product, the first call of a fresh process was
+slower (p50 1.64 s, six processes) and a free `count_tokens` warm-up before it brought it to p50 1.44 s (four);
+idle gaps up to 45 s cost nothing measurable. A warm-up at server start was built and timed in section 1 and
+did not move the in-situ check (1.68 to 2.91 s warmed, against 1.56 and 1.61 s for main's two runs in the same
+hour), so it was not kept. What stops a 2.0 s landing is the check itself (about 1.2 to 1.9 s and its hour's
+variance) on top of the final's 1.0 s.
 
 ### 32.4 Proof
 
