@@ -2844,16 +2844,20 @@ wrapper in `extension/src/engine.ts`).** Where the time went on main (section 1 
 check's request reached the server 0.19 to 0.25 s after that (the client's delivery, the page read, the POST); the
 check answered in 1.4 to 2.1 s (p50 1.88 s); the typing took 0.06 to 0.18 s. A dictated final is not held by the
 client's `LOCAL_HOLD_MS` on this path, so the early ask saves the 0.2 s before the request, not 0.7 s. The recogniser names the stable words
-(`onStable(text, decision)`) when a final arrives, before the hold, and when the server's pause (33.3) names
-them; the engine asks the check for those words at once, with the finals before them and the page as it is
-then. When a final reaches the engine, a check asked for exactly its words, with exactly the same finals
-before them, since the last `katkesta`, is its check, pending or answered; anything else (a final joined with
-the next, words that changed after the pause, a cancel in between) is asked as before, and the earlier answer
-is dropped unread. Nothing else of this section changes: nothing is typed before the final and its verdict,
-finals are taken in order, a verdict belongs to exact words and never to a piece of them. With only the owner
-on, the recogniser names stable words only for an authorized final (the server sends no pause) and the
-engine's `ownerOnly` wall drops any without a verified owner decision (31.2). Cost: one check per final as
-before; stable words the final does not keep cost one more.
+(`onStable(text, decision)`) only when a final arrives, before the hold; the engine asks the check for those
+words at once, with the finals before them and the page as it is then. When a final reaches the engine, a
+check asked for exactly its words, with exactly the same finals before them, since the last `katkesta`, is its
+check, pending or answered; anything else (a final joined with the next, a cancel in between) is asked as
+before, and the earlier answer is dropped unread. Nothing else of this section changes: nothing is typed before
+the final and its verdict, finals are taken in order, a verdict belongs to exact words and never to a piece of
+them. With only the owner on, the recogniser names stable words only for an authorized final and the engine's
+`ownerOnly` wall drops any without a verified owner decision (31.2). Cost: one check per final, as before.
+
+**Never on the server's pause (QUICK review 2).** The first version also asked when the server's pause (33.3)
+named the words. In section 1 that ask went out in 5 of 5 runs on the words before "saada", which the final did
+not keep: answered ignore and dropped unread, it sent the model words main never sends and took the calls per
+100 dictated sentences from 200 to 300 ($0.56 to $0.67), while the whole measured gain (the ask stage, 204 to
+23 ms p50) comes from the final's arrival. So the pause no longer starts an ask.
 
 **The check's call stays as it is (round 10 prompt 6, lane QUICK review 1; HANDOFF 1u).** Its shape does not
 make it faster: on the 16 addressee cases, back to back, the tool reply (49 output tokens), effort off,
