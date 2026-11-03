@@ -33,6 +33,7 @@ import type { SavedItem } from '../src/core/saved.ts'
 import type { BoxState } from '../src/browser/protocol.ts'
 // ---------- round 10: addressed speech (32.3) ----------
 import { addresseeAnswer } from '../server/addressee.ts'
+import { DEMO_2026_11_03 } from '../src/core/fixtures/demo-2026-11-03.ts'
 import type { AddresseeRequest, AddresseeVerdict } from '../src/core/addressee.ts'
 // ---------- end of addressed speech ----------
 import { ModelConfigError, NO_USAGE, modelFromEnv } from '../server/model/index.ts'
@@ -924,7 +925,7 @@ interface AskResult {
   say: string
   done: boolean
   /** Round 10: an addressee case wants a verdict. */
-  wanted: Expectation | Expectation[] | AddresseeVerdict
+  wanted: Expectation | Expectation[] | AddresseeVerdict | AddresseeVerdict[]
   problem: string | null
   error?: string
   care: 'quick' | 'careful'
@@ -1085,7 +1086,23 @@ interface AddresseeCase {
   utterance: string
   page: PageContext
   finals?: string[]
-  want: AddresseeVerdict
+  /** Round 11 (F6): any of these verdicts passes. */
+  want: AddresseeVerdict | AddresseeVerdict[]
+  /** Round 11 (F6): the strip just read the armed field back. */
+  readBack?: boolean
+}
+/** Round 11 (F6): Gmail's compose window with the "To" field armed, the address typed and read back (stand-in address). */
+const GMAIL_COMPOSE_TO: PageContext = {
+  ...GMAIL_COMPOSE,
+  box: { present: true, text: 'natim.naide@example.com', armed: true, kind: 'field', fieldKind: 'email', single: true, mail: true, label: 'Saajad' },
+}
+/** Round 11 (F6): the address as he dictated it in the demo of 2026-11-03, with the stand-in for his friend's. */
+const DICTATED_ADDRESS = 'Okei, kirjuta meil Natim punkt naide example punkt com.'
+/** Round 11 (F6): row n (from 1) of his demo's replay fixture; the recognised text stays in src/core/fixtures. */
+function demo(n: number): string {
+  const row = DEMO_2026_11_03[n - 1]
+  if (row === undefined) throw new Error(`no row ${n} in the demo fixture`)
+  return row.said
 }
 const ADDRESSEE_CASES: AddresseeCase[] = [
   { name: 'addressee: P3 the command said while people talk', utterance: "mine youtube'i ja ava video", page: NEW_TAB, finals: ['kas keegi teed tahab', 'jah palun'], want: 'command' },
@@ -1104,10 +1121,19 @@ const ADDRESSEE_CASES: AddresseeCase[] = [
   { name: 'addressee: P2 room talk with "ütlen"', utterance: 'ma ütlen sulle homme', page: NEW_TAB, finals: ['mis sa arvad'], want: 'ignore' },
   { name: 'addressee: dictation into an armed chat', utterance: 'tere Karin, ma jõuan homme kella kolmeks', page: WHATSAPP_KARIN, want: 'dictation' },
   { name: 'addressee: dictation goes on in the chat', utterance: 'ja võta palun leiba ka', page: WHATSAPP_KARIN, finals: ['tere Karin, ma jõuan homme kella kolmeks'], want: 'dictation' },
+  // Round 11 (F6): his two corrections right after the bar read the address back (demo of 2026-11-03), judged "ignore" that day.
+  { name: 'addressee: readback, the name corrected', utterance: 'Nadim on nõrga t-ga ja punkt naide example punkt com', page: GMAIL_COMPOSE_TO, finals: [DICTATED_ADDRESS], readBack: true, want: ['dictation', 'command'] },
+  { name: 'addressee: readback, delete the whole address', utterance: 'ei, kustuta see terve e-mail ära, sa kirjutasid valesti', page: GMAIL_COMPOSE_TO, finals: [DICTATED_ADDRESS, 'Nadim on nõrga t-ga ja punkt naide example punkt com'], readBack: true, want: 'command' },
+  // The sentences as the recogniser wrote them that day, from the replay fixture (rows 24, 25, 28; the finals before them as heard).
+  { name: 'addressee: readback, as recognised, row 24', utterance: demo(24), page: GMAIL_COMPOSE_TO, finals: [demo(23)], readBack: true, want: ['dictation', 'command'] },
+  { name: 'addressee: readback, as recognised, row 25', utterance: demo(25), page: GMAIL_COMPOSE_TO, finals: [demo(23), demo(24)], readBack: true, want: ['dictation', 'command'] },
+  { name: 'addressee: readback, as recognised, row 28 (delete it)', utterance: demo(28), page: GMAIL_COMPOSE_TO, finals: [demo(25), demo(26), demo(27)], readBack: true, want: 'command' },
+  // The read-back makes the next sentence addressed only while the field is armed: on the inbox, room talk stays room talk.
+  { name: 'addressee: readback, nothing armed, room talk', utterance: 'kas sa tuled ka poodi', page: GMAIL_INBOX, finals: [DICTATED_ADDRESS], readBack: true, want: 'ignore' },
 ]
 
 async function runAddressee(c: AddresseeCase, model: Model): Promise<AskResult> {
-  const request: AddresseeRequest = { lang: 'et', utterance: c.utterance, finals: c.finals ?? [], page: { url: c.page.url, title: c.page.title, box: { present: c.page.box.present, armed: c.page.box.armed } } }
+  const request: AddresseeRequest = { lang: 'et', utterance: c.utterance, finals: c.finals ?? [], page: { url: c.page.url, title: c.page.title, box: { present: c.page.box.present, armed: c.page.box.armed } }, ...(c.readBack === true ? { readBack: true } : {}) }
   const started = Date.now()
   let verdict: AddresseeVerdict | null = null
   let error: string | undefined
@@ -1126,9 +1152,10 @@ async function runAddressee(c: AddresseeCase, model: Model): Promise<AskResult> 
     error = e instanceof Error ? e.message : String(e)
   }
   const ms = Date.now() - started
-  const ok = verdict === c.want
+  const wants: readonly AddresseeVerdict[] = Array.isArray(c.want) ? c.want : [c.want]
+  const ok = verdict !== null && wants.includes(verdict)
   const problem = error ? `error ${error}` : ok ? null : `verdict ${verdict ?? 'none'}`
-  console.log(`${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms quick   ${siteOf(c.page).padEnd(18)} "${c.utterance}" -> ${verdict ?? 'error'}${problem ? ` (wanted ${c.want})` : ''} [in=${fresh(usage)} out=${usage.output} ${dollars(usd)}]`)
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms quick   ${siteOf(c.page).padEnd(18)} "${c.utterance}" -> ${verdict ?? 'error'}${problem ? ` (wanted ${wants.join(' or ')})` : ''} [in=${fresh(usage)} out=${usage.output} ${dollars(usd)}]`)
   return { name: c.name, utterance: c.utterance, step: 1, site: siteOf(c.page), ms, ok, got: verdict ?? 'error', say: '', done: true, wanted: c.want, problem, ...(error ? { error } : {}), care: 'quick', model: MODEL, usage, usd, provider }
 }
 // ---------- end of the addressee check ----------

@@ -34,4 +34,18 @@ describe('POST /api/addressee (round 10, 32.3)', () => {
     const failing: Model = { ask: () => Promise.reject(new ModelError('timeout', 'fake', 'slow')) }
     await expect(addresseeAnswer(REQUEST, { model: failing })).rejects.toMatchObject({ code: 'timeout' })
   })
+
+  it('round 11 (F6): after a read-back the user turn says so and the prompt treats the next sentence, with the field armed, as addressed', async () => {
+    const seen: ModelAsk[] = []
+    const readBack = { ...REQUEST, utterance: 'ei, kustuta see terve e-mail ära, sa kirjutasid valesti', readBack: true }
+    await addresseeAnswer(readBack, { model: replying({ verdict: 'command' }, seen) })
+    expect(JSON.parse(seen[0]?.user ?? '{}')).toMatchObject({ readBack: true, sentence: readBack.utterance })
+    const system = seen[0]?.system ?? ''
+    expect(system).toContain('readBack')
+    expect(system).toMatch(/never "ignore"/)
+    // Without the flag the user turn is as before (an older extension sends none).
+    await addresseeAnswer(REQUEST, { model: replying({ verdict: 'ignore' }, seen) })
+    expect(JSON.parse(seen[1]?.user ?? '{}')).not.toHaveProperty('readBack')
+    await expect(addresseeAnswer({ ...REQUEST, readBack: 'yes' }, { model: replying({ verdict: 'ignore' }) })).rejects.toMatchObject({ code: 'bad_request' })
+  })
 })
