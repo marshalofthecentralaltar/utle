@@ -1163,7 +1163,7 @@ const RULE_CASES: RuleCase[] = [
     name: 'nadim: "vale" after a read-back clears To, the next utterance is spelled into the address',
     page: GMAIL_COMPOSE,
     said: [
-      { utterance: 'vale', box: TO_FIELD('natim.metavallijad@gmail.com') },
+      { utterance: 'vale', box: TO_FIELD('natim.naide@example.com') },
       { utterance: 'n a d i m punkt naide ät example punkt com', box: TO_FIELD('') },
     ],
     saved: [NADIM],

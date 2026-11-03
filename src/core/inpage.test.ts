@@ -2555,16 +2555,16 @@ describe('round 11: "vale" in a read-back (26.8)', () => {
 
   for (const phrase of ['vale', 'valesti', 'see on vale', 'ei, vale', 'Vale.']) {
     it(`vale: "${phrase}" after a read-back clears the field, says so, arms spelling`, () => {
-      const step = inpageStep(session(), phrase, to('natim.metavallijad@gmail.com'))
+      const step = inpageStep(session(), phrase, to('natim.naide@example.com'))
       expect(step.commands).toEqual([{ kind: 'setText', text: '' }])
       expect(step.line).toBe('Kustutasin. Ütle tähthaaval.')
       expect(step.session.spellNext).toBe('email')
-      expect(step.session.undo).toEqual(['natim.metavallijad@gmail.com'])
+      expect(step.session.undo).toEqual(['natim.naide@example.com'])
     })
   }
 
   it('vale: the next utterance is spelled: "n a d i m punkt naide ät example punkt com" is the address', () => {
-    const cleared = inpageStep(session(), 'vale', to('natim.metavallijad@gmail.com'))
+    const cleared = inpageStep(session(), 'vale', to('natim.naide@example.com'))
     const spelled = inpageStep(cleared.session, 'n a d i m punkt naide ät example punkt com', to(''))
     expect(spelled.commands).toEqual([{ kind: 'setText', text: 'nadim.naide@example.com' }])
     expect(spelled.ask).toBeUndefined()
