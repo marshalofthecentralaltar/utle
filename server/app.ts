@@ -129,6 +129,12 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
   if (httpServer) console.info(`[model] primary=${configured.primary} careful=${configured.carefulLabel} fallback=${configured.fallback ?? 'none'}${configured.ready ? '' : ' (no key: rules only)'}`)
   // Round 10 (#8): which Anthropic key, by prefix, and from where (a Windows user variable outranks .env.local).
   if (httpServer) console.info(keyLine(keySource(env.ANTHROPIC_API_KEY, envLocalText(options.root))))
+  // Round 10 prompt 6 (32.3, QUICK review 1): warm the quick model once, so his first sentence's
+  // addressee check does not pay for the client and its connection. Free (count_tokens).
+  if (httpServer && configured.ready && !rehearsal) {
+    const warmStarted = Date.now()
+    void configured.model.warm?.().then(() => console.info(`[model] warmed ms=${Date.now() - warmStarted}`))
+  }
 
   const answer = async (input: unknown) => {
     if (!rehearsal) return interpret(input, { model: configured.model })

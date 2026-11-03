@@ -28,21 +28,22 @@ export interface AnthropicReply {
 export interface MessagesClient {
   messages: {
     create(params: Anthropic.MessageCreateParamsNonStreaming, options?: { timeout?: number }): Promise<AnthropicReply>
+    /** 32.3 (QUICK review 1): the free token count, used only to warm the client at start. */
+    countTokens?(params: { model: string; messages: Anthropic.MessageParam[] }, options?: { timeout?: number }): Promise<unknown>
   }
 }
 
 /**
  * The real SDK client: no retries (a voice command answers at once or not at all). Made at the
- * first ask, so a server without a key starts (rules only) and says so in /api/status.
+ * first ask or the warm-up, so a server without a key starts (rules only) and says so in /api/status.
  */
 export function anthropicClient(apiKey: string | undefined): MessagesClient {
   let anthropic: Anthropic | null = null
+  const sdk = (): Anthropic => (anthropic ??= new Anthropic({ maxRetries: 0, ...(apiKey ? { apiKey } : {}) }))
   return {
     messages: {
-      create: (params, options) => {
-        anthropic ??= new Anthropic({ maxRetries: 0, ...(apiKey ? { apiKey } : {}) })
-        return anthropic.messages.create(params, options)
-      },
+      create: (params, options) => sdk().messages.create(params, options),
+      countTokens: (params, options) => sdk().messages.countTokens(params, options),
     },
   }
 }
@@ -114,6 +115,15 @@ export function anthropicError(error: unknown): ModelError {
 
 export function anthropicModel(client: MessagesClient, model: string): Model {
   return {
+    // 32.3 (QUICK review 1): the first call of a process paid about 0.2 to 1 s for the client and its
+    // connection; a free count_tokens at start pays it instead. A failure changes nothing.
+    async warm(): Promise<void> {
+      try {
+        await client.messages.countTokens?.({ model, messages: [{ role: 'user', content: '.' }] }, { timeout: 5000 })
+      } catch {
+        // The first ask then pays as before.
+      }
+    },
     async ask(ask: ModelAsk): Promise<ModelReplyNeutral> {
       const started = Date.now()
       let reply: AnthropicReply

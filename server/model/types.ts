@@ -60,6 +60,11 @@ export interface ModelReplyNeutral {
 
 export interface Model {
   ask(ask: ModelAsk): Promise<ModelReplyNeutral>
+  /**
+   * Round 10 prompt 6 (32.3, QUICK review 1): build the client and its connection once at start, so
+   * the first ask does not pay for them. Free, never throws; absent where a provider has none.
+   */
+  warm?(): Promise<void>
 }
 
 /**

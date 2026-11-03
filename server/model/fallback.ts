@@ -44,5 +44,9 @@ export function withFallback(primary: Model, fallback: Model | null): FallbackMo
       last = 'primary'
       return reply
     },
+    // 32.3 (QUICK review 1): the primary only; the fallback is asked rarely and stays cold.
+    warm: async () => {
+      await primary.warm?.()
+    },
   }
 }
