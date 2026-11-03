@@ -959,6 +959,95 @@ line, so a miss says by how much. After the fix: full `UTLE_REAL=1 voice.ts` 55 
 Logs: `artifacts/live/` in the worktree (good-7a5ce7c, main-8c7b705, bisect-*, bisect-firstparent.log,
 bisect-inner.log, hover-1..5, full-voice, suite).
 
+## 1v. Round 10, prompt 6, lane EXIT (2026-11-03): the exit test (#9) rehearsed end to end on stand-ins
+
+`UTLE_REAL=1 npx tsx extension/test/exit.ts` runs the whole path in a fresh Chromium profile: install, the real
+welcome page, enrolment in a SYNTHETIC voice (twelve phrases), the voice test, only my voice, wake mode (LIMITED:
+PR #11 is unmerged, so the wake word is the text alone), "Ütle, mine youtube'i ja otsi lastelaulud" with two room
+voices (kalev before him, vesta over his end), YouTube's consent stand-in, the results, the WhatsApp stand-in, one
+sentence dictated, "saada". The server is the real one in-process (TalTech's recogniser, TitaNet, the default
+model); the microphone is a stand-in at the socket. Each run writes a timeline and a screenshot per step under
+`artifacts/exit/<run>/` in the worktree (not committed); `artifacts/exit/runner.log` has CPU and free memory before
+each run. This is the exit test's precondition, not the test: no person, no room, no real YouTube.
+
+Runs (suite lock held, CPU 19 to 54 %, 6.5 to 6.9 GB free before each): v-1, v-2, v-3 at the brief's condition
+(`UTLE_EXIT_OVERLAP_MS=800`), control-1 with vesta starting 2 s after his last word (`-1500`). The variable
+overstates the overlap: vesta's file has 800 ms of silence before her speech and exit.ts subtracts 300, so at 800
+her first word lands 300 ms before his last (scene line: his speech 5160-7340 ms, hers 7040-9700); the header now
+says so. The first EXIT agent's runs (dbg2-1, r-1, r-2) agree with these; r-3 (91 % CPU) and dbg-1 (no network)
+are void.
+
+| step (ms from install, or after his last word) | v-1 | v-2 | v-3 | control |
+|---|---|---|---|---|
+| install: the welcome page opens | 1189 | 1205 | 980 | 1031 |
+| microphone, server, enrolment (12 phrases) ends | 66790 | 66450 | 65086 | 66151 |
+| voice test, only my voice, wake mode | PASS | PASS | PASS | PASS |
+| YouTube opens (after his last word; only at his second saying, finding 6) | 7994 | 8446 | 8947 | 3642 |
+| YouTube's consent first | PASS | PASS | PASS | PASS |
+| results for "lastelaulud" | FAIL | FAIL | PASS | PASS |
+| WhatsApp, Jaan Tamm's chat open (after his last word) | 6511 | 9837 | 9990 | 9775 |
+| dictated sentence in the box (after his last word) | 1160 | 1681 | 1582 | 1728 |
+| "saada": sent, his sentence only (after his last word) | 1985 | 2567 | 2500 | 2531 |
+| the bar shows three room words in a row (samples) | 443/1826 | 568/2095 | 566/1831 | 0/1738 |
+| enrolment: no phrase of his reading runs as speech | FAIL | FAIL | FAIL | FAIL |
+| machine time | 194.3 s | 226.3 s | 196.9 s | 187.0 s |
+
+Machine time is about 3 to 4 minutes, well under ten. The sent list is `["Tere, Jaan, ma jõuan homme kella
+kolmeks."]` in every run: his sentence only. One-word "saada" was verified in v-1 and the control (0.578, 0.583);
+in v-2 and v-3 it was `insufficient_audio` and "saada sõnum" sent it. Steps a person adds, not timed: reading the
+helper's sheet; loading the unpacked extension; Chrome's microphone Allow; reading the twelve phrases at his own
+pace; choosing wake mode; "Ütle, nõustu kõigiga" on YouTube's consent; "saada sõnum" when "saada" is too short;
+saying the command again when nothing opens (every run, finding 6).
+
+**FAIL: enrolment, his last phrase runs as a command (4/4).** The server sends `enrolled` before that phrase's
+final: 66321/66363, 66031/66079, 64611/64652, 65681/65722 ms (enrolled/final), so the engine takes "Värskenda
+lehte: mine edasi ja vaigista heli enne tööleminekut." as speech for Ütle. Class product; owner the server's
+enrolment ordering (31.7, `takePhrase`/`finishScript` in server/asrSession.ts). A small lane after this merge.
+
+**FAIL: the bar shows vesta's sentence (3/3 at the overlap, 0 in the control).** His final reads "Ütle, mine
+Youtube, ei otsi lastelauda. Mul on vaja vanaemale helistada." and is verified as his (0.696 to 0.699), so her
+words reach the strip and the model. The gap sweep (below) shows the recogniser joins her sentence into his final
+whenever she starts within 300 ms of his last word, and splits from 600 ms; the control (2 s) never leaked. Class
+product; owner the speaker gate's per-segment decision (31.2, #3) or the endpointer; issue-size. His message was
+never touched: in the dictation scene the room was rejected every time (0.12 to 0.47).
+
+**FAIL: the results for "lastelaulud" (v-1, v-2).** Two causes. First (finding 5, new): the model's plan opened
+youtube.com and then ran `siteSearch` while the consent covered the page; the field is in the stand-in's DOM, but
+`searchField()` (page.ts) only takes a `visible()` field, so the search answered `not_found` and the strip said
+"Sellel lehel ei ole otsingut. Ütle „otsi googlest“." (3/3 at 129948, 130895, 129197 ms). That advice is wrong: the
+page has a search, the consent is in front of it. After "Ütle, nõustu kõigiga" the model searched again in v-2 and
+v-3, not in v-1 (youtube.com reloaded at 134830 ms and nothing else). The control escaped because the model went
+straight to `/results?search_query=lastelaulud`. Class product, page side: the command path's answer to a search
+under an open dialog (strings.ts `siteSearch` failure line; keep the search until the dialog closes, or say to
+answer the dialog first). Not fixed here. Second (finding 3): v-2 searched "lastelauda". Every final under the
+overlap ends "lastelauda" (6/6), both control finals end "lastelaulud"; the model corrected it in v-1 and v-3, not
+in v-2. Owner the speech model and the gate.
+
+**Finding 6 (new): his first saying fails every time (4/4, the control too).** The first final reads "Ütlemine
+juhtub, ei otsi lastelau..."; the model answers "Ei saanud aru", "Ei saa helistada" or a Google search. The same
+audio a second time reads "Ütle, mine Youtube..." (4/4). Offline, his clip alone gives "Ütlemine Youtubei otsi
+lastelaulud" and the scene after kalev gives "Ütle mine Youtubey": the recogniser merges "Ütle mine" depending on
+what came before. It costs him a repeat: here about 35 s from his first final to YouTube opening, most of it the
+script's 30 s wait for a tab. Owner the speech model and the wake word (a spotter on
+the audio, PR #11, would not depend on the text).
+
+The gap sweep (`artifacts/exit/gap.ts` writes the scene with vesta's first word at each gap after his last;
+`scripts/asr-file.ts` with the speech detector, Idle priority, no lock; `artifacts/exit/gap/table.txt`):
+
+| gap (ms) | finals after kalev's | his final |
+|---|---|---|
+| -800 | 1 | "Ütle mine Youtubey otsi lastelaulud. Mul on vaja vanaemale helistada." |
+| -300 (the runs) | 1 | "Ütle mine Youtubey ja otsi lastelaulu? Mul on vaja vanaemale helistada." |
+| 0 | 1 | "... otsi lastelaulud. Ei tule. Mul on vaja vanaemale helistada." |
+| 300 | 1 | "... otsi lastelaulud. Ei tule, mul on vaja vanaemale helistada" |
+| 600 | 2 | "Ütle mine Youtubey ja otsi lastelaulud" / ". Ei tule, mul on vaja vanaemale helistada." |
+| 1000 | 2 | "Ütle mine Youtubey ja otsi lastelaulud" / "Ei tule, mul on vaja vanaemale helistada." |
+| 1500 | 2 | the same split |
+| 2000 (the control) | 3 | the same split, plus a "." final |
+
+The 1k-REALPAGES check (the strip leaves the consent's "Nõustu kõigiga" clickable) passed on the stand-in in every
+run; on the real youtube.com it is unverified.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

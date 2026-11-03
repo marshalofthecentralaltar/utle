@@ -20,7 +20,9 @@
 //
 //   npx tsx extension/test/exit.ts        (UTLE_REAL=1 is implied; the model call needs ANTHROPIC_API_KEY)
 //   UTLE_EXIT_PORT=5186                    the bridge's port (the extension's server address)
-//   UTLE_EXIT_OVERLAP_MS=800               how long the second room voice talks over the end of his command
+//   UTLE_EXIT_OVERLAP_MS=800               the second room voice over the end of his command: her file has
+//                                          800 ms of silence first, so her speech starts OVERLAP - 500 ms
+//                                          before his last word (800: 300 ms over him; -1500: 2000 ms after)
 //   UTLE_EXIT_OUT=artifacts/exit/run-1     where the timeline and the screenshots go
 
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises'
