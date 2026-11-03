@@ -76,8 +76,8 @@ export type ServerState = 'live' | 'no_key' | 'bad_token' | 'unreachable'
 
 export interface ServerCheck {
   state: ServerState
-  /** Which speech engines the server can run, when it answered. */
-  speech?: { local: boolean; soniox: boolean }
+  /** Whether the server has the speech model, when it answered. */
+  speech?: { local: boolean }
   /** Round 7 (27.6): which voice profile the token is, when the server says. */
   profile?: { name: string; enrolled: boolean }
 }
@@ -97,7 +97,7 @@ export async function serverCheck(statusUrl: string, token: string): Promise<Ser
     const name = field(profile, 'name')
     return {
       state: field(body, 'intent') === 'no_key' ? 'no_key' : 'live',
-      speech: { local: field(speech, 'local') === true, soniox: field(speech, 'soniox') === true },
+      speech: { local: field(speech, 'local') === true },
       ...(typeof name === 'string' ? { profile: { name, enrolled: field(profile, 'enrolled') === true } } : {}),
     }
   } catch {

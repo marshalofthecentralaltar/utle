@@ -1,7 +1,7 @@
 /**
  * The production entry (ARCHITECTURE 27.1): `npm run serve`. The same API as the dev server, on a
  * plain Node http server, no Vite. PORT (default 8787); UTLE_TOKEN for the token (27.2);
- * ANTHROPIC_API_KEY, SONIOX_API_KEY and UTLE_MODEL as in development. Never logs the token.
+ * ANTHROPIC_API_KEY and UTLE_MODEL as in development. Never logs the token.
  */
 import { fileURLToPath } from 'node:url'
 import { tokenUsers } from './auth.ts'

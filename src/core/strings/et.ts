@@ -470,14 +470,6 @@ export const ET: Strings = {
     gazeMicEn: 'The microphone square',
     gazeBar: 'Kogu riba',
     gazeBarEn: 'The whole bar',
-    speechEngine: 'Kõnemudel',
-    speechEngineEn: 'Speech model',
-    engineLocal: 'Arvutis (TalTech)',
-    engineLocalEn: 'On this computer (TalTech)',
-    engineSoniox: 'Soniox (pilves)',
-    engineSonioxEn: 'Soniox (in the cloud)',
-    engineNote: 'Soniox vajab võtit arendusserveris (SONIOX_API_KEY). Valik hakkab kehtima järgmisel sisselülitamisel.',
-    engineNoteEn: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
     myVoice: 'Minu hääl',
     myVoiceEn: 'My voice',
     onlyOwner: 'Kuula ainult mind',
@@ -552,8 +544,7 @@ export const ET: Strings = {
     serverTest: 'Proovi ühendust',
     serverChecking: 'Proovin…',
     serverOk: (speech, understanding) => {
-      const engines = [speech.local ? 'TalTechi kõnemudel' : '', speech.soniox ? 'Soniox' : ''].filter((x) => x !== '')
-      return `Ühendus töötab: ${engines.length > 0 ? engines.join(' ja ') : 'kõnemudelit pole'}, mõistmine ${understanding ? 'sees' : 'väljas'}.`
+      return `Ühendus töötab: ${speech.local ? 'TalTechi kõnemudel' : 'kõnemudelit pole'}, mõistmine ${understanding ? 'sees' : 'väljas'}.`
     },
     serverUnreachable: 'Ei saa ühendust.',
     serverWrongToken: 'Vale võti.',

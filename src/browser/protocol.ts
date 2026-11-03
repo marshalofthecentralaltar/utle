@@ -1,20 +1,9 @@
 /**
- * The contract between the Ütle page and the Ütle browser extension.
- *
- * The page cannot open tabs or touch other sites. It posts a BridgeRequest on its own window;
- * the extension's content script on the Ütle page relays it to the extension and posts the
- * BridgeResponse back. Commands act on the active tab of the last focused ordinary browser
- * window, never on the window that shows Ütle.
+ * The browser commands the extension carries out, and their results. The offscreen engine sends
+ * them to the service worker; the browser suite's stand-in page (extension/test/fixtures/utle.html)
+ * posts them through extension/relay.js. Round 12 removed the development page and its bridge
+ * client. Commands act on the active tab of the last focused ordinary browser window.
  */
-
-export const BRIDGE_APP = 'utle-app'
-export const BRIDGE_EXTENSION = 'utle-extension'
-
-/** How long the page waits for an answer before it decides no extension is installed. */
-export const BRIDGE_TIMEOUT_MS = 1500
-
-/** How long the page waits for any command other than ping, which may load a page or a conversation first. */
-export const BRIDGE_COMMAND_TIMEOUT_MS = 20_000
 
 export type BrowserCommand =
   /** Answers at once. Tells the page the extension is there. */
@@ -291,18 +280,4 @@ export function dialogButtons(message: string | undefined): string[] | null {
     .split('\n')
     .map((b) => b.trim())
     .filter((b) => b !== '')
-}
-
-/** Posted by the page with window.postMessage(request, window.location.origin). */
-export interface BridgeRequest {
-  source: typeof BRIDGE_APP
-  id: number
-  command: BrowserCommand
-}
-
-/** Posted back by the extension's content script, with the id of the request it answers. */
-export interface BridgeResponse {
-  source: typeof BRIDGE_EXTENSION
-  id: number
-  result: BrowserResult
 }

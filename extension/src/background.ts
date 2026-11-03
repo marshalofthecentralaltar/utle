@@ -620,12 +620,6 @@ function patchState(patch: Partial<StripState>): Promise<void> {
 
 let creating: Promise<void> | null = null
 
-/** The speech engine chosen on the options page (round 3): local (TalTech) or soniox. */
-async function speechEngine(): Promise<'local' | 'soniox'> {
-  const value = await stored('speechEngine')
-  return value === 'soniox' ? 'soniox' : 'local'
-}
-
 /**
  * Round 4: only the owner's voice is obeyed (the options page's "Kuula ainult mind"). Round 11 (F1,
  * 31.7): `onlyOwner` is the mode in force, which followReadiness keeps off while no voice exists;
@@ -703,11 +697,11 @@ async function placeByVoice(tab: Tab, command: Extract<BrowserCommand, { kind: '
 
 async function ensureOffscreen(): Promise<void> {
   const base = chrome.runtime.getURL('offscreen.html')
-  // The engine, the only-owner mode and the server (27.3) are in the address, so a changed setting makes a new document on the next start.
+  // The only-owner mode, the wake word and the server (27.3) are in the address, so a changed setting makes a new document on the next start.
   // The token rides here because an offscreen document can only use chrome.runtime, not the storage.
   const server = await connection()
   const token = server.token === '' ? '' : `&token=${encodeURIComponent(server.token)}`
-  const wanted = `${base}?asr=${encodeURIComponent(server.asrUrl)}${token}&engine=${await speechEngine()}${(await onlyOwner()) ? '&onlyOwner=1' : ''}${await wakeParam()}`
+  const wanted = `${base}?asr=${encodeURIComponent(server.asrUrl)}${token}${(await onlyOwner()) ? '&onlyOwner=1' : ''}${await wakeParam()}`
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] })
   const existing = contexts.find((c) => c.documentUrl?.startsWith(base))
   if (existing && existing.documentUrl === wanted) return

@@ -69,10 +69,6 @@ export interface FinalWhy {
   paddedMs?: number
 }
 
-/** The lines the page shows when the local recogniser cannot run (src/speech/pick.ts). */
-export const FELL_BACK = "The speech model on this computer is not running, so Chrome's recognition is listening instead."
-export const NOTHING_LEFT = 'The speech model on this computer is not running and this browser has no speech recognition. Type instead.'
-
 export type AsrUnavailableReason = 'model_missing' | 'addon_missing' | 'load_failed'
 
 export type AsrServerMessage =

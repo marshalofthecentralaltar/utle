@@ -464,14 +464,6 @@ export const EN: Strings = {
     gazeMicEn: 'The microphone square',
     gazeBar: 'The whole bar',
     gazeBarEn: 'The whole bar',
-    speechEngine: 'Speech model',
-    speechEngineEn: '',
-    engineLocal: 'On this computer (TalTech)',
-    engineLocalEn: 'On this computer (TalTech)',
-    engineSoniox: 'Soniox (in the cloud)',
-    engineSonioxEn: 'Soniox (in the cloud)',
-    engineNote: 'Soniox needs a key on the dev server (SONIOX_API_KEY). The choice takes effect the next time listening starts.',
-    engineNoteEn: '',
     myVoice: 'My voice',
     myVoiceEn: '',
     onlyOwner: 'Listen only to me',
@@ -546,8 +538,7 @@ export const EN: Strings = {
     serverTest: 'Test the connection',
     serverChecking: 'Testing…',
     serverOk: (speech, understanding) => {
-      const engines = [speech.local ? "TalTech's speech model" : '', speech.soniox ? 'Soniox' : ''].filter((x) => x !== '')
-      return `Connected: ${engines.length > 0 ? engines.join(' and ') : 'no speech model'}, understanding ${understanding ? 'on' : 'off'}.`
+      return `Connected: ${speech.local ? "TalTech's speech model" : 'no speech model'}, understanding ${understanding ? 'on' : 'off'}.`
     },
     serverUnreachable: 'Cannot connect.',
     serverWrongToken: 'Wrong token.',

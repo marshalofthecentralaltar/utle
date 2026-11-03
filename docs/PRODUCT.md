@@ -77,8 +77,8 @@ eye tracker there is push-to-talk by looking: it listens while the pointer rests
 or on the whole bar, and delivers the words when the pointer leaves. Commands heard the Estonian way
 ("juutuba", "aga whatsapp", "saadake") are understood by sound. Scrolling can be a little, slow, and
 stopped. The speech server can no longer fall minutes behind, and the bar says when it is behind at
-all. And there are two speech backends: TalTech's model on the laptop, or Soniox in the cloud when a
-key is set. None of this has been tried with his voice yet.
+all. (A second speech backend, Soniox in the cloud, was built that night and removed in round 12:
+it never ran with a key.) None of this has been tried with his voice yet.
 
 **What changed on 6 October, morning.** After the demo he asked for three more things. One breath
 may now hold a chain: "mine whatsappi, siis ava Karini viimane sõnum, siis kustuta see kõigi jaoks"
@@ -100,10 +100,9 @@ thinks, and "katkesta" stops everything at once. And "suurenda" / "vähenda" zoo
 layout together, kept per site. All of it is proven on stand-in pages only: a Smart-ID-like test
 page, never the real one, and no real voice.
 
-**The first version, a document editor,** survives only as a development page at localhost: say
-"change the budget deadline to Friday", see the change marked in the text, say yes or no. Its edits
-need an Anthropic API key, and the key on the build machine is rejected. It is not part of what the
-user is given.
+**The first version, a document editor** (say "change the budget deadline to Friday", see the
+change marked in the text, say yes or no), lived on as a development page at localhost until round 12
+removed it; `npm run dev` is now the server only.
 
 ## How it feels to use
 
@@ -125,8 +124,7 @@ tracker.
 - A Chrome extension draws the bar, listens, and types into the page.
 - Speech is recognised by TalTech's Estonian model (Tanel Alumäe's Laboratory of Language
   Technology, MIT licence) running on the same laptop, on its own thread so nothing else slows it.
-  No audio leaves the machine, unless Soniox (a hosted recogniser) is chosen on the settings page
-  with a key on the server; then it does, and the settings page says so.
+  No audio leaves the machine when the server is the local one.
 - Fixed commands and repairs are understood by rules, with no AI model and no cost per use. What
   the rules do not recognise is understood by a Claude model, which sees the words and what is on
   the page (never the audio) and may answer only with one of a fixed set of actions, checked before
@@ -163,7 +161,7 @@ tracker.
 | Push-to-talk by looking | The timing is unit tested with fake clocks; not tried with a real eye tracker or a real pointer |
 | Sound-alike commands, slow scrolling, stop | Unit tests and automated browser tests on stand-in pages; the misheard forms come from his report, not from recordings |
 | The speech server never falls behind | Tested with a fake slow decoder; the worker thread not run with the model on this machine |
-| Soniox as a second recogniser | Built against Soniox's published client code; never connected, no key |
+| Soniox as a second recogniser | Removed in round 12; it was never connected (no key) |
 | Works with the voice of the person it is for | Not tried for anything built since the first version |
 | Works with a real eye tracker | Not tried |
 | Faster for him than typing | Not measured |

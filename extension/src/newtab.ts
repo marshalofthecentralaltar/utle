@@ -6,7 +6,7 @@
 import { SITES } from '../../src/core/browserIntent.ts'
 import { HELP_EXAMPLES } from '../../src/core/phrases.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import { createDwell } from '../../src/ui/dwell.ts'
+import { createDwell } from './dwell.ts'
 import type { ToPage } from './messages.ts'
 import { mountStrip } from './strip.ts'
 

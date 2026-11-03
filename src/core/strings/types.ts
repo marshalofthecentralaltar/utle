@@ -7,14 +7,6 @@ import type { SavedKind } from '../saved.ts'
  */
 export type Lang = 'et' | 'en'
 
-/** The recogniser's BCP 47 tag for each language. */
-export const LANG_TAG: Record<Lang, string> = { et: 'et-EE', en: 'en-US' }
-
-/** The interface language for a recogniser tag. Anything Estonian is Estonian, the rest English. */
-export function langOfTag(tag: string): Lang {
-  return tag.toLowerCase().startsWith('et') ? 'et' : 'en'
-}
-
 export interface Strings {
   // What the user can say next, per mode.
   promptListening: string
@@ -291,14 +283,6 @@ export interface Strings {
     gazeMicEn: string
     gazeBar: string
     gazeBarEn: string
-    speechEngine: string
-    speechEngineEn: string
-    engineLocal: string
-    engineLocalEn: string
-    engineSoniox: string
-    engineSonioxEn: string
-    engineNote: string
-    engineNoteEn: string
     // The owner's voice (round 4, VOICE lane).
     /** The group on the options page. */
     myVoice: string
@@ -373,7 +357,7 @@ export interface Strings {
     serverTest: string
     serverChecking: string
     /** The test answered: what the server has (the speech engines, understanding on or off). */
-    serverOk(speech: { local: boolean; soniox: boolean }, understanding: boolean): string
+    serverOk(speech: { local: boolean }, understanding: boolean): string
     serverUnreachable: string
     serverWrongToken: string
     /** Round 7 (27.6): which voice profile the token is, after the test answered. */
@@ -453,7 +437,7 @@ export interface Strings {
     active: string
     /** Round 10 (32.1, 32.3): finals not meant for Ütle (PASSIVE, or the addressee check said ignore), counted quietly. */
     notForMe(count: number): string
-    /** Round 10 (32.2): wake mode with a hosted server or Soniox would send the room's audio away: it does not start. */
+    /** Round 10 (32.2): wake mode with a hosted server or a cloud recogniser would send the room's audio away: it does not start. */
     uploadsOff: string
     /** The settings page: the mode's choice and the word's field. */
     listenWake: string

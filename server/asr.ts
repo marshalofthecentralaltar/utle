@@ -14,20 +14,12 @@ import { createAsrSession, samplesFromFrame } from './asrSession.ts'
 import { hostInThread, openDecoderExtras, openSpeakerGate, startWorkerHost } from './asrWorker.ts'
 import type { DecoderHost, HostStart, SpeakerStatus } from './asrWorker.ts'
 import type { DecoderExtras } from './asrSession.ts'
-import { attachSonioxSession } from './soniox.ts'
 
 export { MODEL_DIR, MODEL_FILES, loadModel } from './asrModel.ts'
 export type { ModelLoad } from './asrModel.ts'
 
 /** The decode worker's entry, relative to the project root (the server runs from Vite's bundled config, so import.meta.url is no guide). */
 export const WORKER_ENTRY = join('server', 'asrWorker.ts')
-
-/** True when this connection should go to Soniox instead of the local model. */
-export function wantsSoniox(url: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.UTLE_ASR === 'soniox') return true
-  const query = url.split('?')[1] ?? ''
-  return new URLSearchParams(query).get('engine') === 'soniox'
-}
 
 const send = (socket: WebSocket, message: AsrServerMessage): void => {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message))
@@ -184,12 +176,6 @@ export function attachAsr(httpServer: EventEmitter, root: string, options: Attac
       return
     }
     sockets.handleUpgrade(req, socket, head, (ws) => {
-      // Soniox (ARCHITECTURE 23.4): `?engine=soniox` on the socket address, or UTLE_ASR=soniox for every
-      // connection, hands the socket to the second recogniser. Everything below is the local model.
-      if (wantsSoniox(req.url ?? '')) {
-        attachSonioxSession(ws, { apiKey: process.env.SONIOX_API_KEY })
-        return
-      }
       void ensureHost().then((loaded) => {
         if (ws.readyState !== ws.OPEN) return
         if (!loaded.ok) {

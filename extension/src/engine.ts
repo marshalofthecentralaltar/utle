@@ -755,7 +755,7 @@ export function createEngine(given: EngineDeps): Engine {
 
   const start = (): void => {
     if (listening) return
-    // Round 10 (#2, 32.2): in PASSIVE the room is heard all day; a hosted server or Soniox would get all of it. Never a silent upload.
+    // Round 10 (#2, 32.2): in PASSIVE the room is heard all day; a hosted server or a cloud recogniser would get all of it. Never a silent upload.
     if (wakeGate.on && (deps.uploads === true || deps.hosted === true)) {
       deps.publish({ listening: false, problem: wakeText.uploadsOff })
       return

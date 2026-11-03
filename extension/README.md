@@ -5,7 +5,7 @@ Messenger, any page) while you speak, and the browser scrolls and switches tabs 
 the bottom of every page, and of the new-tab page, shows the microphone, the words heard, and what
 was done. Nothing opens a separate window. Design: `docs/ARCHITECTURE.md` sections 21.2 and 21.3 (the strip and
 live words), 22 (understanding by meaning), 23 (round 3: speed, push-to-talk by looking, sound-alike
-commands, editing, Soniox), 24 (round 4: chains of goals, only your own voice, everything on the page) and 25
+commands, editing), 24 (round 4: chains of goals, only your own voice, everything on the page) and 25
 (round 5: numbers and form fields, care for the model and never stuck, the page's size) and 27
 (round 6: a hosted server behind a token, the store zip).
 
@@ -44,16 +44,7 @@ From the repository root:
 6. If the server runs at another address, the welcome page's step 2 or the settings page's **Server**
    (see "Hosted server" below) sets it; it takes effect the next time listening is turned on.
 
-## Soniox instead of the local model (optional)
-
-Soniox is a hosted Estonian recogniser; the audio then leaves the laptop. It needs a key in the
-environment of the terminal that runs `npm run dev`, never in a file: PowerShell
-`$env:SONIOX_API_KEY="..."; npm run dev`, bash `SONIOX_API_KEY=... npm run dev`.
-`curl localhost:5173/api/status` then shows `"speech":{"local":true,"soniox":true}`. On the settings
-page choose **Kõnemudel: Soniox (pilves)**; the choice takes effect the next time listening is turned
-on. `UTLE_ASR=soniox` in the same environment sends every connection to Soniox whatever the setting.
-Without the key the bar says the speech model is not reachable and the server logs
-`[soniox] SONIOX_API_KEY is not set`. Nobody has run this with a real key (see "Unverified").
+The Soniox engine (a hosted recogniser, a settings choice since round 3) was removed in round 12: nobody ever ran it with a real key.
 
 ## Only your own voice (round 4, strict since round 7, optional)
 
@@ -274,9 +265,7 @@ itself within a second. A fold he asked for ("peida riba") never comes back by i
   192, `barHeight`), microphone side (`micSide`: Vasakul / Paremal), and whether the bar starts
   folded (`barHiddenDefault`), how listening is triggered (`listenMode`: Lülitiga / Vaatamisega /
   Äratussõnaga, the last with a field for the wake word, `wakeWord`, default "Ütle"),
-  what the gaze rests on (`gazeTarget`: Mikrofon / Kogu riba, shown only for Vaatamisega) and the
-  speech model (`speechEngine`: Arvutis (TalTech) / Soniox (pilves); Soniox needs `SONIOX_API_KEY`
-  on the dev server and takes effect the next time listening starts), and since round 4 the group
+  what the gaze rests on (`gazeTarget`: Mikrofon / Kogu riba, shown only for Vaatamisega), and since round 4 the group
   **Minu hääl**: the buttons **Õpeta mu hääl lausetega** and **Õpeta vabalt rääkides** (round 7;
   see "Only your own voice" above) and the
   choice **Kuula ainult mind** / **Kuula kõiki** (`onlyOwner`, default off; takes effect the next
@@ -300,7 +289,7 @@ itself within a second. A fold he asked for ("peida riba") never comes back by i
   recogniser's glued "ütlemine youtube'i" counts too. ACTIVE (amber disc): sentences need no word until
   20 s of quiet with no task running, `aitab` / `lõpeta kuulamine`, `saada`, or "Ütle" alone again.
   "kirjuta ütle" types the word; "ütlen", "ütles", "ütlemine on ..." never wake. With a hosted server
-  or Soniox the mode does not start and the strip says why (PASSIVE would send the room's audio away).
+  the mode does not start and the strip says why (PASSIVE would send the room's audio away).
 - **Always-on and the toggle** (round 10, 32.3, LIMITED: text only): a sentence no rule knows is first
   asked once (`/api/addressee`, about 1.3 s) whether it was said to Ütle; "not for me" is never shown
   or typed, only counted. If the check fails the sentence goes on as before. While he speaks the
@@ -705,8 +694,6 @@ password field is never filled from here.
   (round 4); `[asr] no speaker model (npm run model fetches it; loudness only until then); owner's
   voice not learnt yet` when neither is. The two halves vary on their own. Nothing says whose
   voice an utterance was; the close line counts the finals of other voices.
-- `[soniox] connecting`, `[soniox] session open`, `[soniox] browser closed, code 1000`; with no key
-  `[soniox] SONIOX_API_KEY is not set; the Soniox engine is unavailable`.
 
 ## What the page tells the model (`readPage`)
 
@@ -857,13 +844,11 @@ keys reach it, the whole-box repairs and "find a word" do not (see "What to say"
   fake microphone).
 - Live words on real WhatsApp: whether its composer takes the typed-at-the-end words as smoothly as
   the Lexical stand-in does.
-- The development page at localhost (section 20) still works through `relay.js` as a harness.
+- The development page at localhost (section 20) was removed in round 12; `npm run dev` is now the server only (the API and the speech socket).
 - Round 3, all of it: nothing below has been tried with a real voice.
   - Push-to-talk by looking with a real eye tracker: the 250 ms arming and 600 ms grace are unit
     tested with fake clocks and chosen by reasoning, not measured against a tracker's jitter; whether
     a page swallows the pointer-leave event so that the one-second poll is what ends listening.
-  - Soniox: no key was available. The field names in `server/soniox.ts` come from Soniox's client
-    source, not from a session; `server/soniox.test.ts` proves the mapping against a scripted Soniox.
   - Google Docs: the editor selectors (`iframe.docs-texteventtarget-iframe`) and its key habits are
     from knowledge of its markup; nothing was run on docs.google.com.
   - The decode worker on the laptop's Node: Node 22.18 or newer runs the `.ts` worker; an older one

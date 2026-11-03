@@ -3,7 +3,7 @@
  * labelled folder (labels.tsv, scripts/measure.ts), per clip and in total, with each engine's median
  * end-of-utterance latency and its price per hour of audio.
  *
- *   npx tsx scripts/wer.ts --labels <labels.tsv> [--engine taltech,soniox] [--json <file>] [--kind command,...]
+ *   npx tsx scripts/wer.ts --labels <labels.tsv> [--engine taltech] [--json <file>] [--kind command,...]
  *
  * Normalisation (both sides, scripts/measure.ts normaliseEt): lower case, punctuation and quotes
  * removed, apostrophes dropped inside a word, digits spelled one by one in Estonian. Clips with a
@@ -18,10 +18,8 @@
  * Engines:
  *   taltech  the local recogniser through the same code as scripts/asr-file.ts and the server
  *            (server/asrModel.ts, decoderInThread, the speech detector). Cost: none per hour (this machine).
- *   soniox   Soniox real-time over its websocket with the server's own config (server/soniox.ts
- *            sonioxConfig: model stt-rt-v5 or SONIOX_MODEL, language hint et, endpoint detection).
- *            Needs SONIOX_API_KEY. $0.12 per hour of streamed audio (soniox.com/pricing, read 2026-10-27).
- *   A third engine is one more entry in ENGINES (ElevenLabs is not wired: no key).
+ *   A cloud recogniser was the second engine until round 12 removed it from the server (never run
+ *   with a real key); another engine is one more entry in ENGINES (ElevenLabs is not wired: no key).
  *
  * Prints references and hypotheses to the terminal; writes them to the JSON file only, which by
  * default sits next to labels.tsv (artifacts/ when labels.tsv is in the repository).
@@ -29,12 +27,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { WebSocket } from 'ws'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
 import { loadModel } from '../server/asrModel.ts'
 import { decoderInThread } from '../server/asrSession.ts'
 import { loadVad } from '../server/vad.ts'
-import { SONIOX_DEFAULT_MODEL, SONIOX_END_TOKEN, SONIOX_FIN_TOKEN, SONIOX_URL, int16FromFloat32, parseSonioxResponse, sonioxConfig } from '../server/soniox.ts'
 import { charErrors, insideRepo, median, parseLabels, rate, speechEndSample, sumCounts, wordErrors } from './measure.ts'
 import type { ErrorCount, LabelRow } from './measure.ts'
 import { readAnyWav } from './wav.ts'
@@ -107,68 +103,9 @@ async function taltech(): Promise<Engine> {
   }
 }
 
-async function soniox(): Promise<Engine> {
-  const key = process.env.SONIOX_API_KEY ?? ''
-  if (key === '') throw new Error('soniox: SONIOX_API_KEY is not set (node --env-file=<.env.local> or set it in the shell)')
-  const model = process.env.SONIOX_MODEL ?? SONIOX_DEFAULT_MODEL
-  return {
-    name: 'soniox',
-    usdPerHour: 0.12,
-    priceSource: 'soniox.com/pricing, real-time, read 2026-10-27',
-    async transcribe(samples) {
-      const { frames, lastSpeechFrame } = framesOf(samples)
-      const ws = new WebSocket(SONIOX_URL)
-      let text = ''
-      let lastFinalAt = Number.NaN
-      let speechSentAt = Number.NaN
-      let failure: string | null = null
-      const done = new Promise<void>((resolveDone) => {
-        ws.on('message', (raw) => {
-          const response = parseSonioxResponse(raw.toString())
-          if (!response) return
-          if (response.errorCode !== null) failure = `soniox error ${response.errorCode}`
-          for (const token of response.tokens) {
-            if (!token.is_final) continue
-            if (token.text === SONIOX_END_TOKEN || token.text === SONIOX_FIN_TOKEN) {
-              lastFinalAt = performance.now()
-              continue
-            }
-            text += token.text
-            lastFinalAt = performance.now()
-          }
-          if (response.finished || failure !== null) resolveDone()
-        })
-        ws.on('close', () => resolveDone())
-        ws.on('error', (e) => {
-          failure = e.message
-          resolveDone()
-        })
-      })
-      await new Promise<void>((r, j) => {
-        ws.once('open', () => r())
-        ws.once('error', j)
-      })
-      ws.send(JSON.stringify(sonioxConfig(key, model)))
-      const started = performance.now()
-      for (const [i, frame] of frames.entries()) {
-        await sleep(Math.max(0, started + i * FRAME_MS - performance.now()))
-        ws.send(int16FromFloat32(frame))
-        if (i === lastSpeechFrame) speechSentAt = performance.now()
-      }
-      ws.send('')
-      await Promise.race([done, sleep(10_000)])
-      ws.close()
-      if (failure !== null) throw new Error(failure)
-      return { text: text.replace(/\s+/g, ' ').trim(), eouMs: lastFinalAt - speechSentAt, sentS: frames.length * (FRAME_MS / 1000) }
-    },
-    close() {},
-  }
-}
-
 export const ENGINES: Readonly<Record<string, () => Promise<Engine>>> = {
   taltech,
-  soniox,
-  elevenlabs: () => Promise.reject(new Error('elevenlabs: not wired (no key); add a transcribe() here like soniox()')),
+  elevenlabs: () => Promise.reject(new Error('elevenlabs: not wired (no key); add a transcribe() here like taltech()')),
 }
 
 interface ClipResult {
@@ -191,7 +128,7 @@ const value = (name: string): string | undefined => {
 }
 const labelsArg = value('--labels')
 if (labelsArg === undefined) {
-  console.error('usage: npx tsx scripts/wer.ts --labels <labels.tsv> [--engine taltech,soniox] [--json <file>] [--kind command,dictation,...]')
+  console.error('usage: npx tsx scripts/wer.ts --labels <labels.tsv> [--engine taltech] [--json <file>] [--kind command,dictation,...]')
   process.exit(2)
 }
 const labelsFile = resolve(labelsArg)

@@ -39,8 +39,8 @@ Nothing opens in a separate window. Ütle also replaces Chrome's new-tab page wi
 large tiles for common sites, so the bar is there on an empty tab too.
 
 Speech is recognised by TalTech's Estonian model, running on your own computer through a small local
-server that you start with `npm run dev`. Soniox, a hosted recogniser, can be chosen instead on the
-settings page when a `SONIOX_API_KEY` is set on that server; audio then leaves the computer.
+server that you start with `npm run dev`. (A hosted recogniser, Soniox, was a settings choice until
+round 12 removed it: it was never run with a real key.)
 
 Built at the NewWorkTech Inclusive Digital Innovation Hackathon, TalTech Mektory, Tallinn, 5 and 6
 October 2026.
@@ -57,9 +57,8 @@ This is a hackathon prototype.
 - It has not been tried with the voice of the person it is for, or with a real eye tracker.
 - Messenger has never been tried on the real site.
 - Everything from the night of 5 October (editing inside the text, push-to-talk by looking, sound-alike
-  commands, slow scrolling, Soniox, the speech server that never falls behind) is proven with recorded
-  speech, stand-in pages and unit tests only. Google Docs has not been tried on the real site; Soniox
-  has not been tried with a key.
+  commands, slow scrolling, the speech server that never falls behind) is proven with recorded
+  speech, stand-in pages and unit tests only. Google Docs has not been tried on the real site.
 - Everything from 6 October (chains of goals, only your own voice, the messages and hover on the
   page) is proven on stand-in pages and with fakes only: no real voice, no real site, and the
   speaker model never run on an Estonian voice. The WhatsApp message selectors are guesses.
@@ -219,9 +218,7 @@ the bar says what it took it to be. "Saada", "puhka", "ärka üles" and "võta t
 ## Privacy
 
 - Audio never leaves the computer with the default speech model. The extension sends it only to the
-  speech server on the same machine (`localhost`). The one exception is chosen on purpose: with
-  Soniox selected on the settings page and a `SONIOX_API_KEY` on that server, the server forwards the
-  audio to Soniox.
+  speech server on the same machine (`localhost`).
 - The free-form understanding sends the words you said and what is on the page (addresses, titles,
   the visible buttons and links, the message box text) to Anthropic's API when the server has an
   `ANTHROPIC_API_KEY`; never the audio. Without the key, the fixed phrases still work.
@@ -229,10 +226,8 @@ the bar says what it took it to be. "Saada", "puhka", "ärka üles" and "võta t
   why it cannot recognise if the model is missing, a line when a connection opens or closes (with the
   number of open connections and the close code), and "decode failed" if decoding fails.
 - No account and no key are needed for the extension.
-- The development page at `http://localhost:5173` (the original document editor, kept for
-  development) is different: if the local model is missing it falls back to Chrome's own speech
-  recognition, which Google runs on its servers, and its document edits send the document text to
-  Anthropic's API when an `ANTHROPIC_API_KEY` is set. The extension uses neither.
+- The development page at `http://localhost:5173` (the original document editor) was removed in
+  round 12; `npm run dev` is now the server only (the API and the speech socket).
 
 ## Tests
 
