@@ -18,7 +18,7 @@ unpacked.
 ## Rules
 
 - `src/core/**` is pure: no DOM, no network, no timers, no imports from `speech`, `api`, `ui` or `server`.
-- The model proposes operations and never returns a rewritten document. Every op is validated against the document on the server and again in the reducer.
+- The model proposes one intent from a fixed set and never acts on its own: every answer is validated on the server (`src/core/pageIntent.ts`) and again in the engine before anything runs.
 - Relative imports carry the `.ts` or `.tsx` extension (the server project compiles with `nodenext`).
 - Types are imported with `import type` (`verbatimModuleSyntax`).
 - Named exports only, except where a tool demands a default (`vite.config.ts`).
@@ -32,13 +32,12 @@ unpacked.
 
 ## Commands
 
-- `npm run dev` runs the dev server: the speech model at `ws://localhost:5173/api/asr` and the development page.
+- `npm run dev` runs the dev server: the API and the speech model at `ws://localhost:5173/api/asr` (no page since round 12).
 - `npm run model` downloads TalTech's speech model into `models/` (once).
 - `npm run ext` bundles `extension/src/` into `extension/dist/`; reload the extension after it.
-- `npm run check` is the gate: typecheck, lint, test, build, extension build.
+- `npm run check` is the gate: typecheck, lint, test, extension build.
 - `npx tsx extension/test/run.ts` runs every browser command in Chromium.
 - `UTLE_REAL=1 npx tsx extension/test/voice.ts` (PowerShell: `$env:UTLE_REAL=1; npx tsx extension/test/voice.ts`) runs recorded speech through the real model and the real command logic (without `UTLE_REAL=1` it uses a stand-in); needs `npx vite --port 5193 --strictPort`.
-- `npm run smoke` runs the old demo script through the real model. It spends a few cents.
 - `npx tsx scripts/intent-eval.ts` runs the intent cases through `/api/intent`'s model against fake pages and ends with the cost table ($ per completed task); `UTLE_MODEL` picks the model as the server does.
 
 ## Model variables (ARCHITECTURE 30.5)
