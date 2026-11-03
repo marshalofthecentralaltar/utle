@@ -1,0 +1,80 @@
+[
+  {
+    "name": "owner-youtube",
+    "speaker": "mari",
+    "room": false,
+    "text": "Ütle, mine youtube’i ja otsi lastelaulud."
+  },
+  {
+    "name": "owner-accept",
+    "speaker": "mari",
+    "room": false,
+    "text": "Ütle, nõustu kõigiga."
+  },
+  {
+    "name": "owner-chat",
+    "speaker": "mari",
+    "room": false,
+    "text": "Ütle, mine whatsappi ja ava Jaan Tamme vestlus."
+  },
+  {
+    "name": "owner-message",
+    "speaker": "mari",
+    "room": false,
+    "text": "Tere Jaan, ma jõuan homme kella kolmeks."
+  },
+  {
+    "name": "owner-send",
+    "speaker": "mari",
+    "room": false,
+    "text": "Saada."
+  },
+  {
+    "name": "owner-send-long",
+    "speaker": "mari",
+    "room": false,
+    "text": "Saada sõnum."
+  },
+  {
+    "name": "owner-wake",
+    "speaker": "mari",
+    "room": false,
+    "text": "Ütle."
+  },
+  {
+    "name": "room-kalev-1",
+    "speaker": "kalev",
+    "room": true,
+    "text": "Kas sa tuled täna õhtul ka poodi kaasa?"
+  },
+  {
+    "name": "room-vesta-1",
+    "speaker": "vesta",
+    "room": true,
+    "text": "Ei tule, mul on vaja vanaemale helistada."
+  },
+  {
+    "name": "room-kalev-2",
+    "speaker": "kalev",
+    "room": true,
+    "text": "Ütle talle, et ma ostan leiba ja piima."
+  },
+  {
+    "name": "room-vesta-2",
+    "speaker": "vesta",
+    "room": true,
+    "text": "Ilm on täna jälle nii hall ja külm."
+  },
+  {
+    "name": "room-kalev-3",
+    "speaker": "kalev",
+    "room": true,
+    "text": "Kus mu prillid küll on, kas sa nägid neid?"
+  },
+  {
+    "name": "room-vesta-3",
+    "speaker": "vesta",
+    "room": true,
+    "text": "Bussipeatus on kohe maja taga."
+  }
+]
