@@ -1197,6 +1197,52 @@ conflicts cannot be resolved from the cloud until that `main` is pushed; the two
 same features twice (navigation commands, a settings page), so resolving them is a judgment call
 on which to keep, per file.**
 
+## 1w. Round 11, lane VOICE2 (2026-11-03)
+
+F3 (his own voice rejected one time in four) measured on the first real labelled set, and F2 (enrolment
+phrases cut by the server's backlog) fixed. ARCHITECTURE 31.7 ("Under a backlog") and 31.8 (the set,
+the method, the table, the proposal). `OWNER_THRESHOLD` / `FACTORY_THRESHOLD` are unchanged (0.54):
+the line is the owner's ruling.
+
+**F2, fixed.** During scripted enrolment the session holds its backlog whole instead of dropping the
+oldest audio (bounded at `ENROL_MAX_BACKLOG_MS` 30 s), and tells the page once
+`enrolPhrase { problem: 'slow' }`; the welcome says "Arvuti on praegu aeglane. Oota hetk, loetud lause
+jõuab kohale." Red first: on main's code the new test's backlog never grew past 300 ms (it dropped);
+now 44 s fed to a decoder doing 2 of every 3 frames: `droppedMs` 0, 36 of 36 phrases whole.
+
+**F3, measured.** Sweep: 67 owner trials (one of 68 had too little speech), 9 other (one YouTube
+video), profile = mean of his 7 enrol clips. Against the demo's live `owner.json` the same trials give
+FRR 29.9 % at 0.54 and 22.4 % at 0.50, highest video score 0.463.
+
+| model | line | FRR his clips (n=67) | FAR video clips (n=9), Wilson upper | FRR < 1 s speech (n=16) | <= 0.7 s (13) | 0.7-<1 s (3) | 1-2 s (22) | > 2 s (29) |
+|---|---|---|---|---|---|---|---|---|
+| titanet-small | 0.54 (today) | 28.4% (19) | 0/9, <= 30% | 62.5% (10) | 61.5% (8) | 66.7% (2) | 22.7% (5) | 13.8% (4) |
+| titanet-small | **0.50 (proposed)** | 23.9% (16) | 0/9, <= 30% | 62.5% (10) | 61.5% (8) | 66.7% (2) | 13.6% (3) | 10.3% (3) |
+| titanet-small | 0.486 (FAR<=1% op. point) | 20.9% (14) | 0/9, <= 30% | 56.3% (9) | 53.8% (7) | 66.7% (2) | 9.1% (2) | 10.3% (3) |
+| titanet-small | 0.421 (EER) | 16.4% (11) | 1/9, <= 44% | 43.8% (7) | 38.5% (5) | 66.7% (2) | 4.5% (1) | 10.3% (3) |
+| campplus | 0.54 / 0.50 | 47.8% / 43.3% | 3/9 / 4/9 | 100% / 100% | | | | |
+| campplus | 0.755 (op. point) | 85.1% (57) | 0/9, <= 30% | 100% (16) | | | | |
+| eres2net | 0.54 / 0.50 | 34.3% / 25.4% | 1/9 / 1/9 | 68.8% / 56.3% | | | | |
+| eres2net | 0.558 (op. point) | 37.3% (25) | 0/9, <= 30% | 68.8% (11) | | | | |
+| resnet34 | 0.54 / 0.50 | 9.0% / 6.0% | 8/9 / 8/9 | 18.8% / 12.5% | | | | |
+| resnet34 | 0.825 (op. point) | 58.2% (39) | 0/9, <= 30% | 100% (16) | | | | |
+
+EER over all trials: titanet-small 13.8 % (at 0.421), eres2net 22.3 % (0.475), resnet34 34.6 % (0.763),
+campplus 44.6 % (0.517). Per bucket (titanet-small): EER 0.0 % in <= 0.7 s, 0.7-1 s and 1-2 s, 5.2 %
+over 2 s, each on 1 to 4 other trials (not verifiable). Every FAR <= 1 % claim needs 381 other trials
+with none accepted (Wilson upper bound); this set has 9, all one YouTube video.
+
+**Proposal for Ralf:** keep TitaNet-small; move `FACTORY_THRESHOLD` 0.54 to 0.50 (his rejections about
+28 % to 24 %, no video clip accepted, margin 0.025 over the highest; FAR <= 1 % not verifiable at n=9 at
+either line). Short words (under 1 s of speech: 10 of 16 rejected at both lines) and quiet speech (4 of
+5) are not fixed by any line or by any of five signal changes tried (repeating to 2 s helped 2 of 67,
+within noise, not shipped); they need the "say it longer / come closer" line. Next data: 30 consenting
+other-speaker scores (per_profile), 381 other trials for any FAR <= 1 % claim, more one-word commands.
+
+Not verified here: a real enrolment on a loaded machine with the new hold (the test is a fake decoder);
+the sweep's frames are the RMS-selected ones, the server's are the detector's (31.2), so live scores
+can differ slightly.
+
 ## 2. What Ralf must do
 
 1. After a pull: `git pull` on `main`, `npm ci`, `npm run ext`, reload the extension on
