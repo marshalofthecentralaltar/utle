@@ -1021,6 +1021,22 @@ Safety and gates on the final code (14:23 to 14:32, under the lock): voice.ts se
 engine tests untouched). The bound (4500 ms) and README's "about three seconds" stay: the final's landings were
 2.6 to 4.0 s (p50 2.75 s), still under 4500 and the server's 5000 ms timeout.
 
+Review 2 (2026-11-03, ruling: the pause trigger goes). The pause's early ask (the paragraph above) cost a third
+model call per sentence for no measured gain, so the early ask now starts only on the final's arrival (32.3,
+bbc362f spec, 0d63db3 red, b3485e7 code; `src/speech/local.ts` onPause no longer calls `onStable`). Five section 1
+runs on that code (14:52 to 14:57, CPU 24 to 43 % at start, 6.1 GB free, artifacts/quick/r2-*): landings 3042,
+2729, 2411, 3819, 2634 ms (p50 2729, max 3819); stages p50 final 943, ask 31, check 1585, typed 81. One addressee
+line and one intent line per run (5 of 5). Cost after: 200 calls per 100 sentences, $0.56, as main. Section 8:
+6 PASS 0 FAIL; `run.ts` ALL PASS; `npm run check` green, 4246 tests.
+
+Diagnostic (no fix): is the in-situ check (1.4 to 2.6 s) slower than the eval's (p50 1.2 to 1.3 s) because the
+server's event loop is blocked while the reply waits? `artifacts/quick/looplag.mjs` (loaded into vite only, by
+NODE_OPTIONS, not product) logged `monitorEventLoopDelay` every 250 ms; `loop_window.py r2`. Inside each check's
+window the loop's delay peaked at 52 to 75 ms (Windows' timer floor is about 15 ms), against 1411 to 2595 ms
+checks; the whole process (worker threads included) used about one core in that window (1171 to 2719 ms CPU).
+At most about 60 ms of the gap is the loop: it does not explain it. Still open: the API's own time in the hour
+and the first call of a fresh process (+0.2 to 0.45 s outside the product, not moved in situ by a warm-up).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
