@@ -1239,9 +1239,23 @@ either line). Short words (under 1 s of speech: 10 of 16 rejected at both lines)
 within noise, not shipped); they need the "say it longer / come closer" line. Next data: 30 consenting
 other-speaker scores (per_profile), 381 other trials for any FAR <= 1 % claim, more one-word commands.
 
+The choice between 0.54 and 0.50 is Ralf's. At 0.54 about 28 % of his utterances are rejected (29.9 %
+against the live profile) and the line sits 0.077 above the loudest video clip (0.463 against the live
+profile; 0.065 above the sweep profile's 0.475); at 0.50 about 24 % (22.4 % live) are rejected and the
+margin is 0.037 (0.025 against the sweep profile).
+
 Not verified here: a real enrolment on a loaded machine with the new hold (the test is a fake decoder);
 the sweep's frames are the RMS-selected ones, the server's are the detector's (31.2), so live scores
 can differ slightly.
+
+**For other owners** (the strip's lines, `extension/src/offscreenMain.ts`; nothing changed there in this lane):
+- An owner utterance of 0.5 to 1 s of speech that scores under the line is answered as not his voice
+  (`rejected_other`); it should get the "say it longer" line that `insufficient_audio` gets ("ütle
+  pikemalt"). Under 1 s of speech, 10 of his 16 clips are rejected at 0.54 and at 0.50 alike; his 5
+  clips under 0.5 s already get that line (`insufficient_audio`), but 6 of his 11 clips of 0.5 to 1 s
+  are told "not your voice" (at 0.54 and at 0.50).
+- A rejection at a speech RMS under 0.04 should say to come closer to the microphone: 4 of his 5 clips
+  that quiet are rejected at 0.54, under every signal change tried.
 
 ## 2. What Ralf must do
 
