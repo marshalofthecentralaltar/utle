@@ -12,6 +12,7 @@ import type { FormatStyle } from '../../src/browser/protocol.ts'
 // mail (29.3)
 import type { MailField, PageContact } from '../../src/browser/protocol.ts'
 import { collectContacts } from '../../src/core/contacts.ts'
+import { behindDialog } from '../../src/browser/protocol.ts'
 import type { ContactSource } from '../../src/core/contacts.ts'
 import { MAIL, MAIL_NAMES } from './sites.ts'
 import { composeWindowOf, mailPartOf, subjectIn } from './box.ts'
@@ -2354,11 +2355,28 @@ function searchField(site: Site | null): HTMLElement | null {
 /** True once the page has started leaving (the answer may then never arrive; background.ts waits for the load). */
 let leaving = false
 
+/**
+ * Lane EXIT (finding 5): a search field that is on the page but covered by an open dialog (YouTube's cookie
+ * consent). The answer names the dialog's buttons, so he hears to answer it first, not that there is no search.
+ */
+function fieldBehindDialog(site: Site | null): string | null {
+  const dialog = [...document.querySelectorAll<HTMLElement>(DIALOG)].find((d) => visible(d))
+  if (!dialog) return null
+  const selectors = [searchFieldFor(location.hostname), site?.searchField ?? null, ...GENERIC_SEARCH_FIELDS]
+  const covered = selectors.some((selector) => selector !== null && [...document.querySelectorAll<HTMLElement>(selector)].some((el) => isTextField(el) && !dialog.contains(el)))
+  if (!covered) return null
+  const buttons = [...dialog.querySelectorAll<HTMLElement>('button, [role="button"]')]
+    .filter((b) => visible(b))
+    .map((b) => clean(b.innerText || b.textContent))
+    .filter((t) => t !== '' && t.length <= 40)
+  return behindDialog([...new Set(buttons)])
+}
+
 async function siteSearch(query: string, site: Site | null): Promise<PageResult> {
   const text = query.trim()
   if (text === '') return fail('not_found', 'Nothing to search for.')
   const field = await waitFor(() => searchField(site), SEARCH_FIELD_MS)
-  if (!field) return fail('not_found', 'This page has no search field.')
+  if (!field) return fail('not_found', fieldBehindDialog(site) ?? 'This page has no search field.')
   await emptyField(field)
   await typeAtSelection(field, text)
   await sleep(60)

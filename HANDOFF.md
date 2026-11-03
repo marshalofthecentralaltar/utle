@@ -1129,6 +1129,43 @@ run; on the real youtube.com it is unverified.
 Gates on r10-exit (under the lock, 2026-11-03 14:10 to 14:14): `npm run check` 60 files, 4238 tests, exit 0;
 `run.ts` 330 PASS, ALL PASS (docs/proof restored after).
 
+**Review round 1: hermetic, and finding 5 fixed.** control-1 drove the real google.com: the model's first answer
+opened `https://www.google.com/search?q=lastelaulud`, Google answered with `/sorry/index` and reCAPTCHA. Hosts per
+earlier run: control-1 www.google.com (5 navigations), www.youtube.com, web.whatsapp.com; dbg2-1, r-1, r-3, v-1,
+v-2, v-3 only www.youtube.com and web.whatsapp.com (stand-ins); r-2 only web.whatsapp.com; dbg-1 none. exit.ts now
+routes every request: localhost passes, YouTube and WhatsApp get their stand-ins, any google.* host gets a minimal
+results stand-in, anything else is aborted; the new check "hermetic: every navigation is to a stand-in or an
+extension page" names any other URL. Finding 5: when the search field is on the page but an open dialog covers it,
+page.ts `siteSearch` now answers `not_found` with `behindDialog(buttons)` (protocol.ts; the dialog's visible
+buttons), and the strip says "Otsing on lehe akna taga. Vasta enne aknale, näiteks „keeldu kõigist“ või „nõustu
+kõigiga“, siis ütle otsing uuesti." instead of "Sellel lehel ei ole otsingut. Ütle „otsi googlest“." Chosen: tell
+him, not hold the search (a held search needs a pending command across the dialog's close, engine work). Red first:
+`src/core/searchBehindDialog.test.ts` 3 failed, 2 passed before the fix; 5 passed after.
+
+Runs w-1, w-2, w-3 (overlap) and control2-1 (CPU 16 to 29 %, 5.8 to 6.6 GB free): steps 1 to 9 and 11 to 13 pass in
+all four; hermetic PASS 4/4 (control2-1 reached the google stand-in at 86315 ms, nothing live). Results for
+"lastelaulud" FAIL 4/4: w-1 and w-2 searched "lastelauda" (finding 3); w-3 and control2-1 got the new line (the old
+one 0/4), but the scripted person only says "Ütle, nõustu kõigiga" and never the search again, and the exit set has
+no "otsi lastelaulud" clip. So with this fix the step needs one more human sentence; holding the search would not.
+WhatsApp 8953/9759/9258/6824 ms, dictation 1199/1702/1301/1203 ms, "saada" 1894/2660/1978/2087 ms after his last
+word; machine time 195.1/242.2/209.4/205.8 s; the bar leaks in the overlap runs (finding 2), none in the control;
+the enrolment phrase 4/4 (finding 1). Gates after the fix: `npm run check` 61 files, 4243 tests; `run.ts` 330 PASS.
+
+**Review round 2: the ruling, the person follows the bar, run.ts cases.** Ruling (orchestrator): keep "tell him",
+do not hold the search. The consent comes once per profile, and a command held across a page reload could fire
+later when he no longer expects it, worse for a person who cannot stop it by hand; reversible later. The exit set
+has a new owner clip `owner-search` ("Ütle, otsi lastelaulud.", voice mari, `UTLE_EXIT_ONLY=owner-search npx tsx
+scripts/exit-set.ts` writes only it), and exit.ts's person, when the bar has said "Otsing on lehe akna taga", answers
+the consent and then says it (logged as a reaction). run.ts has three cases on stand-ins: (i) the YouTube stand-in
+with its consent open: the search's line says to answer the window and names „keeldu kõigist“ and „nõustu
+kõigiga“; (ii) a page with a small dialog that covers nothing and no search field: the old line; (iii) the YouTube
+stand-in after the consent is answered: the search runs (results for lastelaulud). Red first, run.ts on page.ts
+without the `fieldBehindDialog` call: "FAIL siteSearch EXIT 5 (i) ... not_found: This page has no search field.
+line="Sellel lehel ei ole otsingut. Ütle „otsi googlest“." consent=true", (ii) and (iii) PASS, "1 FAILED" in the
+whole suite (`artifacts/exit/suite-red-1.log`). Typecheck and lint pass on this tree. Not yet run here: the green
+run.ts, `npm run check`, and the three overlap runs and the control with the new clip; the batch was stopped by
+the session's low-memory reap at 15:08 (machine at about 4 GB free while Ralf uses the product on port 5173).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

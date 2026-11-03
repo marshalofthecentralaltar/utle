@@ -1125,6 +1125,37 @@ async function main(): Promise<void> {
       await send({ kind: 'arm', on: false })
       await essay.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
 
+      // Lane EXIT, finding 5 (review 2): a search while YouTube's cookie consent covers the page (the stand-in
+      // trimmed from the real one), a dialog that covers nothing on a page without a search, and the search once
+      // the consent is answered.
+      const youtubeHtml = readFileSync(join(here, 'fixtures/youtube.html'), 'utf8')
+      const dialogNoSearch =
+        '<!doctype html><html lang="et"><head><meta charset="utf-8"><title>Teade</title></head><body><main><h1>Leht ilma otsinguta</h1><p>Siin ei ole otsingukasti.</p></main>' +
+        '<div role="dialog" aria-label="Teade" style="position:fixed;right:16px;bottom:16px;width:260px;padding:12px;background:#fff;border:1px solid #888"><p>Uus teade</p><button>Sulge</button></div></body></html>'
+      await ctx.route('https://www.youtube.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: youtubeHtml }))
+      await ctx.route('https://dialog.stand-in.test/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: dialogNoSearch }))
+      const searchKids = { kind: 'siteSearch', query: 'lastelaulud' } as const
+      const searchLine = (res: Result | 'timeout'): string => (res !== 'timeout' && !res.ok ? STRINGS.et.browserFailed(searchKids, res.code, res.message) : '')
+      const youtubeTab = (): Page | undefined => ctx.pages().find((p) => !p.isClosed() && p.url().startsWith('https://www.youtube.com'))
+      const consentUp = async (p: Page | undefined): Promise<boolean> => (await p?.evaluate(() => (globalThis as unknown as { consentShown?: () => boolean }).consentShown?.() === true).catch(() => false)) === true
+      await send({ kind: 'goTo', url: 'https://www.youtube.com/' })
+      await youtubeTab()?.waitForFunction(() => (globalThis as unknown as { consentShown?: () => boolean }).consentShown?.() === true, undefined, { timeout: 5000 })
+      r = await send(searchKids)
+      const behindLine = searchLine(r)
+      line('siteSearch', 'EXIT 5 (i): behind YouTube’s consent the line says to answer the window, naming its buttons', behindLine.startsWith('Otsing on lehe akna taga') && behindLine.includes('„nõustu kõigiga“') && behindLine.includes('„keeldu kõigist“'), `${describe(r)} line=${JSON.stringify(behindLine)} consent=${await consentUp(youtubeTab())}`)
+      await send({ kind: 'goTo', url: 'https://dialog.stand-in.test/' })
+      r = await send(searchKids)
+      line('siteSearch', 'EXIT 5 (ii): a dialog that covers nothing, no search field: the old line, not the window line', searchLine(r) === 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.', `${describe(r)} line=${JSON.stringify(searchLine(r))}`)
+      await send({ kind: 'goTo', url: 'https://www.youtube.com/' })
+      const answered = youtubeTab()
+      await answered?.click('#accept', { timeout: 5000 }).catch(() => undefined)
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      await answered?.waitForLoadState('domcontentloaded').catch(() => undefined)
+      const consentAfter = await consentUp(answered)
+      r = await send(searchKids)
+      await answered?.waitForURL(/\/results\?search_query=lastelaulud/, { timeout: 5000 }).catch(() => undefined)
+      line('siteSearch', 'EXIT 5 (iii): with the consent answered the search runs (results for lastelaulud)', !consentAfter && /\/results\?search_query=lastelaulud/.test(answered?.url() ?? ''), `${describe(r)} consent=${consentAfter} url=${answered?.url() ?? '-'}`)
+
       // The Google Docs stand-in, served at docs.google.com (page.ts recognises Docs by its hostname).
       const DOCS = 'https://docs.google.com/document/d/stand-in/edit'
       const docsHtml = readFileSync(join(here, 'fixtures/docs.html'), 'utf8')

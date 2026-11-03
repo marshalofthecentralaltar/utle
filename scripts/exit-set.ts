@@ -41,6 +41,9 @@ const EXIT_SET = [
   { name: 'room-vesta-2', speaker: 'vesta', room: true, text: 'Ilm on täna jälle nii hall ja külm.' },
   { name: 'room-kalev-3', speaker: 'kalev', room: true, text: 'Kus mu prillid küll on, kas sa nägid neid?' },
   { name: 'room-vesta-3', speaker: 'vesta', room: true, text: 'Bussipeatus on kohe maja taga.' },
+  // Review 2 (finding 5): the bar says the search is behind YouTube's window; with it answered he says the search
+  // again. Last in the list, so a full regeneration gives the clips above the same floor noise.
+  { name: 'owner-search', speaker: 'mari', room: false, text: 'Ütle, otsi lastelaulud.' },
 ] as const
 
 async function tts(text: string, speaker: string): Promise<Float32Array> {
@@ -73,7 +76,10 @@ function floored(speech: Float32Array): Float32Array {
 }
 
 mkdirSync(out, { recursive: true })
+// UTLE_EXIT_ONLY=owner-search,... writes only those clips (the others keep their recorded WAVs); the json is always whole.
+const only = process.env.UTLE_EXIT_ONLY?.split(',').map((n) => n.trim())
 for (const clip of EXIT_SET) {
+  if (only && !only.includes(clip.name)) continue
   const samples = floored(await tts(clip.text, clip.speaker))
   writeFileSync(join(out, `${clip.name}.wav`), wavBytes(samples, RATE))
   console.log(`${clip.name}.wav  ${clip.speaker}  ${(samples.length / RATE).toFixed(2)} s  "${clip.text}"`)
