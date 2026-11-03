@@ -2731,6 +2731,34 @@ describe('round 10 (#6): always-on mode keeps room speech out of the bar and out
     expect(t.state.line).toBe(STRINGS.et.inpage.cancelled)
     expect(t.heard).toContain('katkesta')
   })
+
+  it('round 11 (F6): after a read-back the check is told so, until something else runs', async () => {
+    const to: BoxState = { present: true, text: '', armed: true, kind: 'field', fieldKind: 'email', single: true, mail: true, label: 'Saajad' }
+    const checked: AddresseeRequest[] = []
+    const t = setup({
+      logic: asking,
+      box: to,
+      // The page answers a typing into the one-line field with the field: the strip reads it back.
+      answers: (command) => (command.kind === 'setText' ? { ok: true, box: { ...to, text: command.text } } : { ok: true }),
+      ask: (request) => Promise.resolve(request.utterance.startsWith('mine') ? answer({ kind: 'command', command: { kind: 'goTo', url: 'https://a.ee/' } }) : answer({ kind: 'dictate', text: 'natim@example.com' })),
+      addressee: (request) => {
+        checked.push(request)
+        return Promise.resolve({ verdict: 'dictation' })
+      },
+    })
+    t.engine.start()
+    t.say('kirjuta natim ät example punkt com')
+    await t.engine.idle()
+    t.say('Nadim on nõrga t-ga')
+    await t.engine.idle()
+    t.say('ei kustuta see ära')
+    await t.engine.idle()
+    t.say('mine kuhugi mujale')
+    await t.engine.idle()
+    t.say('ja veel midagi')
+    await t.engine.idle()
+    expect(checked.map((c) => c.readBack ?? false)).toEqual([false, true, true, true, false])
+  })
 })
 
 describe('Minu kohad in the engine (29.4.2)', () => {
