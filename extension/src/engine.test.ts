@@ -2759,6 +2759,42 @@ describe('round 10 (#6): always-on mode keeps room speech out of the bar and out
     await t.engine.idle()
     expect(checked.map((c) => c.readBack ?? false)).toEqual([false, true, true, true, false])
   })
+
+  it('round 11 (F6, review 1): the demo path: a sentence judged ignore runs nothing, so the next is still told; a rule that runs nothing ends it', async () => {
+    const to: BoxState = { present: true, text: '', armed: true, kind: 'field', fieldKind: 'email', single: true, mail: true, label: 'Saajad' }
+    const checked: AddresseeRequest[] = []
+    const t = setup({
+      logic: asking,
+      box: to,
+      answers: (command) => (command.kind === 'setText' ? { ok: true, box: { ...to, text: command.text } } : { ok: true }),
+      ask: () => Promise.resolve(answer({ kind: 'dictate', text: 'natim@example.com' })),
+      addressee: (request) => {
+        checked.push(request)
+        return Promise.resolve({ verdict: request.utterance.startsWith('Nadim') ? 'ignore' : 'command' })
+      },
+    })
+    t.engine.start()
+    t.say('kirjuta natim ät example punkt com')
+    await t.engine.idle()
+    // As in the demo: his first correction judged not for Ütle ...
+    t.say('Nadim on nõrga teega')
+    await t.engine.idle()
+    expect(t.state.ignored).toBe(STRINGS.et.wake.notForMe(1))
+    // ... and the one after it is still checked as right after the read-back.
+    t.say('ei kustuta see terve meil ära')
+    await t.engine.idle()
+    // A rule that runs nothing (no commands, no ask: never checked) ends the read-back.
+    t.say('vaikus')
+    await t.engine.idle()
+    t.say('ja veel midagi')
+    await t.engine.idle()
+    expect(checked.map((c) => [c.utterance, c.readBack ?? false])).toEqual([
+      ['kirjuta natim ät example punkt com', false],
+      ['Nadim on nõrga teega', true],
+      ['ei kustuta see terve meil ära', true],
+      ['ja veel midagi', false],
+    ])
+  })
 })
 
 describe('Minu kohad in the engine (29.4.2)', () => {

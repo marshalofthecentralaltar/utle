@@ -558,7 +558,7 @@ export const BROWSER_PHRASES: readonly string[] = Object.keys(FIXED)
 /** The command, or null; a loose match (round 11: a site's name alone, "ma tahan X-i minna") needs the box, so only inpageStep takes it. */
 export function browserIntent(text: string): BrowserCommand | null {
   const understood = browserUnderstood(text)
-  return understood === null || understood.loose === true ? null : understood.command
+  return understood === null || understood.loose !== undefined ? null : understood.command
 }
 
 /** Round 11 (F4): "ma tahan töötukassasse minna", "tahan minna youtube'i": a wish to go to a place. */
@@ -570,25 +570,26 @@ const BARE_NAME = /^[\p{L}\p{N}.-]+(?: [\p{L}\p{N}.-]+)?$/u
  * Round 11 (F4): a known site's name said alone, or "ma tahan X-i minna": the table's names and
  * bare domains only, never a sound-alike, at least four letters ("err" alone is a hesitation).
  */
-function looseSite(s: string): BrowserCommand | null {
+function looseSite(s: string): { command: BrowserCommand; loose: 'name' | 'wish' } | null {
   const wish = WISH_GO.exec(s)
   const wished = wish?.[1] ?? wish?.[2]
   if (wished !== undefined) {
     const site = siteUrl(wished)
-    return site === null ? null : { kind: 'goTo', url: site.url }
+    return site === null ? null : { command: { kind: 'goTo', url: site.url }, loose: 'wish' }
   }
   if (s.length < 4 || !BARE_NAME.test(s)) return null
   const site = siteUrl(s, false)
-  return site === null ? null : { kind: 'goTo', url: site.url }
+  return site === null ? null : { command: { kind: 'goTo', url: site.url }, loose: 'name' }
 }
 
 /**
  * browserIntent, plus what it was taken to be when a case ending came off a site name
  * ("mine whatsappi" is understood as "mine whatsapp"); understood is null otherwise. loose (round
  * 11): the command came from a site's name alone or "ma tahan X-i minna", words a message may hold;
- * inpageStep takes them for dictation while he is writing.
+ * inpageStep takes them for dictation while he is writing. 'name': the name alone, which the
+ * one-letter correction never reaches (misheard in inpage.ts); 'wish': it has a verb.
  */
-export function browserUnderstood(text: string): { command: BrowserCommand; understood: string | null; loose?: true } | null {
+export function browserUnderstood(text: string): { command: BrowserCommand; understood: string | null; loose?: 'name' | 'wish' } | null {
   const s = cleanForBrowser(text)
   if (s === '') return null
   const plain = (command: BrowserCommand): { command: BrowserCommand; understood: null } => ({ command, understood: null })
@@ -624,5 +625,5 @@ export function browserUnderstood(text: string): { command: BrowserCommand; unde
     if (site) return { command: { kind: 'goTo', url: site.url }, understood: site.key === null ? null : `${go[1]} ${site.key}` }
   }
   const loose = looseSite(s)
-  return loose === null ? null : { command: loose, understood: null, loose: true }
+  return loose === null ? null : { command: loose.command, understood: null, loose: loose.loose }
 }

@@ -1205,8 +1205,12 @@ per-utterance verdicts (vitest hides a passing test's output).
 Still asked, rightly: English and Estonian talk to himself or the room, his corrections of the address in the To
 field, page clicks ("Mobiil-ID-ga sisselogimine", "logi mobiil-ID-ga sisse"), "sinna kus ma olin enne
 töötukassat" (34.2: the model knows the tab he came from; the rules see no tabs), "kirjuta enda sõbrale e-maili"
-(a careful plan), and words the recogniser broke. Side effect by design (33.3): "tagasi" and "mine
-tagasi" now wait for their final, because a longer command starts with them.
+(a careful plan), and words the recogniser broke. Prefix waits (33.3), checked against origin/main's
+`commandPrefix.ts`, `phrases.ts`, `quickReply.ts` with `npx tsx`: main `extendsCommand('tagasi') = false,
+extendsCommand('mine tagasi') = true`; this branch `true, true`. So "mine tagasi" waited already (round 10, "mine
+tagasi sinna kus ma olin"); a bare "tagasi" (the undo word) now waits for its final, about 0.6 s, because "tagasi
+eelmisele lehele" starts with it. A site's name alone must be exact: no one-letter or sound-alike correction
+reaches it ("you tubee", "gmai" do nothing); "ma tahan X-i minna" keeps them.
 
 **F6, the sentence after a read-back is addressed.** The addressee request carries `readBack` (the last step typed
 into a one-line field and the strip read it back); the prompt treats the next sentence, while the field is armed,
@@ -1217,7 +1221,7 @@ guard), 112/112 on Sonnet 5.5, $0.571 for the run; the YouTube recovery case ("n
 search") passed this run (it searched at once, then said it saw no results). Gate: `npm run check` 4276 tests.
 
 Not verified: a real voice; the real Gmail To field returning `box.single` after a typing (the flag needs it;
-only indirectly shown, by the demo's read-back line); the latency effect of "tagasi" waiting for its final.
+only indirectly shown, by the demo's read-back line); what the bare "tagasi" waiting for its final costs him in use.
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 

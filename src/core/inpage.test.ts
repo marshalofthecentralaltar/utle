@@ -2572,6 +2572,14 @@ describe('round 11 (F4, lane WORDS): the owner\'s own words for the core command
     }
   })
 
+  it('a bare word one letter from a site name does nothing (the name alone must be exact; the wish form has a verb)', () => {
+    for (const u of ['gmai', 'delf', 'you tubee', 'you tub', 'linked ín', 'Töötukass']) {
+      expect(first(u)?.kind, u).not.toBe('goTo')
+    }
+    // With the verb a correction still reaches the site: "ma tahan juutuubi minna" by sound.
+    expect(first('ma tahan juutuubi minna')).toEqual({ kind: 'goTo', url: 'https://www.youtube.com/' })
+  })
+
   it('what no rule may guess stays with the model: an unknown place, a wish with no place, "where I was before" (34.2)', () => {
     for (const u of ['ma tahan koju minna', 'ma tahan minna', 'ma tahan magama minna', 'mine tagasi sinna kus ma olin', 'Ei, ma mõtlen sinna, kus ma olin ennem töötukassat', 'ma tahan kirjutada enda sõbrale e-maili']) {
       expect(asks(u), u).toBe(true)
