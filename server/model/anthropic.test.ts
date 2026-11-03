@@ -168,3 +168,26 @@ describe('the Anthropic adapter reads the reply', () => {
     }
   })
 })
+
+describe('the Anthropic adapter warms at start (32.3, QUICK review 1)', () => {
+  it('warm sends one free count_tokens request for its model and no message', async () => {
+    const counted: unknown[] = []
+    const { client, calls } = fakeClient()
+    client.messages.countTokens = async (params) => {
+      counted.push(params)
+      return { input_tokens: 1 }
+    }
+    await anthropicModel(client, 'claude-sonnet-5-5').warm?.()
+    expect(counted).toEqual([{ model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: '.' }] }])
+    expect(calls).toEqual([])
+  })
+
+  it('a failed warm-up resolves (the first ask then pays as before); a client without count_tokens is a no-op', async () => {
+    const { client } = fakeClient()
+    client.messages.countTokens = async () => {
+      throw new Anthropic.APIConnectionError({ message: 'down' })
+    }
+    await expect(anthropicModel(client, 'm').warm?.()).resolves.toBeUndefined()
+    await expect(anthropicModel(fakeClient().client, 'm').warm?.()).resolves.toBeUndefined()
+  })
+})

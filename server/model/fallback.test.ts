@@ -105,3 +105,14 @@ describe('withFallback (plan 4.2: fast failures only)', () => {
     expect(primary.calls).toBe(2)
   })
 })
+
+describe('withFallback warms its primary only (32.3, QUICK review 1)', () => {
+  it('warm reaches the primary, never the fallback; a primary without warm is a no-op', async () => {
+    const warmed: string[] = []
+    const primary = { ...fake('anthropic'), warm: async () => void warmed.push('primary') }
+    const behind = { ...fake('deepseek'), warm: async () => void warmed.push('fallback') }
+    await withFallback(primary, behind).warm?.()
+    expect(warmed).toEqual(['primary'])
+    await expect(withFallback(fake('anthropic'), null).warm?.()).resolves.toBeUndefined()
+  })
+})
