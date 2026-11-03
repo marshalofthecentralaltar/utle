@@ -26,6 +26,11 @@ import { DEFAULT_PLACES, placeNouns } from '../src/core/places.ts'
 import type { Lang } from '../src/core/strings.ts'
 import type { PageContext } from '../src/browser/protocol.ts'
 import { pageIntent } from '../server/intent.ts'
+// Round 11 (F5, 26.8): the rule cases run the real rules; the model is never asked for them.
+import { initialInpage, inpageStep } from '../src/core/inpage.ts'
+import type { InpageSession, InpageStep } from '../src/core/inpage.ts'
+import type { SavedItem } from '../src/core/saved.ts'
+import type { BoxState } from '../src/browser/protocol.ts'
 // ---------- round 10: addressed speech (32.3) ----------
 import { addresseeAnswer } from '../server/addressee.ts'
 import type { AddresseeRequest, AddresseeVerdict } from '../src/core/addressee.ts'
@@ -1128,6 +1133,63 @@ async function runAddressee(c: AddresseeCase, model: Model): Promise<AskResult> 
 }
 // ---------- end of the addressee check ----------
 
+// ---------- Round 11 (F5, 26.8): rule cases on the Gmail stand-in ----------
+// "kirjuta Nadimile" with a saved contact and "vale" after a read-back are answered by the rules
+// before any model: each case proves the rules answer (commands, no ask) and the model is never asked.
+
+interface RuleCase {
+  name: string
+  page: PageContext
+  /** The utterances in order, each with the box the page reports at that moment. */
+  said: { utterance: string; box: BoxState }[]
+  saved: SavedItem[]
+  /** The last step, judged; null when it passes, else what is wrong. */
+  judge(step: InpageStep): string | null
+}
+
+const NADIM: SavedItem = { id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' }
+const TO_FIELD = (text: string): BoxState => ({ present: true, text, armed: true, kind: 'field', fieldKind: 'email', single: true, label: 'Saajad', mail: true })
+const setTo = (want: string) => (step: InpageStep): string | null => {
+  const [first] = step.commands
+  if (step.ask === true) return 'the model would be asked'
+  if (step.commands.length !== 1 || first?.kind !== 'setText') return `commands ${JSON.stringify(step.commands)}`
+  return first.text === want ? null : `typed ${JSON.stringify(first.text)}`
+}
+
+const RULE_CASES: RuleCase[] = [
+  { name: 'nadim: "kirjuta Nadimile" with compose open and To armed puts the contact\'s address in To', page: GMAIL_COMPOSE, said: [{ utterance: 'kirjuta Nadimile', box: TO_FIELD('') }], saved: [NADIM], judge: setTo('nadim.naide@example.com') },
+  { name: 'nadim: "Natim" heard for "Nadim" still finds the contact', page: GMAIL_COMPOSE, said: [{ utterance: 'saada meil Natimile', box: TO_FIELD('') }], saved: [NADIM], judge: setTo('nadim.naide@example.com') },
+  {
+    name: 'nadim: "vale" after a read-back clears To, the next utterance is spelled into the address',
+    page: GMAIL_COMPOSE,
+    said: [
+      { utterance: 'vale', box: TO_FIELD('natim.metavallijad@gmail.com') },
+      { utterance: 'n a d i m punkt naide ät example punkt com', box: TO_FIELD('') },
+    ],
+    saved: [NADIM],
+    judge: setTo('nadim.naide@example.com'),
+  },
+]
+
+function runRuleCase(c: RuleCase): { ok: boolean; ms: number } {
+  const started = Date.now()
+  let session: InpageSession = { ...initialInpage('et'), saved: c.saved }
+  let step: InpageStep | null = null
+  let problem: string | null = null
+  for (const { utterance, box } of c.said) {
+    step = inpageStep(session, utterance, box)
+    if (step.ask === true) problem = `the model would be asked for "${utterance}"`
+    session = step.session
+  }
+  if (problem === null) problem = step === null ? 'no step' : c.judge(step)
+  const ok = problem === null
+  const ms = Date.now() - started
+  const last = c.said.at(-1)?.utterance ?? ''
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${String(ms).padStart(5)} ms rules   ${siteOf(c.page).padEnd(18)} "${last}" -> ${JSON.stringify(step?.commands ?? [])} (model not asked)${problem ? ` (${problem})` : ''} [${dollars(0)}]`)
+  return { ok, ms }
+}
+// ---------- end of the rule cases ----------
+
 async function main(): Promise<void> {
   if (!CONFIGURED.ready) {
     console.error(`intent-eval: ${MODEL} has no key (ANTHROPIC_API_KEY is not set)`)
@@ -1168,6 +1230,19 @@ async function main(): Promise<void> {
   }
   if (addressees.length > 0) console.log(`addressee: ${addresseePassed}/${addressees.length} verdicts right`)
   selected.push(...addressees.map((c): Case => ({ name: c.name, utterance: c.utterance, steps: [] })))
+  // Round 11 (F5, 26.8): the rule cases, no model call, counted as passed tasks at $0.
+  const rules = RULE_CASES.filter((c) => ONLY === '' || `${c.name} ${c.said.map((x) => x.utterance).join(' ')}`.toLowerCase().includes(ONLY))
+  let rulesPassed = 0
+  for (const c of rules) {
+    const result = runRuleCase(c)
+    if (result.ok) {
+      passed += 1
+      rulesPassed += 1
+    }
+    tasks.push({ name: c.name, model: 'rules', passed: result.ok, asks: 0, input: 0, cacheRead: 0, output: 0, usd: 0, ms: result.ms })
+  }
+  if (rules.length > 0) console.log(`rules: ${rulesPassed}/${rules.length} answered by the rules, the model never asked`)
+  selected.push(...rules.map((c): Case => ({ name: c.name, utterance: c.said.at(-1)?.utterance ?? '', steps: [] })))
 
   const latencies = all.map((a) => a.ms).sort((a, b) => a - b)
   const p50 = percentile(latencies, 50)
@@ -1210,7 +1285,8 @@ async function main(): Promise<void> {
   console.log('| model | pass | asks per task | tokens per completed task (in / cached / out) | $ per completed task | $ wasted on failed tasks | p50 / p95 ms |')
   console.log('|---|---|---|---|---|---|---|')
   for (const row of rows) console.log(line(row))
-  if (rows.length > 1) console.log(line(table))
+  // Round 11: with rule cases only there is no model row; the total row still says what they cost.
+  if (rows.length !== 1) console.log(line(table))
   const deepseek = [MODEL, CAREFUL].some((m) => m.startsWith('deepseek:'))
   console.log(`total spend ${dollars(totalUsd)}${deepseek ? `; DeepSeek ${deepseekPeak(at) ? 'peak' : 'off-peak'} prices (unverified hours)` : ''}`)
 

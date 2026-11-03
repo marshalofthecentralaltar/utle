@@ -1727,7 +1727,7 @@ describe('Round 5 fields: dictation into a kind of field is converted and append
   it('the step line of a single field reads back what it now holds', () => {
     const step = inpageStep(session(), 'kolm üheksa null kaks', field('', 'code', 'Isikukood'))
     expect(step.line).toBe(ET.inpage.typedInto('3902'))
-    expect(step.line).toBe('Kirjutasin: 3902 (ütle „edasi“ või „valmis“)')
+    expect(step.line).toBe('Kirjutasin: 3902 (ütle „edasi“, „valmis“ või „vale“)')
     expect(inpageStep(session({ lang: 'en' }), 'three nine zero two', field('', 'code')).line).toBe(EN.inpage.typedInto('3902'))
   })
 
@@ -1949,7 +1949,7 @@ describe('round 6: Minu andmed, saved values by the rules (26.2)', () => {
       expect(step.commands).toEqual([{ kind: 'setText', text: 'ralf.tamm@gmail.com' }])
       expect(step.ask).toBeUndefined()
       expect(step.line).toBe(ET.inpage.insertedSaved('ralf.tamm@gmail.com', 'minu e-post'))
-      expect(step.line).toBe('Kirjutasin: ralf.tamm@gmail.com (minu e-post). Ütle „valmis“ või „edasi“.')
+      expect(step.line).toBe('Kirjutasin: ralf.tamm@gmail.com (minu e-post). Ütle „valmis“, „edasi“ või „vale“.')
       expect(step.session.undo).toEqual(['vana'])
     })
   }
@@ -2509,5 +2509,98 @@ describe('timed scroll (round 10, #7, ARCHITECTURE 33.4)', () => {
     }
     // A seek stays a seek.
     expect(inpageStep(session(), 'keri edasi kaks minutit', NO_BOX).commands).toEqual(only({ kind: 'media', action: 'forward', seconds: 120 }))
+  })
+})
+
+// Round 11 (F5, ARCHITECTURE 26.8): a saved contact puts its address into To; "vale" in a read-back
+// clears the field and the next utterance is spelled letter by letter.
+describe('round 11: contact (26.8)', () => {
+  const NADIM: SavedItem = { id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' }
+  const EMAIL: SavedItem = { id: 'e1', name: 'minu e-post', value: 'ralf.tamm@gmail.com', kind: 'email' }
+  const withContact = session({ saved: [EMAIL, NADIM] })
+  const to = (text = ''): BoxState => ({ present: true, text, armed: true, kind: 'field', fieldKind: 'email', single: true, label: 'Saaja', mail: true })
+  const chat: BoxState = { present: true, text: '', armed: true, kind: 'composer', label: 'Sõnum' }
+
+  for (const phrase of ['kirjuta Nadimile', 'saada meil Nadimile', 'kirjuta Nadim', 'kirjuta meil Natimile']) {
+    it(`contact: "${phrase}" in an armed To field types the address whole, reads the name back, asks no model`, () => {
+      const step = inpageStep(withContact, phrase, to('natim'))
+      expect(step.commands).toEqual([{ kind: 'setText', text: 'nadim.naide@example.com' }])
+      expect(step.ask).toBeUndefined()
+      expect(step.line).toBe(ET.inpage.insertedContact('Nadim', 'nadim.naide@example.com'))
+      expect(step.line.startsWith('Saaja: Nadim')).toBe(true)
+    })
+  }
+
+  it('contact: with no compose open, "kirjuta Nadimile, et tulen homme" opens a mail to the address with the body', () => {
+    const step = inpageStep(withContact, 'kirjuta Nadimile, et tulen homme', NO_BOX)
+    expect(step.commands).toEqual([{ kind: 'compose', to: 'nadim.naide@example.com', body: 'Tulen homme.' }])
+    expect(step.ask).toBeUndefined()
+    const done = inpageResult(withContact, step.commands, OK)
+    expect(done.line).toBe(ET.inpage.contactMail('Nadim', 'nadim.naide@example.com'))
+  })
+
+  it('contact: in a chat composer the bare "kirjuta Nadimile" stays a chat; "saada meil Nadimile" is the mail', () => {
+    expect(inpageStep(withContact, 'kirjuta Nadimile', chat).commands).not.toEqual([{ kind: 'compose', to: 'nadim.naide@example.com' }])
+    expect(inpageStep(withContact, 'saada meil Nadimile', chat).commands).toEqual([{ kind: 'compose', to: 'nadim.naide@example.com' }])
+  })
+
+  it('contact: without a saved contact "kirjuta meil Nadimile" is the mail to the name, as before (29.3: only -le comes off)', () => {
+    expect(inpageStep(session({ saved: [EMAIL] }), 'kirjuta meil Nadimile', NO_BOX).commands).toEqual([{ kind: 'compose', to: 'Nadimi' }])
+  })
+})
+
+describe('round 11: "vale" in a read-back (26.8)', () => {
+  const to = (text: string): BoxState => ({ present: true, text, armed: true, kind: 'field', fieldKind: 'email', single: true, label: 'Saaja', mail: true })
+  const name = (text: string): BoxState => ({ present: true, text, armed: true, kind: 'field', fieldKind: 'text', single: true, label: 'Nimi' })
+
+  for (const phrase of ['vale', 'valesti', 'see on vale', 'ei, vale', 'Vale.']) {
+    it(`vale: "${phrase}" after a read-back clears the field, says so, arms spelling`, () => {
+      const step = inpageStep(session(), phrase, to('natim.metavallijad@gmail.com'))
+      expect(step.commands).toEqual([{ kind: 'setText', text: '' }])
+      expect(step.line).toBe('Kustutasin. Ütle tähthaaval.')
+      expect(step.session.spellNext).toBe('email')
+      expect(step.session.undo).toEqual(['natim.metavallijad@gmail.com'])
+    })
+  }
+
+  it('vale: the next utterance is spelled: "n a d i m punkt naide ät example punkt com" is the address', () => {
+    const cleared = inpageStep(session(), 'vale', to('natim.metavallijad@gmail.com'))
+    const spelled = inpageStep(cleared.session, 'n a d i m punkt naide ät example punkt com', to(''))
+    expect(spelled.commands).toEqual([{ kind: 'setText', text: 'nadim.naide@example.com' }])
+    expect(spelled.ask).toBeUndefined()
+    expect(spelled.session.spellNext ?? null).toBeNull()
+    expect(spelled.line).toBe(ET.inpage.typedInto('nadim.naide@example.com'))
+  })
+
+  it('vale: in a text field the letters are joined too', () => {
+    const cleared = inpageStep(session(), 'vale', name('Natim'))
+    expect(cleared.session.spellNext).toBe('text')
+    expect(inpageStep(cleared.session, 'n a d i m', name('')).commands).toEqual([{ kind: 'setText', text: 'nadim' }])
+  })
+
+  it('vale: English "wrong", and the English line', () => {
+    const step = inpageStep(session({ lang: 'en' }), 'wrong', to('x@y.ee'))
+    expect(step.commands).toEqual([{ kind: 'setText', text: '' }])
+    expect(step.line).toBe(EN.inpage.wrongCleared)
+    expect(EN.inpage.wrongCleared).toBe('Deleted. Spell it letter by letter.')
+  })
+
+  it('vale: "edasi" and "valmis" are unchanged; "vale" with an empty field, or outside a one-line field, is not the read-back answer', () => {
+    expect(inpageStep(session(), 'edasi', to('a@b.ee')).commands).toEqual([{ kind: 'pressKey', key: 'Tab' }])
+    expect(inpageStep(session(), 'valmis', to('a@b.ee')).commands).toEqual([{ kind: 'pressKey', key: 'Tab' }])
+    expect(inpageStep(session(), 'vale', to('')).commands).not.toEqual([{ kind: 'setText', text: '' }])
+    expect(inpageStep(session(), 'vale', box('Tere')).commands).not.toEqual([{ kind: 'setText', text: '' }])
+  })
+
+  it('vale: a command after "vale" is still a command, and the spelling is dropped', () => {
+    const cleared = inpageStep(session(), 'vale', to('x@y.ee'))
+    const next = inpageStep(cleared.session, 'edasi', to(''))
+    expect(next.commands).toEqual([{ kind: 'pressKey', key: 'Tab' }])
+    expect(next.session.spellNext ?? null).toBeNull()
+  })
+
+  it('read-back: the lines offer "vale"', () => {
+    expect(ET.inpage.typedInto('a@b.ee')).toBe('Kirjutasin: a@b.ee (ütle „edasi“, „valmis“ või „vale“)')
+    expect(ET.inpage.insertedSaved('a@b.ee', 'minu e-post')).toBe('Kirjutasin: a@b.ee (minu e-post). Ütle „valmis“, „edasi“ või „vale“.')
   })
 })

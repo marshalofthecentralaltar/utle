@@ -131,3 +131,16 @@ describe('the entry flow: "katkesta" at any step leaves nothing saved', () => {
     expect(r[1]?.save).toBeUndefined()
   })
 })
+
+describe('round 11: a contact by voice (26.8)', () => {
+  it('contact: the name is always asked, the address is spelled as an e-mail, valmis saves it', () => {
+    let r = startEntry('contact', [], 'et')
+    expect(r.state?.step).toBe('name')
+    r = entryStep(r.state!, 'Nadim', [], 'et')
+    expect(r.state?.step).toBe('value')
+    for (const said of ['n a d i m punkt naide ät example punkt com']) r = entryStep(r.state!, said, [], 'et')
+    expect(r.state?.value).toBe('nadim.naide@example.com')
+    r = entryStep(r.state!, 'valmis', [], 'et')
+    expect(r.save).toEqual({ name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' })
+  })
+})

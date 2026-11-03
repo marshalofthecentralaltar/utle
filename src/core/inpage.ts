@@ -7,9 +7,9 @@ import { FILLERS, NOT_A_NAME, messageCommand, nameFromSpoken } from './message.t
 import { mailCommand, mailFieldCommand } from './mail.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
-import { savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
+import { contactMatch, savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
 import type { SavedItem } from './saved.ts'
-import { spokenValueOnly, typedFromSpoken } from './spelling.ts'
+import { spelledKind, spokenValueOnly, typedFromSpoken } from './spelling.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
 import { choiceName, choicePick } from './meant.ts'
@@ -47,6 +47,11 @@ export interface InpageSession {
   choosing?: readonly string[] | null
   /** Round 10 (#5, 34.4): the two page items the bar just asked about ("Kumb: 1 …, 2 …?"), by readPage id, or null. */
   choosingItems?: readonly number[] | null
+  /**
+   * Round 11 (F5, 26.8): "vale" in a read-back cleared a one-line field: the next utterance into it
+   * is spelled letter by letter for this kind of field (a command word is still a command). Null or absent: off.
+   */
+  spellNext?: FieldKind | null
   /**
    * Review R3 M6: the last commands that ran ended with a select, so "kustuta see" deletes the
    * selection (Backspace); otherwise it takes back the last utterance. Set by inpageResult.
@@ -100,10 +105,28 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
     if (id !== undefined) return act(cleared, { kind: 'browser', command: { kind: 'clickItem', id } }, box)
     return inpageStep(cleared, utterance, box)
   }
+  // Round 11 (F5, 26.8): after "vale" the next utterance into the one-line field is spelled, unless it is a command.
+  const spellNext = previous.spellNext ?? null
+  if (spellNext !== null) {
+    const cleared: InpageSession = { ...previous, spellNext: null }
+    const clean = normalise(utterance)
+    const field = box.present && box.armed && box.single === true && !cleared.asleep && FORM_KEYS[clean] === undefined && !WRONG.has(clean)
+    const spelled = field ? classifyExact(cleared, utterance).action : null
+    if (spelled?.kind === 'dictate' && spelled.spell === undefined) return act(cleared, { kind: 'dictate', text: spelled.text, spell: spelledKind(spelled.text, spellNext) }, box)
+    return inpageStep(cleared, utterance, box)
+  }
   // Round 6 (26.2): a question about two saved values lasts one utterance.
   const session: InpageSession = (previous.choosing ?? null) === null ? previous : { ...previous, choosing: null }
   const saved = savedAction(previous, utterance, box)
   if (saved !== null) return act(session, saved, box)
+  // Round 11 (F5, 26.8): a saved contact named in a mail phrase ("kirjuta Nadimile"): its address in
+  // To. In a chat's composer only with a mail word ("saada meil Nadimile"); "kirjuta Marile" there is the chat.
+  const contact = session.asleep || isCancelAll(utterance) ? null : contactMatch(utterance, session.saved ?? [])
+  if (contact !== null && (mailCommand(utterance) !== null || !(box.present && box.armed && box.kind === 'composer' && box.mail !== true))) {
+    const into = box.present && box.armed && box.single === true && box.fieldKind === 'email' && contact.body === undefined
+    const action: Action = into ? { kind: 'insertSaved', item: contact.item } : { kind: 'browser', command: { kind: 'compose', to: contact.item.value, ...(contact.body !== undefined ? { body: contact.body } : {}) } }
+    return act(session, action, box)
+  }
   // A saved value named with no armed box ("minu meil" on a form): never a misheard command; the
   // model is asked, and may pick the field first (26.3).
   if (!session.asleep && (!box.present || !box.armed) && savedMatch(utterance, session.saved ?? [], false) !== null) {
@@ -113,6 +136,11 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
   // "kinnita" / "logi sisse" submit, whatever the box holds; elsewhere the words keep their meaning.
   const formKey = box.present && box.armed && box.single === true && !session.asleep ? FORM_KEYS[normalise(utterance)] : undefined
   if (formKey !== undefined) return act(session, { kind: 'browser', command: { kind: 'pressKey', key: formKey } }, box)
+  // Round 11 (F5, 26.8): "vale" answers the read-back of a one-line field that holds something: the field
+  // is cleared (undo keeps it) and the next utterance is spelled letter by letter.
+  if (box.present && box.armed && box.single === true && box.kind !== 'search' && box.fieldKind !== 'password' && !session.asleep && box.text.trim() !== '' && WRONG.has(normalise(utterance))) {
+    return { session: { ...pushUndo(session, box.text), spellNext: box.fieldKind ?? 'text' }, commands: [{ kind: 'setText', text: '' }], line: STRINGS[session.lang].inpage.wrongCleared }
+  }
   // mail (29.3.2): "teema …" and "lisa koopia" only in a field of a compose window; elsewhere they are words.
   const mailField = box.present && box.mail === true && !session.asleep ? mailFieldCommand(utterance) : null
   if (mailField !== null) return act(session, { kind: 'browser', command: mailField }, box)
@@ -215,8 +243,13 @@ export function inpageResult(
       // Round 6: a saved value is read back with its name.
       const item = typed?.kind === 'setText' && !wasUndo ? savedTyped(session.saved ?? [], typed.text) : undefined
       const shown = result.box?.single === true ? readBack(result.box.text, result.box.fieldKind ?? 'text') : item?.value ?? ''
-      if (item !== undefined) line = s.inpage.insertedSaved(shown, item.name)
+      if (typed?.kind === 'setText' && typed.text === '' && (session.spellNext ?? null) !== null) line = s.inpage.wrongCleared
+      else if (item?.kind === 'contact') line = s.inpage.insertedContact(item.name, item.value)
+      else if (item !== undefined) line = s.inpage.insertedSaved(shown, item.name)
       else line = result.box?.single === true ? s.inpage.typedInto(shown) : s.inpage.written
+    } else if (last.kind === 'compose' && contactTo(session, last.to) !== undefined) {
+      const contact = contactTo(session, last.to)
+      line = contact === undefined ? '' : s.inpage.contactMail(contact.name, contact.value)
     } else line = s.browserDone(last, result.tab?.title ?? null, result.hints ?? null) + (result.box ? savedHint(session.saved ?? [], result.box, session.lang) : '')
     return { session: { ...session, undo, hints, ...selected(session, last.kind === 'select') }, line }
   }
@@ -366,6 +399,9 @@ const SOFT_WORDS = new Set([
 const STOP = new Set(['stopp', 'stop', 'lõpeta'])
 
 /** Round 5: in an armed one-line form field, the next field and the form's Enter (whole utterance, normalised). */
+/** Round 11 (F5, 26.8): "vale" and its forms, normalised: the read-back was wrong. */
+const WRONG = new Set(['vale', 'valesti', 'see on vale', 'ei vale', 'see on valesti', 'kirjutasid valesti', 'wrong', 'thats wrong', 'that is wrong', 'its wrong'])
+
 const FORM_KEYS: Record<string, PressableKey> = {
   valmis: 'Tab', 'olen valmis': 'Tab', edasi: 'Tab', 'järgmine väli': 'Tab', done: 'Tab', next: 'Tab', 'next field': 'Tab',
   kinnita: 'Enter', sisesta: 'Enter', enter: 'Enter', 'logi sisse': 'Enter', 'saada vorm': 'Enter', 'esita vorm': 'Enter',
@@ -570,7 +606,8 @@ const SAVED_PROBE: BoxState = { present: true, text: '', armed: true }
  * awake; null otherwise (with no armed box the words are dictation and the model may pick a field).
  */
 function savedAction(session: InpageSession, utterance: string, box: BoxState): Action | null {
-  const items = session.saved ?? []
+  // Round 11 (26.8): a contact's address goes by name only into an e-mail field (To, Cc, an e-mail input).
+  const items = (session.saved ?? []).filter((item) => item.kind !== 'contact' || box.fieldKind === 'email')
   if (items.length === 0 || session.asleep || !box.present || !box.armed || isCancelAll(utterance)) return null
   const choosing = session.choosing ?? []
   if (choosing.length > 0) {
@@ -962,7 +999,7 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       const { value, name } = action.item
       const before = box.text.replace(/\s+$/u, '')
       const text = box.single === true || before === '' ? value : `${before} ${value}`
-      const line = s.inpage.insertedSaved(readBack(value, box.fieldKind === 'password' ? 'password' : 'text'), name)
+      const line = action.item.kind === 'contact' ? s.inpage.insertedContact(name, value) : s.inpage.insertedSaved(readBack(value, box.fieldKind === 'password' ? 'password' : 'text'), name)
       return { session: pushUndo(session, box.text), commands: [{ kind: 'setText', text }], line }
     }
     case 'speak': {
@@ -988,6 +1025,11 @@ function act(session: InpageSession, action: Action, box: BoxState): InpageStep 
       return { session: pushUndo(session, box.text), commands: [command], line }
     }
   }
+}
+
+/** Round 11 (26.8): the saved contact whose address a compose went to. */
+function contactTo(session: InpageSession, to: string | undefined): SavedItem | undefined {
+  return to === undefined ? undefined : (session.saved ?? []).find((item) => item.kind === 'contact' && item.value === to)
 }
 
 /** The text of a single field as the strip reads it back: a password as dots. */

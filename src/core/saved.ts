@@ -1,5 +1,6 @@
 import type { BoxState } from '../browser/protocol.ts'
-import { soundsLike } from './phonetic.ts'
+import { phoneticKey, soundsLike } from './phonetic.ts'
+import { asSentence } from './message.ts'
 import { normalise } from './quickReply.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang } from './strings.ts'
@@ -11,7 +12,8 @@ import type { Lang } from './strings.ts'
  * model is told savedNames, never a value.
  */
 
-export type SavedKind = 'email' | 'tel' | 'code' | 'number' | 'text'
+/** Round 11 (F5, 26.8): contact is a person's name (the item's name) and e-mail address (the value). */
+export type SavedKind = 'email' | 'tel' | 'code' | 'number' | 'text' | 'contact'
 
 export interface SavedItem {
   id: string
@@ -24,7 +26,7 @@ export interface SavedItem {
   aliases?: string[]
 }
 
-export const SAVED_KINDS: readonly SavedKind[] = ['email', 'tel', 'code', 'number', 'text']
+export const SAVED_KINDS: readonly SavedKind[] = ['email', 'tel', 'code', 'number', 'text', 'contact']
 /** The chrome.storage.local key. */
 export const SAVED_KEY = 'savedValues'
 export const MAX_SAVED = 50
@@ -199,6 +201,8 @@ export function savedFrom(stored: unknown): SavedItem[] {
  * the family word and no other item of that family is saved, so the short form is unambiguous.
  */
 export function savedPhrases(item: SavedItem, items: readonly SavedItem[] = [item]): string[] {
+  // Round 11 (26.8): a contact is said in a mail phrase.
+  if (item.kind === 'contact') return [`kirjuta meil ${item.name}`, item.name]
   const phrases = [item.name]
   const family = itemFamily(item)
   const folded = formOf(item.name).folded
@@ -221,4 +225,57 @@ export function savedHint(items: readonly SavedItem[], box: BoxState, lang: Lang
 /** The saved item a typed text ends with (the read-back after an insert), or undefined. */
 export function savedTyped(items: readonly SavedItem[], text: string): SavedItem | undefined {
   return items.find((item) => text === item.value || text.endsWith(` ${item.value}`))
+}
+
+// ---------- Round 11 (F5, docs/ARCHITECTURE.md 26.8): a saved contact named in a mail phrase ----------
+
+const MAIL_WORD = String.raw`(?:meil|meili|e-?meil|e-?meili|email|e-mail|emaili|e-maili|kiri|kirja|e-?kiri|e-?kirja)`
+/** "kirjuta Nadimile", "saada meil Nadimile", "kirjuta Nadimile, et tulen homme", "kirjuta Nadim". */
+const CONTACT_ET = new RegExp(String.raw`^(?:kirjuta|saada|koosta)\s+(?:uus\s+|üks\s+)?(?:${MAIL_WORD}\s+)?(\p{L}+(?:\s+\p{L}+)?)(?:\s*,?\s+et\s+(.+))?$`, 'iu')
+/** "write to Nadim", "email Nadim", "send a mail to Nadim saying ...". */
+const CONTACT_EN = /^(?:write|send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+|mail\s+)?(?:to\s+)?(\p{L}+(?:\s+\p{L}+)?)(?:\s*,?\s+(?:saying|that)\s+(.+))?$/iu
+/** At least this many letters stay when an ending comes off. */
+const NAME_STEM_MIN = 3
+
+/**
+ * The phonetic keys a spoken name may stand for: as said; with the allative -ile / -ele taken off
+ * ("Nadimile" is Nadim), and the genitive -i ("Nadimi"); with -le taken off, the stem may also lack
+ * the name's last letter ("Maasikale" is Maasikas). Exact keys only: "Marile" is never Mart.
+ */
+function spokenKeys(spoken: string): { exact: string[]; stem: string | null } {
+  const words = spoken.toLocaleLowerCase('et').split(/\s+/u).filter((w) => w !== '')
+  const last = words.at(-1) ?? ''
+  const head = words.slice(0, -1).join('')
+  const cut = (ending: string): string | null => (last.endsWith(ending) && last.length - ending.length >= NAME_STEM_MIN ? last.slice(0, -ending.length) : null)
+  const forms = [last, cut('ile'), cut('ele'), cut('le'), cut('i')].filter((f): f is string => f !== null)
+  const le = cut('le')
+  return { exact: forms.map((f) => phoneticKey(head + f)), stem: le === null ? null : phoneticKey(head + le) }
+}
+
+function namesContact(spoken: string, item: SavedItem): boolean {
+  const { exact, stem } = spokenKeys(spoken)
+  return [item.name, ...(item.aliases ?? [])].some((name) => {
+    const key = phoneticKey(name)
+    if (key === '') return false
+    return exact.includes(key) || (stem !== null && stem.length >= 4 && key.length === stem.length + 1 && key.startsWith(stem))
+  })
+}
+
+/**
+ * The saved contact a mail phrase names (26.8), with the body said after "et" / "saying", or null:
+ * no contact saved, no such phrase, or a name that is no contact's (the mail rules of 29.3 then
+ * take the phrase as before). Two contacts with the name: null (nothing is guessed).
+ */
+export function contactMatch(utterance: string, items: readonly SavedItem[]): { item: SavedItem; body?: string } | null {
+  const contacts = items.filter((item) => item.kind === 'contact')
+  if (contacts.length === 0) return null
+  const s = utterance.trim().replace(/\s+/g, ' ').replace(/[.!?…]+$/u, '').trim()
+  const m = CONTACT_ET.exec(s) ?? CONTACT_EN.exec(s)
+  const spoken = m?.[1]
+  if (m === null || spoken === undefined) return null
+  const named = contacts.filter((item) => namesContact(spoken, item))
+  const [item] = named
+  if (item === undefined || named.length > 1) return null
+  const body = m[2] === undefined ? '' : asSentence(m[2])
+  return body === '' ? { item } : { item, body }
 }

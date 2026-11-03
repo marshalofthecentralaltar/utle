@@ -145,8 +145,14 @@ export interface Strings {
     /** A single-line field waits for the model; it did not answer, so nothing was typed. */
     fieldUnverified: string
     // Round 6 (Minu andmed, 26.2): a saved value typed, which one, gone, the hint, the settings page not in front.
-    /** "Kirjutasin: X (minu e-post). Ütle „valmis“ või „edasi“." */
+    /** "Kirjutasin: X (minu e-post). Ütle „valmis“, „edasi“ või „vale“." */
     insertedSaved(text: string, name: string): string
+    /** Round 11 (F5, 26.8): a saved contact's address typed into To: the name first. */
+    insertedContact(name: string, address: string): string
+    /** Round 11 (F5): a new mail opened to a saved contact. */
+    contactMail(name: string, address: string): string
+    /** Round 11 (F5): "vale" in a read-back: the field is cleared and the next utterance is spelled. */
+    wrongCleared: string
     /** "Kumb: a või b?" (two), "Milline: a, b või c?" (more). */
     whichSaved(names: readonly string[]): string
     /** Round 10 (#5, 34.4): the tie: "Kumb: 1 Ava, 2 Ava kiri?". */
@@ -328,6 +334,14 @@ export interface Strings {
     voiceTooShort: string
     /** model_unavailable: the voice cannot be checked right now (no speaker model, or a speech engine without one). */
     voiceUnsupported: string
+    /** Round 11 (F1, 31.5): profile_missing: no voice is taught yet; never the retrain line. */
+    voiceNoProfile: string
+    /** Round 11 (F1): with voiceNoProfile, where to teach it: the bar's settings button (voice cannot open it while the gate drops everything). */
+    voiceNoProfileHow: string
+    /** Round 11 (F1): model_mismatch: the voice was taught with another model and must be taught again. */
+    voiceMismatch: string
+    /** Round 11 (F1, 31.7): he chose only-my-voice, but no voice is ready yet: the wish is kept, every voice is heard. */
+    guardWaiting: string
     // Round 10 (31.7): onboarding and readiness.
     /** A read phrase was not counted: why, and to read it again. */
     phraseProblem: Record<'too_short' | 'too_quiet' | 'clipped' | 'model_error', string>
@@ -543,7 +557,6 @@ export interface Strings {
     guardAllSub: string
     guardOnDone: string
     guardAllDone: string
-    guardNeedsTest: string
     readyTitle: string
     readyBody: string
     readyDone: string
@@ -934,14 +947,17 @@ const ET: Strings = {
     lateCommand: (say) => `Hiljem: see oli käsk „${say}“, teksti ei muutnud.`,
     spellDigits: 'Kirjutan numbritena.',
     spellWords: 'Kirjutan tavaliselt.',
-    typedInto: (text) => `Kirjutasin: ${text} (ütle „edasi“ või „valmis“)`,
+    typedInto: (text) => `Kirjutasin: ${text} (ütle „edasi“, „valmis“ või „vale“)`,
     thinkingLong: 'Mõtlen pikemalt…',
     tookTooLong: 'Võttis liiga kaua, katkestasin.',
     cancelled: 'Katkestatud.',
     scrollEnded: 'Kerimine lõppes.',
     keptWords: 'Pikk lause jäi kasti, käsku ei täitnud.',
     fieldUnverified: 'Abiline ei vastanud, välja ei kirjutanud.',
-    insertedSaved: (text, name) => `Kirjutasin: ${text} (${name}). Ütle „valmis“ või „edasi“.`,
+    insertedSaved: (text, name) => `Kirjutasin: ${text} (${name}). Ütle „valmis“, „edasi“ või „vale“.`,
+    insertedContact: (name, address) => `Saaja: ${name} (${address}). Ütle „edasi“ või „vale“.`,
+    contactMail: (name, address) => `Uus kiri: ${name} (${address}).`,
+    wrongCleared: 'Kustutasin. Ütle tähthaaval.',
     whichSaved: (names) => (names.length <= 2 ? `Kumb: ${names.join(' või ')}?` : `Milline: ${names.slice(0, -1).join(', ')} või ${names.at(-1) ?? ''}?`),
     whichItem: (names) => `Kumb: ${names.map((name, i) => `${i + 1} ${name}`).join(', ')}?`,
     beside: 'Uues vahelehes, see leht jääb alles.',
@@ -1109,6 +1125,10 @@ const ET: Strings = {
     voiceUnverified: 'Häält ei õnnestunud kinnitada.',
     voiceTooShort: 'Liiga lühike, et häält kontrollida. Ütle pikemalt: „saada sõnum“ või „jah, kinnitan“.',
     voiceUnsupported: 'Häält ei saa praegu kontrollida. Vali seadetes kohalik kõnetuvastus või luba kõik hääled.',
+    voiceNoProfile: 'Õpeta mulle enne oma hääl.',
+    voiceNoProfileHow: 'Vaata riba nupule „Seaded“ ja vali „Õpeta mu hääl lausetega“ või „Kuula kõiki“.',
+    voiceMismatch: 'Hääl on õpetatud teise mudeliga. Õpeta hääl uuesti: riba nupp „Seaded“.',
+    guardWaiting: 'Jätsin meelde: „Kuula ainult mind“ lülitub sisse, kui hääl on õpitud. Seni kuulan kõiki.',
     phraseProblem: {
       too_short: 'Lause jäi liiga lühikeseks. Loe see uuesti.',
       too_quiet: 'Liiga vaikne. Räägi mikrofonile lähemal ja loe see uuesti.',
@@ -1191,9 +1211,9 @@ const ET: Strings = {
     edit: 'Muuda',
     forget: 'Unusta',
     forgotten: (name) => `Unustasin: ${name}.`,
-    add: (kind) => `Lisa ${({ email: 'e-post', tel: 'telefon', code: 'isikukood', number: 'number', text: 'muu' } as const)[kind]}`,
-    kindName: (kind) => ({ email: 'e-post', tel: 'telefon', code: 'isikukood', number: 'number', text: 'muu' } as const)[kind],
-    defaultName: (kind) => ({ email: 'minu e-post', tel: 'minu telefon', code: 'minu isikukood', number: 'minu number', text: 'minu tekst' } as const)[kind],
+    add: (kind) => `Lisa ${({ email: 'e-post', tel: 'telefon', code: 'isikukood', number: 'number', text: 'muu', contact: 'kontakt' } as const)[kind]}`,
+    kindName: (kind) => ({ email: 'e-post', tel: 'telefon', code: 'isikukood', number: 'number', text: 'muu', contact: 'Kontakt: nimi ja e-posti aadress' } as const)[kind],
+    defaultName: (kind) => ({ email: 'minu e-post', tel: 'minu telefon', code: 'minu isikukood', number: 'minu number', text: 'minu tekst', contact: 'kontakt' } as const)[kind],
     formTitle: 'Klaviatuuriga (abiline)',
     formName: 'Nimi',
     formKind: 'Liik',
@@ -1307,7 +1327,6 @@ const ET: Strings = {
     guardAllSub: 'Kõik hääled, ilma kaitseta',
     guardOnDone: 'Sees: kuulan ainult sind.',
     guardAllDone: 'Kuulan kõiki hääli. Kaitse ei ole sees.',
-    guardNeedsTest: 'Enne sisselülitamist proovi oma häält: ma pean sind ära tundma.',
     readyTitle: 'Valmis',
     readyBody: 'Ütle näiteks:',
     readyDone: 'Kõik on valmis.',
@@ -1578,14 +1597,17 @@ const EN: Strings = {
     lateCommand: (say) => `Later: "${say}" was a command, text left as is.`,
     spellDigits: 'Writing as digits.',
     spellWords: 'Writing as words.',
-    typedInto: (text) => `Typed: ${text} (say "next" or "done")`,
+    typedInto: (text) => `Typed: ${text} (say "next", "done" or "wrong")`,
     thinkingLong: 'Thinking it through…',
     tookTooLong: 'It took too long, I stopped it.',
     cancelled: 'Cancelled.',
     scrollEnded: 'Scrolling ended.',
     keptWords: 'The long sentence stays in the box; no command was run.',
     fieldUnverified: 'The assistant did not answer; nothing was typed into the field.',
-    insertedSaved: (text, name) => `Typed: ${text} (${name}). Say "done" or "next".`,
+    insertedSaved: (text, name) => `Typed: ${text} (${name}). Say "done", "next" or "wrong".`,
+    insertedContact: (name, address) => `To: ${name} (${address}). Say "next" or "wrong".`,
+    contactMail: (name, address) => `New mail: ${name} (${address}).`,
+    wrongCleared: 'Deleted. Spell it letter by letter.',
     whichSaved: (names) => (names.length <= 2 ? `Which one: ${names.join(' or ')}?` : `Which one: ${names.slice(0, -1).join(', ')} or ${names.at(-1) ?? ''}?`),
     whichItem: (names) => `Which one: ${names.map((name, i) => `${i + 1} ${name}`).join(', ')}?`,
     beside: 'In a new tab; this page stays.',
@@ -1752,6 +1774,10 @@ const EN: Strings = {
     voiceUnverified: 'Could not confirm the voice.',
     voiceTooShort: 'Too short to check the voice. Say it longer: "saada sõnum" or "jah, kinnitan".',
     voiceUnsupported: 'The voice cannot be checked right now. Choose the local speech engine in the settings, or allow all voices.',
+    voiceNoProfile: 'Teach me your voice first.',
+    voiceNoProfileHow: 'Look at the bar\'s "Settings" button and choose "Teach it my voice with sentences" or "Listen to everyone".',
+    voiceMismatch: 'The voice was taught with another model. Teach it again: the bar\'s "Settings" button.',
+    guardWaiting: 'Noted: "Listen only to me" turns on once your voice is taught. Until then I listen to everyone.',
     phraseProblem: {
       too_short: 'The sentence was too short. Read it again.',
       too_quiet: 'Too quiet. Speak closer to the microphone and read it again.',
@@ -1834,9 +1860,9 @@ const EN: Strings = {
     edit: 'Change',
     forget: 'Forget',
     forgotten: (name) => `Forgot: ${name}.`,
-    add: (kind) => `Add ${({ email: 'e-mail', tel: 'phone', code: 'ID code', number: 'number', text: 'other' } as const)[kind]}`,
-    kindName: (kind) => ({ email: 'e-mail', tel: 'phone', code: 'ID code', number: 'number', text: 'other' } as const)[kind],
-    defaultName: (kind) => ({ email: 'minu e-post', tel: 'minu telefon', code: 'minu isikukood', number: 'minu number', text: 'minu tekst' } as const)[kind],
+    add: (kind) => `Add ${({ email: 'e-mail', tel: 'phone', code: 'ID code', number: 'number', text: 'other', contact: 'contact' } as const)[kind]}`,
+    kindName: (kind) => ({ email: 'e-mail', tel: 'phone', code: 'ID code', number: 'number', text: 'other', contact: 'Contact: a name and an e-mail address' } as const)[kind],
+    defaultName: (kind) => ({ email: 'minu e-post', tel: 'minu telefon', code: 'minu isikukood', number: 'minu number', text: 'minu tekst', contact: 'kontakt' } as const)[kind],
     formTitle: 'By keyboard (a helper)',
     formName: 'Name',
     formKind: 'Kind',
@@ -1950,7 +1976,6 @@ const EN: Strings = {
     guardAllSub: 'Every voice, no protection',
     guardOnDone: 'On: listening only to you.',
     guardAllDone: 'Listening to every voice. Protection is off.',
-    guardNeedsTest: 'Check your voice before turning it on: I must know you.',
     readyTitle: 'Ready',
     readyBody: 'Say, for example:',
     readyDone: 'Everything is ready.',

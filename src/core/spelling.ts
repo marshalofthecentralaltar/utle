@@ -316,6 +316,17 @@ function detect(words: readonly string[]): FieldKind {
 }
 
 /**
+ * Round 11 (F5, docs/ARCHITECTURE.md 26.8): the kind an utterance spelled after "vale" is typed as:
+ * the field's own kind; in a text field by content (an "ät" is an e-mail address), and otherwise
+ * the letters are joined (code), never kept as words with spaces ("n a d i m" is "nadim").
+ */
+export function spelledKind(text: string, field: FieldKind): FieldKind {
+  if (field !== 'text') return field
+  const kind = detect(tokenise(text))
+  return kind === 'text' ? 'code' : kind
+}
+
+/**
  * What to type into a field of this kind for what he said. "auto" chooses by content.
  * - text: unchanged, except that three or more number words in a row become digits.
  * - email: lowercase, no spaces, numbers to digits, "ät" to @, "punkt" to a dot, letters spelled
