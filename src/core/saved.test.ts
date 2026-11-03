@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BoxState } from '../browser/protocol.ts'
-import { MAX_SAVED, MAX_SAVED_NAMES, SAVED_NAME_CHARS, savedByName, savedFrom, savedHint, savedMatch, savedNames, savedPhrases } from './saved.ts'
+import { MAX_SAVED, MAX_SAVED_NAMES, SAVED_NAME_CHARS, contactMatch, savedByName, savedFrom, savedHint, savedMatch, savedNames, savedPhrases } from './saved.ts'
 import type { SavedItem } from './saved.ts'
 import { STRINGS } from './strings.ts'
 
@@ -112,5 +112,55 @@ describe('the guidance', () => {
     expect(savedPhrases(PHONE)).toEqual(['minu telefon', 'mu number'])
     expect(savedPhrases(CODE)).toEqual(['minu isikukood', 'mu kood'])
     expect(savedPhrases(WORK)).toEqual(['töö e-post'])
+  })
+})
+
+// Round 11 (F5, ARCHITECTURE 26.8): a saved contact, a name and an e-mail address. The demo of
+// 2026-11-03: the recogniser wrote "Natim" for "Nadim" and the address could not be corrected.
+describe('contact: a name and an e-mail address (26.8)', () => {
+  const NADIM: SavedItem = { id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' }
+  const MARI: SavedItem = { id: 'k2', name: 'Mari Maasikas', value: 'mari@example.com', kind: 'contact', aliases: ['Mari'] }
+  const items = [EMAIL, PHONE, NADIM, MARI]
+
+  it('savedFrom keeps a contact; its value is the address, its name is the name', () => {
+    expect(savedFrom([{ id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' }])).toEqual([NADIM])
+  })
+
+  for (const [phrase, body] of [
+    ['kirjuta Nadimile', undefined],
+    ['saada meil Nadimile', undefined],
+    ['kirjuta meil Nadimile', undefined],
+    ['kirjuta Nadim', undefined],
+    ['kirjuta Natimile', undefined],
+    ['kirjuta Nadimile, et tulen homme', 'Tulen homme.'],
+    ['write to Nadim', undefined],
+  ] as const) {
+    it(`contactMatch: "${phrase}" is Nadim's address${body ? ' with a body' : ''}`, () => {
+      expect(contactMatch(phrase, items)).toEqual(body === undefined ? { item: NADIM } : { item: NADIM, body })
+    })
+  }
+
+  it('contactMatch: the allative of a two-word name and of an alias', () => {
+    expect(contactMatch('kirjuta Mari Maasikale', items)).toEqual({ item: MARI })
+    expect(contactMatch('saada meil Marile', items)).toEqual({ item: MARI })
+  })
+
+  it('contactMatch: no contact, another name, or no mail phrase is null', () => {
+    expect(contactMatch('kirjuta Nadimile', [EMAIL, PHONE])).toBeNull()
+    expect(contactMatch('kirjuta Karinile', items)).toBeNull()
+    expect(contactMatch('Nadim', items)).toBeNull()
+    expect(contactMatch('kirjuta tere', items)).toBeNull()
+  })
+
+  it('a contact is never the answer to "minu meil": it has no family', () => {
+    expect(savedMatch('pane mu meil siia', items, true)).toEqual({ kind: 'one', item: EMAIL })
+  })
+})
+
+describe('contact: what to say (26.8)', () => {
+  it('savedPhrases: a contact is said in a mail phrase', () => {
+    const NADIM: SavedItem = { id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' }
+    expect(savedPhrases(NADIM)).toEqual(['kirjuta meil Nadim', 'Nadim (kirja aadressiväljal)'])
+    expect(contactMatch(savedPhrases(NADIM)[0] ?? '', [NADIM])).toEqual({ item: NADIM })
   })
 })

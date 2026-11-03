@@ -1221,6 +1221,44 @@ search") passed this run (it searched at once, then said it saw no results). Gat
 Not verified: a real voice; the real Gmail To field returning `box.single` after a typing (the flag needs it;
 only indirectly shown, by the demo's read-back line).
 
+## 1w. Round 11, lane FIRSTRUN (2026-11-03): the first run cannot lock him out; a name in an address can be corrected
+
+From Ralf's demo of 2026-11-03 (`docs/plans/2026-11-03-round-11-demo-brief.md`, F1 and F5). Spec: ARCHITECTURE
+31.5, 31.7 "The wish and the mode in force", 26.8.
+
+**F1, the lines.** A `profile_missing` drop now says "Õpeta mulle enne oma hääl." / "Teach me your voice first."
+with "Vaata riba nupule „Seaded“ ja vali „Õpeta mu hääl lausetega“ või „Kuula kõiki“." / "Look at the bar's
+"Settings" button and choose "Teach it my voice with sentences" or "Listen to everyone"." at every drop, never
+the retrain line. `model_mismatch` says "Hääl on õpetatud teise mudeliga. Õpeta hääl uuesti: riba nupp „Seaded“."
+/ "The voice was taught with another model. Teach it again: the bar's "Settings" button." Every other reason as
+in 31.5.
+
+**F1, the mode.** Storage: `onlyOwnerWanted` (boolean, his choice) and `onlyOwner` (boolean, in force; the
+offscreen document's `&onlyOwner=1`). `src/core/guard.ts` `onlyOwnerEffective(wanted, readiness)`: in force
+only with `ready` or `model_unavailable` (fail closed: a voice exists, the speaker model is down). "Lülita
+sisse" with no voice keeps the wish and says "Jätsin meelde: „Kuula ainult mind“ lülitub sisse, kui hääl on
+õpitud. Seni kuulan kõiki." / "Noted: "Listen only to me" turns on once your voice is taught. Until then I listen
+to everyone." The service worker settles the mode at browser start from `/api/status` `profile.enrolled` and on
+every readiness the offscreen document reports; a change while listening remakes the document and listens on.
+The settings page shows the wish and the waiting line. A store from before (only `onlyOwner: true`) is the wish.
+
+**F5.** Saved kind `contact` (`{ id, name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact', aliases? }`
+in `savedValues`); Minu andmed offers "Kontakt: nimi ja e-posti aadress" and "Lisa kontakt". "kirjuta Nadimile",
+"saada meil Nadimile", "kirjuta Nadimile, et …", "kirjuta Nadim" (and "Natim", by phonetic key) put the address
+in an armed To, else open a new mail to it (review 2: the bare name only in an armed mail field; elsewhere a mail word
+is needed, so "kirjuta Marile" on WhatsApp stays the chat); the bar: "Saaja: Nadim (nadim.naide@example.com). Ütle „edasi“ või
+„vale“." / "To: Nadim (…). Say "next" or "wrong"." "vale" (valesti, see on vale, ei vale, wrong) in a one-line
+field's read-back clears it: "Kustutasin. Ütle tähthaaval." / "Deleted. Spell it letter by letter.", and the next
+utterance is spelled ("n a d i m punkt naide ät example punkt com" is nadim.naide@example.com). The read-back
+lines now offer „vale“.
+
+**Proofs (worktree r11-firstrun, `artifacts/firstrun/`, not committed).** Unit: 4303 tests in 63 files (red first: `f1-red.log` 4 failed, `f5-red.log` 17 failed, `f6-vale-red.log` 9 failed). `run.ts`: 339 PASS, 0 FAIL, ALL PASS (333 before; new: welcome-guard no voice, the demo state, ready; contact, vale, spelled).
+Eval `UTLE_EVAL_ONLY=nadim`: 3/3 rule cases, the model never asked, $0. `npm run check`: exit 0.
+
+**Not verified.** A real voice; real Gmail's To (a chip field, not the stand-in's input); a real speaker gate
+reporting `no_profile` to a real extension (played through the strip state in `run.ts`; the server side is
+VOICE2's); whether the addressee check passes "vale" right after a read-back (F6, lane WORDS).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

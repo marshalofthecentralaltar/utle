@@ -136,6 +136,9 @@ export interface ForeignText {
   voiceUnverified?: string
   voiceTooShort?: string
   voiceUnsupported?: string
+  voiceNoProfile?: string
+  voiceNoProfileHow?: string
+  voiceMismatch?: string
 }
 
 /**
@@ -143,12 +146,17 @@ export interface ForeignText {
  * in a row, once, the line that tells him to teach his voice again. Round 10 (31.5): a drop for
  * another voice (or without a reason) says so as before; any other reason says the voice could not
  * be confirmed, too little audio adds "try a longer command", and a voice that cannot be checked
- * says what to do instead of the retrain line.
+ * says what to do instead of the retrain line. Round 11 (F1): no voice taught (profile_missing)
+ * says "teach me your voice first" and where, at every drop, never "teach it again"; a voice taught
+ * with another model (model_mismatch) says it must be taught again.
  */
 export function foreignNotice(streak: number, text: ForeignText, reason?: SpeakerReason): { foreign: string; line?: string } {
+  if (reason === 'profile_missing' && text.voiceNoProfile !== undefined) {
+    return text.voiceNoProfileHow === undefined ? { foreign: text.voiceNoProfile } : { foreign: text.voiceNoProfile, line: text.voiceNoProfileHow }
+  }
   const other = reason === undefined || reason === 'rejected_other'
   const foreign = other ? text.foreign : (text.voiceUnverified ?? text.foreign)
-  const line = reason === 'insufficient_audio' ? text.voiceTooShort : reason === 'model_unavailable' ? text.voiceUnsupported : undefined
+  const line = reason === 'insufficient_audio' ? text.voiceTooShort : reason === 'model_unavailable' ? text.voiceUnsupported : reason === 'model_mismatch' ? text.voiceMismatch : undefined
   if (line !== undefined) return { foreign, line }
   return retrainDue(streak) ? { foreign, line: text.foreignRetrain } : { foreign }
 }

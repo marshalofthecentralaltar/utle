@@ -37,6 +37,7 @@ const BOXES: Record<PhraseContext, BoxState> = {
   document: { present: true, text: 'Esimene lause on siin. Teine lause tuleb siia.', armed: true, kind: 'field', document: true },
   hints: NOTHING,
   saved: field('email'),
+  mailTo: { present: true, text: '', armed: true, kind: 'field', single: true, fieldKind: 'email', mail: true, label: 'Saaja' },
   asleep: NOTHING,
   spelled: { present: true, text: '', armed: true, kind: 'composer' },
   entry: NOTHING,
@@ -50,6 +51,7 @@ function sessionFor(context: PhraseContext): InpageSession {
   if (context === 'hints') return { ...base, hints: true }
   if (context === 'asleep') return { ...base, asleep: true }
   if (context === 'saved') return { ...base, saved: SAVED }
+  if (context === 'mailTo') return { ...base, saved: [...SAVED, { id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' }] }
   if (context === 'spelled') return { ...base, spell: 'code' }
   return base
 }

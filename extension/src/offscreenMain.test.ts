@@ -123,6 +123,37 @@ describe('strict mode lines on the strip (round 7)', () => {
     expect(foreignNotice(3, lines, 'verification_error')).toEqual({ foreign: lines.voiceUnverified, line: lines.foreignRetrain })
   })
 
+  // Round 11 (F1, 31.5): the strip line per gate reason, with the real strings in both languages.
+  // profile_missing was the demo's lockout: 19 drops said "could not confirm" and "teach it again".
+  for (const lang of ['et', 'en'] as const) {
+    const S = STRINGS[lang].strip
+    const cases: ReadonlyArray<readonly [string, Parameters<typeof foreignNotice>[2], { foreign: string; line?: string }]> = [
+      ['no reason', undefined, { foreign: S.foreign }],
+      ['rejected_other', 'rejected_other', { foreign: S.foreign }],
+      ['insufficient_audio', 'insufficient_audio', { foreign: S.voiceUnverified, line: S.voiceTooShort }],
+      ['model_unavailable', 'model_unavailable', { foreign: S.voiceUnverified, line: S.voiceUnsupported }],
+      ['profile_missing', 'profile_missing', { foreign: S.voiceNoProfile, line: S.voiceNoProfileHow }],
+      ['model_mismatch', 'model_mismatch', { foreign: S.voiceUnverified, line: S.voiceMismatch }],
+      ['verification_error', 'verification_error', { foreign: S.voiceUnverified }],
+      ['mixed_speakers', 'mixed_speakers', { foreign: S.voiceUnverified }],
+    ]
+    for (const [label, reason, want] of cases) {
+      it(`foreignNotice per reason (${lang}): ${label}, first drop and third in a row`, () => {
+        expect(foreignNotice(1, S, reason)).toEqual(want)
+        const third = foreignNotice(3, S, reason)
+        // The retrain line ("teach it your voice again") only where a voice was taught and judged.
+        if (reason === 'profile_missing') {
+          expect(third).toEqual(want)
+          expect(third.line).not.toBe(S.foreignRetrain)
+          expect(third.foreign).toBe(lang === 'et' ? 'Õpeta mulle enne oma hääl.' : 'Teach me your voice first.')
+          expect(third.line).toMatch(lang === 'et' ? /Seaded/u : /Settings/u)
+        } else if (want.line !== undefined) expect(third).toEqual(want)
+        else expect(third).toEqual({ ...want, line: S.foreignRetrain })
+        if (reason === 'model_mismatch') expect(want.line).toMatch(lang === 'et' ? /teise mudeliga.*uuesti/u : /another model.*again/u)
+      })
+    }
+  }
+
   it('says how many phrases taught the voice, and when they were too few', () => {
     const lines = { enrolDone: 'done', enrolFailed: 'failed', enrolPhrasesDone: (n: number) => `done ${n}`, enrolFew: (n: number, enough: number) => `few ${n}/${enough}` }
     expect(enrolledLine(false, 12, lines)).toBe('failed')

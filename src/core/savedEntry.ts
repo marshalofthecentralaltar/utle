@@ -70,14 +70,15 @@ const taken = (existing: readonly SavedItem[], name: string): boolean => existin
 
 function valueLine(kind: SavedKind, lang: Lang): string {
   const s = STRINGS[lang].andmed
-  return kind === 'email' ? `${s.stepValue} ${s.suffixHint}` : s.stepValue
+  return kind === 'email' || kind === 'contact' ? `${s.stepValue} ${s.suffixHint}` : s.stepValue
 }
 
 /** After the kind: a name when one of that kind is saved already (or the default is in use), else straight to the value. */
 function afterKind(kind: SavedKind, existing: readonly SavedItem[], lang: Lang): EntryResult {
   const s = STRINGS[lang].andmed
   const name = s.defaultName(kind)
-  if (existing.some((item) => item.kind === kind) || taken(existing, name)) {
+  // Round 11 (26.8): a contact is always named (the person's name is how he will say it).
+  if (kind === 'contact' || existing.some((item) => item.kind === kind) || taken(existing, name)) {
     return { state: { step: 'name', kind, name: '', value: '', suffix: '' }, line: s.askName }
   }
   return { state: { step: 'value', kind, name, value: '', suffix: '' }, line: valueLine(kind, lang) }
@@ -119,7 +120,7 @@ export function entryStep(state: EntryState, utterance: string, existing: readon
   if (SAVE.has(clean)) {
     if (state.value === '' && state.suffix === '') return { state, line: s.nothingYet }
     const value = (state.suffix === '' ? state.value : state.value.replace(/@$/u, '') + state.suffix).slice(0, SAVED_VALUE_CHARS)
-    if (kind === 'email' && !EMAIL.test(value)) return { state, line: s.needAt }
+    if ((kind === 'email' || kind === 'contact') && !EMAIL.test(value)) return { state, line: s.needAt }
     if ((kind === 'tel' || kind === 'number') && !/\d/u.test(value)) return { state, line: s.needDigit }
     return { state: null, line: s.savedOk(state.name), save: { name: state.name, value, kind } }
   }
@@ -129,12 +130,12 @@ export function entryStep(state: EntryState, utterance: string, existing: readon
     if (state.value === '' && state.suffix === '') return { state, line: s.nothingYet }
     return { state, line: s.readBack(spokenLetters(state.value), state.suffix) }
   }
-  if (kind === 'email') {
+  if (kind === 'email' || kind === 'contact') {
     const suffix = Object.hasOwn(EMAIL_SUFFIXES, clean) ? EMAIL_SUFFIXES[clean] : undefined
     if (suffix !== undefined) return now({ ...state, suffix })
     if (NO_SUFFIX.has(clean)) return now({ ...state, suffix: '' })
   }
-  const typed = typedFromSpoken(utterance, kind)
+  const typed = typedFromSpoken(utterance, kind === 'contact' ? 'email' : kind)
   if (typed === '') return { state, line: valueLine(kind, lang) }
   const value = kind === 'text' && state.value !== '' ? `${state.value} ${typed}` : state.value + typed
   return now({ ...state, value: value.slice(0, SAVED_VALUE_CHARS) })

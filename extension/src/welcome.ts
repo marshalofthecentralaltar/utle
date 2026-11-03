@@ -12,6 +12,8 @@ import type { StripState, ToBackground, ToPage } from './messages.ts'
 import { STATE_KEY } from './messages.ts'
 import { phraseLine, voiceTestLine } from './voiceLines.ts'
 import { mountStrip } from './strip.ts'
+import { guardStore, readinessFrom } from '../../src/core/guard.ts'
+import type { GuardReadiness } from '../../src/core/guard.ts'
 
 const W = STRINGS.et.welcome
 const WE = STRINGS.en.welcome
@@ -365,23 +367,32 @@ guardRow.className = 'choices'
 guardRow.append(guardOnButton, guardAllButton)
 guard.section.append(guardRow, guard.result)
 
-/** Only after the voice test knew him: only-owner on is never offered as protection it is not. */
+/** Round 11 (F1): the readiness the offscreen document last reported (the strip state's voiceReady). */
+let voiceReady: GuardReadiness | undefined
+/** Whether only-owner is in force now (guardOn): the voice test knew him, or the server says ready. */
+let guardInForce = false
+
+/**
+ * Round 11 (F1, 31.7): "Lülita sisse" is kept as his wish (onlyOwnerWanted) at any time, but the
+ * mode is in force only once the voice test knew him (or the server says the voice is ready): with
+ * no voice the gate would drop everything he says, and nothing by voice could undo it. Until then
+ * the card says it waits, and every voice is heard.
+ */
 async function guardOn(): Promise<void> {
-  if (!done.check) {
-    show(guard, W.guardNeedsTest)
-    return
-  }
-  await chrome.storage.local.set({ onlyOwner: true }).catch(() => undefined)
+  const store = guardStore(true, done.check ? 'ready' : voiceReady)
+  await chrome.storage.local.set({ ...store }).catch(() => undefined)
   guardChoice = 'owner'
+  guardInForce = store.onlyOwner
   guardOnButton.setAttribute('aria-pressed', 'true')
   guardAllButton.setAttribute('aria-pressed', 'false')
-  show(guard, W.guardOnDone, true)
+  show(guard, store.onlyOwner ? W.guardOnDone : text.guardWaiting, store.onlyOwner)
   mark(guard, true)
 }
 
 /** All voices: allowed at any time, and said plainly to be without protection. */
 async function guardAll(): Promise<void> {
-  await chrome.storage.local.set({ onlyOwner: false }).catch(() => undefined)
+  await chrome.storage.local.set({ ...guardStore(false, voiceReady) }).catch(() => undefined)
+  guardInForce = false
   guardChoice = 'all'
   guardOnButton.setAttribute('aria-pressed', 'false')
   guardAllButton.setAttribute('aria-pressed', 'true')
@@ -392,6 +403,9 @@ async function guardAll(): Promise<void> {
 /** The strip's state, published by the offscreen document: the phrases, their problems, the outcome, the voice test. */
 function followVoice(state: StripState | undefined): void {
   if (!state) return
+  // Round 11 (F1): a wish that waited is put in force once the voice is ready, and the card says so.
+  voiceReady = readinessFrom(state.voiceReady)
+  if (guardChoice === 'owner' && !guardInForce && voiceReady === 'ready') void guardOn()
   if (reading) {
     if (state.enrolPhrases >= 0) {
       readingSeen = true
@@ -413,6 +427,7 @@ function followVoice(state: StripState | undefined): void {
       done.check = result === 'recognised'
       show(check, voiceTestLine(result, text), done.check)
       mark(check, done.check)
+      if (done.check && guardChoice === 'owner' && !guardInForce) void guardOn()
     }
   }
 }
@@ -487,7 +502,7 @@ function readyCheck(): void {
   const all = done.mic && done.server && done.demo
   readyCard.section.dataset.done = String(all)
   // Round 10 (31.7): the last card says how the voice is set: protected only when he turned it on after the test knew him.
-  const voiceLine = guardChoice === 'owner' ? ` ${W.guardOnDone}` : guardChoice === 'all' ? ` ${W.guardAllDone}` : ''
+  const voiceLine = guardChoice === 'owner' ? ` ${guardInForce ? W.guardOnDone : text.guardWaiting}` : guardChoice === 'all' ? ` ${W.guardAllDone}` : ''
   show(readyCard, all ? `${W.readyDone}${voiceLine}` : '', all)
 }
 

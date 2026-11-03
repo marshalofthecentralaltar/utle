@@ -4,6 +4,7 @@
 import type { BrowserCommand, BrowserFailure, BrowserResult } from '../../src/browser/protocol.ts'
 import type { TabSummary } from '../../src/core/pageIntent.ts'
 import { SAVED_KEY, savedFrom } from '../../src/core/saved.ts'
+import { guardPatch, readinessFrom } from '../../src/core/guard.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { ENTRY_KEY, INITIAL_STATE, OFFSCREEN_CREATED_KEY, STATE_KEY } from './messages.ts'
 import { CONNECTION_KEYS, connectionFrom, connectionOf, serverCheck, serverUrl } from './connection.ts'
@@ -625,9 +626,33 @@ async function speechEngine(): Promise<'local' | 'soniox'> {
   return value === 'soniox' ? 'soniox' : 'local'
 }
 
-/** Round 4: only the owner's voice is obeyed (the options page's "Kuula ainult mind"). */
+/**
+ * Round 4: only the owner's voice is obeyed (the options page's "Kuula ainult mind"). Round 11 (F1,
+ * 31.7): `onlyOwner` is the mode in force, which followReadiness keeps off while no voice exists;
+ * his choice is `onlyOwnerWanted`.
+ */
 async function onlyOwner(): Promise<boolean> {
   return (await stored('onlyOwner')) === true
+}
+
+/**
+ * Round 11 (F1, 31.7): the offscreen document reports the gate's readiness (the strip state's
+ * voiceReady) on every connection with the mode on, and after an enrolment, a voice test or a
+ * status request. With no voice for this model the mode is switched off (the wish is kept) and a
+ * listening document is made again without the gate, so he is never locked out; once a voice is
+ * ready the wish is put back in force the same way.
+ */
+async function followReadiness(value: unknown): Promise<void> {
+  const readiness = readinessFrom(value)
+  if (readiness === undefined) return
+  const now = await chrome.storage.local.get(['onlyOwner', 'onlyOwnerWanted'])
+  const patch = guardPatch(now, readiness)
+  if (patch === null) return
+  await chrome.storage.local.set({ ...patch })
+  if ((now.onlyOwner === true) === patch.onlyOwner) return
+  const state = (await chrome.storage.session.get(STATE_KEY))[STATE_KEY] as StripState | undefined
+  if (!patch.onlyOwner) await patchState({ line: STRINGS.et.strip.guardWaiting })
+  if (state?.listening === true) await toOffscreen('start')
 }
 
 // ---------- wake word and places (29.4) ----------
@@ -785,6 +810,10 @@ async function checkServer(): Promise<void> {
   const server = await connection()
   const check = await serverCheck(serverUrl(server.asrUrl, '/api/status'), server.token)
   await patchState({ connection: connectionOf(check.state) })
+  // Round 11 (F1, 31.7): at browser start the mode follows the server's voice before any document is
+  // made: no voice there (enrolled false) is never only-my-voice. The gate's own readiness, on the
+  // first connection, refines it (a voice of another model).
+  if (check.profile !== undefined) await followReadiness(check.profile.enrolled ? 'ready' : 'no_profile')
 }
 chrome.runtime.onStartup.addListener(() => {
   void checkServer()
@@ -819,7 +848,7 @@ chrome.runtime.onMessage.addListener((message: ToBackground, sender, sendRespons
       void toOffscreen('toggle')
       return false
     case 'utle-state':
-      void patchState(message.patch)
+      void patchState(message.patch).then(() => (message.patch.voiceReady !== undefined ? followReadiness(message.patch.voiceReady) : undefined))
       return false
     case 'utle-bar':
       void patchState({ hidden: !message.show })

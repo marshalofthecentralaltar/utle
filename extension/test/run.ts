@@ -20,6 +20,8 @@ import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { initialInpage, inpageStep } from '../../src/core/inpage.ts'
 import { inpageResult } from '../../src/core/inpage.ts'
+// Round 11 (F5, 26.8): the contact case.
+import { savedFrom } from '../../src/core/saved.ts'
 // Round 10 (#5, 34.4): the tie, through the real core.
 import { applyIntent } from '../../src/core/inpage.ts'
 import type { BoxState, BrowserResult } from '../../src/browser/protocol.ts'
@@ -887,6 +889,43 @@ async function main(): Promise<void> {
     const freshTo = await mailValue('to')
     const freshBody = await mailTab.evaluate(() => document.getElementById('body')?.innerText ?? '')
     line('compose', '"kirjuta meil Jaanile, et …" on a written window: a fresh one, To and body filled, body armed', r !== 'timeout' && r.ok && record.clicks.filter((c) => c === 'koosta').length === 2 && freshTo === 'Jaan' && freshBody === 'Tere, Jaan!' && r.box?.kind === 'composer' && r.box.armed === true, `${describe(r)} to=${JSON.stringify(freshTo)} body=${JSON.stringify(freshBody)}`)
+    // ---------- Round 11 (F5, 26.8): a saved contact and "vale" on the Gmail stand-in ----------
+    // The contact is saved as the options page saves it (savedValues); the utterances go through the
+    // real rules (inpageStep, inpageResult) with the box the page reports, and the commands run on the page.
+    {
+      await sw.evaluate(async (item) => chrome.storage.local.set({ savedValues: [item] }), { id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' })
+      const stored = savedFrom(await sw.evaluate(async () => (await chrome.storage.local.get('savedValues')).savedValues))
+      r = await send({ kind: 'compose' })
+      const toBox = r !== 'timeout' && r.ok ? r.box : undefined
+      let mailSession = { ...initialInpage('et'), saved: stored }
+      const step = inpageStep(mailSession, 'kirjuta Nadimile', toBox ?? { present: false, text: '', armed: false })
+      const [typed] = step.commands
+      r = typed === undefined ? 'timeout' : await send(typed)
+      const after = r !== 'timeout' ? inpageResult(step.session, step.commands, r) : null
+      const toNow = await mailValue('to')
+      line(
+        'contact',
+        '"kirjuta Nadimile" with a saved contact: the address in To, the bar reads the name back, no model',
+        r !== 'timeout' && r.ok && toBox?.fieldKind === 'email' && step.ask === undefined && toNow === 'nadim.naide@example.com' && after?.line === STRINGS.et.inpage.insertedContact('Nadim', 'nadim.naide@example.com') && after.line.startsWith('Saaja: Nadim'),
+        `${describe(r)} to=${JSON.stringify(toNow)} line=${JSON.stringify(after?.line)} commands=${JSON.stringify(step.commands)}`,
+      )
+      mailSession = after?.session ?? step.session
+      // "vale": the read-back was wrong; the field is cleared and the next utterance is spelled.
+      r = await send({ kind: 'readBox' })
+      const wrong = inpageStep(mailSession, 'vale', r !== 'timeout' && r.ok && r.box ? r.box : { present: false, text: '', armed: false })
+      const [cleared] = wrong.commands
+      r = cleared === undefined ? 'timeout' : await send(cleared)
+      const wrongLine = r !== 'timeout' ? inpageResult(wrong.session, wrong.commands, r).line : ''
+      const emptied = await mailValue('to')
+      line('contact', '"vale" after the read-back: To cleared, "Kustutasin. Ütle tähthaaval."', r !== 'timeout' && r.ok && emptied === '' && wrongLine === 'Kustutasin. Ütle tähthaaval.' && wrong.session.spellNext === 'email', `${describe(r)} to=${JSON.stringify(emptied)} line=${JSON.stringify(wrongLine)}`)
+      r = await send({ kind: 'readBox' })
+      const spelled = inpageStep(wrong.session, 'n a d i m punkt naide ät example punkt com', r !== 'timeout' && r.ok && r.box ? r.box : { present: false, text: '', armed: false })
+      const [spelledText] = spelled.commands
+      r = spelledText === undefined ? 'timeout' : await send(spelledText)
+      const spelledTo = await mailValue('to')
+      line('contact', 'the next utterance spelled letter by letter: nadim.naide@example.com in To, no model', r !== 'timeout' && r.ok && spelled.ask === undefined && spelledTo === 'nadim.naide@example.com', `${describe(r)} to=${JSON.stringify(spelledTo)}`)
+      await sw.evaluate(() => chrome.storage.local.remove('savedValues'))
+    }
     await send({ kind: 'closeTab' })
     await sw.evaluate(() => chrome.storage.local.remove('mailHome'))
 
@@ -1779,6 +1818,46 @@ async function main(): Promise<void> {
           const drop = new Set(['utle-enrol-script', 'utle-enrol-finish', 'utle-voice-test'])
           chrome.runtime.sendMessage = ((message: { type?: string }, ...rest: unknown[]) => (drop.has(message?.type ?? '') ? Promise.resolve(undefined) : (w.__realSend as (...a: unknown[]) => Promise<unknown>)(message, ...rest))) as typeof chrome.runtime.sendMessage
         })
+        // ---------- Round 11 (F1, 31.5 and 31.7): the first run cannot lock him out ----------
+        {
+          type Guard = { onlyOwner?: unknown; onlyOwnerWanted?: unknown }
+          const guardNow = async (): Promise<Guard> => sw.evaluate(async () => (await chrome.storage.local.get(['onlyOwner', 'onlyOwnerWanted'])) as Guard)
+          type StripG = { foreign?: string; line?: string; voiceReady?: string }
+          const stripG = async (): Promise<StripG> => sw.evaluate(async () => ((await chrome.storage.session.get('stripState')).stripState ?? {}) as StripG)
+          // As the offscreen document publishes: through the service worker's utle-state, so its readiness rule runs.
+          const publishState = async (patch: Record<string, unknown>): Promise<void> => {
+            await page.evaluate(async (pt) => {
+              const w = window as unknown as { __realSend: (m: unknown) => Promise<unknown> }
+              await w.__realSend({ type: 'utle-state', patch: pt }).catch(() => undefined)
+            }, patch)
+            await page.waitForTimeout(500)
+          }
+          // A fresh profile chooses "Lülita sisse" with no voice taught (enrolment skipped).
+          await sw.evaluate(async () => chrome.storage.local.remove(['onlyOwner', 'onlyOwnerWanted']))
+          await page.mouse.move(0, 0)
+          await page.click('#guardOn')
+          await page.waitForTimeout(400)
+          const waiting = { result: await text('stepGuardResult'), stored: await guardNow() }
+          check('welcome-guard: "Lülita sisse" with no voice keeps the wish (onlyOwnerWanted), onlyOwner stays false, the card says it waits', waiting.result === S10.guardWaiting && waiting.stored.onlyOwner === false && waiting.stored.onlyOwnerWanted === true, JSON.stringify(waiting))
+          // The demo's state: only-my-voice stored on from before, no voice on the server. The offscreen
+          // document's drop (foreignNotice of profile_missing) and the readiness, as the server sends them.
+          await sw.evaluate(async () => chrome.storage.local.set({ onlyOwner: true }))
+          await publishState({ foreign: S10.voiceNoProfile, line: S10.voiceNoProfileHow, voiceReady: 'no_profile' })
+          await waitUntil(async () => (await guardNow()).onlyOwner === false, 3000)
+          const locked = { strip: await stripG(), stored: await guardNow() }
+          check(
+            'welcome-guard: a profile_missing drop shows "Õpeta mulle enne oma hääl.", never the retrain line; no_profile turns onlyOwner off, the wish stays',
+            locked.strip.foreign === 'Õpeta mulle enne oma hääl.' && locked.strip.foreign !== S10.foreignRetrain && locked.strip.line !== S10.foreignRetrain && locked.strip.line === S10.guardWaiting && locked.stored.onlyOwner === false && locked.stored.onlyOwnerWanted === true,
+            JSON.stringify(locked),
+          )
+          // Once the voice is ready the wish is put in force.
+          await publishState({ voiceReady: 'ready' })
+          await waitUntil(async () => (await guardNow()).onlyOwner === true, 3000)
+          const back = await guardNow()
+          check('welcome-guard: readiness ready puts the wish in force (onlyOwner true)', back.onlyOwner === true && back.onlyOwnerWanted === true, JSON.stringify(back))
+          await sw.evaluate(async () => chrome.storage.local.remove(['onlyOwner', 'onlyOwnerWanted']))
+          await setState({ voiceReady: '', foreign: '', line: '' })
+        }
         await page.mouse.move(0, 0)
         await page.click('#voiceStart')
         await page.waitForTimeout(400)
@@ -1804,7 +1883,8 @@ async function main(): Promise<void> {
         await page.click('#guardOn')
         await page.waitForTimeout(300)
         const early = { result: await text('stepGuardResult'), stored: await sw.evaluate(async () => (await chrome.storage.local.get('onlyOwner')).onlyOwner) }
-        check('welcome-guard: "Lülita sisse" before the voice test refuses and stores nothing', early.result === W10.guardNeedsTest && early.stored !== true, JSON.stringify(early))
+        // Round 11 (F1): before the voice test the wish is kept and the mode waits (it no longer refuses).
+        check('welcome-guard: "Lülita sisse" before the voice test waits: onlyOwner stays off', early.result === S10.guardWaiting && early.stored !== true, JSON.stringify(early))
         const tests = (await sw.evaluate(async () => ((await chrome.storage.session.get('stripState')).stripState as { voiceTests?: number } | undefined)?.voiceTests ?? 0)) as number
         await page.mouse.move(0, 0)
         await page.click('#checkStart')

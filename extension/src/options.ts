@@ -11,6 +11,8 @@ import type { EntryResult, EntryState } from '../../src/core/savedEntry.ts'
 import { ENROL_PHRASES } from '../../src/core/enrolPhrases.ts'
 import { phraseLine } from './voiceLines.ts'
 import { STRINGS } from '../../src/core/strings.ts'
+import { guardStore, onlyOwnerWantedFrom, readinessFrom } from '../../src/core/guard.ts'
+import type { GuardReadiness } from '../../src/core/guard.ts'
 import { createDwell } from '../../src/ui/dwell.ts'
 import { CONNECTION_KEYS, connectionFrom, connectionOf, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
 import { STATE_KEY } from './messages.ts'
@@ -285,6 +287,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
 })
 
 let current: StripSettings = settingsFrom({})
+// Round 11 (F1, 31.7): "Kuula ainult mind" shows his wish (onlyOwnerWanted); the mode in force
+// (onlyOwner) waits for a voice, and the line under the choices says so.
+let ownerWanted = false
+let ownerInForce = false
+let ownerReadiness: GuardReadiness | undefined
+const ownerWaiting = document.createElement('p')
+ownerWaiting.id = 'ownerWaiting'
+ownerWaiting.className = 'note'
+ownerWaiting.setAttribute('role', 'status')
+ownerWaiting.textContent = STRINGS.et.strip.guardWaiting
+ownerWaiting.hidden = true
+/** The settings as shown: onlyOwner is the wish, not the mode in force. */
+const shown = (settings: StripSettings): StripSettings => ({ ...settings, onlyOwner: ownerWanted })
 const buttons = new Map<SettingKey, { value: Choice['value']; button: HTMLButtonElement }[]>()
 const sections = new Map<SettingKey, HTMLElement>()
 
@@ -297,12 +312,19 @@ function reflect(): void {
   // Round 8 (29.4.1): the wake word's field is shown in wake mode only.
   const wakePanel = document.getElementById('wakePanel')
   if (wakePanel) wakePanel.hidden = current.listenMode !== 'wake'
+  ownerWaiting.hidden = !(ownerWanted && !ownerInForce)
 }
 
 function choose(key: SettingKey, value: Choice['value']): void {
-  current = settingsFrom({ ...current, [key]: value })
+  // Round 11 (F1): only-my-voice is stored as the wish and the mode in force (src/core/guard.ts).
+  const patch: Record<string, unknown> = key === 'onlyOwner' ? { ...guardStore(value === true, ownerReadiness) } : { [key]: value }
+  if (key === 'onlyOwner') {
+    ownerWanted = value === true
+    ownerInForce = patch.onlyOwner === true
+  }
+  current = shown(settingsFrom({ ...current, [key]: value }))
   reflect()
-  chrome.storage.local.set({ [key]: value }).then(
+  chrome.storage.local.set(patch).then(
     () => say(text.saved),
     () => say(text.saved),
   )
@@ -355,7 +377,7 @@ for (const group of GROUPS) {
   }
   buttons.set(group.key, list)
   section.append(h2, sub, grid)
-  if (group.key === 'onlyOwner') section.append(scriptPanel())
+  if (group.key === 'onlyOwner') section.append(ownerWaiting, scriptPanel())
   if (group.key === 'listenMode') section.append(wakeWordPanel())
   if (group.note !== undefined) {
     const note = document.createElement('p')
@@ -368,19 +390,31 @@ for (const group of GROUPS) {
 }
 reflect()
 
-chrome.storage.local.get([...SETTING_KEYS]).then(
+chrome.storage.local.get([...SETTING_KEYS, 'onlyOwnerWanted']).then(
   (stored) => {
-    current = settingsFrom(stored)
+    ownerWanted = onlyOwnerWantedFrom(stored)
+    ownerInForce = stored.onlyOwner === true
+    current = shown(settingsFrom(stored))
     reflect()
   },
   () => reflect(),
 )
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !SETTING_KEYS.some((key) => changes[key])) return
+  if (area !== 'local' || !(SETTING_KEYS.some((key) => changes[key]) || changes.onlyOwnerWanted)) return
   const next: Record<string, unknown> = { ...current }
   for (const key of SETTING_KEYS) if (changes[key]) next[key] = changes[key].newValue
-  current = settingsFrom(next)
+  if (changes.onlyOwner) ownerInForce = changes.onlyOwner.newValue === true
+  if (changes.onlyOwnerWanted) ownerWanted = changes.onlyOwnerWanted.newValue === true
+  current = shown(settingsFrom(next))
   reflect()
+})
+// Round 11 (F1): the readiness the offscreen document last reported, for the choice above.
+const followOwnerReadiness = (state: StripState | undefined): void => {
+  ownerReadiness = readinessFrom(state?.voiceReady)
+}
+void chrome.storage.session.get(STATE_KEY).then((stored) => followOwnerReadiness(stored[STATE_KEY] as StripState | undefined), () => undefined)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session' && changes[STATE_KEY]) followOwnerReadiness(changes[STATE_KEY].newValue as StripState | undefined)
 })
 
 // ---------- the page address (section 20); the speech address moved to the Server section (27.3) ----------
@@ -426,7 +460,8 @@ if (save) {
 // (the engine sends each utterance here as savedEntry while it runs), and a keyboard form for Tom.
 
 const A = STRINGS.et.andmed
-const KINDS: readonly SavedKind[] = ['email', 'tel', 'code', 'text']
+// Round 11 (F5, 26.8): "Lisa kontakt": a person's name and e-mail address.
+const KINDS: readonly SavedKind[] = ['email', 'tel', 'code', 'text', 'contact']
 let savedItems: SavedItem[] = []
 let entry: EntryState | null = null
 /** The id of the item the keyboard form is changing, or null for a new one. */
@@ -600,6 +635,11 @@ if (saveButton) {
     const kind = SAVED_KINDS.find((k) => k === kindSelect?.value) ?? 'text'
     if (name === '' || value === '') {
       strip(A.formMissing)
+      return
+    }
+    // Round 11 (26.8): a contact's value is its e-mail address.
+    if (kind === 'contact' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/u.test(value)) {
+      strip(A.needAt)
       return
     }
     const id = editing ?? crypto.randomUUID()
