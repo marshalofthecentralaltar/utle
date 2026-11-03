@@ -42,10 +42,25 @@ knowing what 0.54 and 0.50 each cost him (section 2.5).
 by the speaker gate with the wrong line (1w VOICE2); the first "Ütle, …" of a session can be heard as
 "Ütlemine …" (PR #11 may remove it).
 
-**Where things are**: section 5. **Size** (cloc, 2026-11-03): 214 TypeScript files, 43.9k lines, of which
-about 25k is product (extension and server), 19k tests, 6.6k measurement scripts. Duplication 0.5%
-(jscpd); dead exports near zero (knip). The large files `extension/src/page.ts`, `extension/src/engine.ts`
-and `src/core/strings.ts` are being split by seam (round 12).
+**Where things are**: section 5. **Size after round 12** (cloc, 2026-11-03): 192 TypeScript files, 37.6k
+lines (43.9k before), about 22k product (extension and server), the rest tests and measurement scripts.
+Duplication 0.5% (jscpd); knip clean with the config in `docs/plans/2026-11-03-round-12-structure.md`.
+
+**Round 12 (2026-11-03, the structure pass).** Measured first: the code was not bloated (0.5 % duplication,
+2 dead symbols, 15 unused exports), so the cut was at the edges. Gone: the pre-extension dev page and its
+document-editing path (`index.html`, `src/ui`, `src/api`, the bridge, `session.ts`, `/api/interpret`,
+rehearsal mode; 4.5k lines with tests), the Soniox engine (never run with a key; 0.8k), eight one-off
+scripts, and the vite build (`npm run check` is typecheck, lint, test, extension build; `npm run dev` is
+the server only). Split by seam: `extension/src/page.ts` into `page/*.ts` (14 modules; git's move detection
+shows nothing changed but exports and one setter), `extension/src/engine.ts` into `engine/*.ts` (the parts
+take `EngineState` explicitly; `engine.test.ts` unchanged), `src/core/strings.ts` into `strings/{types,et,en}.ts`.
+`extension/relay.js` stays: the browser suite's fixture drives commands through it. Proof on 47b1cdd:
+`npm run check` 53 files, 4,089 tests (4,340 minus the 251 of the removed code), exit 0; `run.ts` 339 PASS
+(one earlier run died at 21 with a 0-width Chromium window; the re-run passed); `npm run serve` answers
+`/api/status`. Not run: `voice.ts` with the real model, the eval. Remote branches of finished rounds deleted
+(24); `r10-kws`, `r10-realwake` kept with their worktrees; the `r11-*` worktrees still hold a `models/`
+junction and must be unlinked before removal (see the memory note), and seven emptied `utle-cloud-r9-*`
+and `utle-cloud-speech` folders are left for a hand delete.
 
 ---
 
