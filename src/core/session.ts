@@ -315,7 +315,7 @@ function onBrowserResult(s: Session, seq: number, command: BrowserCommand, resul
       const late = result.code === 'failed' && result.message === BRIDGE_TIMED_OUT
       // Text may already be typed and sent when insertText times out; when opening timed out, nothing was typed.
       if (late && command.kind === 'insertText') return done(toListening(s, t.sendTimedOut))
-      return done(toListening(s, t.sendFailed(late ? t.browserTimedOut : t.browserFailed(command, result.code))))
+      return done(toListening(s, t.sendFailed(late ? t.browserTimedOut : t.browserFailed(command, result.code, result.message))))
     }
     if (command.kind === 'openConversation') {
       const next: BrowserCommand = { kind: 'insertText', text: draftText(s.doc), submit: true }
@@ -326,7 +326,7 @@ function onBrowserResult(s: Session, seq: number, command: BrowserCommand, resul
   }
 
   if (!result.ok) {
-    return done({ ...s, hints: command.kind === 'showHints' ? false : s.hints, understood: s.mode === 'asleep' ? s.understood : result.code === 'failed' && result.message === BRIDGE_TIMED_OUT ? t.browserTimedOut : t.browserFailed(command, result.code) })
+    return done({ ...s, hints: command.kind === 'showHints' ? false : s.hints, understood: s.mode === 'asleep' ? s.understood : result.code === 'failed' && result.message === BRIDGE_TIMED_OUT ? t.browserTimedOut : t.browserFailed(command, result.code, result.message) })
   }
   const hints = command.kind === 'showHints' ? true : s.hints
   if (s.mode === 'asleep') return done({ ...s, hints })

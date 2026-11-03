@@ -239,7 +239,7 @@ function failureLine(s: Strings, command: BrowserCommand, code: BrowserFailure, 
     return command.kind === 'pressSend' ? s.sendTimedOut : s.browserTimedOut
   }
   const box = command.kind === 'setText' || command.kind === 'pressSend' || command.kind === 'readBox'
-  const reason = box && code === 'not_found' ? s.inpage.boxNotFound : s.browserFailed(command, code)
+  const reason = box && code === 'not_found' ? s.inpage.boxNotFound : s.browserFailed(command, code, message)
   return command.kind === 'pressSend' ? s.inpage.notSent(reason) : reason
 }
 

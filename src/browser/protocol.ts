@@ -277,6 +277,22 @@ export type BrowserResult =
   | { ok: true; tab?: { title: string; url: string }; hints?: number; box?: BoxState; page?: PageContext; reading?: ReadingText }
   | { ok: false; code: BrowserFailure; message: string }
 
+/**
+ * Lane EXIT (finding 5): a search whose field is on the page but behind an open dialog (YouTube's cookie
+ * consent). The page answers `not_found` with this message, naming the dialog's buttons it can read.
+ */
+const BEHIND_DIALOG = 'behind_dialog:'
+export const behindDialog = (buttons: string[]): string => `${BEHIND_DIALOG}${buttons.join('\n')}`
+/** The dialog's button labels when a failure says the field is behind a dialog (maybe none), else null. */
+export function dialogButtons(message: string | undefined): string[] | null {
+  if (message === undefined || !message.startsWith(BEHIND_DIALOG)) return null
+  return message
+    .slice(BEHIND_DIALOG.length)
+    .split('\n')
+    .map((b) => b.trim())
+    .filter((b) => b !== '')
+}
+
 /** Posted by the page with window.postMessage(request, window.location.origin). */
 export interface BridgeRequest {
   source: typeof BRIDGE_APP

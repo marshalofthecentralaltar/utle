@@ -1,4 +1,5 @@
 import type { BrowserCommand, BrowserFailure, MediaAction, PressableKey } from '../browser/protocol.ts'
+import { dialogButtons } from '../browser/protocol.ts'
 import type { SavedKind } from './saved.ts'
 import type { FormatStyle } from '../browser/protocol.ts'
 import { HELP_EXAMPLES, HELP_EXAMPLES_EN, PHRASE_GROUPS } from './phrases.ts'
@@ -66,7 +67,8 @@ export interface Strings {
   // Browser commands: while on the way, after success, after failure.
   browserDoing(command: BrowserCommand): string
   browserDone(command: BrowserCommand, tabTitle: string | null, hints: number | null): string
-  browserFailed(command: BrowserCommand, code: BrowserFailure): string
+  /** `message` is the page's failure message (lane EXIT: a search field behind an open dialog names its buttons there). */
+  browserFailed(command: BrowserCommand, code: BrowserFailure, message?: string): string
 
   // Messages.
   draftStarted(to: string | null): string
@@ -847,7 +849,7 @@ const ET: Strings = {
         return ET.browserDoing(command)
     }
   },
-  browserFailed(command, code) {
+  browserFailed(command, code, message) {
     // ---------- reading aloud (29.5) ----------
     if (command.kind === 'read' && code === 'not_allowed') return ET.read.noVoice
     if (command.kind === 'read' && code === 'not_found') return command.what === 'continue' ? ET.read.ended : ET.read.nothing
@@ -863,7 +865,15 @@ const ET: Strings = {
         if (command.kind === 'openConversation') return `Vestlust „${command.name}“ ei leitud.`
         if (command.kind === 'insertText') return 'Sõnumikasti ei leitud.'
         if (command.kind === 'clickItem' || command.kind === 'focusItem' || command.kind === 'hover' || command.kind === 'contextMenu' || command.kind === 'scrollTo') return 'Seda ei ole enam lehel. Ütle uuesti.'
-        if (command.kind === 'siteSearch') return 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.'
+        if (command.kind === 'siteSearch') {
+          // Lane EXIT (finding 5): the field is there, an open dialog (a cookie consent) is in front of it.
+          const buttons = dialogButtons(message)
+          if (buttons) {
+            const say = buttons.slice(0, 2).map((b) => `„${b.toLowerCase()}“`).join(' või ')
+            return say === '' ? 'Otsing on lehe akna taga. Vasta enne aknale, siis ütle otsing uuesti.' : `Otsing on lehe akna taga. Vasta enne aknale, näiteks ${say}, siis ütle otsing uuesti.`
+          }
+          return 'Sellel lehel ei ole otsingut. Ütle „otsi googlest“.'
+        }
         if (command.kind === 'media') return 'Siin ei ole videot.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'Ühtegi kasti ei ole valitud. Ütle „näita numbreid“ ja number.'
         if (command.kind === 'caret' || command.kind === 'select') return 'Seda teksti kastis ei ole.'
@@ -1484,7 +1494,7 @@ const EN: Strings = {
         return EN.browserDoing(command)
     }
   },
-  browserFailed(command, code) {
+  browserFailed(command, code, message) {
     // ---------- reading aloud (29.5) ----------
     if (command.kind === 'read' && code === 'not_allowed') return EN.read.noVoice
     if (command.kind === 'read' && code === 'not_found') return command.what === 'continue' ? EN.read.ended : EN.read.nothing
@@ -1500,7 +1510,14 @@ const EN: Strings = {
         if (command.kind === 'openConversation') return `No conversation with ${command.name} was found.`
         if (command.kind === 'insertText') return 'No message box was found.'
         if (command.kind === 'clickItem' || command.kind === 'focusItem' || command.kind === 'hover' || command.kind === 'contextMenu' || command.kind === 'scrollTo') return 'That is no longer on the page. Say it again.'
-        if (command.kind === 'siteSearch') return 'This page has no search. Say "search google for".'
+        if (command.kind === 'siteSearch') {
+          const buttons = dialogButtons(message)
+          if (buttons) {
+            const say = buttons.slice(0, 2).map((b) => `“${b}”`).join(' or ')
+            return say === '' ? 'The search is behind a window on the page. Answer it first, then say the search again.' : `The search is behind a window on the page. Answer it first, for example ${say}, then say the search again.`
+          }
+          return 'This page has no search. Say "search google for".'
+        }
         if (command.kind === 'media') return 'There is no video here.'
         if (command.kind === 'clearField' || command.kind === 'arm') return 'No field is picked. Say "show numbers" and a number.'
         if (command.kind === 'caret' || command.kind === 'select') return 'That text is not in the field.'

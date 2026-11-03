@@ -327,6 +327,16 @@ interface StripSample {
 }
 const strip: StripSample[] = []
 
+/** The hosts this run serves itself (stand-ins); a navigation anywhere else is a live site. */
+const STAND_IN = /^https:\/\/((www\.)?youtube\.com|(www\.)?google\.[a-z.]+|web\.whatsapp\.com)\//
+/** Requests the catch-all route aborted (ms from install, URL). */
+const blocked: string[] = []
+/** A minimal Google results stand-in: the query, a search field, no live results. */
+function googleStandIn(url: string): string {
+  const q = (new URL(url).searchParams.get('q') ?? '').replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`)
+  return `<!doctype html><html lang="et"><head><meta charset="utf-8"><title>${q === '' ? 'Google' : `${q} - Google otsing`}</title></head><body><form action="/search" role="search"><input name="q" type="text" aria-label="Otsi" value="${q}"></form><div id="search"><h3>Google (stand-in: no live site in a test)</h3></div></body></html>`
+}
+
 const plain = (s: string): string =>
   s
     .toLowerCase()
@@ -436,6 +446,16 @@ async function main(): Promise<void> {
     const youtube = readFileSync(join(FIXTURES, 'youtube.html'), 'utf8')
     const whatsapp = readFileSync(join(FIXTURES, 'whatsapp.html'), 'utf8')
     const lexical = readFileSync(join(here, 'vendor/lexical.js'), 'utf8')
+    // Hermetic (lane EXIT, review 1): nothing leaves for a live site. Registered first, so the stand-ins
+    // below win; google.com gets a minimal results stand-in (control-1 reached the real one and was sent
+    // to reCAPTCHA); anything else is aborted, and a navigation there fails the check at the end.
+    await ctx.route('**/*', (route) => {
+      const url = route.request().url()
+      if (!/^https?:/.test(url) || /^https?:\/\/(localhost|127\.0\.0\.1)[:/]/.test(url)) return route.continue()
+      if (/^https:\/\/(www\.)?google\.[a-z.]+\//.test(url)) return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: googleStandIn(url) })
+      blocked.push(`${at()} ${url}`)
+      return route.abort('blockedbyclient')
+    })
     await ctx.route('https://www.youtube.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: youtube }))
     await ctx.route('https://youtube.com/**', (route) => route.fulfill({ status: 301, headers: { location: route.request().url().replace('https://youtube.com', 'https://www.youtube.com') } }))
     await ctx.route('https://web.whatsapp.com/**', (route) =>
@@ -732,6 +752,8 @@ async function main(): Promise<void> {
     // ---- criterion 2: the bar never shows the others' words; the box and the message neither ----
     const leaks = strip.filter((s) => roomRun(`${s.heard}`) !== '' || roomRun(`${s.line}`) !== '')
     check(`the bar never shows three of the room’s words in a row (${strip.length} samples)`, leaks.length === 0, leaks.slice(0, 3).map((s) => `${s.t} ms heard=${JSON.stringify(s.heard)} line=${JSON.stringify(s.line)} (${roomRun(s.heard) || roomRun(s.line)})`).join('; '))
+    const offSite = navigations.filter((n) => !STAND_IN.test(n.slice(n.indexOf(' ') + 1)))
+    check('hermetic: every navigation is to a stand-in or an extension page', offSite.length === 0, `${offSite.join(' | ')}${blocked.length > 0 ? `; blocked requests ${blocked.length}: ${blocked.slice(0, 3).join(' | ')}` : ''}`)
     const boxLeaks = boxes.filter((b) => roomRun(b.text) !== '')
     check(`the chat box never holds three of the room’s words in a row (${boxes.length} samples)`, boxLeaks.length === 0, boxLeaks.slice(0, 2).map((b) => `${b.t} ms ${JSON.stringify(b.text)}`).join('; '))
     check('the sent list is his sentence, once', sentList.length === 1 && roomRun(sentList[0] ?? '') === '', JSON.stringify(sentList))
