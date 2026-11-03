@@ -329,8 +329,8 @@ export interface Strings {
     /** model_unavailable: the voice cannot be checked right now (no speaker model, or a speech engine without one). */
     voiceUnsupported: string
     // Round 10 (31.7): onboarding and readiness.
-    /** A read phrase was not counted: why, and to read it again. */
-    phraseProblem: Record<'too_short' | 'too_quiet' | 'clipped' | 'model_error', string>
+    /** A read phrase was not counted: why, and to read it again. Round 11 (F2): slow, the computer is behind: wait, nothing is lost. */
+    phraseProblem: Record<'too_short' | 'too_quiet' | 'clipped' | 'model_error' | 'slow', string>
     /** An enrolment replaced nothing: why; the old voice stays. */
     enrolFailedWhy: Record<'too_few_phrases' | 'too_little_speech' | 'held_out_failed' | 'write_failed' | 'model_unavailable', string>
     /** An enrolment passed the held-out check. */
@@ -1114,6 +1114,7 @@ const ET: Strings = {
       too_quiet: 'Liiga vaikne. Räägi mikrofonile lähemal ja loe see uuesti.',
       clipped: 'Liiga vali, heli moonutub. Räägi veidi vaiksemalt ja loe see uuesti.',
       model_error: 'Häält ei õnnestunud mõõta. Loe see uuesti.',
+      slow: 'Arvuti on praegu aeglane. Oota hetk, loetud lause jõuab kohale.',
     },
     enrolFailedWhy: {
       too_few_phrases: 'Lauseid jäi liiga vähe, vaja on vähemalt kuus. Senine hääl jäi alles.',
@@ -1757,6 +1758,7 @@ const EN: Strings = {
       too_quiet: 'Too quiet. Speak closer to the microphone and read it again.',
       clipped: 'Too loud, the sound distorts. Speak a little softer and read it again.',
       model_error: 'The voice could not be measured. Read it again.',
+      slow: 'The computer is slow right now. Wait a moment, the sentence you read is still on its way.',
     },
     enrolFailedWhy: {
       too_few_phrases: 'Too few sentences, at least six are needed. The voice you had is kept.',

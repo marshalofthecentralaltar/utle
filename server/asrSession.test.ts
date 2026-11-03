@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES, ENDPOINT_TRAILING_MS } from '../src/speech/asrProtocol.ts'
 import { SPEAKER_REASONS } from '../src/speech/asrProtocol.ts'
 import type { AsrServerMessage, FinalWhy, SpeakerReason } from '../src/speech/asrProtocol.ts'
-import { ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, PAUSE_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
+import { ENROL_MAX_BACKLOG_MS, ENROL_PATIENCE, KEEP_MS, LAG_REPORT_MS, MAX_BACKLOG_MS, MAX_KEPT_MS, PAUSE_MS, SILENCE_RMS, createAsrSession, decoderInThread, rms, samplesFromFrame } from './asrSession.ts'
 import type { DecodeResult, Decoder, OnlineRecognizerLike, OnlineStreamLike } from './asrSession.ts'
 import type { EnrolFailure, EnrolOutcome, EnrolPhrase, Judgement, PhraseProblem, PhraseResult, Readiness, SpeakerGate, SpeakerTest, SpeakerVerification } from './speaker.ts'
 import { CAPTURE_LOG, captureFromEnv, createCapture } from './capture.ts'
@@ -980,6 +980,65 @@ describe('scripted enrolment (round 7)', () => {
     plain.session.enrolScript(12)
     await microtasks()
     expect(plain.sent).toEqual([{ type: 'enrolled', ok: false, seconds: 0, phrases: 0 }])
+  })
+
+  // Round 11 (F2, ARCHITECTURE 31.7): on 2026-11-03 the enrolment connection received 44 s and dropped
+  // 10 s under load; a phrase cut by the drop came back too_short again and again with no hint why.
+  it('round 11 (F2): a slow decoder drops nothing inside an enrolment phrase, and the client is told once that the computer is slow', async () => {
+    const { gate, sent, loop, session } = setupWithGate()
+    session.enrolScript(40)
+    // A phrase is one second of words and two silent frames (the first ends it).
+    const phrase = [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 0, 0]
+    const values = Array.from({ length: 440 }, (_, i) => phrase[i % phrase.length] ?? 0)
+    // 44 s arrive; the decoder gets through two frames for every three (a loaded machine).
+    values.forEach((value, i) => {
+      session.audio(frame(value))
+      if (i % 3 !== 2) loop.tick()
+    })
+    // It really fell behind, far past the bound where audio is dropped outside enrolment.
+    expect(session.backlogMs()).toBeGreaterThan(5 * MAX_BACKLOG_MS)
+    loop.settle()
+    await microtasks()
+    expect(session.stats().droppedMs).toBe(0)
+    expect(session.stats().decodedMs).toBe(session.stats().receivedMs)
+    // Every phrase reached takePhrase whole: ten frames of words each, none cut, none asked again.
+    expect(gate.phrased).toHaveLength(36)
+    expect(gate.phrased.every((frames) => frames.length === 10)).toBe(true)
+    const phrases = sent.filter((m) => m.type === 'enrolPhrase')
+    expect(phrases.filter((m) => m.problem === undefined).map((m) => m.count)).toEqual(Array.from({ length: 36 }, (_, i) => i + 1))
+    expect(phrases.filter((m) => m.problem !== undefined && m.problem !== 'slow')).toEqual([])
+    expect(phrases.filter((m) => m.problem === 'slow')).toHaveLength(1)
+  })
+
+  it('round 11 (F2): once enrolment is over, a backlog is dropped as before', async () => {
+    const { sent, loop, session } = setupWithGate()
+    session.enrolScript(1)
+    feed(session, loop, [1, 2, 0])
+    await microtasks()
+    expect(sent.filter((m) => m.type === 'enrolled')).toHaveLength(1)
+    for (let i = 0; i < 20; i += 1) session.audio(frame(1))
+    expect(session.stats().droppedMs).toBeGreaterThan(0)
+    expect(session.backlogMs()).toBeLessThanOrEqual(MAX_BACKLOG_MS)
+    expect(sent.filter((m) => m.type === 'enrolPhrase' && m.problem === 'slow')).toEqual([])
+  })
+
+  it('round 11 (F2): an enrolment started over still holds its backlog (the answer to the first one does not end the hold)', async () => {
+    const { session } = setupWithGate()
+    session.enrolScript(40)
+    session.enrolScript(40)
+    await microtasks()
+    for (let i = 0; i < 50; i += 1) session.audio(frame((i % 3) + 1))
+    expect(session.stats().droppedMs).toBe(0)
+    expect(session.backlogMs()).toBe(5000)
+  })
+
+  it('round 11 (F2): an enrolment backlog is bounded at ENROL_MAX_BACKLOG_MS; past it the oldest audio is dropped', () => {
+    const { session } = setupWithGate()
+    session.enrolScript(40)
+    const frames = ENROL_MAX_BACKLOG_MS / 100 + 10
+    for (let i = 0; i < frames; i += 1) session.audio(frame((i % 3) + 1))
+    expect(session.stats().droppedMs).toBeGreaterThan(0)
+    expect(session.backlogMs()).toBeLessThanOrEqual(ENROL_MAX_BACKLOG_MS)
   })
 })
 

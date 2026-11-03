@@ -115,9 +115,12 @@ export type AsrServerMessage =
 
 // ---------- onboarding and readiness (round 10, lane VOICE, ARCHITECTURE 31.7) ----------
 
-/** Why a read phrase is asked again. */
-export type PhraseProblem = 'too_short' | 'too_quiet' | 'clipped' | 'model_error'
-export const PHRASE_PROBLEMS: readonly PhraseProblem[] = ['too_short', 'too_quiet', 'clipped', 'model_error']
+/**
+ * Why a read phrase is asked again. Round 11 (F2): `slow` is no refusal: the server fell behind while
+ * the phrases were being read and holds them whole; the page says to wait (the count stays).
+ */
+export type PhraseProblem = 'too_short' | 'too_quiet' | 'clipped' | 'model_error' | 'slow'
+export const PHRASE_PROBLEMS: readonly PhraseProblem[] = ['too_short', 'too_quiet', 'clipped', 'model_error', 'slow']
 /** Why an enrolment replaced nothing (the old profile stays). */
 export type EnrolFailure = 'too_few_phrases' | 'too_little_speech' | 'held_out_failed' | 'write_failed' | 'model_unavailable'
 export const ENROL_FAILURES: readonly EnrolFailure[] = ['too_few_phrases', 'too_little_speech', 'held_out_failed', 'write_failed', 'model_unavailable']
