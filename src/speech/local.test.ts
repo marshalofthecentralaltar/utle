@@ -1237,19 +1237,16 @@ describe('the endpoint mode and the pause (round 10, #7)', () => {
     expect(endpoints(socket())).toEqual([{ type: 'endpoint', mode: 'command' }])
   })
 
-  it('round 10 prompt 6 (QUICK, 32.3): the stable words go to onStable at the pause and when the final arrives, before the hold delivers it; only the owner: never for a pause or an unauthorized final', () => {
+  it('round 10 prompt 6 (QUICK, 32.3, review 2): the stable words go to onStable only when the final arrives, before the hold delivers it, never at the pause; only the owner: never for a pause or an unauthorized final', () => {
     const { r, socket, utterances, stable } = setup()
     r.start()
     socket().says({ type: 'ready' })
     socket().says({ type: 'partial', text: 'jõuan kell viis' })
     expect(stable).toEqual([])
     socket().says({ type: 'pause', text: 'jõuan kell viis' })
-    expect(stable).toEqual([['jõuan kell viis', undefined]])
+    expect(stable).toEqual([])
     socket().says({ type: 'final', text: 'jõuan kell viis' })
-    expect(stable).toEqual([
-      ['jõuan kell viis', undefined],
-      ['jõuan kell viis', undefined],
-    ])
+    expect(stable).toEqual([['jõuan kell viis', undefined]])
     // The hold still holds the final: nothing delivered yet.
     expect(utterances).toEqual([])
     vi.advanceTimersByTime(5000)
