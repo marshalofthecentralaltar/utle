@@ -16,7 +16,7 @@ export type PhraseRule = 'inpage' | 'browserIntent' | 'places' | 'placeVoice' | 
  * resting, or an empty box after "numbritena". For savedEntry: the voice entry of an e-mail on the settings page. For wake: the wake
  * word set, the window shut (or, for `open`, already open).
  */
-export type PhraseContext = 'none' | 'focused' | 'empty' | 'text' | 'code' | 'email' | 'tel' | 'mail' | 'document' | 'hints' | 'saved' | 'asleep' | 'spelled' | 'entry' | 'wakeShut' | 'wakeOpen'
+export type PhraseContext = 'none' | 'focused' | 'empty' | 'text' | 'code' | 'email' | 'tel' | 'mail' | 'document' | 'hints' | 'saved' | 'asleep' | 'spelled' | 'entry' | 'wakeShut' | 'wakeOpen' | 'mailTo'
 
 export interface Phrase {
   /** The Estonian forms; the first is shown large. Every one is tested. */
@@ -279,6 +279,8 @@ export const PHRASE_GROUPS: readonly PhraseGroup[] = [
       { et: ['valmis'], en: 'done', does: 'Sisestamisel: salvestab.', doesEn: 'In the entry: saves it.', rule: 'savedEntry', expect: 'save', context: 'entry' },
       { et: ['katkesta'], en: 'cancel', does: 'Sisestamisel: lahkub salvestamata.', doesEn: 'In the entry: leaves without saving.', rule: 'savedEntry', expect: 'cancel', context: 'entry' },
       { et: ['minu e-post', 'mu meil', 'kirjuta mu telefon', 'sisesta minu isikukood'], en: 'my email, my phone', does: 'Väljal: kirjutab salvestatud väärtuse korraga.', doesEn: 'In a field: the saved value is typed whole.', rule: 'inpage', expect: 'setText', context: 'saved' },
+      // Round 11 (26.8): a saved contact. The bare name only in a compose window's To; elsewhere with a mail word.
+      { et: ['saada meil Nadimile', 'kirjuta Nadimile meil'], en: 'email Nadim', does: 'Kontakt: kirja aadressiväljal kirjutab tema aadressi, mujal avab talle uue kirja. Kirja aadressiväljal piisab „kirjuta Nadimile“.', doesEn: 'A contact: in the To field of a mail it types the address, elsewhere it opens a new mail to it. In the To field, "kirjuta Nadimile" is enough.', rule: 'inpage', expect: 'setText', context: 'mailTo' },
     ],
   },
   {

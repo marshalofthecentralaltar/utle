@@ -2531,8 +2531,23 @@ describe('round 11: contact (26.8)', () => {
     })
   }
 
-  it('contact: with no compose open, "kirjuta Nadimile, et tulen homme" opens a mail to the address with the body', () => {
-    const step = inpageStep(withContact, 'kirjuta Nadimile, et tulen homme', NO_BOX)
+  // Review 2 (ruling): a contact by its bare name is the mail only where the mail is in front (an armed
+  // mail field); elsewhere the phrase needs a mail word, so "kirjuta Marile" on WhatsApp stays Mari's chat.
+  it('contact: with a contact "Mari" saved and no box, "kirjuta Marile" gives the same commands as on main (the chat)', () => {
+    const MARI: SavedItem = { id: 'k2', name: 'Mari', value: 'mari@example.com', kind: 'contact' }
+    const before = inpageStep(session(), 'kirjuta Marile', NO_BOX)
+    expect(before.commands).toEqual([{ kind: 'openConversation', name: 'Mari' }])
+    expect(inpageStep(session({ saved: [MARI] }), 'kirjuta Marile', NO_BOX).commands).toEqual(before.commands)
+  })
+
+  it('contact: a mail word after the name is the mail too: "kirjuta Nadimile meil", "kirjuta Nadimile e-kiri", "email Nadim"', () => {
+    for (const phrase of ['kirjuta Nadimile meil', 'kirjuta Nadimile e-kiri', 'email Nadim']) {
+      expect(inpageStep(withContact, phrase, NO_BOX).commands).toEqual([{ kind: 'compose', to: 'nadim.naide@example.com' }])
+    }
+  })
+
+  it('contact: with no compose open, "saada meil Nadimile, et tulen homme" opens a mail to the address with the body', () => {
+    const step = inpageStep(withContact, 'saada meil Nadimile, et tulen homme', NO_BOX)
     expect(step.commands).toEqual([{ kind: 'compose', to: 'nadim.naide@example.com', body: 'Tulen homme.' }])
     expect(step.ask).toBeUndefined()
     const done = inpageResult(withContact, step.commands, OK)

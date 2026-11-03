@@ -666,9 +666,10 @@ Räägi. Või ütle „minu e-post“." Free phrasing goes to the model, which k
 and may pick the field first: `täida telefon`, `sisesta see gmaili aadress`.
 
 **Contacts (round 11).** Kind "Kontakt: nimi ja e-posti aadress" (or **Lisa kontakt** by voice): the
-name is the person's, the value the address. Then `kirjuta Nadimile`, `saada meil Nadimile`, `kirjuta
-Nadimile, et tulen homme` or, in Gmail's To, `kirjuta Nadim` put the address in To (or open a new mail
-to it), no model asked; the bar reads the name back: "Saaja: Nadim (nadim.naide@example.com)."
+name is the person's, the value the address. Then `saada meil Nadimile`, `kirjuta Nadimile meil` or
+`saada meil Nadimile, et tulen homme` open a new mail to the address (or type it into To when a compose
+window's To is armed), no model asked; in To the bare name is enough (`kirjuta Nadimile`, `kirjuta Nadim`),
+elsewhere `kirjuta Marile` stays the chat; the bar reads the name back: "Saaja: Nadim (nadim.naide@example.com)."
 
 **"vale" (round 11).** When the bar reads a one-line field back wrong, say `vale` (`valesti`, `see on
 vale`): the field is cleared ("Kustutasin. Ütle tähthaaval.") and the next thing you say is spelled

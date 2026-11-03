@@ -1204,7 +1204,8 @@ The settings page shows the wish and the waiting line. A store from before (only
 **F5.** Saved kind `contact` (`{ id, name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact', aliases? }`
 in `savedValues`); Minu andmed offers "Kontakt: nimi ja e-posti aadress" and "Lisa kontakt". "kirjuta Nadimile",
 "saada meil Nadimile", "kirjuta Nadimile, et …", "kirjuta Nadim" (and "Natim", by phonetic key) put the address
-in an armed To, else open a new mail to it; the bar: "Saaja: Nadim (nadim.naide@example.com). Ütle „edasi“ või
+in an armed To, else open a new mail to it (review 2: the bare name only in an armed mail field; elsewhere a mail word
+is needed, so "kirjuta Marile" on WhatsApp stays the chat); the bar: "Saaja: Nadim (nadim.naide@example.com). Ütle „edasi“ või
 „vale“." / "To: Nadim (…). Say "next" or "wrong"." "vale" (valesti, see on vale, ei vale, wrong) in a one-line
 field's read-back clears it: "Kustutasin. Ütle tähthaaval." / "Deleted. Spell it letter by letter.", and the next
 utterance is spelled ("n a d i m punkt naide ät example punkt com" is nadim.naide@example.com). The read-back

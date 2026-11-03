@@ -160,7 +160,7 @@ describe('contact: a name and an e-mail address (26.8)', () => {
 describe('contact: what to say (26.8)', () => {
   it('savedPhrases: a contact is said in a mail phrase', () => {
     const NADIM: SavedItem = { id: 'k1', name: 'Nadim', value: 'nadim.naide@example.com', kind: 'contact' }
-    expect(savedPhrases(NADIM)).toEqual(['kirjuta meil Nadim', 'Nadim'])
+    expect(savedPhrases(NADIM)).toEqual(['kirjuta meil Nadim', 'Nadim (kirja aadressiväljal)'])
     expect(contactMatch(savedPhrases(NADIM)[0] ?? '', [NADIM])).toEqual({ item: NADIM })
   })
 })

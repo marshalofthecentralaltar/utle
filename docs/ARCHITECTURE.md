@@ -1297,7 +1297,7 @@ the read-back offered only "edasi" or "valmis", and his correction was appended 
 address, aliases as for any item. `savedFrom` keeps it. It has no family (26.2), so "minu meil" is never
 a contact. Minu andmed offers it in the keyboard form's kind select ("Kontakt: nimi ja e-posti
 aadress"; the value must be an address) and as "Lisa kontakt" for the voice flow (26.5), which always
-asks the name and spells the address as an e-mail. The line under it: "Ütle: kirjuta meil Nadim, Nadim".
+asks the name and spells the address as an e-mail. The line under it: "Ütle: kirjuta meil Nadim, Nadim (kirja aadressiväljal)".
 
 **The rule** (`contactMatch` in `src/core/saved.ts`, tried in `inpageStep` after the saved values and
 before the mail rules of 29.3, never the model): "kirjuta | saada | koosta [uus] [meil | kiri …] <one or
@@ -1310,7 +1310,11 @@ may have one more last letter ("Maasikale" is Maasikas). Exact keys only, so "Ma
 - an armed one-line e-mail field (To, Cc) and no body: the address typed whole (`insertSaved`), line
   `inpage.insertedContact`: "Saaja: Nadim (nadim.naide@example.com). Ütle „edasi“ või „vale“." (the name first);
 - otherwise `compose { to: address, body? }` (29.3.4), line `inpage.contactMail`: "Uus kiri: Nadim (nadim.naide@example.com).";
-- in a chat's composer the bare form ("kirjuta Marile") stays the chat (22); with a mail word it is the mail.
+- review 2 ruling: a contact by its bare name ("kirjuta Nadimile", "kirjuta Nadim") is the mail only where
+  the mail is in front, an armed mail field (`box.mail`, a compose window's To); anywhere else the phrase
+  needs a mail word (meil, e-kiri, kiri, email; "saada meil Nadimile", "kirjuta Nadimile meil", "email
+  Nadim", `contactMailWorded`), so "kirjuta Marile" on WhatsApp's chat list, with a contact Mari saved,
+  stays Mari's chat (22) as before; a contact is never taken for the no-box saved value of 26.3 either.
 
 By its name alone ("Nadim", "kirjuta Nadim" in To) a contact goes only into an e-mail field. The model
 sees the contact's name on the `saved:` line like any saved name (26.3).

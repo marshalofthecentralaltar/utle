@@ -202,7 +202,8 @@ export function savedFrom(stored: unknown): SavedItem[] {
  */
 export function savedPhrases(item: SavedItem, items: readonly SavedItem[] = [item]): string[] {
   // Round 11 (26.8): a contact is said in a mail phrase.
-  if (item.kind === 'contact') return [`kirjuta meil ${item.name}`, item.name]
+  // Review 2: the bare name only in a compose window's To (an armed mail field).
+  if (item.kind === 'contact') return [`kirjuta meil ${item.name}`, `${item.name} (kirja aadressiväljal)`]
   const phrases = [item.name]
   const family = itemFamily(item)
   const folded = formOf(item.name).folded
@@ -234,6 +235,10 @@ const MAIL_WORD = String.raw`(?:meil|meili|e-?meil|e-?meili|email|e-mail|emaili|
 const CONTACT_ET = new RegExp(String.raw`^(?:kirjuta|saada|koosta)\s+(?:uus\s+|üks\s+)?(?:${MAIL_WORD}\s+)?(\p{L}+(?:\s+\p{L}+)?)(?:\s*,?\s+et\s+(.+))?$`, 'iu')
 /** "write to Nadim", "email Nadim", "send a mail to Nadim saying ...". */
 const CONTACT_EN = /^(?:write|send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+|mail\s+)?(?:to\s+)?(\p{L}+(?:\s+\p{L}+)?)(?:\s*,?\s+(?:saying|that)\s+(.+))?$/iu
+/** A mail word ending the phrase ("kirjuta Nadimile meil"). */
+const TRAILING_MAIL = new RegExp(String.raw`\s+${MAIL_WORD}$`, 'iu')
+/** The words that make a phrase a mail (review 2): with one, a contact's name is the mail anywhere. */
+const MAIL_WORDS = new Set(['meil', 'meili', 'emeil', 'emeili', 'email', 'emaili', 'kiri', 'kirja', 'ekiri', 'ekirja', 'mail', 'maili'])
 /** At least this many letters stay when an ending comes off. */
 const NAME_STEM_MIN = 3
 
@@ -266,10 +271,20 @@ function namesContact(spoken: string, item: SavedItem): boolean {
  * no contact saved, no such phrase, or a name that is no contact's (the mail rules of 29.3 then
  * take the phrase as before). Two contacts with the name: null (nothing is guessed).
  */
+/**
+ * True when the phrase carries a mail word ("saada meil Nadimile", "kirjuta Nadimile e-kiri", "email
+ * Nadim"). Review 2 ruling (26.8): a contact by its bare name is the mail only in an armed mail field;
+ * elsewhere it needs this, so "kirjuta Marile" on a chat site stays the chat.
+ */
+export function contactMailWorded(utterance: string): boolean {
+  return utterance.toLocaleLowerCase('et').replace(/-/gu, '').split(/[^\p{L}]+/u).some((w) => MAIL_WORDS.has(w))
+}
+
 export function contactMatch(utterance: string, items: readonly SavedItem[]): { item: SavedItem; body?: string } | null {
   const contacts = items.filter((item) => item.kind === 'contact')
   if (contacts.length === 0) return null
-  const s = utterance.trim().replace(/\s+/g, ' ').replace(/[.!?…]+$/u, '').trim()
+  // "kirjuta Nadimile meil", "kirjuta Nadimile e-kiri": the mail word after the name is not part of it.
+  const s = utterance.trim().replace(/\s+/g, ' ').replace(/[.!?…]+$/u, '').trim().replace(TRAILING_MAIL, '')
   const m = CONTACT_ET.exec(s) ?? CONTACT_EN.exec(s)
   const spoken = m?.[1]
   if (m === null || spoken === undefined) return null

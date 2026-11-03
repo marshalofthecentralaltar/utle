@@ -7,7 +7,7 @@ import { FILLERS, NOT_A_NAME, messageCommand, nameFromSpoken } from './message.t
 import { mailCommand, mailFieldCommand } from './mail.ts'
 import { soundsLike } from './phonetic.ts'
 import { normalise, quickReply, spokenNumber } from './quickReply.ts'
-import { contactMatch, savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
+import { contactMailWorded, contactMatch, savedByName, savedChoice, savedHint, savedMatch, savedTyped } from './saved.ts'
 import type { SavedItem } from './saved.ts'
 import { spelledKind, spokenValueOnly, typedFromSpoken } from './spelling.ts'
 import { STRINGS } from './strings.ts'
@@ -119,17 +119,19 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
   const session: InpageSession = (previous.choosing ?? null) === null ? previous : { ...previous, choosing: null }
   const saved = savedAction(previous, utterance, box)
   if (saved !== null) return act(session, saved, box)
-  // Round 11 (F5, 26.8): a saved contact named in a mail phrase ("kirjuta Nadimile"): its address in
-  // To. In a chat's composer only with a mail word ("saada meil Nadimile"); "kirjuta Marile" there is the chat.
+  // Round 11 (F5, 26.8): a saved contact named in a mail phrase: its address in To. Review 2 ruling: by
+  // its bare name ("kirjuta Nadimile") only in an armed mail field (a compose window's To); elsewhere the
+  // phrase needs a mail word ("saada meil Nadimile"), so "kirjuta Marile" on a chat site stays the chat.
   const contact = session.asleep || isCancelAll(utterance) ? null : contactMatch(utterance, session.saved ?? [])
-  if (contact !== null && (mailCommand(utterance) !== null || !(box.present && box.armed && box.kind === 'composer' && box.mail !== true))) {
+  if (contact !== null && (contactMailWorded(utterance) || (box.present && box.armed && box.mail === true))) {
     const into = box.present && box.armed && box.single === true && box.fieldKind === 'email' && contact.body === undefined
     const action: Action = into ? { kind: 'insertSaved', item: contact.item } : { kind: 'browser', command: { kind: 'compose', to: contact.item.value, ...(contact.body !== undefined ? { body: contact.body } : {}) } }
     return act(session, action, box)
   }
   // A saved value named with no armed box ("minu meil" on a form): never a misheard command; the
   // model is asked, and may pick the field first (26.3).
-  if (!session.asleep && (!box.present || !box.armed) && savedMatch(utterance, session.saved ?? [], false) !== null) {
+  // A contact is not among them (26.8): "kirjuta Marile" names Mari's chat, not her saved address.
+  if (!session.asleep && (!box.present || !box.armed) && savedMatch(utterance, (session.saved ?? []).filter((item) => item.kind !== 'contact'), false) !== null) {
     return { ...act(session, { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }, box), ask: true }
   }
   // Round 5: in a one-line form field he armed, "valmis" / "edasi" go to the next field and
