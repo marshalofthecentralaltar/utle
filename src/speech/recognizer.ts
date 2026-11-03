@@ -51,7 +51,7 @@ export interface RecognizerHandlers {
   onInterim(text: string): void
   /**
    * Round 10 prompt 6 (QUICK, ARCHITECTURE 32.3): these words are done (a final arrived, before the
-   * assembler's hold; or the server's pause named them). Nothing may act on them: only an ask may
+   * assembler's hold; never at the server's pause, review 2). Nothing may act on them: only an ask may
    * start early. With only the owner obeyed, only for an authorized final, with its decision.
    */
   onStable?(text: string, decision?: SpeakerDecision): void

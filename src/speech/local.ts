@@ -260,8 +260,7 @@ export function createLocalRecognizer(
    * swallowed as for any released reply. Never with only the owner on (onPartial never settles there).
    */
   const onPause = (text: string): void => {
-    // Round 10 prompt 6 (QUICK, 32.3): the words are stable; an ask may start before the final.
-    if (!strict && text !== '') handlers.onStable?.(text)
+    // QUICK review 2 (32.3): the pause starts no early ask (it asked on words the final did not keep).
     if (strict || settling === '' || text !== settling) return
     cancelSettle()
     if (assembler.idle()) releaseInstant(text)
