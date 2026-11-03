@@ -2511,3 +2511,78 @@ describe('timed scroll (round 10, #7, ARCHITECTURE 33.4)', () => {
     expect(inpageStep(session(), 'keri edasi kaks minutit', NO_BOX).commands).toEqual(only({ kind: 'media', action: 'forward', seconds: 120 }))
   })
 })
+
+describe('round 11 (F4, lane WORDS): the owner\'s own words for the core commands are rules', () => {
+  const first = (u: string, b: BoxState = NO_BOX): BrowserCommand | undefined => inpageStep(session(), u, b).commands[0]
+  const asks = (u: string, b: BoxState = NO_BOX): boolean => inpageStep(session(), u, b).ask === true
+
+  it('back: "mine tagasi eelmisele lehele" and its kin, as the recogniser wrote them, also with words in the box', () => {
+    for (const u of ['mine tagasi eelmisele lehele', 'Mine tagasi eelmisele lehele?', 'mine tagasi eelmisele leheküljele', 'mine tagasi', 'mine eelmisele lehele']) {
+      expect(first(u), u).toEqual({ kind: 'history', direction: 'back' })
+      expect(first(u, box('Tulen homme')), u).toEqual({ kind: 'history', direction: 'back' })
+      expect(asks(u), u).toBe(false)
+    }
+    // The demo's first try: "mine" heard as "mina", one letter away.
+    const step = inpageStep(session(), 'Mina tagasi eelmisele lehele.', NO_BOX)
+    expect(step.commands).toEqual(only({ kind: 'history', direction: 'back' }))
+    expect(step.line.startsWith(ET.inpage.understood('mine tagasi eelmisele lehele'))).toBe(true)
+  })
+
+  it('forward, the mirror of back', () => {
+    for (const u of ['mine järgmisele lehele', 'mine edasi']) expect(first(u), u).toEqual({ kind: 'history', direction: 'forward' })
+  })
+
+  it('a new tab: "mine uuele vahelehele", "uuele vahelehele", "mine uuele lehele", "ava uus vaheleht"', () => {
+    for (const u of ['mine uuele vahelehele', 'Mine uuele vahelehele.', 'uuele vahelehele', 'mine uuele lehele', 'ava uus vaheleht']) {
+      expect(first(u), u).toEqual({ kind: 'newTab' })
+      expect(asks(u), u).toBe(false)
+    }
+  })
+
+  it('a known site: "ma tahan X-i minna", "ma tahan minna X-i", "mine X-sse"', () => {
+    const rows: Array<[string, string]> = [
+      ['ma tahan töötukassasse minna', 'https://www.tootukassa.ee/'],
+      ["ma tahan youtube'i minna", 'https://www.youtube.com/'],
+      ['ma tahan gmaili minna', 'https://mail.google.com/'],
+      ["Ma tahan minna youtube'i.", 'https://www.youtube.com/'],
+      ['tahan töötukassasse minna', 'https://www.tootukassa.ee/'],
+      ['mine töötukassasse', 'https://www.tootukassa.ee/'],
+      ["mine youtube'i", 'https://www.youtube.com/'],
+      ['mine gmaili', 'https://mail.google.com/'],
+    ]
+    for (const [u, url] of rows) {
+      expect(first(u), u).toEqual({ kind: 'goTo', url })
+      expect(first(u, unarmed('')), u).toEqual({ kind: 'goTo', url })
+    }
+  })
+
+  it('a known site\'s name alone opens it when nothing is being written ("Töötukassa", ". Youtube")', () => {
+    expect(first('Töötukassa')).toEqual({ kind: 'goTo', url: 'https://www.tootukassa.ee/' })
+    expect(first('. Youtube')).toEqual({ kind: 'goTo', url: 'https://www.youtube.com/' })
+    expect(first('Gmail', unarmed(''))).toEqual({ kind: 'goTo', url: 'https://mail.google.com/' })
+  })
+
+  it('while he writes (an armed box), the name alone and "ma tahan X-i minna" are words of the message, and the model is asked', () => {
+    for (const u of ['Youtube', 'Töötukassa', "ma tahan youtube'i minna", 'ma tahan minna gmaili']) {
+      for (const b of [EMPTY, box('Tere')]) {
+        const step = inpageStep(session(), u, b)
+        expect(step.commands[0]?.kind, u).toBe('setText')
+        expect(step.ask, u).toBe(true)
+      }
+    }
+  })
+
+  it('a bare word one letter from a site name does nothing (the name alone must be exact; the wish form has a verb)', () => {
+    for (const u of ['gmai', 'delf', 'you tubee', 'you tub', 'linked ín', 'Töötukass']) {
+      expect(first(u)?.kind, u).not.toBe('goTo')
+    }
+    // With the verb a correction still reaches the site: "ma tahan juutuubi minna" by sound.
+    expect(first('ma tahan juutuubi minna')).toEqual({ kind: 'goTo', url: 'https://www.youtube.com/' })
+  })
+
+  it('what no rule may guess stays with the model: an unknown place, a wish with no place, "where I was before" (34.2)', () => {
+    for (const u of ['ma tahan koju minna', 'ma tahan minna', 'ma tahan magama minna', 'mine tagasi sinna kus ma olin', 'Ei, ma mõtlen sinna, kus ma olin ennem töötukassat', 'ma tahan kirjutada enda sõbrale e-maili']) {
+      expect(asks(u), u).toBe(true)
+    }
+  })
+})

@@ -1180,6 +1180,47 @@ In x-3 the finding 5 fix worked end to end: the bar said the search is behind th
 said "Ütle, otsi lastelaulud", and the results for "lastelaulud" opened. Logs: `artifacts/integ/` in the merge worktree
 (not committed).
 
+## 1w. Round 11, lane WORDS (2026-11-03)
+
+Findings F4 and F6 of `docs/plans/2026-11-03-round-11-demo-brief.md` (ARCHITECTURE 23.4 "His own words", 32.3
+"After a read-back").
+
+**F4, his words for the core commands are rules.** `src/core/replay.test.ts` replays his 45 gate-verified
+utterances of the demo (the brief says 48; the log has 45 rows labelled owner) through `inpageStep` with the box
+he had (`src/core/fixtures/demo-2026-11-03.ts`: recognised text only, his friend's address replaced by a stand-in).
+Before (origin/main 242547a): 42 of 45 went to the model. After: 37 of 45. Run it with `--silent=false` to see the
+per-utterance verdicts (vitest hides a passing test's output).
+
+| Form | Maps to | From |
+|---|---|---|
+| mine tagasi eelmisele lehele (also with its first word misheard by one letter) | history back | replay rows 9, 10; brief |
+| mine tagasi eelmisele leheküljele | history back | brief |
+| mine järgmisele lehele | history forward | the mirror of "mine eelmisele lehele" |
+| mine uuele vahelehele, uuele vahelehele | newTab | replay row 19; the gate-rejected tries before it |
+| mine uuele lehele | newTab | brief |
+| ma tahan X-i minna, tahan minna X-i (a known site) | goTo | brief (töötukassa, youtube, gmail) |
+| a known site's name alone ("Töötukassa", "Youtube") | goTo, only with no armed box | replay rows 6, 7 |
+| mine töötukassasse, mine gmaili, ava uus vaheleht | goTo / newTab (already rules; now on the help page) | brief |
+
+Still asked, rightly: English and Estonian talk to himself or the room, his corrections of the address in the To
+field, page clicks ("Mobiil-ID-ga sisselogimine", "logi mobiil-ID-ga sisse"), "sinna kus ma olin enne
+töötukassat" (34.2: the model knows the tab he came from; the rules see no tabs), "kirjuta enda sõbrale e-maili"
+(a careful plan), and words the recogniser broke. The bare "tagasi eelmisele lehele" is left out so that
+the undo word "tagasi" stays instant (`extendsCommand('tagasi') = false`, pinned in `commandPrefix.test.ts`; "mine
+tagasi" waits for its final since round 10); the one-letter rule still carries "mina tagasi …". A site's name alone must be exact: no one-letter or sound-alike correction
+reaches it ("you tubee", "gmai" do nothing); "ma tahan X-i minna" keeps them.
+
+**F6, the sentence after a read-back is addressed.** The addressee request carries `readBack` (the last step typed
+into a one-line field and the strip read it back); the prompt treats the next sentence, while the field is armed,
+as a command or dictation, never ignore. The three sentences as the recogniser wrote them that day were ignore 3
+of 3 runs each on main's prompt and command 3 of 3 with the change (`artifacts/words/eval-readback*.log` in the
+worktree). Eval: 90/90 intent cases and 22/22 addressee verdicts (16 before, plus five read-back cases and one
+guard), 112/112 on Sonnet 5.5, $0.571 for the run; the YouTube recovery case ("not on the page, scroll once, then
+search") passed this run (it searched at once, then said it saw no results). Gate: `npm run check` 4278 tests.
+
+Not verified: a real voice; the real Gmail To field returning `box.single` after a typing (the flag needs it;
+only indirectly shown, by the demo's read-back line).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

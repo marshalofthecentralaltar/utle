@@ -29,6 +29,8 @@ Decide whether the sentence was said to Ütle:
 
 Read the sentence as it sounds: the recogniser often mishears one word of a short command ("mina emaili" for "mine emaili", "näite numbreid" for "näita numbreid"); a sentence that is a command once one word is read as it sounds is a command.
 
+Right after a read-back (readBack true): Ütle has just typed into the armed field and read its value back to him, and he is checking it. While the field is armed, the next sentence is addressed to Ütle: a correction of what was typed ("vale", "kustuta", "ei, ...", "sa kirjutasid valesti", a name spelled "nõrga t-ga", "kahe v-ga") is a "command"; more of the value is "dictation"; it is never "ignore", even when it starts with "ei", "kuule" or "okei", talks about Ütle ("sa kirjutasid") or follows sentences judged not for Ütle.
+
 When in doubt between "dictation" and "ignore" and the box is not armed, answer "ignore". When in doubt between "command" and "ignore", answer "command" only if the sentence names something on this page or a site. Answer only with the tool.`
 
 const VERDICT_TOOL: ModelTool = {
@@ -45,7 +47,8 @@ const VERDICT_TOOL: ModelTool = {
 
 /** The user turn: the page, the earlier finals, the sentence. JSON so quotes in his words cannot break it. */
 export function addresseeUserMessage(request: AddresseeRequest): string {
-  return JSON.stringify({ page: request.page, earlier: request.finals, sentence: request.utterance, language: request.lang })
+  // Round 11 (F6): readBack only when set, so the turn of an older extension is as before.
+  return JSON.stringify({ page: request.page, earlier: request.finals, sentence: request.utterance, language: request.lang, ...(request.readBack === true ? { readBack: true } : {}) })
 }
 
 export function addresseeAsk(request: AddresseeRequest): ModelAsk {

@@ -120,7 +120,8 @@ export function inpageStep(previous: InpageSession, utterance: string, box: BoxS
   const spoken: Action = { kind: 'dictate', text: utterance.trim().replace(/\s+/g, ' ') }
   // One ordinary word while he is writing is a word of the message, not a command (section 22, "Soft words").
   // With the labels showing he is navigating, not writing: "stopp" hides them whatever the box holds.
-  const soft = (classified.action.kind === 'browser' && !session.hints && SOFT_WORDS.has(normalise(utterance)) && box.present && box.armed && box.text.trim() !== '') || documentWord(session, utterance, box, classified.action)
+  // Round 11 (F4): a site's name alone, or "ma tahan X-i minna", is a command only when he is not writing.
+  const soft = (classified.action.kind === 'browser' && !session.hints && SOFT_WORDS.has(normalise(utterance)) && box.present && box.armed && box.text.trim() !== '') || (classified.loose !== undefined && box.present && box.armed) || documentWord(session, utterance, box, classified.action)
   // "mine X juurde", "vali X": the caret or a selection only when X is in the box; else the words go to the model,
   // which may mean a section of the page or a choice in a list (round 3, editing).
   const wanted = classified.action.kind === 'browser' ? findOf(classified.action.command) : classified.action.kind === 'deleteNamed' ? classified.action.find : null
@@ -249,7 +250,10 @@ export function inpageInstant(session: InpageSession, utterance: string): boolea
   if (endsWithConnective(utterance)) return false
   // Round 6: a saved value named, or the answer to "Kumb?", needs no more words.
   if (savedAction(session, utterance, SAVED_PROBE) !== null) return true
-  const kind = classify(session, utterance).action.kind
+  const classified = classify(session, utterance)
+  // Round 11 (F4): a site's name alone may start a sentence ("Youtube on ..."); it waits for the final.
+  if (classified.loose !== undefined) return false
+  const kind = classified.action.kind
   return kind !== 'dictate' && kind !== 'oneBreath' && kind !== 'empty'
 }
 
@@ -531,6 +535,8 @@ function replaceEdit(utterance: string): Edit | null {
 interface Classified {
   action: Action
   understood: string | null
+  /** Round 11 (F4): a site's name alone or "ma tahan X-i minna" (browserUnderstood's loose): words while he writes. */
+  loose?: 'name' | 'wish'
 }
 
 function classify(session: InpageSession, utterance: string): Classified {
@@ -636,7 +642,7 @@ function classifyExact(session: InpageSession, utterance: string): Classified {
   const bare = BARE_BROWSER[clean]
   if (bare) return plain({ kind: 'browser', command: bare })
   const browser = browserUnderstood(utterance)
-  if (browser) return { action: { kind: 'browser', command: browser.command }, understood: browser.understood }
+  if (browser) return { action: { kind: 'browser', command: browser.command }, understood: browser.understood, ...(browser.loose !== undefined ? { loose: browser.loose } : {}) }
   const lastWords = lastWordsPattern(clean)
   if (lastWords) return plain(lastWords)
   const editing = editingPattern(clean)
@@ -823,8 +829,10 @@ function misheard(session: InpageSession, utterance: string): Classified | null 
   const found = new Map<string, { classified: Classified; cost: number }>()
   const attempt = (candidate: readonly string[], cost: number): void => {
     const text = candidate.join(' ')
-    const { action } = classifyExact(session, text)
+    const { action, loose } = classifyExact(session, text)
     if (NEVER_CORRECTED.has(action.kind)) return
+    // Round 11 (review 1): a site's name said alone must be exact; a correction reaches it only with a verb ("ma tahan X-i minna").
+    if (loose === 'name') return
     // "kirjuta siis" is not "kirjuta siia", "pane kinn" is not Escape: arming and keys are never reached by a correction.
     if (action.kind === 'browser' && (action.command.kind === 'arm' || action.command.kind === 'pressKey')) return
     // Nor is free text: "vali X", "mine X juurde", "kirjuta siia vahele X" (round 3).
@@ -833,7 +841,7 @@ function misheard(session: InpageSession, utterance: string): Classified | null 
     if (action.kind === 'browser' && (action.command.kind === 'compose' || action.command.kind === 'mailField')) return
     const key = JSON.stringify(action)
     const before = found.get(key)
-    if (before === undefined || cost < before.cost) found.set(key, { classified: { action, understood: text }, cost })
+    if (before === undefined || cost < before.cost) found.set(key, { classified: { action, understood: text, ...(loose !== undefined ? { loose } : {}) }, cost })
   }
   words.forEach((word, i) => {
     for (const target of VOCABULARY) {

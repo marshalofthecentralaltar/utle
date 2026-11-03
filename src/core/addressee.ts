@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import type { BrowserCommand, BrowserResult } from '../browser/protocol.ts'
 import type { IntentUsage } from './pageIntent.ts'
 import type { Lang } from './strings.ts'
 
@@ -25,6 +26,11 @@ export interface AddresseeRequest {
   finals: string[]
   /** The page in front, in short. */
   page: { url: string; title: string; box: { present: boolean; armed: boolean } }
+  /**
+   * Round 11 (F6): the last thing that ran typed into a one-line field and the strip read the field
+   * back ("Kirjutasin: …"); nothing has run since. Absent: no (an extension older than this).
+   */
+  readBack?: boolean
 }
 
 export interface AddresseeAnswer {
@@ -41,6 +47,7 @@ export const AddresseeRequestSchema: z.ZodType<AddresseeRequest> = z.object({
     title: z.string().max(300),
     box: z.object({ present: z.boolean(), armed: z.boolean() }),
   }),
+  readBack: z.boolean().optional(),
 })
 
 /** The model's verdict, or null for anything else. */
@@ -51,4 +58,12 @@ export function verdictFrom(value: unknown): AddresseeVerdict | null {
 /** The last finals as the request carries them: clipped, newest kept. */
 export function recentFinals(finals: readonly string[]): string[] {
   return finals.map((f) => f.slice(0, FINAL_CHARS)).slice(-ADDRESSEE_FINALS)
+}
+
+/**
+ * Round 11 (F6): whether the strip read a field back after these commands ran (inpageResult's
+ * "Kirjutasin: …"): they ended in a typing that worked, into a one-line field.
+ */
+export function readsBack(commands: readonly BrowserCommand[], result: BrowserResult): boolean {
+  return result.ok && commands.at(-1)?.kind === 'setText' && result.box?.single === true
 }

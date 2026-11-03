@@ -30,7 +30,7 @@ import type { WakeState } from '../../src/core/wake.ts'
 // ---------- round 10: addressed speech (32) ----------
 import { createListen, listenActive, listenBusy, listenFinal, listenHeard, listenOff, listenOn, listenSleep, listenTick, listenWake } from '../../src/core/listen.ts'
 import type { ListenState } from '../../src/core/listen.ts'
-import { recentFinals } from '../../src/core/addressee.ts'
+import { readsBack, recentFinals } from '../../src/core/addressee.ts'
 import type { AddresseeAnswer, AddresseeRequest, AddresseeVerdict } from '../../src/core/addressee.ts'
 // ---------- end of addressed speech ----------
 /** Round 8 (29.4.3): how long "lisa koht" waits for the word. */
@@ -267,6 +267,8 @@ export function createEngine(given: EngineDeps): Engine {
   let live: Live | null = null
   /** Round 10 (#5, 34.2): his last commands, what ran and whether it worked, oldest first (at most RECENT_COMMANDS). */
   let recent: RecentCommand[] = []
+  /** Round 11 (F6): the last step that ran typed into a one-line field and the strip read it back; the addressee check is told. */
+  let readBack = false
   /** The server has said it has no model. A standing state: published on change only. */
   let modelOff = false
   /** 27.3: the server refused the token. The standing line and the socket's failure name it. */
@@ -777,6 +779,7 @@ export function createEngine(given: EngineDeps): Engine {
     // A command, or nothing at all: the preview must not stay in the box.
     if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
     if (step.commands.length === 0) {
+      readBack = false
       if (job !== null) {
         job.ran.push(ranOf([], step.line))
         job.ok = true
@@ -795,6 +798,7 @@ export function createEngine(given: EngineDeps): Engine {
     }
     const after = deps.logic.inpageResult(session, step.commands, last)
     session = after.session
+    readBack = readsBack(step.commands, last)
     const line = after.line !== '' ? after.line : step.line
     if (job !== null) {
       job.ran.push(ranOf(step.commands, line, page?.items))
@@ -1530,7 +1534,7 @@ export function createEngine(given: EngineDeps): Engine {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
       try {
-        const request: AddresseeRequest = { lang: deps.lang, utterance: utterance.slice(0, UTTERANCE_CHARS), finals: before, page: await pageNow() }
+        const request: AddresseeRequest = { lang: deps.lang, utterance: utterance.slice(0, UTTERANCE_CHARS), finals: before, page: await pageNow(), readBack }
         const answer = await check(request, controller.signal).catch((): AskFailure => ({ error: 'unreachable' }))
         return 'error' in answer ? null : answer.verdict
       } finally {
