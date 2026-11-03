@@ -1166,6 +1166,20 @@ whole suite (`artifacts/exit/suite-red-1.log`). Typecheck and lint pass on this 
 run.ts, `npm run check`, and the three overlap runs and the control with the new clip; the batch was stopped by
 the session's low-memory reap at 15:08 (machine at about 4 GB free while Ralf uses the product on port 5173).
 
+On merged main (orchestrator, 2026-11-03, the code of 6070983, the merge worktree, under the lock):
+`npm run check` 62 files, 4251 tests; run.ts 333 PASS, ALL PASS (EXIT 5 i to iii included); `UTLE_REAL=1 voice.ts`
+56 PASS, ALL PASS (started at 75 % CPU: under load, the owner's own dev server was up). Four rehearsals, every one
+hermetic, finding 1 (the last enrolment phrase as speech) in every one:
+| run | steps | bar samples with three room words | why a step failed |
+|---|---|---|---|
+| x-1 | 12/13 | 302 of 2078 | results for "lastelauda" (finding 3) |
+| x-2 (under load, 62 %) | 13/13 | 549 of 1939 | none |
+| x-3 | 10/11 | 624 of 1992 | WhatsApp: the recogniser fell 17 to 30 s behind real time (`[asr] final ... audio=87400 wall=117417`) with a second speech server decoding on the machine; the command's final came after the step's window. Environment, not product |
+| control (nobody over him) | 13/13 | 0 of 1470 | none |
+In x-3 the finding 5 fix worked end to end: the bar said the search is behind the window, he answered the consent and
+said "Ütle, otsi lastelaulud", and the results for "lastelaulud" opened. Logs: `artifacts/integ/` in the merge worktree
+(not committed).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
