@@ -760,7 +760,7 @@ The extension is the whole product. Nothing opens a window or a page for him to 
 | `background.ts` | the service worker | Target tab, tab commands, `zoom` (round 5: `chrome.tabs.getZoom` and `setZoom` through a step table; text and layout grow together and Chrome keeps the level per site), `runInPage`, the offscreen document, the strip state, the permission page, the relay for the localhost harness. |
 | `offscreen.ts`, `engine.ts` | the offscreen document (`offscreen.html`, reason `USER_MEDIA`) | Microphone, recogniser client (`src/speech/local.ts` with an explicit address), the `InpageSession`, the utterance loop, the chain of goals (24.1). |
 | `content.ts`, `strip.ts` | every http and https page (content script, top frame only) | The strip, in a closed shadow root, and making room for it. |
-| `page.ts`, `sites.ts` | the page in front, injected on demand | Scroll (a page, a little, slowly, stop; 23.4), numbers, the message box (`readBox`, `setText`, `pressSend`, `insertText`), opening a conversation, what the model sees (`readPage`, `clickItem`, `focusItem`, `siteSearch`, `media`, `clearField`, `arm`; section 22), editing inside the box (`caret`, `select`, `typeText`, `pressKey`; 23.5), the text items and `hover`, `contextMenu`, `scrollTo` (24.3). |
+| `page.ts` (the entry) and `page/*.ts`, `sites.ts` | the page in front, injected on demand | Scroll (a page, a little, slowly, stop; 23.4), numbers, the message box (`readBox`, `setText`, `pressSend`, `insertText`), opening a conversation, what the model sees (`readPage`, `clickItem`, `focusItem`, `siteSearch`, `media`, `clearField`, `arm`; section 22), editing inside the box (`caret`, `select`, `typeText`, `pressKey`; 23.5), the text items and `hover`, `contextMenu`, `scrollTo` (24.3). |
 | `permission.ts` | `permission.html`, an extension tab | Asks for the microphone, then closes itself. |
 | `options.ts` | the options page | The settings as large buttons (bar height, microphone side, bar at start, listening mode, gaze target, speech model; 23.3; the owner's voice, 24.2), and under "Täpsemalt" the Ütle harness address and the speech address. |
 
@@ -785,7 +785,7 @@ The engine takes `initialInpage`, `inpageStep`, `inpageResult` and `inpageInstan
 
 **Making room.** The strip must never cover the site's composer, which on WhatsApp and Messenger sits at the bottom of a full-height app. Two steps: (1) a page style gives `html` a content-box height of `100% - 128px` and 128 px of bottom padding, which shrinks every layout built on percentage heights and lets a scrolling page scroll its last 128 px out from under the strip; (2) once a second, if the page's message box (the `readBox` order) reaches under the strip, its outermost ancestor that is as tall as the viewport (a `100vh` app) gets an inline height of `calc(100vh - 128px)`. Elements a site fixes to the bottom of the viewport can still be covered.
 
-**The three commands** (page side, `page.ts`). The box is found in the existing order: the focused text field, else the site's composer (`sites.ts`), else the lowest visible textbox, textarea or input.
+**The three commands** (page side, `page/messageBox.ts`). The box is found in the existing order: the focused text field, else the site's composer (`sites.ts`), else the lowest visible textbox, textarea or input.
 
 - `readBox`: `{present, text}` at once, no waiting. Text is the field's value, or a contenteditable's `innerText` without trailing line breaks. Since M7 the `BoxState` also carries `armed` (section 22), `kind` (composer, search, field, none) and `label` (the placeholder, aria-label, title or `<label for>` text, 60 characters); since round 5 every `<input>` is `single: true` with a `fieldKind` (email, tel, code, number, password or text, from `fieldKindOf` in `box.ts`, 25.1; a search box stays kind `search` with fieldKind text), and a textarea or a contenteditable has neither.
 - `setText`: waits for the box like `insertText`, selects everything inside it (`select()` for a field, a range over its contents in a contenteditable), then types the text through `execCommand('insertText')` line by line. Between lines it dispatches a `beforeinput` of type `insertLineBreak` (what Shift+Enter produces, which Lexical takes), falling back to `execCommand('insertLineBreak')` when no editor handles it; a textarea gets `\n` typed. So a Lexical editor registers every change, and a line break never reaches the Enter handler that sends. Where an editor cancels the native edit and applies it in its own update (Lexical over a selection), the text is checked again 30 ms later before any fallback, so nothing is typed twice. An empty text selects all and deletes. Fallbacks as `insertText` (native value setter; `beforeinput`). Answers with the box read back. Round 5: a one-line `<input>` is never previewed, so it is always selected and replaced whole with the text as the core converted it, never typed at the end of.
@@ -970,7 +970,7 @@ The owner's words: the recogniser writes "juutuba" for YouTube, "aga whatsapp" f
 2. *The misheard rule* (`misheard` in `src/core/inpage.ts`), as a second pass: when no one-letter correction fires, each word of three letters or more is tried as each vocabulary word that sounds like it, one word at a time, under the same rule (the corrections that are commands must all mean one command) and the same protections (never send, sleep, wake, undo, back, arming or a key; not a vocabulary word plus a verb ending; a single word is never corrected). So "aga whatsapp" is "ava whatsapp", "keri ala" is "keri alla", "geri alla" is "keri alla"; "sada", "saata sõnum" and "sul on õigus" stay dictation.
 3. *Send is literal* (`SEND` in `src/core/message.ts`): no correction ever reaches it, so every form is listed as heard: saada, saada ära, saada sõnum, saada see, saadake, saadake ära, saadake sõnum, saadame, saadame ära. "Sada", "saadan", "saata" and "saada mulle pilt" are not send.
 
-**Scrolling** (`scroll` in `src/browser/protocol.ts` gains `mode`; `extension/src/page.ts`; the model's tool asks for a mode too). `page` (the default) scrolls 80% of the view (`PAGE_SCROLL_SHARE`) with `behavior: 'smooth'` and answers once the scroll has settled (unchanged over two looks of 50 ms after it moved, at most `SCROLL_SETTLE_MAX_MS`, 600 ms); `little` a third (`LITTLE_SCROLL_SHARE`), the same way; `top` and `bottom` stay instant. Both keep the rule that nothing scrolled is `failed`: the first container under the middle of the screen that can still move in that direction is the one scrolled. `slow` starts a steady scroll at `SLOW_SCROLL_PX_PER_S` (90 px/s, one `requestAnimationFrame` loop, whole pixels with the fraction carried) and answers at once; it ends on `stop`, on any other scroll command, on a navigation (`onNavigation`), or when the container stops moving. `stop` ends it and is ok when nothing was moving. The phrases: keri natuke alla / üles, natuke alla / üles, keri veidi alla, veidi üles, scroll down a little, a little up → `little`; keri aeglaselt alla / üles, keri tasa alla, aeglaselt alla, scroll slowly down, scroll up slowly → `slow`; stopp, seis, aitab, lõpeta, lõpeta kerimine, peata kerimine, kerimine seis, stop, stop scrolling → `stop`. While the labels show, "stopp", "stop" and "lõpeta" still hide them (22); "seis" and "aitab" stop the scroll and leave the labels. While an armed box holds words, "aitab" and "lõpeta" are soft words (22): message words, not a stop; "stopp", "seis", "stop" and every two-word form stop the scroll whatever the box. The core cannot know whether a slow scroll runs, so a stop with nothing moving answers "Kerimine seis." and changes nothing. "Keri edasi" and "keri tagasi" stay the video's. `extension/test/run.ts` measures all of it: a page scroll ends at 80% of the view, a little one at a third, a slow one moves about 90 px over 1 s and stays where it is once stopped, and another scroll ends it.
+**Scrolling** (`scroll` in `src/browser/protocol.ts` gains `mode`; `extension/src/page/scroll.ts`; the model's tool asks for a mode too). `page` (the default) scrolls 80% of the view (`PAGE_SCROLL_SHARE`) with `behavior: 'smooth'` and answers once the scroll has settled (unchanged over two looks of 50 ms after it moved, at most `SCROLL_SETTLE_MAX_MS`, 600 ms); `little` a third (`LITTLE_SCROLL_SHARE`), the same way; `top` and `bottom` stay instant. Both keep the rule that nothing scrolled is `failed`: the first container under the middle of the screen that can still move in that direction is the one scrolled. `slow` starts a steady scroll at `SLOW_SCROLL_PX_PER_S` (90 px/s, one `requestAnimationFrame` loop, whole pixels with the fraction carried) and answers at once; it ends on `stop`, on any other scroll command, on a navigation (`onNavigation`), or when the container stops moving. `stop` ends it and is ok when nothing was moving. The phrases: keri natuke alla / üles, natuke alla / üles, keri veidi alla, veidi üles, scroll down a little, a little up → `little`; keri aeglaselt alla / üles, keri tasa alla, aeglaselt alla, scroll slowly down, scroll up slowly → `slow`; stopp, seis, aitab, lõpeta, lõpeta kerimine, peata kerimine, kerimine seis, stop, stop scrolling → `stop`. While the labels show, "stopp", "stop" and "lõpeta" still hide them (22); "seis" and "aitab" stop the scroll and leave the labels. While an armed box holds words, "aitab" and "lõpeta" are soft words (22): message words, not a stop; "stopp", "seis", "stop" and every two-word form stop the scroll whatever the box. The core cannot know whether a slow scroll runs, so a stop with nothing moving answers "Kerimine seis." and changes nothing. "Keri edasi" and "keri tagasi" stay the video's. `extension/test/run.ts` measures all of it: a page scroll ends at 80% of the view, a little one at a third, a slow one moves about 90 px over 1 s and stays where it is once stopped, and another scroll ends it.
 
 **Numbers with endings** ("vajuta 5.", "number viis.", "12.") already clicked the label through `cleanForBrowser` and `normalise`; verified by test, unchanged.
 
@@ -978,7 +978,7 @@ The owner's words: the recogniser writes "juutuba" for YouTube, "aga whatsapp" f
 
 ### 23.5 Editing in the box (EDIT lane)
 
-The owner's words: move between sentences and words, erase letters, insert in the middle, undo; an essay, not only a chat message; Google Docs as far as a canvas editor allows. The phrases and what the core does are in the Editing table of 21.1; this is the page side (`extension/src/page.ts`) and the contract (`src/browser/protocol.ts`: `caret{to}`, `select{what}`, `typeText{text}`, `pressKey{key, times}` with `PressableKey` extended by Backspace, Delete, the four arrows, Home, End, Undo, Redo and SelectAll).
+The owner's words: move between sentences and words, erase letters, insert in the middle, undo; an essay, not only a chat message; Google Docs as far as a canvas editor allows. The phrases and what the core does are in the Editing table of 21.1; this is the page side (`extension/src/page/edit.ts`, `pressKey` in `page/field.ts`) and the contract (`src/browser/protocol.ts`: `caret{to}`, `select{what}`, `typeText{text}`, `pressKey{key, times}` with `PressableKey` extended by Backspace, Delete, the four arrows, Home, End, Undo, Redo and SelectAll).
 
 **The field.** Every editing command acts on `editTarget`: the armed field, else the focused text field, else the site's composer when it is armed, else the box in front (`findMessageBox`). With none the answer is `not_found` ("No field is picked to write in."). Backspace, Delete, the arrows, Home, End, Undo, Redo and SelectAll are editing keys: when the focused element is not a text field, `pressKey` focuses the edit target first. Escape, Enter and Tab are leaving keys and go to whatever is focused; Tab moves the focus itself (`focusNext`: the next focusable element in page order, wrapping, skipping the strip and the labels), and a text field reached that way is armed as a real Tab arms it (M7.2). A count is capped at 50.
 
@@ -1117,7 +1117,7 @@ Tests: `server/speaker.test.ts` (one threshold, the self-score of a recording wi
 
 ### 24.3 Everything on the page: text items, hover, the context menu, scroll to (PAGE lane)
 
-The model only knows what `readPage` reports (22, `extension/README.md` "What the page tells the model"). Until round 4 that was the clickable things, so "Karini viimane sõnum" named nothing the model could point at, and a control that shows on hover only (WhatsApp's arrow on a message, YouTube's card menu, Gmail's row actions) was never listed. `extension/src/page.ts` now lists the text he may refer to, rests the pointer on an item, opens an item's context menu, and scrolls an item into view. The contract: `PageItem.role` gains `text`; `hover {id}`, `contextMenu {id}` and `scrollTo {id}` in `src/browser/protocol.ts`, validated by `pageIntentFrom` against the page's ids like `clickItem`, and treated by `afterCommands` as page changes (labels and undo cleared).
+The model only knows what `readPage` reports (22, `extension/README.md` "What the page tells the model"). Until round 4 that was the clickable things, so "Karini viimane sõnum" named nothing the model could point at, and a control that shows on hover only (WhatsApp's arrow on a message, YouTube's card menu, Gmail's row actions) was never listed. `extension/src/page/items.ts` and `page/read.ts` now list the text he may refer to, rest the pointer on an item, open an item's context menu, and scroll an item into view. The contract: `PageItem.role` gains `text`; `hover {id}`, `contextMenu {id}` and `scrollTo {id}` in `src/browser/protocol.ts`, validated by `pageIntentFrom` against the page's ids like `clickItem`, and treated by `afterCommands` as page changes (labels and undo cleared).
 
 | Constant | Value | What |
 |---|---|---|
@@ -1182,7 +1182,7 @@ The recogniser writes numbers as words ("kolm üheksa null kaks") and symbols as
 
 **The form keys.** `FORM_KEYS`, checked in `inpageStep` before every other rule when the box is present, armed and single and Ütle is awake: valmis, olen valmis, edasi, järgmine väli / done, next, next field are `pressKey{Tab}`; kinnita, sisesta, enter, logi sisse, saada vorm, esita vorm / confirm, submit, log in, login, sign in, submit the form, send the form are `pressKey{Enter}`. They act whatever the box holds (the soft-word rule of 22 does not apply in a form field: a PIN is not a message); outside a single field "edasi" stays history forward and "kinnita", "enter", "sisesta" stay the soft Enter. Tab arms the field it lands in (21.1), so "valmis" then the next value needs no click.
 
-**Implicit submission.** `pressKey{Enter}` on an `<input>` inside a form, when no handler cancelled the key, submits the form as a real Enter does (`implicitSubmit` in `page.ts`): `requestSubmit` with the form's first submit button (a `button` without a type, `button[type=submit]`, `input[type=submit]`, `input[type=image]`), or with none only when the form has exactly one text input; a disabled or detached button submits nothing, as a real Enter would do nothing. So "kinnita" on a Smart-ID-like page presses "Logi sisse".
+**Implicit submission.** `pressKey{Enter}` on an `<input>` inside a form, when no handler cancelled the key, submits the form as a real Enter does (`implicitSubmit` in `page/field.ts`): `requestSubmit` with the form's first submit button (a `button` without a type, `button[type=submit]`, `input[type=submit]`, `input[type=image]`), or with none only when the form has exactly one text input; a disabled or detached button submits nothing, as a real Enter would do nothing. So "kinnita" on a Smart-ID-like page presses "Logi sisse".
 
 **Passwords.** The strip reads a password field back as dots, and the server's user turn prints its text as dots; the server never logs document text in any case (the rule in `CLAUDE.md`).
 
@@ -1491,7 +1491,7 @@ edasi" and "keri tagasi" alone are still the 10 s rows):
   and goes on (to the model). A scroll phrase ("keri alla kolm korda") has no `edasi`/`tagasi`
   and is never a seek.
 
-**Page side** (`media()` in `extension/src/page.ts`). Without `seconds`: unchanged (YouTube's own
+**Page side** (`media()` in `extension/src/page/media.ts`). Without `seconds`: unchanged (YouTube's own
 `l`/`j` shortcut, else `currentTime` ± 10). With `seconds` on a plain `<video>`/`<audio>`:
 `currentTime` moves by that amount, clamped to [0, duration]. On YouTube (`#movie_player`), whose
 shortcuts move a fixed 5 or 10 s, the explicit amount sets `currentTime` on the element directly;
@@ -1525,7 +1525,7 @@ utterance, `src/core/browserIntent.ts`, the "document mode (29.2)" block):
 | list | loendiks, tee loendiks, täpploendiks | bulleted list, make it a list |
 | paragraph | uus lõik | new paragraph |
 
-The key table per editor (`extension/src/page.ts`, `format`). A chord is a keydown/keyup pair with
+The key table per editor (`extension/src/page/document.ts`, `format`). A chord is a keydown/keyup pair with
 the modifiers set, sent to the editor's keyboard target. "Fallback" runs when the chord's keydown
 was not cancelled and the field's HTML did not change, which is what a plain contenteditable does
 with a key event a script dispatched.
@@ -1622,8 +1622,8 @@ siin" (before the fix: "Tere.Uus lause on siin").
 Ralf's items 10 and 12. Item 11, the real-voice read-backs, did not happen: section 2 step 3 of the
 plan was not run, so there is no list of wrong read-backs, and the spelling tests of rounds 5 and 6
 stand in for it (29.3.6). The rules live in `src/core/mail.ts`, the address finder in
-`src/core/contacts.ts`, both pure; the page side is the `mail (29.3)` blocks of
-`extension/src/page.ts`, `box.ts`, `sites.ts` and `background.ts`.
+`src/core/contacts.ts`, both pure; the page side is `extension/src/page/mail.ts` and the `mail (29.3)` blocks of
+`box.ts`, `sites.ts` and `background.ts`.
 
 **29.3.1 Three commands.** `compose { to?, body? }`: on Gmail, a new message: the compose window in
 front is used, else Compose ("Koosta") is clicked and the window waited for; `to` (a name, or an
@@ -1972,7 +1972,7 @@ its rules line: "loe ette", "loe mulle seda lehte", "ma ei näe, loe" read page;
 an armed box read box; "loe edasi" continue; "lõpeta lugemine" stop; "ma ei näe" alone is still zoom
 in. "loe viimane lause ette" is the DOCS lane's.
 
-**What is read** (`read` in `extension/src/page.ts`). The root is the first `main` / `[role=main]`,
+**What is read** (`read` in `extension/src/page/reading.ts`). The root is the first `main` / `[role=main]`,
 else `article`, else `#content` / `#primary`, else `body`. Inside it, in document order, every
 `h1` to `h6`, `p`, `li` and `blockquote` that holds no other such block, skipping: anything inside
 `nav`, `aside`, `footer`, `form`, `button`, a dialog (`dialog`, `[role=dialog]`, `[role=alertdialog]`,
@@ -2255,7 +2255,7 @@ over a page's own consent layer: youtube.com's "Nõustu kõigiga" (y 757 to 797 
 ilmateenistus.ee's whole cookie bar (y 806 to 850) sat under the strip (y 772 to 900), so a pointer
 or a dwell could not press them. The strip now steps aside for a page that is asking something:
 
-- *What counts* (`askingLayer` in `strip.ts`, the readPage rule of page.ts without its size test,
+- *What counts* (`askingLayer` in `strip.ts`, the readPage rule of `page/items.ts` without its size test,
   since a 48 px cookie bar is far under a fifth of the screen): walking up from what lies under the
   strip, a fixed layer, or an absolute one with a z-index, whose text is under 3000 characters and
   says cookie, küpsis, nõustu, accept or consent; or a `role=dialog`, `role=alertdialog`,
@@ -2375,7 +2375,7 @@ within 200 px to its right or below (`sendButtonBeside` in `extension/src/box.ts
 already makes such a box a composer). The core reads document mode through one function,
 `inDocument(box)` in `src/core/documentMode.ts`: `box.document === true && box.send !== true`. So a
 600-character forum comment with a Post button beside it is a message box whatever its length, and
-"saada" presses the button (`send` in `extension/src/page.ts`: on a page with no site entry, when
+"saada" presses the button (`send` in `extension/src/page/messageBox.ts`: on a page with no site entry, when
 Enter did not send, the button `sendButtonBeside` found is clicked); a long textarea with no such button is still a document and "saada"
 there still says "Dokumendis ei saadeta." Tests: `npx vitest run src/core/inpage.test.ts -t "send
 button"`; the browser suite's case on `essay.html` (the textarea given a Send button and 600
@@ -2436,7 +2436,7 @@ article instead, to see a fixed fault on the page it was seen on. Every page loa
 
 **Fixes.** A fault the table shows is reproduced on `extension/test/fixtures/real-<site>.html` (the
 relevant real markup, trimmed, no images or scripts), gets a failing case in
-`extension/test/run.ts`, then the fix in `extension/src/page.ts` (readPage's banner, article or search
+`extension/test/run.ts`, then the fix in `extension/src/page/items.ts` (readPage's banner, article or search
 paths only) or the selector in `sites.ts`. The script is run again and the table gains a
 before/after line per fix.
 
@@ -2454,7 +2454,7 @@ a page's own fixed layer at the bottom stays under the strip, and on youtube.com
 Playwright's pointer could not click it.
 
 **What changed.** Each test-first on a fixture copied from the real markup:
-- `collect` in `extension/src/page.ts`: when a dialog's items are on screen and nothing outside it
+- `collect` in `extension/src/page/items.ts`: when a dialog's items are on screen and nothing outside it
   is (only the main video, which is listed even under overlays), the page is covered: the
   `[allpool]` items and the video are dropped. Before, delfi.ee's popup on a full-screen overlay
   and postimees.ee's Didomi layer let story links through as `[allpool] …`, err.ee's modal the video.
@@ -3158,7 +3158,7 @@ With only the owner on (31), nothing of this runs: the server sends no partial a
 never settles a partial and ignores a pause, and the engine's `ownerOnly` wrapper drops any utterance without a
 `verified_owner` decision. Never "run then undo".
 
-### 33.4 Timed scroll (`src/core/browserIntent.ts` `timedScroll`, `extension/src/page.ts` `startSlowScroll`, `extension/src/engine.ts` `scrollRan`)
+### 33.4 Timed scroll (`src/core/browserIntent.ts` `timedScroll`, `extension/src/page/scroll.ts` `startSlowScroll`, `extension/src/engine.ts` `scrollRan`)
 
 "keri alla kaks minutit", "keri üles 30 sekundit", "keri alla minut aega", "keri aeglaselt alla viis minutit",
 "keri kaks minutit alla", "scroll down for two minutes" are the slow scroll of 23.4 for that long:
