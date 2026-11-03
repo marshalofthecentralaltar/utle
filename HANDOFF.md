@@ -1,7 +1,55 @@
 # Ütle: handoff
 
+## State now (2026-11-03, after round 11)
+
+Read this page, then `docs/PRODUCT.md`, then `docs/ARCHITECTURE.md` from section 21 (1 to 20 are history).
+Everything below this page is history in round order (1, 1a, 1b … 1w, newest last) and is kept as the
+record of what was measured and why; sections 2 to 5 are the current to-do, the unverified list, the
+known faults and the map, and are kept current.
+
+**What it is.** A Chrome extension for people who cannot use their hands. A bar at the bottom of every
+page listens; Estonian speech is typed into the site's own message box, repaired and sent by voice, and
+the same voice moves the browser (sites, tabs, scrolling, video, mail, a document, reading aloud). It won
+the NewWorkTech hackathon (TalTech Mektory, 6 October 2026) and has since been used by seven testers
+at Rapla Hooldekogu and by its owner in a nine-minute demo (round 11). Nothing is hosted or deployed:
+the dev server runs on the user's machine, the extension is loaded unpacked, the store packet is ready
+for an upload that has not happened (1k-SHIP, `docs/STORE.md`).
+
+**What works, on `main`.** Speech by TalTech's model in the dev server, with a speech detector and a
+speaker gate that drops other voices when **Kuula ainult mind** is on (threshold 0.54, 1w VOICE2).
+Onboarding by voice (phrases checked one by one), a welcome page, a help page of what to say, settings
+usable by voice and by dwell. Commands by rules first (instant, offline) and by the model when the
+rules do not know the words (`/api/intent`, the page's accessibility-tree summary, one intent from a
+fixed set, validated before anything runs); compound requests as a bounded loop; a careful ask for long
+or chained requests. Dictation only into an armed box, typed first and checked after; an addressee check
+in always-on mode so a voice in the room never lands in his message. Wake word, places, document mode,
+mail (compose, fields, contacts in Minu andmed), reading aloud, a cost record per completed task. Two
+models through one door (`server/model/`): a quick one for most asks, a careful one for the rest, a
+fallback behind both.
+
+**Proof on this `main` (2b8dbe4, 2026-11-03).** `npm run check`: 65 files, 4,340 tests, exit 0.
+`npx tsx extension/test/run.ts`: 339 PASS, ALL PASS. `UTLE_REAL=1 voice.ts` sections 1, 2 and 6: 33 PASS;
+sections 7 and 8 and `intent-eval.ts` (112/112 on the same prompt one commit earlier) are owed on an idle
+machine before the next merge (section 3).
+
+**What Ralf must do next** (section 2 has the full list): keep the Anthropic key in `.env.local` and
+nowhere else (#8); review and merge PR #11 (the keyword spotter; branches `r10-kws`, `r10-realwake`); the
+consent text (#9) and the 20-minute recording with two partners (#4); choose the speaker-gate line
+knowing what 0.54 and 0.50 each cost him (section 2.5).
+
+**The three faults he feels most** (section 4 has them all): a dictated sentence lands in the box about
+2.75 s after he stops speaking (the addressee check is the cost, 1u); short or quiet speech is rejected
+by the speaker gate with the wrong line (1w VOICE2); the first "Ütle, …" of a session can be heard as
+"Ütlemine …" (PR #11 may remove it).
+
+**Where things are**: section 5. **Size** (cloc, 2026-11-03): 214 TypeScript files, 43.9k lines, of which
+about 25k is product (extension and server), 19k tests, 6.6k measurement scripts. Duplication 0.5%
+(jscpd); dead exports near zero (knip). The large files `extension/src/page.ts`, `extension/src/engine.ts`
+and `src/core/strings.ts` are being split by seam (round 12).
+
+---
+
 Written 2026-10-06 about 02:00 (Tallinn), after milestones M7, M7.2 and round 3, for a fresh session with no context.
-Read this, then `docs/PRODUCT.md`, then `docs/ARCHITECTURE.md` section 21 onward (22 is M7).
 The plan for M7 is `docs/plans/2026-10-05-m7-understanding.md`.
 
 Everything stated as fact here was observed in the session that wrote it. What was not is marked.

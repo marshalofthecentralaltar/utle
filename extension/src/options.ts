@@ -457,7 +457,7 @@ if (save) {
 
 // ---------- Minu andmed (round 6, docs/ARCHITECTURE.md 26.5, 26.6) ----------
 // His saved e-mail, phone number and ID code: the list with what to say, the voice entry flow
-// (the engine sends each utterance here as savedEntry while it runs), and a keyboard form for Tom.
+// (the engine sends each utterance here as savedEntry while it runs), and a keyboard form for the helper.
 
 const A = STRINGS.et.andmed
 // Round 11 (F5, 26.8): "Lisa kontakt": a person's name and e-mail address.

@@ -182,7 +182,7 @@ Chrome may show a line about developer-mode extensions when it starts; it can be
 is the same steps with the new zip unpacked over the old folder, then the reload arrow on the Ütle
 card.
 
-**B. Once Ralf uploads to the Chrome Web Store** (unlisted): *(store link once published)*. Install
+**B. Once the extension is on the Chrome Web Store** (unlisted): *(store link once published)*. Install
 from the link; no developer mode. The welcome page opens the same way. The listing text and the
 upload steps are in `docs/STORE.md`.
 
@@ -200,7 +200,7 @@ Chrome Web Store developer dashboard. Raise `version` in `extension/manifest.jso
 
 - `docs/STORE.md`: everything the listing asks for (name, summary, description, category, single
   purpose, each permission's justification, data declarations, privacy policy URL, visibility
-  Unlisted), Estonian first, and Ralf's upload checklist.
+  Unlisted), Estonian first, and the upload checklist.
 - `npx tsx scripts/store-shots.ts`: the five 1280×800 screenshots into `extension/store/`, from the
   stand-in pages and the extension's own pages (no real site). Run it again after a visible change.
 - `npx tsx scripts/pack-check.ts`: unpacks the zip, loads it on a fresh profile, and checks that the
@@ -654,7 +654,7 @@ entry already started:
 - the first e-mail is called "minu e-post" (the first phone "minu telefon", the first ID code "minu
   isikukood"); a second one of the same kind asks for a name first ("töö e-post").
 
-Tom can do the same by keyboard in the form under the list (name, kind, value, **Salvesta**). Each saved
+The helper can do the same by keyboard in the form under the list (name, kind, value, **Salvesta**). Each saved
 item has **Muuda** and **Unusta**, and under it what to say ("Ütle: minu e-post, mu meil"). The buttons
 are dwellable like the rest of the page.
 
