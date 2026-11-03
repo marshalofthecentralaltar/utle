@@ -1242,20 +1242,40 @@ on which to keep, per file.**
   after every perform in `runGoal`).
 - Dictation into a chat box in the toggle and always-on modes: nothing is previewed into the box
   while he speaks (32.3: the addressee check answers first, so a voice in the room never appears in
-  his message); his live words are on the strip, and the sentence lands in the box 2.7 to 3.3 s after
-  he stops (1s). Round 9 typed the words as he spoke. Wake mode ACTIVE still previews.
+  his message); his live words are on the strip, and the sentence lands in the box about 2.75 s after
+  he stops (p50; 2.4 to 3.8 s over five runs, 1u). The check is asked when the final arrives; the check
+  itself (1.6 s p50 on Sonnet) is what stops 2.0 s, and no reply shape or warm-up made it faster (1u).
+  Round 9 typed the words as he spoke. Wake mode ACTIVE still previews.
 - The earlier faults stand: the command word can flash in the box when he keeps talking after a
   quick command (where the box is previewed); the "Sain aru" line is replaced by the result line a
   moment later; live words come in bursts of about 0.6 s; Chrome's own pages (settings, Web Store)
   cannot show the bar, and no extension can change Chrome's settings. Ütle's own settings page is
   the answer to that.
-- On youtube.com and ilmateenistus.ee the strip covers the page's own consent button at the bottom,
-  so a pointer or dwell cannot press it (voice still lists it); a postimees headline is read with its
-  comment count, "(11)" (1k-REALPAGES, not fixed).
+- On youtube.com and ilmateenistus.ee the strip covered the page's own consent button at the bottom
+  (1k-REALPAGES). On the YouTube consent stand-in trimmed from the real page (1v) the bar folds to the
+  pill and the buttons stay clickable; not re-checked on the real pages. A postimees headline is read
+  with its comment count, "(11)" (not fixed).
 - A click whose only effect is a network request with no DOM change for 400 ms gets a second
   activation (Enter) by the click fallback; on an element that handles both it could toggle twice.
 - The cookie-banner rule covers overlays; YouTube's own consent is a separate page (a form), which
-  the model handles as any page with buttons.
+  the model handles as any page with buttons. Nobody accepts cookies for him: a search behind the
+  consent now says to answer the window first and names its buttons, then to say the search again
+  (1v, finding 5, fixed); before, it said the page had no search.
+- From the exit-test rehearsal (1v; `UTLE_REAL=1 npx tsx extension/test/exit.ts`, synthetic voices):
+  - His last enrolment phrase runs as speech once enrolment ends: the server sends `enrolled` about
+    45 ms before that phrase's final, so the engine judges "Värskenda lehte: mine edasi ja vaigista
+    heli ..." as said to Ütle (4 of 4 runs). Product, server enrolment ordering (31.7).
+  - A room voice that starts within about 0.5 s of his last word is joined into his final and passes
+    only-my-voice as his (10 of 11 overlap runs; the recogniser splits from about 0.6 s of silence).
+    Her words reach the bar and the model. The speaker gate decides per segment (31.2); issue #3.
+  - Speech over his last word garbles it ("lastelaulud" heard as "lastelauda"), so the search runs on
+    the wrong word (speech model).
+  - His first "Ütle, mine youtube'i ..." of a session is heard as "Ütlemine ..." (4 of 4, synthetic
+    voice; the second saying is right): one repeat (issue #2; the spotter of PR #11 may remove it).
+  - A misheard send word goes to the model: "Et saada" (for "saada") is judged "ignore" by the
+    addressee check, 5 of 5 on main, and the message is not sent (1u).
+  - For the helper's sheet: on YouTube's consent say "Ütle, nõustu kõigiga", then the search again;
+    say "saada sõnum": a one-word "saada" is often too short to verify under only-my-voice (31).
 
 ## 5. Where things are
 
