@@ -3270,22 +3270,57 @@ when it carries the newest wake's segment. Each final is judged from PASSIVE on 
 in ACTIVE a second wake is none; the assembler's joining of finals is not modelled). `--report` gives
 false wakes per hour on the clips labelled none (spotter wake events, coordinator wakes, the text alone)
 with the one-sided 95 % Poisson upper bound, and per label n, spotter hit, coordinator woke. Cost: real
-time factor 0.30 to 0.47, 89 % of one core in CPU time (recogniser, detector and spotter together), so the
-11.8 h take about 3.6 h on one process. It saves every 50 clips and the same command resumes.
+time factor 0.27 to 0.52 per set with two processes at once, 83.7 % of one core in CPU time (recogniser,
+detector and spotter together); the 13.43 h fed (gaps included) took 2 h 20 min on two processes. It
+saves every 50 clips (through a temporary file, so a stop while saving keeps the last whole checkpoint)
+and the same command resumes; `--part i/n` splits each set for parallel processes.
 
-**REAL, measured 2026-11-02, beside the SYNTHETIC table of 35.1.** Only VoxPopuli test is complete
-(0.12 h without any form). The full run (two processes, 20:07 to 20:33) was stopped by the session's
-low-memory reap at about 40 minutes of audio each, before it saved anything; it has not been run again.
+**REAL, measured 2026-11-02 21:46 to 2026-11-03 00:05, beside the SYNTHETIC table of 35.1.** Every
+clip of the set: 3882 clips, 13.43 h fed. Two processes at Idle priority, each taking one half of every
+set (`--part 1/2`, `--part 2/2`); VoxPopuli test is the whole-set run of 20:06; the first half of
+fleurs-dev was stopped by hand after its first save and resumed by the same command (the resume path,
+run). Report: `npx tsx scripts/kws-real.ts --report` over `artifacts/kws-real/*.json`, none of them
+partial.
 
-| set (REAL) | hours without any form | spotter wake events | coordinator wakes (35) | text alone (32) | per hour, 95 % upper bound | relatives: spotter hit / woke | kin: hit / woke |
+False wakes on the clips without any form of the verb. #2's trial target: at most 0.1 false activations
+per hour.
+
+| corpus (REAL) | hours without any form | clips | spotter wake events | per hour (95 % upper) | coordinator wakes (spotter AND text, 35) | per hour (95 % upper) | text alone (LIMITED, 32) |
 |---|---|---|---|---|---|---|---|
-| voxpopuli-test | 0.12 | 0 | 0 | 0 | 0 (25.9) | 1/3 ("ütleb") / 0/3 | 0/1 / 0/1 |
+| FLEURS | 11.13 | 3650 | 36 | 3.23 (4.27) | 0 | 0 (0.27) | 0 |
+| VoxPopuli | 0.23 | 92 | 1 | 4.40 (20.90) | 0 | 0 (13.20) | 0 |
+| all | 11.36 | 3742 | 37 | 3.26 (4.29) | 0 | 0 (0.26) | 0 |
 
-What this says: nothing about #2's target (at most 0.1 false activations per hour): 0.12 h bounds the rate
-only at 25.9 per hour. The one relative the spotter took for the word ("Nimelt ütleb punkt kuus ...")
-woke nothing, because the text said "ütleb" (35.3). With no false wake at all, a claim of 0.1 per hour at
-95 % needs about 30 h of such audio; the 11.35 h here could bound it at 0.26 per hour at best.
+The clips whose transcript has a form of the verb (per clip: at least one event).
 
-**What it changes in 35.1.** Nothing: the spec stays as measured, and the SYNTHETIC table stays the
-only measurement of recall. Recall on real voices needs real people saying "Ütle": the owner's
-recordings (#4) or a recorded set; no public Estonian corpus found has the bare imperative.
+| label (REAL) | clips (n) | spotter hit | coordinator woke (35) | text alone woke (32) |
+|---|---|---|---|---|
+| wake ("ütle") | 0 | - | - | - |
+| literal | 0 | - | - | - |
+| relative | 116 | 22/116 | 0/116 | 0/116 |
+| kin (`öel-`, `öeld-` only) | 24 | 0/24 | 0/24 | 0/24 |
+
+Relatives per form (spotter hit / clips with it): ütles 18/84, ütleb 2/8, ütlesid 1/13, ütlen 1/2, and
+0 for ütlematagi (3), ütlemast (2), ütlevad (2), ütelda (1), ütleksin (1).
+
+What this says:
+
+- The shipped spec, spotter AND text: no false wake in 11.36 h of real read and parliamentary speech,
+  so at most 0.26 per hour at 95 %. That fits #2's 0.1 per hour and does not prove it: with no false
+  wake, 0.1 at 95 % needs about 30 h.
+- The spotter alone is not a wake and could not be one: 37 wake events in 36 clips, 3.26 per hour,
+  about 30 times the target. 23 of the 36 clips have a word beginning with "ü" ("üle", "üks", "Üldjuhul",
+  "Ühendriikide", "ÜRO"); none of their texts has a form of the verb, so the text check (35.3) dropped
+  every one, and a wake event alone shows nothing. The decoy keywords (35.2) fired 225 times on these
+  clips and were dropped as designed.
+- Relatives: the spotter heard 22 of 116 (mostly "ütles", 18 of 84) and none woke, because the text said
+  "ütles" or "ütleb". The `öel-` kin: 0 of 24.
+- Recall: the wake form is in 0 clips, under 20; no recall claim on real voices.
+- Limits: read sentences and parliament speeches into a close microphone, no room and no television;
+  FLEURS dev and test are women only (train has 1506 male clips); each final is judged from PASSIVE on
+  its own (an upper bound), and the assembler's joining of finals is not modelled.
+
+**What it changes in 35.1.** Nothing: the measurement asks for no change (the AND holds the rate, the
+spotter alone was never a wake), the spec stays as measured, the SYNTHETIC table was not re-run, and it
+stays the only measurement of recall. Recall on real voices needs real people saying "Ütle": the owner's
+recordings (#4) or a recorded set; neither FLEURS nor VoxPopuli (the two searched) has it.

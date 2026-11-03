@@ -472,8 +472,13 @@ async function main(): Promise<void> {
         console.log(`${name}: done already (${file}); delete it to run again`)
         continue
       }
-      const result = evaluate(cache, name, rows, previous, (partial) => writeFileSync(file, JSON.stringify(partial)))
-      writeFileSync(file, JSON.stringify(result))
+      // Through a temporary file: a run stopped while saving keeps the last whole checkpoint.
+      const save = (result: SetOut): void => {
+        writeFileSync(`${file}.tmp`, JSON.stringify(result))
+        renameSync(`${file}.tmp`, file)
+      }
+      const result = evaluate(cache, name, rows, previous, save)
+      save(result)
       console.log(`${name}: ${(result.audioS / 3600).toFixed(2)} h in ${(result.wallS / 60).toFixed(1)} min (RTF ${(result.wallS / result.audioS).toFixed(3)}, CPU ${(100 * result.cpuS / result.audioS).toFixed(1)} % of one core)`)
     }
     return

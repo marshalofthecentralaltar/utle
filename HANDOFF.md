@@ -1011,24 +1011,28 @@ from these corpora, and none is claimed. FLEURS dev and test are female voices o
 
 Measured. Section 10, first run: ALL PASS, 9 checks. The wire: spotter on; "Ma ütlen sulle homme" final with no wake;
 `wake#1` then `final#1 "Ütle"` and the strip ACTIVE; `wake#2`, `final#2 "Ütle."` and back to PASSIVE; `wake#3`,
-`final#3 "Ütle, ava Youtube."`, the strip "Avatud: YouTube (stand-in).", one YouTube navigation. The eval: only
-VoxPopuli test completed (0.12 h without the word: 0 spotter wake events, 0 coordinator wakes, 0 on the text alone;
-95 % upper bound 25.9 per hour; one relative, "ütleb", got a spotter wake event and woke nothing). The full run (two
-processes at Idle priority, 2026-11-02 20:07 to 20:33, about 3 cores each, while lane LIVE held the suite lock from
-20:08) was stopped by the session's low-memory reap after about 40 minutes of audio each, before its first save; the
-orphaned workers were stopped too. Not run again: the reap asks for a go first. The script now saves every 50
-clips and resumes. To finish it, one process at a time:
-`npx tsx scripts/kws-real.ts --eval <cache> --set fleurs-test,fleurs-dev,voxpopuli-validation,fleurs-train`, then
-`--report` (about 3.6 h for everything; fleurs-test plus dev alone are 4.25 h of audio, about 1.3 h).
+`final#3 "Ütle, ava Youtube."`, the strip "Avatud: YouTube (stand-in).", one YouTube navigation.
+
+The eval, complete (review 1): all 3882 clips, 13.43 h fed, two processes at Idle priority each taking half of every
+set (`--part 1/2`, `2/2`), 2026-11-02 21:46 to 2026-11-03 00:05, after a first full run (20:07 to 20:33) was lost
+to the session's low-memory reap. On the 11.36 h without any form of the verb: coordinator wakes (spotter AND text,
+the shipped spec) 0, at most 0.26 per hour at 95 % (#2's target: 0.1 per hour; proving it with no false wake needs
+about 30 h); the text alone 0; spotter wake events alone 37 in 36 clips, 3.26 per hour (95 % upper 4.29), 23 of
+those clips with a word starting "ü" ("üle", "üks", "Ühendriikide"), every one dropped by the text check. Relatives:
+spotter 22 of 116 (ütles 18 of 84), woke 0 of 116; `öel-` kin 0 of 24. The wake form: 0 clips, so no recall claim.
+Tables in 35.6; report in `artifacts/realwake-r2-report.log` (not committed). Spec unchanged. The resume path ran:
+the first half of fleurs-dev, stopped by hand after its first save, resumed by the same command and finished. The
+reap killed the shell wrappers some time after 23:26; the node workers ran on and saved every set whole.
 
 Gate on `cae1838`: `npm run check` 61 files, 4279 tests, green; `npx tsx extension/test/run.ts` 330 PASS, ALL PASS
-(docs/proof restored after it). Spec unchanged (nothing measured asks for a change), so the SYNTHETIC table of 35.1
-was not re-run.
+(docs/proof restored after it). Review 1 (only `scripts/kws-real.ts` and docs changed): `npm run check` 61 files,
+4279 tests, green; run.ts not re-run. Spec unchanged (nothing measured asks for a change), so the SYNTHETIC table of
+35.1 was not re-run.
 
-Not verified: false wakes per hour on hours of real speech (0.12 h is not a measurement of #2's 0.1 per hour; 30 h
-without a false wake would be), recall on real voices (no public corpus has people saying "Ütle"), the resume path
-of `--eval` (written after the reap, type-checked, not run), a real microphone or room (section 10 is a synthetic voice
-through Chrome's fake microphone).
+Not verified: #2's 0.1 false wakes per hour itself (11.36 h without one bounds it at 0.26; 30 h without one would
+prove it), false wakes in a room with a television or other people (these are read sentences and speeches into a
+close microphone), recall on real voices (neither FLEURS nor VoxPopuli, the two searched, has anyone saying "ütle"),
+a real microphone or room (section 10 is a synthetic voice through Chrome's fake microphone).
 
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
