@@ -614,7 +614,7 @@ logic is tested, the service-worker write is not).
 Plan: `docs/plans/2026-10-28-round-10-testers-week.md`. Two lanes on Opus 5.5, each reviewed against the full diff
 with the proofs re-run, two defect rounds each.
 
-- **GATE (#3 A and B): PR #10, branch `r10-gate`, open, not merged (the issue's rule: Ralf reviews first).** Spec
+- **GATE (#3 A and B): PR #10, branch `r10-gate`, merged on 2026-11-02 (f9c8c69; the audit of 2026-11-03 found this line stale).** Spec
   ARCHITECTURE 31. Typed `SpeakerDecision` per segment (8 reasons); with only-owner on, nothing speech-driven reaches
   the page, the model, the queue, wake or read-aloud without `verified_owner` for that segment, session and profile
   version. Continuity (round 7's 10 s promotion of short words) is gone. The server sends no unverified words (a wordless
@@ -633,7 +633,7 @@ with the proofs re-run, two defect rounds each.
 
 ## 1m. Round 10, prompt 2, lane VOICE (2026-11-02): onboarding starts with the voice (#3 D + C's safe retry)
 
-Branch `r10-voice` (stacked on `r10-gate`), not merged. Spec ARCHITECTURE 31.7.
+Branch `r10-voice` (stacked on `r10-gate`), merged on 2026-11-02 (2a621f6; the audit of 2026-11-03 found this line stale). Spec ARCHITECTURE 31.7.
 
 - Enrolment phrases are quality-checked (at least 0.8 s of Silero speech, RMS 0.02, at most 0.5 % clipped) and
   asked again with a plain reason; a flush residue with no recognised words is no phrase attempt. The candidate is
@@ -1259,23 +1259,6 @@ Eval `UTLE_EVAL_ONLY=nadim`: 3/3 rule cases, the model never asked, $0. `npm run
 reporting `no_profile` to a real extension (played through the strip state in `run.ts`; the server side is
 VOICE2's); whether the addressee check passes "vale" right after a read-back (F6, lane WORDS).
 
-## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
-
-- As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
-  schemas or reduce the number of strict tools." The answer tool is no longer strict (the schema is
-  still closed; `pageIntentFrom` validates every answer). Fixed in this branch.
-- Without strict: 61 of 62 pass. Latency on `claude-opus-5-5` at low effort: p50 2.7 s, p95 5.4 s.
-  The one miss ("recovery: click failed, do not repeat it") was the engine's loop stopping after a
-  failed step when the model had said done; the engine now asks once more after a failed step. Fixed.
-- 2.7 s per free-form command is noticeable in a voice UI. `UTLE_MODEL=claude-sonnet-5-5` is the
-  thing to try next, with the eval, before the demo. Dictation is not affected: it is typed first.
-
-**The laptop's `main` has 27 commits (sections 21.4 to 21.7: navigation, settings) that are not on
-GitHub. This branch conflicts with them in 23 files. Ralf asked that the PR not be merged. The
-conflicts cannot be resolved from the cloud until that `main` is pushed; the two sides built the
-same features twice (navigation commands, a settings page), so resolving them is a judgment call
-on which to keep, per file.**
-
 ## 1w. Round 11, lane VOICE2 (2026-11-03)
 
 F3 (his own voice rejected one time in four) measured on the first real labelled set, and F2 (enrolment
@@ -1336,6 +1319,23 @@ can differ slightly.
 - A rejection at a speech RMS under 0.04 should say to come closer to the microphone: 4 of his 5 clips
   that quiet are rejected at 0.54, under every signal change tried.
 
+## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
+
+- As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
+  schemas or reduce the number of strict tools." The answer tool is no longer strict (the schema is
+  still closed; `pageIntentFrom` validates every answer). Fixed in this branch.
+- Without strict: 61 of 62 pass. Latency on `claude-opus-5-5` at low effort: p50 2.7 s, p95 5.4 s.
+  The one miss ("recovery: click failed, do not repeat it") was the engine's loop stopping after a
+  failed step when the model had said done; the engine now asks once more after a failed step. Fixed.
+- 2.7 s per free-form command is noticeable in a voice UI. `UTLE_MODEL=claude-sonnet-5-5` is the
+  thing to try next, with the eval, before the demo. Dictation is not affected: it is typed first.
+
+**The laptop's `main` has 27 commits (sections 21.4 to 21.7: navigation, settings) that are not on
+GitHub. This branch conflicts with them in 23 files. Ralf asked that the PR not be merged. The
+conflicts cannot be resolved from the cloud until that `main` is pushed; the two sides built the
+same features twice (navigation commands, a settings page), so resolving them is a judgment call
+on which to keep, per file.**
+
 ## 2. What Ralf must do
 
 1. After a pull: `git pull` on `main`, `npm ci`, `npm run ext`, reload the extension on
@@ -1357,12 +1357,22 @@ can differ slightly.
 5. Your voice: onboarding starts with it (1m): phrases are checked one by one and the profile is kept
    only if the last two pass. Settings keep test, delete, re-enrol and **Kuula ainult mind**. The
    threshold is one measured value, `OWNER_THRESHOLD` 0.54 in `server/speaker.ts`, picked on synthetic
-   voices; recalibrating it needs real recordings (#4).
+   voices and measured once on your own demo capture on 2026-11-03 (1w VOICE2, ARCHITECTURE 31.8): at 0.54
+   about 28 % of your utterances are rejected, at 0.50 about 24 %, and the loudest clip of a YouTube video
+   scored 0.463. The line is yours to choose; it was not moved. Short words and quiet speech are not fixed
+   by any line: say it longer, come closer.
 6. Review and merge #2's PR (#11, the keyword spotter and its real-voice measurement).
 7. The consent text (#9), then the 20-minute recording with two partners (#4).
 
 ## 3. Not verified by anyone
 
+- Proof on the merged round 11 main (39b4a4a, the three lanes WORDS, FIRSTRUN, VOICE2; 2026-11-03 evening,
+  the machine at 77 to 90 % CPU and 3.4 to 3.6 GB free from other work): `npm run check` 65 files, 4340
+  tests, exit 0; `run.ts` 339 PASS, ALL PASS; `UTLE_REAL=1 voice.ts` sections 1, 2 and 6 33 PASS 0 FAIL
+  (section 1 landing 3940 ms), then the run was stopped by the machine's memory before sections 7 and 8.
+  Section 7 is ALL PASS (20) on `r11-voice2` 133ae8b, the same server code; the eval is 112/112 on
+  `r11-words` c2883a8, the same prompt. Not run on 39b4a4a itself: voice.ts sections 7 and 8, the eval.
+  Owed before the next merge: the full `UTLE_REAL=1 voice.ts` and `intent-eval.ts` on an idle machine.
 - The model's answers on real pages: the eval runs the real model against stand-in pages (1p), and
   real pages were only opened read only (1k-REALPAGES). The server, the validation, the engine and
   the page side are each tested with fakes; the join is tested end to end only without a model.
@@ -1429,6 +1439,11 @@ can differ slightly.
     addressee check, 5 of 5 on main, and the message is not sent (1u).
   - For the helper's sheet: on YouTube's consent say "Ütle, nõustu kõigiga", then the search again;
     say "saada sõnum": a one-word "saada" is often too short to verify under only-my-voice (31).
+- From the sweep on his own capture (1w VOICE2, 2026-11-03): an owner utterance of 0.5 to 1 s of speech that
+  scores under the line is answered "not your voice" (6 of his 11 such clips at both 0.54 and 0.50); it should
+  get the "say it longer" line as `insufficient_audio` does. A rejection at a speech RMS under 0.04 (far from
+  the microphone) should say to come closer: 4 of his 5 clips that quiet were rejected under every signal
+  change tried. Owner: the strip's lines (`extension/src/offscreenMain.ts`) and the gate's reason (31.2).
 
 ## 5. Where things are
 
