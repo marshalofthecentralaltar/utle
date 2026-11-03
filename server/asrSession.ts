@@ -443,6 +443,14 @@ interface Script {
 
 /** Audio queued ahead of the decoder beyond this is a backlog: the oldest of it is dropped. */
 export const MAX_BACKLOG_MS = 1500
+/**
+ * Round 11 (F2, ARCHITECTURE 31.7): while the owner reads the enrolment phrases, a backlog is held,
+ * not dropped (a drop inside a phrase made it too_short again and again on 2026-11-03: 10 s of 44 s
+ * dropped under load), and the client is told once that the computer is slow. Past this bound the
+ * oldest audio is dropped as outside enrolment, so a stuck decoder cannot grow the queue forever
+ * (30 s of 16 kHz float samples is 1.9 MB).
+ */
+export const ENROL_MAX_BACKLOG_MS = 30_000
 /** What is left queued after a drop. */
 export const KEEP_MS = 300
 /** A lag message is sent at most this often. */
@@ -556,6 +564,13 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
   let signalled = false
   /** Round 10 (31.7): the next utterance with words is a voice test. */
   let testing = false
+  /** Round 11 (F2): scripted enrolment is in progress (enrolScript until enrolled): a backlog is held, not dropped. */
+  let holding = false
+  /** Round 11 (F2): the phrases counted so far, and whether the client was told the computer is slow since the queue last emptied. */
+  let phraseCount = 0
+  let slowTold = false
+  /** Round 11 (F2): which enrolScript the hold belongs to; the answer to one that was started over ends nothing. */
+  let enrolments = 0
   /** Round 10 (#7, 33.3): the words of the utterance in progress a pause was sent for. */
   let paused = ''
   // ---------- round 10 (#7, lane LATE): what ended each utterance ----------
@@ -696,6 +711,18 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     }
     queue.splice(0, cut, ...kept)
     if (!lagging || now() - lastReport >= LAG_REPORT_MS) report(backlog)
+  }
+
+  /**
+   * Round 11 (F2): a backlog during scripted enrolment is held whole up to ENROL_MAX_BACKLOG_MS, so no
+   * phrase is cut; the client hears once that the computer is slow (the count stays), and the lag.
+   */
+  const holdBacklog = (): void => {
+    if (!slowTold) {
+      slowTold = true
+      send({ type: 'enrolPhrase', count: phraseCount, problem: 'slow' })
+    }
+    if (!lagging || now() - lastReport >= LAG_REPORT_MS) report(queuedMs)
   }
 
   const failed = (error: unknown): void => {
@@ -854,6 +881,7 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     const item = queue.shift()
     if (item === undefined) {
       draining = false
+      slowTold = false
       if (lagging && now() - lastReport >= LAG_REPORT_MS) report(0)
       return
     }
@@ -905,7 +933,10 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
       receivedMs += ms
       queuedMs += ms
       queue.push({ samples, ms, quiet: rms(samples) < SILENCE_RMS })
-      if (queuedMs > MAX_BACKLOG_MS) dropOldest()
+      if (queuedMs > MAX_BACKLOG_MS) {
+        if (holding && queuedMs <= ENROL_MAX_BACKLOG_MS) holdBacklog()
+        else dropOldest()
+      }
       drain()
     },
     flush() {
@@ -954,12 +985,22 @@ export function createAsrSession(decoder: Decoder, send: (message: AsrServerMess
     enrolScript(phrases) {
       if (closed) return
       const learning = decoder.enrolScript?.(phrases, (count, problem) => {
+        phraseCount = count
         if (!closed) send(problem === undefined ? { type: 'enrolPhrase', count } : { type: 'enrolPhrase', count, problem })
       })
       if (!learning) {
         send({ type: 'enrolled', ok: false, seconds: 0, phrases: 0 })
         return
       }
+      // Round 11 (F2): until the enrolment answers, a backlog is held, not dropped.
+      holding = true
+      phraseCount = 0
+      enrolments += 1
+      const mine = enrolments
+      const done = (): void => {
+        if (mine === enrolments) holding = false
+      }
+      learning.then(done, done)
       learning.then(
         (result) => {
           if (closed) return

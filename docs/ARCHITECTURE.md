@@ -2808,6 +2808,23 @@ words is one phrase attempt, measured on the speech frames the detector kept: fe
 asks for it again with the reason (`enrolPhrase {count, problem}`). Frames a flush ends without any
 recognised word (a breath after an endpoint) are no phrase attempt and answer nothing.
 
+**Under a backlog** (round 11, F2, `createAsrSession` `holding`, `ENROL_MAX_BACKLOG_MS`). On
+2026-11-03 the owner's enrolment connection received 44 s and dropped 10 s while the machine was
+loaded; a drop inside a phrase left it under 0.8 s of speech, so phrase 6 came back `too_short` again
+and again with no hint why. From `enrolScript` until its `enrolled` answer the session no longer drops
+the oldest audio past `MAX_BACKLOG_MS`: it holds the queue whole, so every phrase reaches
+`takePhrase` whole, however late. The first time the queue passes `MAX_BACKLOG_MS` (again only after
+it has emptied) the client gets `enrolPhrase { count, problem: 'slow' }` (count unchanged) and the
+usual `lag`; the welcome page shows "Arvuti on praegu aeglane. Oota hetk, loetud lause jõuab
+kohale." (`strip.phraseProblem.slow`, through `extension/src/voiceLines.ts` `phraseLine`), never
+"read it again"; the next counted phrase clears it. `slow` is no refusal. The hold is bounded: past
+`ENROL_MAX_BACKLOG_MS` (30 s, 1.9 MB of samples) the oldest audio is dropped as outside enrolment, so
+a stuck decoder cannot grow the queue forever. An enrolment started over keeps the hold (the answer
+to the first one ends nothing). Outside enrolment the drop is as before. Proof:
+`server/asrSession.test.ts` "a slow decoder drops nothing inside an enrolment phrase" (44 s fed while
+the decoder does two frames of every three: `droppedMs` 0, 36 phrases of 10 frames each, one `slow`),
+and the release, restart and bound cases.
+
 **Held out, atomic** (`enrolScripted`, `commit`). From N accepted phrases the candidate is the mean
 embedding of the first N − 2 (`HELD_OUT_PHRASES` 2); it must be at least `MIN_TRAIN_PHRASES` 4, so
 fewer than 6 phrases is `too_few_phrases`. The candidate is scored against the last two; both must
@@ -2881,6 +2898,64 @@ ready).
 `scripts/fixtures/enrol-set` (the twelve phrases and two verify phrases in TartuNLP's "mari", made by
 `scripts/enrol-set.ts`). Every score from it is SYNTHETIC. Not done: acoustic turn accumulation for
 0.3 to 1 s words (C's second half), a model swap, Soniox verdicts (E), any real voice.
+
+### 31.8 The first real set: the gate on the owner's own voice (round 11, lane VOICE2, 2026-11-03)
+
+**The set.** Ralf's nine-minute demo of 2026-11-03 with only-my-voice on, captured with
+`UTLE_CAPTURE` and labelled by the words (`scripts/label.ts`; `--check ... --owner ralf` ready: owner
+enrol 7, owner trials 68, other trials 9). The other speaker is one YouTube video playing in the room.
+The clips stay outside the repository (personal data); only numbers are written here.
+
+**Method.** `npx tsx scripts/speaker-calibrate.ts --labels <labels.tsv> --owner-speaker ralf --models all
+--json <next to the labels>` (`scripts/speaker-sweep.ts`): the "enrol" method (profile = mean of his 7
+enrol clips; every other clip a trial), each clip embedded the way the gate embeds it (100 ms frames
+at or above `SILENCE_RMS`), bucket = seconds of that speech. One trial clip had too little speech for
+an embedding and is left out, so 67 owner trials. Cross-check: the same trials against the demo's
+LIVE profile (`owner.json`, 10 phrases, held-out 0.825 and 0.85) give the same picture: FRR 29.9 %
+(20/67) at 0.54 and 22.4 % (15/67) at 0.50, no video clip accepted, the highest video score 0.463
+(0.475 against the sweep's profile). Counting the 5 owner clips under `MIN_JUDGE_SECONDS` 0.5 s as the
+product does (`insufficient_audio` before any score), FRR at 0.54 is 29.9 % (sweep profile) and 31.3 %
+(live profile).
+
+| model | line | FRR his clips (n=67) | FAR video clips (n=9), Wilson upper | FRR < 1 s speech (n=16) | <= 0.7 s (13) | 0.7-<1 s (3) | 1-2 s (22) | > 2 s (29) |
+|---|---|---|---|---|---|---|---|---|
+| titanet-small | 0.54 (today) | 28.4% (19) | 0/9, <= 30% | 62.5% (10) | 61.5% (8) | 66.7% (2) | 22.7% (5) | 13.8% (4) |
+| titanet-small | **0.50 (proposed)** | 23.9% (16) | 0/9, <= 30% | 62.5% (10) | 61.5% (8) | 66.7% (2) | 13.6% (3) | 10.3% (3) |
+| titanet-small | 0.486 (FAR<=1% op. point) | 20.9% (14) | 0/9, <= 30% | 56.3% (9) | 53.8% (7) | 66.7% (2) | 9.1% (2) | 10.3% (3) |
+| titanet-small | 0.421 (EER) | 16.4% (11) | 1/9, <= 44% | 43.8% (7) | 38.5% (5) | 66.7% (2) | 4.5% (1) | 10.3% (3) |
+| campplus | 0.54 / 0.50 | 47.8% / 43.3% | 3/9 / 4/9 | 100% / 100% | | | | |
+| campplus | 0.755 (op. point) | 85.1% (57) | 0/9, <= 30% | 100% (16) | | | | |
+| eres2net | 0.54 / 0.50 | 34.3% / 25.4% | 1/9 / 1/9 | 68.8% / 56.3% | | | | |
+| eres2net | 0.558 (op. point) | 37.3% (25) | 0/9, <= 30% | 68.8% (11) | | | | |
+| resnet34 | 0.54 / 0.50 | 9.0% / 6.0% | 8/9 / 8/9 | 18.8% / 12.5% | | | | |
+| resnet34 | 0.825 (op. point) | 58.2% (39) | 0/9, <= 30% | 100% (16) | | | | |
+
+EER over all trials: titanet-small 13.8 % (at 0.421), eres2net 22.3 % (0.475), resnet34 34.6 % (0.763),
+campplus 44.6 % (0.517). Per bucket (titanet-small): EER 0.0 % in <= 0.7 s, 0.7-1 s and 1-2 s, 5.2 %
+over 2 s, each on 1 to 4 other trials (not verifiable). Every FAR <= 1 % claim needs 381 other trials
+with none accepted (Wilson upper bound); this set has 9, all one YouTube video.
+
+**What makes short words score higher without lowering the line** (titanet-small and eres2net, the
+same trials, applied to enrol and trial clips alike, line 0.54): every frame from the first to the
+last speech frame instead of only frames at or above 0.01 RMS: worse (FRR 32.8 %); a 0.005 floor: no
+change; gain to RMS 0.1: 1 clip; repeating the speech to 2 s: 2 clips (FRR 25.4 %, < 1 s 56.3 %),
+within the noise of 67 trials, and it would change the embedding of every stored profile. None is
+shipped. His quiet clips (speech RMS under 0.04) are rejected 4 of 5 under every variant. One-word
+commands are not fixed by any line: under 1 s of speech 10 of 16 are rejected at 0.54 and at 0.50,
+7 of 16 even at the EER line.
+
+**Policy proposal (the owner rules; nothing changed in this round).**
+1. Keep TitaNet-small. It has the lowest EER (13.8 %); resnet34 accepts 8 of 9 video clips at 0.54 and
+   needs 0.825 to accept none (FRR 58 %); campplus and eres2net are worse on both sides.
+2. Move `FACTORY_THRESHOLD` from 0.54 to 0.50 for TitaNet-small, with a provenance that names this set:
+   his false rejections 28.4 % to 23.9 % (live profile 29.9 % to 22.4 %), mostly in 1 to 2 s of speech
+   (22.7 % to 13.6 %); no video clip accepted on either profile, the highest 0.475, a margin of 0.025.
+   Not the operating point 0.486: that is 0.011 above one video's highest clip, fitted to 9 clips.
+   FAR <= 1 % is NOT verifiable at n=9 (Wilson upper 30 %) at 0.50 or at 0.54 alike.
+3. Short words and quiet speech are not a threshold problem: the product should ask for the longer
+   form and the nearer microphone instead of saying the voice was not his (a line, not the gate).
+4. Before any further move: at least 30 consenting other-speaker scores (`MIN_NEGATIVES`, then
+   `per_profile`), and 381 other trials before anyone writes FAR <= 1 %; more of his one-word commands.
 ## 32. Round 10: addressed speech (LISTEN lane, issues #2 and #6), LIMITED
 
 LIMITED: everything here works on the recogniser's text. There is no acoustic keyword spotter; #2

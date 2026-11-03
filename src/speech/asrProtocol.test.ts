@@ -84,3 +84,11 @@ describe("a final's why (round 10, #7, lane LATE)", () => {
     expect(parseAsrMessage(JSON.stringify({ type: 'final', text: 'keri alla', why: { ...why, audioMs: 'late' } }))).toEqual({ type: 'final', text: 'keri alla' })
   })
 })
+
+describe('an enrolment phrase (round 11, F2)', () => {
+  it('parses the slow reason: the computer is behind and the phrase is held, not refused', () => {
+    expect(parseAsrMessage(JSON.stringify({ type: 'enrolPhrase', count: 5, problem: 'slow' }))).toEqual({ type: 'enrolPhrase', count: 5, problem: 'slow' })
+    expect(parseAsrMessage(JSON.stringify({ type: 'enrolPhrase', count: 5, problem: 'too_short' }))).toEqual({ type: 'enrolPhrase', count: 5, problem: 'too_short' })
+    expect(parseAsrMessage(JSON.stringify({ type: 'enrolPhrase', count: 5, problem: 'sluggish' }))).toEqual({ type: 'enrolPhrase', count: 5 })
+  })
+})
