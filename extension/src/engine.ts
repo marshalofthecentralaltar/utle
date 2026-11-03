@@ -2,252 +2,31 @@
 // the whole browser. No chrome.* here: the offscreen document wires it to the service worker, and
 // the unit test wires it to fakes.
 
-import type { BoxState, BrowserCommand, BrowserResult, PageContext } from '../../src/browser/protocol.ts'
-import type { InpageSession, InpageStep } from '../../src/core/inpage.ts'
-import { chainLine, firstGoal, hasConnective } from '../../src/core/chain.ts'
-import type { IntentAnswer, IntentChain, IntentRequest, IntentStep, ModelIntent, PageIntent, RecentCommand, TabSummary } from '../../src/core/pageIntent.ts'
-// Round 10 (#5, ARCHITECTURE 34): the recent commands, open beside a login in progress.
-import { RECENT_COMMANDS, besideCommands, ranOf, recentFrom } from '../../src/core/meant.ts'
-import { MAX_CHAIN_MS, MAX_CHAIN_STEPS, MAX_INTENT_STEPS } from '../../src/core/pageIntent.ts'
-import { savedNames } from '../../src/core/saved.ts'
-import type { SpendOutcome, SpendRecord } from '../../src/core/spend.ts'
-import type { SavedItem } from '../../src/core/saved.ts'
+import type { BoxState, BrowserCommand, BrowserResult } from '../../src/browser/protocol.ts'
+import type { InpageStep } from '../../src/core/inpage.ts'
 import { STRINGS } from '../../src/core/strings.ts'
-import type { Lang } from '../../src/core/strings.ts'
-import type { Recognizer, RecognizerHandlers } from '../../src/speech/recognizer.ts'
 import { verifiedOwner } from '../../src/speech/asrProtocol.ts'
-import type { EndpointMode, SpeakerDecision, SpeakerReason } from '../../src/speech/asrProtocol.ts'
+import type { EndpointMode } from '../../src/speech/asrProtocol.ts'
 import { documentPaused, inDocument } from '../../src/core/documentMode.ts'
 import { speak as synthSpeak } from '../../src/speech/synth.ts'
 // ---------- reading aloud (29.5) ----------
 import { isReadStop } from '../../src/core/reading.ts'
-import type { StripState } from './messages.ts'
 // ---------- wake word and places (29.4) ----------
-import { placeByNoun, placeCommand, placeHost, placeNounSaid, placeNouns, placeVoice } from '../../src/core/places.ts'
-import type { Place } from '../../src/core/places.ts'
-import { createWake, wakeFind, wakeStarts, wakeWordFrom } from '../../src/core/wake.ts'
-import type { WakeState } from '../../src/core/wake.ts'
+import { placeByNoun, placeCommand, placeHost, placeNounSaid, placeVoice } from '../../src/core/places.ts'
+import { wakeWordFrom } from '../../src/core/wake.ts'
 // ---------- round 10: addressed speech (32) ----------
-import { createListen, listenActive, listenBusy, listenFinal, listenHeard, listenOff, listenOn, listenSleep, listenTick, listenWake } from '../../src/core/listen.ts'
-import type { ListenState } from '../../src/core/listen.ts'
-import { readsBack, recentFinals } from '../../src/core/addressee.ts'
-import type { AddresseeAnswer, AddresseeRequest, AddresseeVerdict } from '../../src/core/addressee.ts'
-// ---------- end of addressed speech ----------
-/** Round 8 (29.4.3): how long "lisa koht" waits for the word. */
-export const PLACE_ASK_MS = 20_000
-// ---------- end of wake word and places ----------
+import { recentFinals } from '../../src/core/addressee.ts'
+import type { AddresseeRequest, AddresseeVerdict } from '../../src/core/addressee.ts'
+// ---------- the engine's parts (engine/) ----------
+import { ASK_TIMEOUT_MS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, GOAL_CHARS, LAG_SHOWN_MS, LONG_UTTERANCE_WORDS, NO_BOX, PLACE_ASK_MS, SEND_PROBE_BOX, STALE_MS, TITLE_CHARS, URL_CHARS, UTTERANCE_CHARS } from './engine/constants.ts'
+import { careOf, clipGoals, wordCount } from './engine/helpers.ts'
+import { createGoals } from './engine/goals.ts'
+import type { AskFailure, Engine, EngineDeps, EngineHandlers, EngineState, Job, Live } from './engine/types.ts'
+import { createWakeGate } from './engine/wake.ts'
+import { createWork } from './engine/work.ts'
 
-/** The functions of src/core/inpage.ts the engine calls. The test build passes a stand-in. */
-export interface InpageLogic {
-  initialInpage(lang: Lang): InpageSession
-  inpageStep(session: InpageSession, utterance: string, box: BoxState): InpageStep
-  inpageResult(session: InpageSession, commands: readonly BrowserCommand[], result: BrowserResult): { session: InpageSession; line: string }
-  inpageInstant(session: InpageSession, utterance: string): boolean
-  inpagePreview(session: InpageSession, partial: string, box: BoxState): string | null
-  /** M7: the step for what the model said the utterance meant. */
-  applyIntent(session: InpageSession, intent: PageIntent, page: PageContext, say?: string): InpageStep
-  /** M7: the model's answer checked against the page, or null. */
-  pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'page' | 'tabs'>): ModelIntent | null
-}
-
-/**
- * Why the model gave no answer: no key on the server, the server cannot be reached, an answer of
- * the wrong shape, or the engine itself gave the question up (barge-in, round 3).
- */
-export type AskFailure = { error: 'no_model' | 'unreachable' | 'bad' | 'aborted' }
-
-/**
- * The recogniser's handlers as the engine gives them: onLag (round 3) and onUtteranceContinued
- * (round 4) are always there, whether or not the recogniser calls them.
- */
-export type EngineHandlers = RecognizerHandlers & {
-  onLag(ms: number): void
-  onUtteranceContinued(text: string, added: string, decision?: SpeakerDecision): void
-  /** Round 4 (review): a foreign final takes back the preview its partials typed. Round 10 (31.7): reason, when the recogniser knows it. */
-  onForeign(reason?: SpeakerReason): void
-  /** Round 4 (review): enrolment is over; utterances are handled again. */
-  onEnrolled(ok: boolean, seconds: number): void
-}
-
-export interface EngineDeps {
-  logic: InpageLogic
-  lang: Lang
-  /** Runs one command on the page in front. Never rejects with a reason the engine must know. */
-  run(command: BrowserCommand): Promise<BrowserResult>
-  publish(patch: Partial<StripState>): void
-  /** Makes the recogniser. onUnavailable: the speech model cannot be reached. The handlers carry onLag (round 3). */
-  recognizer(handlers: EngineHandlers, isInstant: (text: string) => boolean, onUnavailable: () => void): Recognizer
-  /** The microphone was refused or is missing. */
-  micBlocked(): void
-  /**
-   * M7: asks the model (POST /api/intent) what an utterance meant on this page. Never rejects.
-   * Round 3: signal is aborted when the engine no longer wants the answer (a later utterance
-   * arrived, or the timeout passed); the fetch should end with it.
-   */
-  ask(request: IntentRequest, signal: AbortSignal): Promise<IntentAnswer | AskFailure>
-  /** M7: the tabs of the window being driven, left to right. */
-  tabs(): Promise<TabSummary[]>
-  /** M7: whether the server has a model, checked once when the engine starts. bad_token (27.3): it answered 401. */
-  status(): Promise<'live' | 'no_key' | 'bad_token' | 'unreachable'>
-  // ---------- document mode (29.2) ----------
-  /**
-   * Reads text aloud ("loe viimane lause ette"); onEnd once when it is over. Optional: the default
-   * is src/speech/synth.ts. Listening is not paused meanwhile (the READ lane's pause, 29.5).
-   */
-  speak?(text: string, lang: string, onEnd: () => void): void
-  // ---------- wake word and places (29.4) ----------
-  /** Round 8 (29.4.1): the wake word while listenMode is wake; absent in the other modes. */
-  wakeWord?: string
-  // ---------- end of wake word and places ----------
-  // ---------- reading aloud (29.5) ----------
-  /** A reading aloud is in progress: a stop word (isReadStop) stops it first and does nothing else. Absent: never. */
-  reading?(): boolean
-  // ---------- the first run (30.1, ONBOARD lane) ----------
-  /** The server's address is hosted (wss://, or a host other than this computer): the down line says so. */
-  hosted?: boolean
-  /** Round 9 (30.5.4): one record per task as it ends, never with words. Absent: nothing is kept. */
-  spend?(record: SpendRecord): void
-  /**
-   * Round 10 (ARCHITECTURE 31.4): Kuula ainult mind is on. Nothing speech-driven runs without a
-   * decision that verified the owner: partials are never typed or shown, and an utterance or a
-   * continuation without one is dropped before the rules, the page, the model or the queue.
-   */
-  onlyOwner?: boolean
-  // ---------- round 10: addressed speech (32) ----------
-  /**
-   * Round 10 (#6, 32.3): the addressee check of always-on mode (POST /api/addressee). A final no
-   * rule knows is asked once: command, dictation, or not for Ütle. Absent, or in wake mode: no check.
-   */
-  addressee?(request: AddresseeRequest, signal: AbortSignal): Promise<AddresseeAnswer | AskFailure>
-  /** Round 10 (#2, 32.2): the recogniser sends the audio off this computer (Soniox). With `hosted`, wake mode does not start. */
-  uploads?: boolean
-  // ---------- end of addressed speech ----------
-}
-
-export interface Engine {
-  toggle(): void
-  start(): void
-  stop(): void
-  readonly listening: boolean
-  /** Push-to-talk released: the words spoken so far are delivered now, listening stays as it is. */
-  flush(): void
-  /**
-   * Round 4 (review): learns the owner's voice from the next `seconds` of speech. Listening starts
-   * if it was off; what he says meanwhile is neither typed nor run, until the server answers (or
-   * ENROL_TIMEOUT_FACTOR × seconds have passed).
-   */
-  enrol(seconds: number): void
-  /** Resolves when every utterance so far, and every preview being typed, has been handled. For tests. */
-  idle(): Promise<void>
-  /**
-   * Round 6 (26.1): his saved values, from the service worker. The rules and applyIntent find them
-   * on the session; the model is told the names only.
-   */
-  setSaved(items: readonly SavedItem[]): void
-  /**
-   * Round 6 (26.5): the options page runs the voice entry flow. While on, every final utterance
-   * goes to the page in front as savedEntry, never to the rules or the model.
-   */
-  setEntry(on: boolean): void
-  // ---------- wake word and places (29.4) ----------
-  /** Round 8 (29.4.2): his places (Minu kohad, merged over the defaults). The model is told the nouns only. */
-  setPlaces(places: readonly Place[]): void
-  // ---------- end of wake word and places ----------
-}
-
-const NO_BOX: BoxState = { present: false, text: '', armed: false }
-/**
- * Round 3: the box the rules are shown to tell a plain send ("saada") from everything else before
- * the utterance's turn comes. Exported so a test's logic can recognise the probe.
- */
-export const SEND_PROBE_BOX: BoxState = { present: true, text: 'x', armed: true }
-
-/** The model is not asked about an utterance this long when the box is armed: a sentence is dictation. */
-/** Round 4: a chain of commands can be long, so almost every dictation is verified (type first, verify after). */
-export const LONG_UTTERANCE_WORDS = 60
-/** The model must answer within this time, or the rules' step stands. */
-/** Longer than the server's own 7 s, so a slow model answers 504 and the engine sees it rather than giving up first. */
-export const ASK_TIMEOUT_MS = 9000
-/** Round 5: a careful ask (server timeout 12 s) may take this long before the engine gives it up. */
-export const ASK_TIMEOUT_CAREFUL_MS = 14_000
-/** Round 5: how long the engine waits for one ask, by its care. */
-export const askTimeoutMs = (care: Care | undefined): number => (care === 'careful' ? ASK_TIMEOUT_CAREFUL_MS : ASK_TIMEOUT_MS)
-type Care = NonNullable<IntentRequest['care']>
-/**
- * Round 5: an utterance of this many words or more is asked with care (the model reads the whole
- * of it and plans before it acts); so is one with a connective in it, and every ask in a chain.
- * Shorter ones are asked quickly, so a short command keeps its speed.
- */
-export const CAREFUL_WORDS = 8
-/**
- * Round 5: a job (one utterance's turn, or one goal of its chain) that is still working this long
- * after it began is given up as a barge-in would give it up, and the strip says so. Nothing can
- * sit silent for minutes.
- */
-export const JOB_WATCHDOG_MS = 25_000
-/** Round 5: one page command gets this long to answer, else it failed with 'timed_out' (the bridge's own cap is 20 s too). */
-export const COMMAND_TIMEOUT_MS = 20_000
-/** Round 5: the strip shows how long a job has been working from this many seconds on. */
-export const BUSY_FROM_S = 3
-/**
- * Round 5 (review of round 4, M7): a dictation of this many words or more, typed first, is never
- * taken back for a verdict that is one plain command with nothing after it: a 14-word single
- * command is implausible, and a wrong verdict would erase a sentence. Chains carry a plan or
- * done:false, so they still run.
- */
-export const LONG_COMMAND_WORDS = 14
-/** M7.2: a multi-step utterance gets no further step once this long has passed since it arrived. */
-export const INTENT_LOOP_BUDGET_MS = 15_000
-/**
- * Round 3: an utterance that waited longer than this in the queue is handled by the rules alone,
- * with no question to the model: an answer minutes late would act on a page that has changed.
- */
-export const STALE_MS = 3000
-/**
- * Round 3: the recogniser's lag is shown on the strip from this much on, and cleared below it. Below
- * the server's MAX_BACKLOG_MS (1500): the server reports the backlog at the moment it drops, which is
- * never much above that, so a higher threshold would hide every drop.
- */
-export const LAG_SHOWN_MS = 1000
-/** M7.2: the loop stops after this many failed steps (one failure is reported back so the model may recover). */
-export const MAX_STEP_FAILURES = 2
-/** M7.2: how long the page gets to render after a step before it is read again (a goTo already waited for the load). */
-export const SETTLE_MS = 300
-/** Round 4: the model may plan this many goals after the one it acts on (IntentAnswerSchema: 12). */
-const MAX_PLAN_GOALS = 12
-const GOAL_CHARS = 200
-/** IntentRequestSchema's utterance limit: a longer one would be a 400, and the words never judged. */
-const UTTERANCE_CHARS = 500
-/** Round 4 (review): an enrolment with no answer from the server ends after this many times its seconds. */
-export const ENROL_TIMEOUT_FACTOR = 5
-/** The request's limits in IntentRequestSchema: a page beyond them would be a 400, and the model never asked. */
-const URL_CHARS = 2000
-const TITLE_CHARS = 300
-const BOX_CHARS = 4000
-
-const wordCount = (utterance: string): number => utterance.trim().split(/\s+/).filter((w) => w !== '').length
-/** Lower case, letters and digits only: for telling one goal from another however the model spelt it. */
-const sameGoal = (a: string, b: string): boolean => a.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === b.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
-/** Goals as the chain carries them: each clipped to the schema's length, at most MAX_PLAN_GOALS, the newest kept. */
-const clipGoals = (goals: readonly string[]): string[] => goals.map((g) => g.slice(0, GOAL_CHARS)).slice(-MAX_PLAN_GOALS)
-
-/** One utterance being spoken: its base (the box before it began) and the preview in the box. */
-interface Live {
-  /** The box as it read when the utterance began. Null until readBox has answered. */
-  base: BoxState | null
-  /** Resolves once base is known. */
-  ready: Promise<void>
-  /** The newest partial. */
-  partial: string
-  /** The text this utterance last typed into the box, or null when it has typed nothing. */
-  inBox: string | null
-  /** The typing loop, while it runs. At most one setText is in flight. */
-  typing: Promise<void> | null
-  /** The utterance has ended (a final, or the microphone stopped): type no more previews. */
-  over: boolean
-  /** Round 8 (29.2): it began more than DOCUMENT_PAUSE_MS after the previous final (a document closes the open sentence first). */
-  paused?: boolean
-}
+export { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, PLACE_ASK_MS, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs } from './engine/constants.ts'
+export type { AskFailure, Engine, EngineDeps, EngineHandlers, InpageLogic } from './engine/types.ts'
 
 export function createEngine(given: EngineDeps): Engine {
   /** Round 10 (33.4): the line the strip shows now, so the end of a timed scroll never writes over a newer one. */
@@ -261,36 +40,26 @@ export function createEngine(given: EngineDeps): Engine {
   }
   const text = STRINGS[deps.lang].strip
   const inpageText = STRINGS[deps.lang].inpage
-  let session = deps.logic.initialInpage(deps.lang)
+  /** The state the engine's parts share (engine/types.ts EngineState). */
+  const st: EngineState = { session: deps.logic.initialInpage(deps.lang), recent: [], readBack: false, modelOff: false, lastDone: [], places: [] }
   let listening = false
   let queue: Promise<void> = Promise.resolve()
   let live: Live | null = null
-  /** Round 10 (#5, 34.2): his last commands, what ran and whether it worked, oldest first (at most RECENT_COMMANDS). */
-  let recent: RecentCommand[] = []
-  /** Round 11 (F6): the last step that ran typed into a one-line field and the strip read it back; the addressee check is told. */
-  let readBack = false
-  /** The server has said it has no model. A standing state: published on change only. */
-  let modelOff = false
   /** 27.3: the server refused the token. The standing line and the socket's failure name it. */
   let badToken = false
   /** Round 9 (30.1): the socket failed while listening; the down line was said once and waits for the server. */
   let outage = false
   const downLine = (): string => (badToken ? text.badToken : deps.hosted === true ? text.serverDownHosted : text.serverDownLocal)
-  /**
-   * Round 4: the goals the last utterance finished, in his words, so a continued utterance
-   * ("siis ava Karin") can carry them as `completed`.
-   */
-  let lastDone: string[] = []
 
   const setModelOff = (off: boolean): void => {
-    if (off === modelOff) return
-    modelOff = off
+    if (off === st.modelOff) return
+    st.modelOff = off
     deps.publish({ modelProblem: off ? inpageText.modelOff : '' })
   }
 
   /** Publishes a line about an utterance. */
   const say = (line: string): void => {
-    deps.publish({ line, resting: session.asleep })
+    deps.publish({ line, resting: st.session.asleep })
   }
 
   /** One page command, never longer than COMMAND_TIMEOUT_MS (round 5): a page that never answers must not hold the engine. */
@@ -360,7 +129,7 @@ export function createEngine(given: EngineDeps): Engine {
   const wanted = (u: Live): string | null => {
     const base = u.base
     if (base === null || !base.present) return null
-    const preview = deps.logic.inpagePreview(inDocument(base) ? { ...session, paused: u.paused === true } : session, u.partial, base)
+    const preview = deps.logic.inpagePreview(inDocument(base) ? { ...st.session, paused: u.paused === true } : st.session, u.partial, base)
     if (preview !== null) return preview
     // The words may be a command now: take back a preview already typed.
     return u.inBox !== null ? base.text : null
@@ -394,220 +163,15 @@ export function createEngine(given: EngineDeps): Engine {
     }
   }
 
-  /**
-   * The page in front for the model: readPage, or what is known from the box when the page cannot
-   * answer. baseText, when given, replaces the box text: the box as it was before the utterance,
-   * never with the utterance's own words in it, so the model judges the words themselves.
-   */
-  const readPage = async (box: BoxState, baseText: string | null): Promise<PageContext> => {
-    const read = await runSafe({ kind: 'readPage' })
-    const fallback: PageContext = { url: '', title: '', box: baseText === null ? box : { ...box, text: baseText }, items: [], media: null, hints: session.hints }
-    const page = !read.ok || !read.page ? fallback : baseText === null ? read.page : { ...read.page, box: { ...read.page.box, text: baseText } }
-    // Round 6 (26.1): the names of his saved values, never a value.
-    const names = savedNames(session.saved ?? [])
-    // Clipped to IntentRequestSchema's limits: a page beyond them would be a 400, and the model never asked.
-    // Round 8 (29.4.2): the nouns of his places, never an address.
-    const nouns = placeNouns(places)
-    return { ...page, url: page.url.slice(0, URL_CHARS), title: page.title.slice(0, TITLE_CHARS), box: { ...page.box, text: page.box.text.slice(0, BOX_CHARS) }, ...(names.length > 0 ? { saved: names } : {}), ...(nouns.length > 0 ? { places: nouns } : {}) }
-  }
-
-  /**
-   * Round 3: one utterance's model work. A later utterance interrupts it (no further step after
-   * the page command in hand) and, unless the later one is a plain send waiting for a
-   * verification, cancels it (the question in flight is given up).
-   */
-  interface Job {
-    utterance: string
-    /** Date.now() when the utterance arrived from the recogniser. */
-    arrived: number
-    /** The rules took it for a plain send ("saada"): it waits for every verification pending. */
-    send: boolean
-    /** A later utterance arrived: no further step is asked for. */
-    interrupted: boolean
-    /** The model is not asked (again) and the question in flight is given up. */
-    cancelled: boolean
-    /** Aborts the question in flight, while one is. */
-    controller: AbortController | null
-    /** Past its first step: in the multi-step loop. */
-    looping: boolean
-    /** A type-first verification: the words are in the box, the model judges them in the background. */
-    verifying: boolean
-    /** A verification whose verdict was a command: it is putting the box back and running it. */
-    acting: boolean
-    /**
-     * Round 4: the chain of goals this utterance is working through, once the model has planned
-     * one (or, for a continued utterance, from the start). Null for a single goal.
-     */
-    chain: IntentChain | null
-    /**
-     * Round 4: a continued utterance ("siis ava Karin" soon after the last one): it does not barge
-     * in, waits for every verification like a send, and is never stale.
-     */
-    continued: boolean
-    /** Round 5: Date.now() when the job began working (its turn, or its verification); null before and once given up. */
-    started: number | null
-    /** Round 5: the watchdog for the goal in hand, while one is set. */
-    watchdog: ReturnType<typeof setTimeout> | null
-    /** Round 5: "katkesta": the job does nothing more, not even the rules' step. */
-    dropped: boolean
-    /** Round 8 (29.2): it came more than DOCUMENT_PAUSE_MS after the previous final; in a document the open sentence is closed first. */
-    paused?: boolean
-    /** Round 9 (30.5.4): what the model work cost, summed in askOnce. */
-    spend: { asks: number; input: number; output: number; cacheRead: number; ms: number; provider: string; model: string; steps: number; goals: number }
-    /** Round 9: how the model work ended, when it got that far; null otherwise. */
-    ending: 'done' | 'stopped' | 'unclear' | null
-    /** Round 9: the watchdog gave it up. */
-    timedOut: boolean
-    /** Round 9: a type-first job whose utterance a verification took over; the verification's job reports. */
-    handedOff: boolean
-    /** Round 10 (#5, 34.2): what each step ran (meant.ts ranOf), and whether the last one worked. */
-    ran: string[]
-    ok: boolean
-    /** Round 10: the tab in front before it opened, switched or closed a tab: `2 "title"`. */
-    from?: string
-  }
-
-  /** Every job not finished: the one in its turn of the queue, those waiting for it, the verifications. */
-  const jobs = new Set<Job>()
-  /** The verifications in flight (round 3): a send waits for all of them before it sends. */
-  const pending = new Set<Promise<void>>()
-  /** Of those, the ones running page commands: the next utterance waits for them so commands do not interleave. */
-  const acting = new Set<Promise<void>>()
-  /** How many questions to the model are in flight; thinking is shown while any is. */
-  let thinkingCount = 0
-  let thinkingShown = false
+  const work = createWork({ deps, st, say, inpageText, onWorkChange: () => wakeGate.listenWork() })
+  const { jobs, pending, acting, think, resetThinking, busyCheck, newJob, showChain, giveUp, beginWork, endWork } = work
   let lagShown = false
 
-  const showThinking = (): void => {
-    const now = thinkingCount > 0
-    if (now === thinkingShown) return
-    thinkingShown = now
-    deps.publish({ thinking: now })
-  }
-
-  /** Round 5: clamped at 0, so a reset while questions are in flight never leaves the dots on. */
-  const think = (on: boolean): void => {
-    thinkingCount = Math.max(0, thinkingCount + (on ? 1 : -1))
-    showThinking()
-  }
-
-  /** Round 5: a cancel or a watchdog clears the dots whatever is in flight; the jobs' own decrements then clamp at 0. */
-  const resetThinking = (): void => {
-    thinkingCount = 0
-    showThinking()
-  }
-
-  // ---- Round 5: busy seconds. While any job works, the strip shows the elapsed seconds from BUSY_FROM_S on. ----
-  let busyShown = 0
-  let busyTimer: ReturnType<typeof setInterval> | null = null
-  const publishBusy = (seconds: number): void => {
-    if (seconds === busyShown) return
-    busyShown = seconds
-    deps.publish({ busySeconds: seconds })
-  }
-  const busyTick = (): void => {
-    const now = Date.now()
-    let longest = 0
-    for (const job of jobs) if (job.started !== null) longest = Math.max(longest, now - job.started)
-    const seconds = Math.floor(longest / 1000)
-    publishBusy(seconds >= BUSY_FROM_S ? seconds : 0)
-  }
-  const anyWorking = (): boolean => [...jobs].some((job) => job.started !== null)
-  const busyCheck = (): void => {
-    if (anyWorking()) {
-      if (busyTimer === null) busyTimer = setInterval(busyTick, 1000)
-    } else {
-      if (busyTimer !== null) clearInterval(busyTimer)
-      busyTimer = null
-      publishBusy(0)
-    }
-    listenWork()
-  }
-  // ---- end of busy seconds ----
-
-  const newJob = (utterance: string, send: boolean): Job => {
-    const job: Job = { utterance, arrived: Date.now(), send, interrupted: false, cancelled: false, controller: null, looping: false, verifying: false, acting: false, chain: null, continued: false, started: null, watchdog: null, dropped: false, spend: { asks: 0, input: 0, output: 0, cacheRead: 0, ms: 0, provider: '', model: '', steps: 0, goals: 1 }, ending: null, timedOut: false, handedOff: false, ran: [], ok: true }
-    jobs.add(job)
-    return job
-  }
-
-  /** Round 4: the strip's chain line while a chain runs, '' once it is over. Published on change only. */
-  let chainShown = ''
-  const showChain = (chain: IntentChain | null): void => {
-    const line = chain === null ? '' : chainLine(chain)
-    if (line === chainShown) return
-    chainShown = line
-    deps.publish({ chain: line })
-  }
-
-  // ---- Round 5: the watchdog. A job that works JOB_WATCHDOG_MS without finishing its goal is given up. ----
-  const unwatch = (job: Job): void => {
-    if (job.watchdog !== null) clearTimeout(job.watchdog)
-    job.watchdog = null
-  }
-  /** Gives the job up as a barge-in would: the question in flight, the loop and the chain end; the page command in hand finishes. */
-  const giveUp = (job: Job): void => {
-    job.interrupted = true
-    job.cancelled = true
-    job.controller?.abort()
-    job.started = null
-    unwatch(job)
-  }
-  const tookTooLong = (job: Job): void => {
-    if (!jobs.has(job) || job.cancelled) return
-    job.timedOut = true
-    job.dropped = true
-    giveUp(job)
-    if (job.chain !== null) showChain(null)
-    resetThinking()
-    busyCheck()
-    say(inpageText.tookTooLong)
-  }
-  /** (Re)starts the job's watchdog: at its turn, and at every goal of its chain. */
-  const watch = (job: Job): void => {
-    unwatch(job)
-    job.watchdog = setTimeout(() => tookTooLong(job), JOB_WATCHDOG_MS)
-  }
-  /** The job begins working: it is counted as busy and watched. */
-  const beginWork = (job: Job): void => {
-    job.started = Date.now()
-    watch(job)
-    busyCheck()
-  }
-  /** Round 9 (30.5.4): how a task ended, for its spend record. */
-  const outcomeOf = (job: Job): SpendOutcome => {
-    if (job.timedOut) return 'tookTooLong'
-    if (job.cancelled || job.dropped) return 'cancelled'
-    if (job.spend.asks === 0) return 'rules'
-    return job.ending ?? 'stopped'
-  }
-  /** Round 9 (30.5.4): one record per task, at its end; none for a job a verification took over. */
-  const reportSpend = (job: Job): void => {
-    if (job.handedOff || !deps.spend) return
-    const { asks, steps, goals, input, cacheRead, output, ms, provider, model } = job.spend
-    deps.spend({ outcome: outcomeOf(job), asks, steps, goals, input, cacheRead, output, ms, provider, model })
-  }
-  /** Round 10 (#5, 34.2): the job's command joins the recent ones the model hears; a type-first job's verification reports instead. */
-  const remember = (job: Job): void => {
-    if (job.handedOff || job.ran.length === 0) return
-    recent = [...recent, recentFrom(job.utterance, job.ran, job.ok && job.ending !== 'unclear', job.from)].slice(-RECENT_COMMANDS)
-  }
-  /** The job is over, however it ended. */
-  const endWork = (job: Job): void => {
-    unwatch(job)
-    job.started = null
-    if (jobs.delete(job)) {
-      reportSpend(job)
-      remember(job)
-    }
-    busyCheck()
-  }
-  // ---- end of the watchdog ----
 
   /** The rules' step for an utterance against the probe box. Pure: the probe box is never typed into. Null when the rules throw. */
   const probe = (utterance: string): InpageStep | null => {
     try {
-      return deps.logic.inpageStep(session, utterance, SEND_PROBE_BOX)
+      return deps.logic.inpageStep(st.session, utterance, SEND_PROBE_BOX)
     } catch {
       return null
     }
@@ -638,8 +202,6 @@ export function createEngine(given: EngineDeps): Engine {
     busyCheck()
   }
 
-  /** Round 5: how hard the model should think about this job's ask. */
-  const careOf = (job: Job): Care => (job.chain !== null || wordCount(job.utterance) >= CAREFUL_WORDS || hasConnective(job.utterance) ? 'careful' : 'quick')
 
   /**
    * Barge-in (round 3): a new utterance stops the model work of every earlier one at the next
@@ -665,378 +227,8 @@ export function createEngine(given: EngineDeps): Engine {
     }
   }
 
-  const askWithTimeout = (request: IntentRequest, controller: AbortController): Promise<IntentAnswer | AskFailure> =>
-    new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        controller.abort()
-        resolve({ error: 'unreachable' })
-      }, askTimeoutMs(request.care))
-      // The engine's own abort answers at once; the fetch ends on its own.
-      controller.signal.addEventListener('abort', () => {
-        clearTimeout(timer)
-        resolve({ error: 'aborted' })
-      })
-      deps.ask(request, controller.signal).then(
-        (answer) => {
-          clearTimeout(timer)
-          resolve(answer)
-        },
-        () => {
-          clearTimeout(timer)
-          resolve({ error: 'unreachable' })
-        },
-      )
-    })
+  const { askOnce, perform, beside, follow, verify } = createGoals({ deps, st, inpageText, say, runSafe, readBox, takeBack, setModelOff, speakAloud: (text) => speakAloud(text), scrollRan, placeStep: (noun) => placeStep(noun), work })
 
-  /** The model's answer, validated against the page it saw. */
-  interface Heard {
-    intent: ModelIntent
-    say: string
-    /** The model says the utterance asks for more after this step. */
-    more: boolean
-    /** Round 4: the goals after the one this step serves, in his words. Empty for one goal. */
-    plan: string[]
-    page: PageContext
-  }
-
-  /** The model's plan as a clean list: strings only, trimmed, no empties, clipped to the schema's limits. */
-  const planFrom = (answer: IntentAnswer): string[] =>
-    (Array.isArray(answer.plan) ? answer.plan : [])
-      .filter((goal): goal is string => typeof goal === 'string')
-      .map((goal) => goal.trim().slice(0, GOAL_CHARS))
-      .filter((goal) => goal !== '')
-      .slice(0, MAX_PLAN_GOALS)
-
-  /**
-   * One question to the model: the page as it is now (with the box as it was before the utterance
-   * when baseText is given), the tabs, the lines before this utterance and the steps already taken
-   * for it. Null when the model gave no answer (the caller keeps what the rules did), or when the
-   * job was cancelled by a later utterance.
-   */
-  const askOnce = async (job: Job, box: BoxState, baseText: string | null, recentBefore: RecentCommand[], steps: IntentStep[]): Promise<Heard | null> => {
-    if (job.cancelled) return null
-    // Review R3 M3: the controller is set before the page is read, so a barge-in while the page
-    // is read counts this as model work begun and cancels it.
-    const controller = new AbortController()
-    job.controller = controller
-    let answer: IntentAnswer | AskFailure
-    let page: PageContext
-    let tabs: TabSummary[]
-    try {
-      page = await readPage(box, baseText)
-      tabs = await deps.tabs().catch((): TabSummary[] => [])
-      if (job.cancelled) return null
-      // Round 4: in a chain the model is asked about the goal in hand, and told the chain.
-      const chain = job.chain
-      const request: IntentRequest = { lang: deps.lang, utterance: (chain === null ? job.utterance : chain.goal).slice(0, UTTERANCE_CHARS), page, tabs, recent: recentBefore, care: careOf(job) }
-      if (steps.length > 0) request.steps = steps
-      if (chain !== null) request.chain = chain
-      const asked = Date.now()
-      answer = await askWithTimeout(request, controller)
-      // Round 9 (30.5.4): every ask counts, a failed one with its time and no tokens.
-      job.spend.asks += 1
-      job.spend.ms += Date.now() - asked
-      if (!('error' in answer) && answer.usage) {
-        const { usage } = answer
-        job.spend.input += usage.input + usage.cacheWrite
-        job.spend.output += usage.output
-        job.spend.cacheRead += usage.cacheRead
-        job.spend.provider = usage.provider
-        job.spend.model = usage.model
-      }
-    } finally {
-      job.controller = null
-    }
-    if (job.cancelled) return null
-    if ('error' in answer) {
-      if (answer.error === 'no_model') setModelOff(true)
-      return null
-    }
-    setModelOff(false)
-    const intent = deps.logic.pageIntentFrom(answer.intent, { page, tabs }) ?? { kind: 'unclear', say: '' }
-    return { intent, say: answer.say, more: answer.done === false, plan: planFrom(answer), page }
-  }
-
-  /** How one step went, for the strip and for the model's next look. */
-  interface Outcome {
-    ok: boolean
-    /** The strip's line about it. */
-    line: string
-  }
-
-  /**
-   * Runs one step: its commands in order through the page, stopping at the first failure, and
-   * inpageResult for the line and the session (hints, undo). u: the live utterance whose preview
-   * may still be in the box; a step without a setText puts the base back first. suffix: added to
-   * both lines (round 3: "Jõuan järele…" on a stale utterance).
-   */
-  const perform = async (step: InpageStep, u: Live | null, suffix = '', job: Job | null = null, page: PageContext | null = null): Promise<Outcome> => {
-    const withSuffix = (line: string): string => (suffix === '' || line === '' ? line : `${line} ${suffix}`)
-    session = step.session
-    say(withSuffix(step.line))
-    // Round 8 (29.2): "loe viimane lause ette": the text is read aloud; nothing runs on the page.
-    if (step.speak !== undefined) speakAloud(step.speak)
-    // A command, or nothing at all: the preview must not stay in the box.
-    if (u !== null && !step.commands.some((c) => c.kind === 'setText')) await takeBack(u)
-    if (step.commands.length === 0) {
-      readBack = false
-      if (job !== null) {
-        job.ran.push(ranOf([], step.line))
-        job.ok = true
-      }
-      return { ok: true, line: step.line }
-    }
-    // Round 10 (#5, 34.2): a command that opens, switches or closes a tab remembers the tab he was on.
-    if (job !== null && job.from === undefined && step.commands.some((c) => c.kind === 'newTab' || c.kind === 'switchTab' || c.kind === 'closeTab')) {
-      const front = (await deps.tabs().catch((): TabSummary[] => [])).find((t) => t.active)
-      if (front !== undefined) job.from = `${front.index} ${JSON.stringify(front.title)}`
-    }
-    let last: BrowserResult = { ok: true }
-    for (const command of step.commands) {
-      last = await runSafe(command)
-      if (!last.ok) break
-    }
-    const after = deps.logic.inpageResult(session, step.commands, last)
-    session = after.session
-    readBack = readsBack(step.commands, last)
-    const line = after.line !== '' ? after.line : step.line
-    if (job !== null) {
-      job.ran.push(ranOf(step.commands, line, page?.items))
-      job.ok = last.ok
-    }
-    // Round 5: a job given up meanwhile ("katkesta", the watchdog) keeps that line, not this late result.
-    if (job?.dropped !== true) say(withSuffix(line))
-    scrollRan(step.commands.at(-1), last, withSuffix(line))
-    return { ok: last.ok, line }
-  }
-
-  /** The step for the model, e.g. "command goTo", "command clickItem 12", "edit undo", "send". */
-  const kindSummary = (intent: ModelIntent): string => {
-    switch (intent.kind) {
-      case 'command': {
-        const c = intent.command
-        const withId = c.kind === 'clickItem' || c.kind === 'focusItem' || c.kind === 'hover' || c.kind === 'contextMenu' || c.kind === 'scrollTo'
-        const detail = withId ? ` ${c.id}` : c.kind === 'clickHint' ? ` ${c.number}` : ''
-        return `command ${c.kind}${detail}`
-      }
-      case 'edit':
-        return `edit ${intent.edit.kind}`
-      default:
-        return intent.kind
-    }
-  }
-
-  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
-
-  /**
-   * Round 10 (#5, 34.3): a site opened while a login or form is in progress opens beside it (goTo
-   * becomes newTab), so the tab in front is never lost; the strip says so. The page is read only
-   * when the step has a goTo and the caller has not read it.
-   */
-  const beside = async (step: InpageStep, box: BoxState, page: PageContext | null): Promise<InpageStep> => {
-    if (!step.commands.some((c) => c.kind === 'goTo')) return step
-    // The box as it was before the utterance: a preview of his own words is not words he has not sent.
-    const front = page ?? (await readPage(box, box.text))
-    const commands = besideCommands(step.commands, front)
-    return commands === step.commands ? step : { ...step, commands, line: `${step.line} ${inpageText.beside}`.trim() }
-  }
-
-  /**
-   * Round 4: the model planned goals after the one its action serves. With no chain yet, the
-   * chain starts: the goal is the part of the utterance the action served (firstGoal). In a chain,
-   * a plan on a goal's first ask means the goal itself held several parts ("siis ava Karin ja
-   * kustuta see"): the goal narrows to its first part and the rest go before what remained.
-   */
-  const planChain = (job: Job, heard: Heard, firstAskOfGoal: boolean): void => {
-    if (heard.plan.length === 0 || !firstAskOfGoal) return
-    const chain = job.chain
-    if (chain === null) {
-      const goal = firstGoal(job.utterance, heard.plan, heard.say)
-      // Review: a plan that repeats the whole utterance or the goal in hand would ask the same thing
-      // again until MAX_CHAIN_STEPS; such goals, and duplicates, are not goals.
-      const remaining = heard.plan.filter((g, i) => !sameGoal(g, goal) && !sameGoal(g, job.utterance) && heard.plan.findIndex((h) => sameGoal(h, g)) === i)
-      if (remaining.length === 0) return
-      job.chain = { original: job.utterance.slice(0, 1000), completed: [], goal, remaining }
-    } else {
-      const goal = firstGoal(chain.goal, heard.plan, heard.say)
-      const known = [...chain.completed, goal, chain.goal, chain.original, ...chain.remaining]
-      const fresh = heard.plan.filter((g, i) => !known.some((k) => sameGoal(k, g)) && heard.plan.findIndex((h) => sameGoal(h, g)) === i)
-      if (fresh.length === 0) return
-      job.chain = { ...chain, goal, remaining: [...fresh, ...chain.remaining].slice(0, MAX_PLAN_GOALS) }
-    }
-    showChain(job.chain)
-  }
-
-  /** How one goal's loop ended: done (the chain may go on), or stopped for good. */
-  type GoalEnd = 'done' | 'stopped'
-
-  /**
-   * M7.2: runs the model's step and, while the model says the goal asks for more, looks at the
-   * page again and asks again with the steps taken so far. Bounded: maxSteps steps (MAX_INTENT_STEPS,
-   * or what the chain has left), INTENT_LOOP_BUDGET_MS since `since`, MAX_STEP_FAILURES failed
-   * steps, an unclear answer stops it, and so does a later utterance (round 3: the step in hand
-   * finishes, no further one is asked for; the strip keeps that step's line). Everything runs
-   * through perform, so the session stays true. Round 4: an unclear after a good step ("Valmis")
-   * ends the goal as done; `taken` counts the steps run, for the chain's total.
-   */
-  const runGoal = async (job: Job, box: BoxState, recentBefore: RecentCommand[], first: Heard, u: Live | null, since: number, maxSteps: number, taken: { n: number }): Promise<GoalEnd> => {
-    let heard = first
-    let steps: IntentStep[] = []
-    let failures = 0
-    for (;;) {
-      planChain(job, heard, steps.length === 0)
-      // Round 8 (29.4.2): a place is resolved here, from his own list; applyIntent never sees it.
-      const planned = heard.intent.kind === 'place' ? placeStep(heard.intent.noun) : deps.logic.applyIntent(session, heard.intent, heard.page, heard.say)
-      // Round 10 (#5, 34.3): beside a login in progress, a site or place opens in a new tab.
-      const step = await beside(planned, box, heard.page)
-      const outcome = await perform(step, u, '', job, heard.page)
-      u = null
-      if (job.dropped) return 'stopped'
-      // Round 10 (#5, 34.4): a tie asked its question; his next utterance answers it.
-      if (heard.intent.kind === 'choose') return 'stopped'
-      if (heard.intent.kind === 'unclear') {
-        if (steps.some((s) => s.ok)) return 'done'
-        // Round 9: an unclear with no step of it run is its own ending.
-        if (steps.length === 0) job.ending = 'unclear'
-        return 'stopped'
-      }
-      // A step with nothing to run did nothing: the model hears that, not a success.
-      const ok = outcome.ok && step.commands.length > 0
-      if (!ok) failures += 1
-      taken.n += 1
-      steps = [...steps, { action: kindSummary(heard.intent), say: heard.say, ok, message: ok ? '' : outcome.line }]
-      if (!heard.more && ok) return 'done'
-      // A failed step is asked about once more even when the model thought it was done: the
-      // model could not know the click would miss, and the steps now say so.
-      if (steps.length >= maxSteps || failures >= MAX_STEP_FAILURES) return 'stopped'
-      if (job.interrupted) return 'stopped'
-      if (Date.now() - since > INTENT_LOOP_BUDGET_MS) return 'stopped'
-      await settle()
-      if (job.interrupted) return 'stopped'
-      job.looping = true
-      const next = await askOnce(job, box, null, recentBefore, steps)
-      if (next === null) return 'stopped'
-      heard = next
-    }
-  }
-
-  /**
-   * Round 4: works through the utterance's goals. The first goal runs as M7.2's loop; when the
-   * model's answer carried a plan the chain starts, and each goal done shifts to the next: asked
-   * afresh with that goal as the utterance, the chain in the request, and the steps reset. It
-   * stops when nothing remains, after MAX_CHAIN_STEPS page steps in all, after MAX_CHAIN_MS since
-   * the utterance arrived, on unclear, on two failed steps for one goal, when the model cannot be
-   * reached, and on barge-in (a later utterance; a plain send only waits). The chain line on the
-   * strip is published on every shift and cleared when the chain ends, however it ends.
-   */
-  const follow = async (job: Job, box: BoxState, recentBefore: RecentCommand[], first: Heard, u: Live | null): Promise<void> => {
-    const started = job.arrived
-    const taken = { n: 0 }
-    let heard = first
-    let since = job.arrived
-    if (job.chain !== null) showChain(job.chain)
-    // Round 9 (30.5.4): done only when the last goal ended done and nothing remained.
-    let finished = false
-    try {
-      for (;;) {
-        const end = await runGoal(job, box, recentBefore, heard, u, since, Math.min(MAX_INTENT_STEPS, MAX_CHAIN_STEPS - taken.n), taken)
-        u = null
-        const chain = job.chain
-        if (end !== 'done' || chain === null) {
-          finished = end === 'done'
-          break
-        }
-        const [goal, ...remaining] = chain.remaining
-        if (goal === undefined) {
-          finished = true
-          break
-        }
-        if (taken.n >= MAX_CHAIN_STEPS || Date.now() - started > MAX_CHAIN_MS || job.interrupted) break
-        job.chain = { ...chain, completed: clipGoals([...chain.completed, chain.goal]), goal, remaining }
-        showChain(job.chain)
-        await settle()
-        if (job.interrupted) break
-        job.looping = true
-        since = Date.now()
-        // Round 5: the watchdog is per goal, so a long chain is never given up while it moves.
-        watch(job)
-        const next = await askOnce(job, box, null, recentBefore, [])
-        if (next === null) break
-        heard = next
-      }
-    } finally {
-      // Review: the chain line goes on every exit, a thrown step included.
-      const chain = job.chain
-      lastDone = clipGoals(chain === null ? [job.utterance] : [...chain.completed, chain.goal])
-      if (chain !== null) showChain(null)
-      job.ending ??= finished ? 'done' : 'stopped'
-      job.spend.steps += taken.n
-      job.spend.goals = chain === null ? 1 : chain.completed.length + 1
-    }
-  }
-
-  /**
-   * Round 3: the verification of a type-first dictation, in the background. The words are in the
-   * box and the next utterance goes on; a send waits for this. A verdict of dictate or unclear, no
-   * answer, or a cancellation leaves the words. A command: when the box still reads as the typing
-   * left it, the typing is taken back (the session from before it, the base in the box) and the
-   * command runs; when the box has changed since (more was typed, or the page changed it), nothing
-   * is touched and the strip says the words were a command.
-   */
-  const verify = (from: Job, box: BoxState, before: InpageSession, typedSession: InpageSession, typed: Outcome, expected: string | null, recentBefore: RecentCommand[]): void => {
-    const job = newJob(from.utterance, false)
-    // Round 10 (#5, 34.2): the typing is this utterance's command until a verdict takes it back.
-    job.ran = [...from.ran]
-    job.ok = from.ok
-    job.verifying = true
-    job.chain = from.chain
-    job.continued = from.continued
-    let done = (): void => undefined
-    const p = new Promise<void>((resolve) => {
-      done = resolve
-    })
-    pending.add(p)
-    void (async () => {
-      think(true)
-      beginWork(job)
-      try {
-        const heard = await askOnce(job, box, box.text, recentBefore, [])
-        if (heard === null) return
-        // Round 9 (30.5.4): the words stay as typed: dictation is the task done, unclear its own ending.
-        if (heard.intent.kind === 'dictate' || heard.intent.kind === 'unclear') {
-          job.ending = heard.intent.kind === 'dictate' ? 'done' : 'unclear'
-          return
-        }
-        // Round 5 (review M7): a long sentence judged one plain command with nothing after it stays.
-        if (heard.intent.kind === 'command' && !heard.more && heard.plan.length === 0 && wordCount(job.utterance) >= LONG_COMMAND_WORDS) {
-          job.ending = 'done'
-          say(inpageText.keptWords)
-          return
-        }
-        job.acting = true
-        acting.add(p)
-        if (typed.ok && expected !== null) {
-          const now = await readBox()
-          if (now.text !== expected) {
-            say(inpageText.lateCommand(job.utterance))
-            return
-          }
-        }
-        // The rules' typing is taken back: the session from before it (unless something since has
-        // moved the session on), and the base in the box.
-        if (session === typedSession) session = before
-        if (typed.ok) await runSafe({ kind: 'setText', text: box.text })
-        job.ran = []
-        await follow(job, box, recentBefore, heard, null)
-      } finally {
-        think(false)
-        endWork(job)
-        pending.delete(p)
-        acting.delete(p)
-        done()
-      }
-    })()
-  }
 
   const settled = (set: Set<Promise<void>>): Promise<unknown> => Promise.all([...set])
 
@@ -1053,7 +245,7 @@ export function createEngine(given: EngineDeps): Engine {
         return
       }
       // Round 4: a continued utterance carries what the last one finished as its completed goals.
-      if (job.continued && job.chain !== null) job.chain = { ...job.chain, completed: clipGoals(lastDone) }
+      if (job.continued && job.chain !== null) job.chain = { ...job.chain, completed: clipGoals(st.lastDone) }
       let box: BoxState
       if (u === null) {
         box = await readBox()
@@ -1067,24 +259,24 @@ export function createEngine(given: EngineDeps): Engine {
         box = job.send ? await readBox() : (u.base ?? NO_BOX)
       }
       // Round 8 (29.2): in a document the rules hear whether the pause before this final was a long one.
-      if (inDocument(box)) session = { ...session, paused: job.paused === true }
+      if (inDocument(box)) st.session = { ...st.session, paused: job.paused === true }
       // ---------- wake word and places (29.4) ----------
       // Round 8 (29.4.3): "lisa koht uudised" saves the tab in front; "lisa koht" asks for the word first.
       if (await placeByVoice(job, box, u)) {
-        lastDone = clipGoals([job.utterance])
+        st.lastDone = clipGoals([job.utterance])
         return
       }
       // Round 8: "vaata uudiseid" opens his place, before the rules; never in an armed box (it may be a message).
-      const place = box.armed ? null : placeCommand(job.utterance, places)
+      const place = box.armed ? null : placeCommand(job.utterance, st.places)
       if (place !== null) {
-        await perform(await beside({ session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.place.label) }, box, null), u, '', job)
-        lastDone = clipGoals([job.utterance])
+        await perform(await beside({ session: st.session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.place.label) }, box, null), u, '', job)
+        st.lastDone = clipGoals([job.utterance])
         return
       }
       // ---------- end of wake word and places ----------
-      const before = session
-      const recentBefore = recent
-      const rules = deps.logic.inpageStep(session, job.utterance, box)
+      const before = st.session
+      const recentBefore = st.recent
+      const rules = deps.logic.inpageStep(st.session, job.utterance, box)
       // Round 8 (29.4.1): words the rules type into an armed box open the dictation window.
       wakeDictation(job, box, rules)
       // Waited too long in the queue: the rules alone, and the strip says so (round 3). A continued
@@ -1094,7 +286,7 @@ export function createEngine(given: EngineDeps): Engine {
       const shouldAsk = rules.ask === true && (!box.armed || wordCount(job.utterance) < LONG_UTTERANCE_WORDS) && !stale && !job.cancelled
       if (!shouldAsk) {
         await perform(await beside(rules, box, null), u, stale ? inpageText.catchingUp : '', job)
-        lastDone = clipGoals([job.utterance])
+        st.lastDone = clipGoals([job.utterance])
         return
       }
       // Round 5: a single-line field (a form's name, email, code) is verified before anything is typed.
@@ -1105,7 +297,7 @@ export function createEngine(given: EngineDeps): Engine {
         // them back when it is sure they were something else. The verification does not hold the
         // queue (round 3).
         const typed = await perform(rules, u, '', job)
-        const typedSession = session
+        const typedSession = st.session
         const expected = rules.commands.reduce<string | null>((text, c) => (c.kind === 'setText' ? c.text : text), null)
         if (!job.cancelled) {
           // Round 9: the verification's job reports the task's spend, not this one.
@@ -1126,7 +318,7 @@ export function createEngine(given: EngineDeps): Engine {
         if (heard === null) {
           // A single-line field with a model that gave no answer gets nothing typed (round 5); the
           // rules' step stands everywhere else, and where there is no model at all.
-          if (single && box.armed && !modelOff) {
+          if (single && box.armed && !st.modelOff) {
             if (u !== null) await takeBack(u)
             say(inpageText.fieldUnverified)
             return
@@ -1218,12 +410,10 @@ export function createEngine(given: EngineDeps): Engine {
   // ---------- end of document mode ----------
   // ---------- wake word and places (29.4) ----------
   const wakeText = STRINGS[deps.lang].wake
-  /** Round 8 (29.4.2): his places, merged over the defaults by the offscreen document (setPlaces); none until then. */
-  let places: Place[] = []
   /** The model's place, resolved here; a noun no longer set opens nothing. */
   const placeStep = (noun: string): InpageStep => {
-    const place = placeByNoun(places, noun)
-    return place === undefined ? { session, commands: [], line: wakeText.missing } : { session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.label) }
+    const place = placeByNoun(st.places, noun)
+    return place === undefined ? { session: st.session, commands: [], line: wakeText.missing } : { session: st.session, commands: [{ kind: 'goTo', url: place.url }], line: wakeText.opening(place.label) }
   }
   /** Round 8 (29.4.3): "lisa koht" asked for the word; the next final within PLACE_ASK_MS is it. */
   let placeAsk: { action: 'save' | 'remove'; until: number } | null = null
@@ -1246,7 +436,7 @@ export function createEngine(given: EngineDeps): Engine {
       say(want.action === 'save' ? wakeText.placeAsk : wakeText.placeAskRemove)
       return true
     }
-    if (want.action === 'remove' && placeByNoun(places, want.noun) === undefined) {
+    if (want.action === 'remove' && placeByNoun(st.places, want.noun) === undefined) {
       say(wakeText.placeNotThere(want.noun))
       return true
     }
@@ -1255,66 +445,8 @@ export function createEngine(given: EngineDeps): Engine {
     else say(want.action === 'save' ? wakeText.placeSaved(want.noun, placeHost(result.tab?.url ?? '')) : wakeText.placeRemoved(want.noun))
     return true
   }
-  /** Round 8 (29.4.1): the wake word while listenMode is wake, else null. */
-  const wake: WakeState | null = deps.wakeWord === undefined ? null : createWake(deps.wakeWord)
-  /** Round 10 (32.1): PASSIVE, ACTIVE or HARD_OFF (src/core/listen.ts). */
-  let listen: ListenState = createListen()
-  /** What the strip was last told (wakeOpen = ACTIVE), so it is told on change only. */
-  let wakeShown = false
-  let wakeTimer: ReturnType<typeof setTimeout> | null = null
-  /** The last final passed the gate: a continuation of it ("siis ...") passes too. */
-  let lastPassed = false
-  const windowOpen = (): boolean => wake !== null && listenActive(listen, Date.now())
-  /** Publishes ACTIVE on change, says when it ended, and sets the timer for its end (none while a task runs). */
-  const showWake = (quiet = false): void => {
-    if (wake === null) return
-    const now = Date.now()
-    listen = listenTick(listen, now)
-    const open = listenActive(listen, now)
-    if (wakeTimer !== null) clearTimeout(wakeTimer)
-    wakeTimer = null
-    if (open && !listen.busy) {
-      wakeTimer = setTimeout(() => {
-        wakeTimer = null
-        showWake()
-      }, listen.until - now)
-    }
-    if (open === wakeShown) return
-    wakeShown = open
-    if (quiet) deps.publish({ wakeOpen: open })
-    else deps.publish({ wakeOpen: open, line: open ? wakeText.active : wakeText.passive(wakeWordFrom(deps.wakeWord)) })
-  }
-  /** Round 10 (32.1): a task began or ended; ACTIVE does not end mid-command. */
-  const listenWork = (): void => {
-    if (wake === null) return
-    listen = listenBusy(listen, jobs.size > 0, Date.now())
-    showWake(true)
-  }
-  /** One final through the machine: the words to act on, or null when they go nowhere (not even the strip). */
-  const wakeFilter = (word: WakeState, utterance: string): string | null => {
-    const r = listenFinal(listen, word, utterance, Date.now())
-    listen = r.state
-    lastPassed = r.utterance !== null
-    if (r.event === 'ignored') deps.publish({ ignored: wakeText.notForMe(listen.ignored) })
-    if (r.event === 'woke') deps.publish({ ignored: '' })
-    // A woken command says its own line; the bare word says "Kuulan sind.".
-    showWake(r.event === 'passed' || r.utterance !== null)
-    return r.utterance
-  }
-  /** Dictation by the rules into an armed box keeps ACTIVE (a send never does). */
-  const wakeDictation = (job: Job, box: BoxState, rules: InpageStep): void => {
-    if (wake === null || job.send || !box.present || !box.armed) return
-    if (!rules.commands.some((c) => c.kind === 'setText')) return
-    listen = listenWake(listen, Date.now())
-    showWake(true)
-  }
-  /** Listening stopped by hand: HARD_OFF, without a line. */
-  const wakeStopped = (): void => {
-    if (wake === null) return
-    listen = listenOff(listen)
-    lastPassed = false
-    showWake(true)
-  }
+  const wakeGate = createWakeGate({ deps, wakeText, jobCount: () => jobs.size, entry: () => entry, enrolling: () => enrolling, whileReading: (utterance) => whileReading(utterance), dropLive, isPlainSend })
+  const { windowOpen, wakeDictation, wakeStopped } = wakeGate
   // ---------- end of wake word and places ----------
   // ---------- reading aloud (29.5) ----------
   /**
@@ -1454,57 +586,8 @@ export function createEngine(given: EngineDeps): Engine {
     },
   }
 
-  // ---------- wake word and places (29.4) ----------
-  // Round 8 (29.4.1): in wake mode every final, continuation and partial passes the gate first. The
-  // voice entry flow (26.5) and enrolment are not gated.
-  if (wake !== null) {
-    const word = wake
-    const ungated = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
-    const gated = (): boolean => !entry && !enrolling
-    handlers.onUtterance = (utterance) => {
-      // 29.5: while reading, the reading's filter comes before the gate: a stop word stops it without the wake word.
-      if (!enrolling && whileReading(utterance)) return
-      if (!gated()) return ungated.onUtterance(utterance)
-      const passed = wakeFilter(word, utterance)
-      if (passed === null) {
-        // Round 10 (32.1): PASSIVE, a toggle or a stop word: nothing of it reaches the strip, the box or the queue.
-        dropLive()
-        return
-      }
-      const closes = windowOpen() && isPlainSend(passed)
-      ungated.onUtterance(passed)
-      // The message is gone: what the room says next must not be typed.
-      if (closes) {
-        listen = listenSleep(listen)
-        showWake(true)
-      }
-    }
-    handlers.onUtteranceContinued = (text, added) => {
-      if (!enrolling && whileReading(added)) return
-      if (!gated()) return ungated.onUtteranceContinued(text, added)
-      if (lastPassed && windowOpen()) {
-        const rest = wakeStarts(word, added)
-        listen = listenHeard(listen, Date.now())
-        showWake(true)
-        return ungated.onUtteranceContinued(text, rest === null || rest === '' ? added : rest)
-      }
-      // What it continues was dropped: these words are a final of their own.
-      handlers.onUtterance(added)
-    }
-    handlers.onInterim = (interim) => {
-      if (deps.reading?.() === true) return
-      if (!gated() || interim === '') return ungated.onInterim(interim)
-      if (windowOpen()) {
-        listen = listenHeard(listen, Date.now())
-        showWake(true)
-        return ungated.onInterim(interim)
-      }
-      // Round 10 (32.1): PASSIVE. Nothing is shown or typed, except the words after a wake word heard just now.
-      const hit = wakeFind(word, interim, true)
-      if (hit !== null && hit.after !== '') deps.publish({ heard: hit.after })
-    }
-  }
-  // ---------- end of wake word and places ----------
+  // Round 8 (29.4.1): in wake mode every final, continuation and partial passes the gate first (engine/wake.ts).
+  wakeGate.gate(handlers)
 
   // ---------- round 10 (#6, 32.3): the addressee check of always-on mode ----------
   /** The finals heard before (after the speaker gate), oldest first: the check's context. */
@@ -1517,7 +600,7 @@ export function createEngine(given: EngineDeps): Engine {
   let checks: Promise<void> = Promise.resolve()
   /** Review 1: "katkesta" drops the checks still pending too; each check remembers the epoch it began in. */
   let checkEpoch = 0
-  if (wake === null && deps.addressee !== undefined) {
+  if (!wakeGate.on && deps.addressee !== undefined) {
     const check = deps.addressee
     const inner = { onUtterance: handlers.onUtterance, onUtteranceContinued: handlers.onUtteranceContinued, onInterim: handlers.onInterim }
     const judged = (): boolean => !entry && !enrolling && deps.reading?.() !== true
@@ -1534,7 +617,7 @@ export function createEngine(given: EngineDeps): Engine {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), ASK_TIMEOUT_MS)
       try {
-        const request: AddresseeRequest = { lang: deps.lang, utterance: utterance.slice(0, UTTERANCE_CHARS), finals: before, page: await pageNow(), readBack }
+        const request: AddresseeRequest = { lang: deps.lang, utterance: utterance.slice(0, UTTERANCE_CHARS), finals: before, page: await pageNow(), readBack: st.readBack }
         const answer = await check(request, controller.signal).catch((): AskFailure => ({ error: 'unreachable' }))
         return 'error' in answer ? null : answer.verdict
       } finally {
@@ -1648,7 +731,7 @@ export function createEngine(given: EngineDeps): Engine {
     heardBy,
     // Round 6: a spelled letter for the entry flow must not wait for the hold.
     // Round 8 (29.4.1): no quick reply from a partial while the wake window is closed (a partial cannot be gated).
-    (utterance) => entry || ((wake === null || windowOpen()) && deps.logic.inpageInstant(session, utterance)),
+    (utterance) => entry || ((!wakeGate.on || windowOpen()) && deps.logic.inpageInstant(st.session, utterance)),
     () => {
       listening = false
       endEnrolment()
@@ -1664,8 +747,8 @@ export function createEngine(given: EngineDeps): Engine {
   queue = queue.then(async () => {
     const status = await deps.status().catch((): 'unreachable' => 'unreachable')
     badToken = status === 'bad_token'
-    modelOff = status === 'no_key' || badToken
-    deps.publish({ modelProblem: badToken ? text.badToken : modelOff ? inpageText.modelOff : '' })
+    st.modelOff = status === 'no_key' || badToken
+    deps.publish({ modelProblem: badToken ? text.badToken : st.modelOff ? inpageText.modelOff : '' })
     // Round 9 (30.1): a 401 learnt after the socket failed names the token, not the server.
     if (outage && badToken) deps.publish({ problem: downLine() })
   })
@@ -1673,16 +756,13 @@ export function createEngine(given: EngineDeps): Engine {
   const start = (): void => {
     if (listening) return
     // Round 10 (#2, 32.2): in PASSIVE the room is heard all day; a hosted server or Soniox would get all of it. Never a silent upload.
-    if (wake !== null && (deps.uploads === true || deps.hosted === true)) {
+    if (wakeGate.on && (deps.uploads === true || deps.hosted === true)) {
       deps.publish({ listening: false, problem: wakeText.uploadsOff })
       return
     }
     listening = true
-    if (wake !== null) {
-      listen = listenOn(listen, Date.now())
-      showWake(true)
-    }
-    deps.publish({ listening: true, problem: '', line: deps.wakeWord === undefined ? text.sayPrompt : wakeText.prompt(wakeWordFrom(deps.wakeWord)), resting: session.asleep })
+    wakeGate.wakeStarted()
+    deps.publish({ listening: true, problem: '', line: deps.wakeWord === undefined ? text.sayPrompt : wakeText.prompt(wakeWordFrom(deps.wakeWord)), resting: st.session.asleep })
     recognizer.start()
   }
 
@@ -1725,7 +805,7 @@ export function createEngine(given: EngineDeps): Engine {
       return listening
     },
     setSaved(items) {
-      session = { ...session, saved: [...items] }
+      st.session = { ...st.session, saved: [...items] }
     },
     setEntry(on) {
       entry = on
@@ -1733,7 +813,7 @@ export function createEngine(given: EngineDeps): Engine {
       if (on) dropLive()
     },
     setPlaces(list) {
-      places = [...list]
+      st.places = [...list]
     },
     async idle() {
       for (;;) {
