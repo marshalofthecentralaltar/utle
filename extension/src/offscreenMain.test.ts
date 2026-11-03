@@ -2,7 +2,7 @@ import type { IntentRequest } from '../../src/core/pageIntent.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STRINGS } from '../../src/core/strings.ts'
 import { DEFAULT_ASR_URL, authHeaders, connectionFrom, isHostedAddress, serverCheck, serverStatus, socketAddress } from './connection.ts'
-import { ENOUGH_PHRASES, asrAddress, askIntent, enrolledLine, foreignNotice, phraseLine, readinessLine, serverUrl, voiceTestLine, wakeWordParam } from './offscreenMain.ts'
+import { ENOUGH_PHRASES, askIntent, enrolledLine, foreignNotice, phraseLine, readinessLine, serverUrl, voiceTestLine, wakeWordParam } from './offscreenMain.ts'
 import { INITIAL_STATE } from './messages.ts'
 // ---------- reading aloud (29.5) ----------
 import { beforeEach } from 'vitest'
@@ -27,9 +27,9 @@ describe('the server address (27.3)', () => {
     expect(serverUrl('wss://utle.example:8443/api/asr', '/api/status')).toBe('https://utle.example:8443/api/status')
   })
 
-  it('never carries the socket query (the token, the engine) into an http address', () => {
-    const socket = socketAddress(asrAddress('wss://h.example/api/asr', 'soniox'), 's3cret')
-    expect(socket).toBe('wss://h.example/api/asr?engine=soniox&token=s3cret')
+  it('never carries the socket query (the token) into an http address', () => {
+    const socket = socketAddress('wss://h.example/api/asr', 's3cret')
+    expect(socket).toBe('wss://h.example/api/asr?token=s3cret')
     expect(serverUrl(socket, '/api/status')).toBe('https://h.example/api/status')
   })
 
@@ -66,15 +66,15 @@ describe('the status with a token (27.3)', () => {
   const answer = (status: number, body: unknown) => vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(new Response(JSON.stringify(body), { status })))
 
   it('sends the token and reads what the server has', async () => {
-    const fetchMock = answer(200, { intent: 'live', speech: { local: true, soniox: false }, auth: 'on' })
+    const fetchMock = answer(200, { intent: 'live', speech: { local: true }, auth: 'on' })
     vi.stubGlobal('fetch', fetchMock)
-    expect(await serverCheck('https://h.example/api/status', 't1')).toEqual({ state: 'live', speech: { local: true, soniox: false } })
+    expect(await serverCheck('https://h.example/api/status', 't1')).toEqual({ state: 'live', speech: { local: true } })
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('authorization')).toBe('Bearer t1')
   })
 
   it('reads which profile the token is (round 7, 27.6), and leaves it out when the server does not say', async () => {
-    vi.stubGlobal('fetch', answer(200, { intent: 'live', speech: { local: true, soniox: false }, auth: 'on', profile: { name: 'ralf', enrolled: true, seconds: 8 } }))
-    expect(await serverCheck('https://h.example/api/status', 't1')).toEqual({ state: 'live', speech: { local: true, soniox: false }, profile: { name: 'ralf', enrolled: true } })
+    vi.stubGlobal('fetch', answer(200, { intent: 'live', speech: { local: true }, auth: 'on', profile: { name: 'ralf', enrolled: true, seconds: 8 } }))
+    expect(await serverCheck('https://h.example/api/status', 't1')).toEqual({ state: 'live', speech: { local: true }, profile: { name: 'ralf', enrolled: true } })
     vi.stubGlobal('fetch', answer(200, { intent: 'live', profile: { name: 7 } }))
     expect((await serverCheck('https://h.example/api/status', 't1')).profile).toBeUndefined()
     expect(STRINGS.et.strip.serverProfile({ name: 'ralf', enrolled: true })).toBe('Profiil: ralf, hääl õpetatud.')

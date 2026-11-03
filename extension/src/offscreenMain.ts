@@ -113,8 +113,8 @@ export async function askAddressee(url: string, request: AddresseeRequest, signa
 
 /**
  * After a flush, the microphone stays open this long so the final can arrive (round 3). The server
- * first decodes what it still holds (up to its 1500 ms backlog), and Soniox answers a finalize over
- * the network; when the final is later than this, the recogniser delivers the words as last heard.
+ * first decodes what it still holds (up to its 1500 ms backlog); when the final is later than
+ * this, the recogniser delivers the words as last heard.
  */
 export const FLUSH_STOP_MS = 800
 
@@ -171,14 +171,6 @@ export function enrolledLine(ok: boolean, phrases: number | undefined, text: { e
   if (detail?.heldOut !== undefined && text.enrolVerified !== undefined) return text.enrolVerified(phrases ?? 0, detail.heldOut.count)
   if (phrases === undefined) return text.enrolDone
   return phrases < ENOUGH_PHRASES ? text.enrolFew(phrases, ENOUGH_PHRASES) : text.enrolPhrasesDone(phrases)
-}
-
-/** The speech model's address with the engine chosen on the options page: ?engine=soniox asks the dev server for Soniox (round 3). */
-export function asrAddress(base: string, engine: string | null): string {
-  if (engine !== 'soniox') return base
-  const url = new URL(base)
-  url.searchParams.set('engine', 'soniox')
-  return url.toString()
 }
 
 // ---------- reading aloud (29.5) ----------
@@ -299,7 +291,7 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
   const params = new URLSearchParams(location.search)
   // The token (27.3) comes in the document's address: an offscreen document cannot read chrome.storage.
   const token = params.get('token') ?? ''
-  const address = socketAddress(asrAddress(params.get('asr') ?? DEFAULT_ASR_URL, params.get('engine')), token)
+  const address = socketAddress(params.get('asr') ?? DEFAULT_ASR_URL, token)
   const intentUrl = serverUrl(address, '/api/intent')
   const addresseeUrl = serverUrl(address, '/api/addressee')
   const statusUrl = serverUrl(address, '/api/status')
@@ -461,8 +453,6 @@ export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {
     // Round 10 (31.4): the engine's own wall behind the recogniser's.
     onlyOwner,
     ...(wakeWord === undefined ? {} : { wakeWord }),
-    // Round 10 (#2, 32.2): Soniox sends the audio off this computer; with it (or a hosted server) wake mode does not start.
-    uploads: params.get('engine') === 'soniox',
     // Round 10 (#6, 32.3): always-on and the toggle ask whether a final no rule knows was said to Ütle. Wake mode never does.
     ...(wakeWord === undefined ? { addressee: (request: AddresseeRequest, signal: AbortSignal) => askAddressee(addresseeUrl, request, signal, token) } : {}),
   })

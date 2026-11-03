@@ -13,7 +13,7 @@ import { phraseLine } from './voiceLines.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 import { guardStore, onlyOwnerWantedFrom, readinessFrom } from '../../src/core/guard.ts'
 import type { GuardReadiness } from '../../src/core/guard.ts'
-import { createDwell } from '../../src/ui/dwell.ts'
+import { createDwell } from './dwell.ts'
 import { CONNECTION_KEYS, connectionFrom, connectionOf, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
 import { STATE_KEY } from './messages.ts'
 import type { StripState, ToBackground, ToPage } from './messages.ts'
@@ -129,16 +129,6 @@ const GROUPS: Group[] = [
     choices: [
       { value: 'mic', label: text.gazeMic, sub: text.gazeMicEn },
       { value: 'bar', label: text.gazeBar, sub: text.gazeBarEn },
-    ],
-  },
-  {
-    key: 'speechEngine',
-    title: text.speechEngine,
-    titleEn: text.speechEngineEn,
-    note: `${text.engineNote} ${text.engineNoteEn}`,
-    choices: [
-      { value: 'local', label: text.engineLocal, sub: text.engineLocalEn },
-      { value: 'soniox', label: text.engineSoniox, sub: text.engineSonioxEn },
     ],
   },
   // The owner's voice (round 4, VOICE lane): teach the server his voice, then obey only it.
@@ -791,7 +781,7 @@ function serverSection(): void {
       if (check.state === 'bad_token') show(text.serverWrongToken)
       else if (check.state === 'unreachable') show(text.serverUnreachable)
       else {
-        const ok = text.serverOk(check.speech ?? { local: false, soniox: false }, check.state === 'live')
+        const ok = text.serverOk(check.speech ?? { local: false }, check.state === 'live')
         show(check.profile ? `${ok} ${text.serverProfile(check.profile)}` : ok, true)
       }
     })()

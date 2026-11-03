@@ -6,9 +6,9 @@
 // reads its own look (height, microphone side) from chrome.storage.local, set on the options page.
 
 import { STRINGS } from '../../src/core/strings.ts'
-import { createDwell } from '../../src/ui/dwell.ts'
-import { createGaze, GAZE_OFF_MS, GAZE_ON_MS, GAZE_POLL_MS } from '../../src/ui/gaze.ts'
-import type { Gaze } from '../../src/ui/gaze.ts'
+import { createDwell } from './dwell.ts'
+import { createGaze, GAZE_OFF_MS, GAZE_ON_MS, GAZE_POLL_MS } from './gaze.ts'
+import type { Gaze } from './gaze.ts'
 import { bottomBox, watchTrustedClicks } from './box.ts'
 import { INITIAL_STATE, STATE_KEY } from './messages.ts'
 import type { StripMeasure, StripState, ToBackground, ToStrip } from './messages.ts'
@@ -29,8 +29,6 @@ export type MicSide = 'left' | 'right'
 export type ListenMode = 'toggle' | 'gaze' | 'wake'
 /** What the gaze rests on in gaze mode: the microphone square, or the whole bar. */
 export type GazeTarget = 'mic' | 'bar'
-/** local: TalTech's model on this computer. soniox: Soniox through the dev server (needs SONIOX_API_KEY there). */
-export type SpeechEngine = 'local' | 'soniox'
 export interface StripSettings {
   barHeight: BarHeight
   micSide: MicSide
@@ -38,14 +36,13 @@ export interface StripSettings {
   barHiddenDefault: boolean
   listenMode: ListenMode
   gazeTarget: GazeTarget
-  speechEngine: SpeechEngine
   /** Round 4: only the owner's voice is obeyed (needs an enrolled voice on the dev server). */
   onlyOwner: boolean
   /** 29.5: "Loe riba ette": the bar's new amber lines are spoken (the offscreen document does it). */
   readBar: boolean
 }
-export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', speechEngine: 'local', onlyOwner: false, readBar: false }
-export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'speechEngine', 'onlyOwner', 'readBar'] as const
+export const DEFAULT_SETTINGS: StripSettings = { barHeight: STRIP_HEIGHT, micSide: 'left', barHiddenDefault: false, listenMode: 'toggle', gazeTarget: 'mic', onlyOwner: false, readBar: false }
+export const SETTING_KEYS = ['barHeight', 'micSide', 'barHiddenDefault', 'listenMode', 'gazeTarget', 'onlyOwner', 'readBar'] as const
 
 /** Reads the strip's settings out of a chrome.storage.local answer, defaults for anything missing. */
 export function settingsFrom(stored: Record<string, unknown>): StripSettings {
@@ -58,7 +55,6 @@ export function settingsFrom(stored: Record<string, unknown>): StripSettings {
     barHiddenDefault: stored.barHiddenDefault === true,
     listenMode: stored.listenMode === 'gaze' || stored.listenMode === 'wake' ? stored.listenMode : 'toggle',
     gazeTarget: stored.gazeTarget === 'bar' ? 'bar' : 'mic',
-    speechEngine: stored.speechEngine === 'soniox' ? 'soniox' : 'local',
     onlyOwner: stored.onlyOwner === true,
     readBar: stored.readBar === true,
   }

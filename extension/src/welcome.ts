@@ -4,7 +4,7 @@
 // commands (utle-page-run) number its buttons and type into its demo box; the strip is mounted here.
 
 import { STRINGS } from '../../src/core/strings.ts'
-import { createDwell } from '../../src/ui/dwell.ts'
+import { createDwell } from './dwell.ts'
 import { armElement } from './box.ts'
 import { CONNECTION_KEYS, connectionFrom, connectionOf, isHostedAddress, isSocketAddress, serverCheck, serverUrl } from './connection.ts'
 import { ENROL_PHRASES, VERIFY_PHRASES } from '../../src/core/enrolPhrases.ts'
@@ -282,7 +282,7 @@ async function testServer(): Promise<void> {
   if (check.state === 'bad_token') show(server, text.serverWrongToken)
   else if (check.state === 'unreachable') show(server, `${text.serverUnreachable} ${isHostedAddress(connection.asrUrl) ? W.hintHosted : W.hintLocal}`)
   else {
-    const ok = text.serverOk(check.speech ?? { local: false, soniox: false }, check.state === 'live')
+    const ok = text.serverOk(check.speech ?? { local: false }, check.state === 'live')
     show(server, check.profile ? `${ok} ${text.serverProfile(check.profile)}` : ok, true)
   }
   mark(server, done.server)

@@ -13,7 +13,7 @@ export type Intent =
   | { kind: 'not_understood'; message: string }
 
 /** A proposal waiting for yes or no. */
-export interface Pending {
+interface Pending {
   summary: string
   ops: Op[]
 }

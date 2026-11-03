@@ -90,7 +90,7 @@ interface Options {
   onlyOwner?: boolean
   /** Round 10 (#6): the addressee check of always-on mode. Absent: no check. */
   addressee?: (request: AddresseeRequest, signal: AbortSignal) => Promise<AddresseeAnswer | AskFailure>
-  /** Round 10 (#2): the recogniser sends audio off this computer (Soniox). */
+  /** Round 10 (#2): the recogniser sends audio off this computer (a cloud recogniser). */
   uploads?: boolean
 }
 
@@ -2438,7 +2438,7 @@ describe('wake mode (29.4.1; round 10: PASSIVE, ACTIVE, HARD_OFF)', () => {
     expect(t.state.wakeOpen).toBeUndefined()
   })
 
-  it('#2 privacy: with a hosted server or Soniox, wake mode does not start the microphone and says why (0 frames in PASSIVE)', async () => {
+  it('#2 privacy: with a hosted server or a cloud recogniser, wake mode does not start the microphone and says why (0 frames in PASSIVE)', async () => {
     for (const option of [{ hosted: true }, { uploads: true }]) {
       const t = setup({ wakeWord: 'Ütle', ...option })
       t.engine.start()

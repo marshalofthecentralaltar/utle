@@ -36,7 +36,7 @@ describe('the server token (27.2)', () => {
 
   it('takes ?token= or the header on the websocket upgrade', () => {
     expect(upgradeAuthorized(req('/api/asr?token=t1'), 't1')).toBe(true)
-    expect(upgradeAuthorized(req('/api/asr?engine=soniox&token=t1'), 't1')).toBe(true)
+    expect(upgradeAuthorized(req('/api/asr?mode=command&token=t1'), 't1')).toBe(true)
     expect(upgradeAuthorized(req('/api/asr?token=a%2Bb'), 'a+b')).toBe(true)
     expect(upgradeAuthorized(req('/api/asr', 'Bearer t1'), 't1')).toBe(true)
     expect(upgradeAuthorized(req('/api/asr'), 't1')).toBe(false)

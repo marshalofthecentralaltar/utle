@@ -3,17 +3,15 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { join } from 'node:path'
-import { InterpretRequestSchema } from '../src/core/intent.ts'
 import { MODEL_DIR, attachAsr } from './asr.ts'
 import type { AttachOptions } from './asr.ts'
 import { LOCAL_USER, authState, httpUser, tokenUsers, upgradeUser } from './auth.ts'
 import type { TokenUser } from './auth.ts'
 import { pageIntent } from './intent.ts'
 import { addresseeAnswer } from './addressee.ts'
-import { InterpretError, interpret } from './interpret.ts'
+import { InterpretError } from './interpret.ts'
 import type { InterpretErrorCode } from './interpret.ts'
 import { modelFromEnv, modelStatus } from './model/index.ts'
-import { rehearse } from './rehearsal.ts'
 import { keyLine, keySource } from './keySource.ts'
 import { profilePath, profileSummary } from './speaker.ts'
 
@@ -33,8 +31,6 @@ export type Mount = (path: string, handler: Handler) => void
 export interface ApiOptions {
   /** The project root: models/ and the decode worker's entry are found from it. */
   root: string
-  /** `vite --mode rehearsal`: /api/interpret answers from the demo script. */
-  rehearsal?: boolean
   /** The environment the token and the keys are read from. Default process.env. */
   env?: NodeJS.ProcessEnv
   /** Starts the decode worker; tests pass a fake host. Default: the real worker. */
@@ -112,14 +108,12 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
  *   GET  /api/status     which interpreter answers, which model (primary, fallback, last), whether /api/intent has a key, which speech engines can run, whether a token is needed
  *   POST /api/intent     one unrecognised utterance with the page in, one IntentAnswer out (M7)
  *   POST /api/addressee  round 10 (32.3): one always-on final, the three before it and the page in short; command, dictation or ignore out
- *   POST /api/interpret  one utterance in, one Intent out
- *   WS   /api/asr        the local recogniser (20.1), or Soniox (23.4); attached when httpServer is given
+ *   WS   /api/asr        the local recogniser (20.1); attached when httpServer is given
  * UTLE_TOKEN set: every /api request needs the bearer header and the websocket ?token= (27.2).
  * The Anthropic key is read from the server's environment and never reaches the browser (principle P8).
  */
 export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, options: ApiOptions): void {
   const env = options.env ?? process.env
-  const rehearsal = options.rehearsal === true
   const users = tokenUsers(env)
   // Each caller's voice profile file (27.6): owner.json for the open server, profiles/<id>.json per token.
   const profileOf = (user: TokenUser): string => profilePath(options.root, env, user.id)
@@ -129,13 +123,6 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
   if (httpServer) console.info(`[model] primary=${configured.primary} careful=${configured.carefulLabel} fallback=${configured.fallback ?? 'none'}${configured.ready ? '' : ' (no key: rules only)'}`)
   // Round 10 (#8): which Anthropic key, by prefix, and from where (a Windows user variable outranks .env.local).
   if (httpServer) console.info(keyLine(keySource(env.ANTHROPIC_API_KEY, envLocalText(options.root))))
-
-  const answer = async (input: unknown) => {
-    if (!rehearsal) return interpret(input, { model: configured.model })
-    const parsed = InterpretRequestSchema.safeParse(input)
-    if (!parsed.success) throw new InterpretError('bad_request', 'The request is malformed.')
-    return rehearse(parsed.data)
-  }
 
   if (httpServer) {
     attachAsr(httpServer, options.root, {
@@ -166,12 +153,12 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
     }
     const intent = configured.ready ? 'live' : 'no_key'
     // local: the model files are on disk (whether the addon loads is only known at the first connection).
-    const speech = { local: existsSync(join(options.root, MODEL_DIR)), soniox: Boolean(env.SONIOX_API_KEY) }
+    const speech = { local: existsSync(join(options.root, MODEL_DIR)) }
     const auth = authState(users.length === 0 ? undefined : 'on')
     // The caller's profile (27.6): which user the token is, and whether that user's voice is learnt.
     const user = httpUser(req, users) ?? LOCAL_USER
     const profile = { name: user.name, ...profileSummary(profileOf(user)) }
-    send(res, 200, rehearsal ? { mode: 'rehearsal', model: null, intent, speech, auth, profile } : { mode: 'live', model: modelStatus(configured), intent, speech, auth, profile })
+    send(res, 200, { mode: 'live', model: modelStatus(configured), intent, speech, auth, profile })
   })
 
   mount('/api/intent', (req, res, next) => {
@@ -203,22 +190,6 @@ export function attachUtleApi(httpServer: EventEmitter | null, mount: Mount, opt
         const input = await jsonBody(req)
         if (!configured.ready) throw new InterpretError('upstream_rejected', 'no_key')
         send(res, 200, await addresseeAnswer(input, { model: configured.model }))
-      } catch (error) {
-        const known = toKnownError(error)
-        send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })
-      }
-    })()
-  })
-
-  mount('/api/interpret', (req, res, next) => {
-    if (preflight(req, res)) return
-    if (req.method !== 'POST') {
-      next()
-      return
-    }
-    void (async () => {
-      try {
-        send(res, 200, await answer(await jsonBody(req)))
       } catch (error) {
         const known = toKnownError(error)
         send(res, STATUS[known.code], { error: { code: known.code, message: known.message } })

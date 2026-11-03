@@ -95,7 +95,7 @@ export interface EngineDeps {
    * rule knows is asked once: command, dictation, or not for Ütle. Absent, or in wake mode: no check.
    */
   addressee?(request: AddresseeRequest, signal: AbortSignal): Promise<AddresseeAnswer | AskFailure>
-  /** Round 10 (#2, 32.2): the recogniser sends the audio off this computer (Soniox). With `hosted`, wake mode does not start. */
+  /** Round 10 (#2, 32.2): the recogniser sends the audio off this computer (a cloud recogniser; none since round 12). With `hosted`, wake mode does not start. */
   uploads?: boolean
   // ---------- end of addressed speech ----------
 }

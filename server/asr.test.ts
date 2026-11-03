@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_ENROL_PHRASES, MAX_ENROL_SECONDS, judgedLine, parseClientFrame, speakerLine, vadLine, wantsSoniox } from './asr.ts'
+import { MAX_ENROL_PHRASES, MAX_ENROL_SECONDS, judgedLine, parseClientFrame, speakerLine, vadLine } from './asr.ts'
 
 describe('client text frames (round 4)', () => {
   it('reads flush, enrol and onlyOwner, and nothing else', () => {
@@ -64,13 +64,5 @@ describe("the log line about a final's verdict", () => {
     expect(judgedLine({ speaker: 'owner', score: 0.71, seconds: 1.4 }, true)).toBe('[asr] final judged owner 0.71 (only owner on)')
     expect(judgedLine({ speaker: 'other', score: 0.2 }, false)).toBe('[asr] final judged other 0.2 (only owner off)')
     expect(judgedLine({ speaker: 'unknown', score: 0, seconds: 0.4, reason: 'insufficient_audio' }, true)).toBe('[asr] final judged unknown 0 insufficient_audio (only owner on)')
-  })
-})
-
-describe('the engine on the socket address', () => {
-  it('routes ?engine=soniox and UTLE_ASR=soniox to Soniox', () => {
-    expect(wantsSoniox('/api/asr', {})).toBe(false)
-    expect(wantsSoniox('/api/asr?engine=soniox', {})).toBe(true)
-    expect(wantsSoniox('/api/asr', { UTLE_ASR: 'soniox' })).toBe(true)
   })
 })

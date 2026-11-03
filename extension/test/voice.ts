@@ -570,7 +570,7 @@ async function onlyOwnerReal(extensionDir: string): Promise<void> {
     res.setHeader('access-control-allow-origin', '*')
     if ((req.url ?? '').startsWith('/api/status')) {
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ intent: 'no_key', speech: { local: true, soniox: false } }))
+      res.end(JSON.stringify({ intent: 'no_key', speech: { local: true } }))
       return
     }
     res.statusCode = 404

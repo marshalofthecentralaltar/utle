@@ -56,7 +56,7 @@ the numbers).
    "ralf:<token 1>,kasutaja:<token 2>" | railway variable set UTLE_TOKEN --stdin --skip-deploys
    ```
 
-   Optional: `SONIOX_API_KEY` (the second recogniser), `UTLE_MODEL` (the model behind the
+   Optional: `UTLE_MODEL` (the model behind the
    understanding, `provider:model`; unset is `anthropic:claude-sonnet-5-5`). Do not set `PORT`:
    Railway sets it.
 

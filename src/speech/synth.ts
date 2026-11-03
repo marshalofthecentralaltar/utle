@@ -32,8 +32,3 @@ export function speak(text: string, lang: string, onEnd: () => void): void {
   utterance.onerror = end
   synth.speak(utterance)
 }
-
-/** Stops any reading in progress. */
-export function hush(): void {
-  synthesis()?.cancel()
-}

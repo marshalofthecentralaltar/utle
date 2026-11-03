@@ -111,17 +111,6 @@ export function browserSocket(events: SocketEvents, address?: string): SocketLik
   return ws
 }
 
-/** True when this browser can stream the microphone to the local recogniser. */
-export function localRecognizerPossible(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof WebSocket !== 'undefined' &&
-    typeof AudioWorkletNode !== 'undefined' &&
-    typeof navigator !== 'undefined' &&
-    navigator.mediaDevices !== undefined
-  )
-}
-
 /** Lower-case words without punctuation, for comparing what was released with what the server finalises. */
 function words(text: string): string[] {
   return text

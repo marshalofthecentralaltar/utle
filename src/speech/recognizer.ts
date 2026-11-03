@@ -80,8 +80,3 @@ export interface RecognizerHandlers {
   /** Round 9 (30.1): the socket to the server changed: connecting (a start), connected (ready), down (refused or lost). Once per change. */
   onConnection?(state: 'connecting' | 'connected' | 'down'): void
 }
-
-export const LANGUAGES = [
-  { tag: 'en-US', label: 'English' },
-  { tag: 'et-EE', label: 'Eesti' },
-] as const
