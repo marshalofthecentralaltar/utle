@@ -79,6 +79,10 @@ phrases(
   'open a new page',
   'open a new window',
   'open new window',
+  // Round 11 (F4): his words in the demo of 2026-11-03.
+  'mine uuele vahelehele',
+  'uuele vahelehele',
+  'mine uuele lehele',
 )
 phrases(
   { kind: 'closeTab' },
@@ -104,12 +108,19 @@ phrases(
   'back a page',
   'previous page',
   'browser back',
+  // Round 11 (F4): his words in the demo of 2026-11-03 ("mine tagasi eelmisele lehele", twice).
+  'mine tagasi eelmisele lehele',
+  'tagasi eelmisele lehele',
+  'mine tagasi eelmisele leheküljele',
 )
 phrases(
   { kind: 'history', direction: 'forward' },
   'mine edasi',
   'edasi',
   'järgmine leht',
+  // Round 11 (F4): the mirror of his "mine eelmisele lehele". Not "edasi järgmisele lehele": a bare
+  // "edasi" (the next field) would then wait for its final (33.3).
+  'mine järgmisele lehele',
   'go forward',
   'forward',
   'page forward',
@@ -413,9 +424,10 @@ function siteLike(name: string): string | null {
 /**
  * The address for a site name or a bare domain, or null. key is the site table's name when an
  * Estonian case ending had to come off first ("whatsappi" is whatsapp), or the name only sounded
- * like it ("juutuba" is juutuub, 23.2), else null.
+ * like it ("juutuba" is juutuub, 23.2), else null. soundAlike false: the table's names and bare
+ * domains only (round 11: a name said alone).
  */
-function siteUrl(name: string): { url: string; key: string | null } | null {
+function siteUrl(name: string, soundAlike = true): { url: string; key: string | null } | null {
   const known = SITES[name]
   if (known) return { url: known, key: null }
   for (const ending of ENDINGS) {
@@ -425,6 +437,7 @@ function siteUrl(name: string): { url: string; key: string | null } | null {
     if (url) return { url, key }
   }
   if (ADDRESS.test(name)) return { url: `https://${name}`, key: null }
+  if (!soundAlike) return null
   const like = siteLike(name)
   if (like !== null) {
     const url = SITES[like]
@@ -542,15 +555,40 @@ function timedScroll(s: string): BrowserCommand | null {
 /** Every fixed phrase of the table, for the in-page command vocabulary (section 21.3). */
 export const BROWSER_PHRASES: readonly string[] = Object.keys(FIXED)
 
+/** The command, or null; a loose match (round 11: a site's name alone, "ma tahan X-i minna") needs the box, so only inpageStep takes it. */
 export function browserIntent(text: string): BrowserCommand | null {
-  return browserUnderstood(text)?.command ?? null
+  const understood = browserUnderstood(text)
+  return understood === null || understood.loose === true ? null : understood.command
+}
+
+/** Round 11 (F4): "ma tahan töötukassasse minna", "tahan minna youtube'i": a wish to go to a place. */
+const WISH_GO = /^(?:ma )?(?:tahan|soovin) (?:minna (.+)|(.+) minna)$/u
+/** Round 11 (F4): a site's name alone ("Töötukassa", ". Youtube"): one or two words. */
+const BARE_NAME = /^[\p{L}\p{N}.-]+(?: [\p{L}\p{N}.-]+)?$/u
+
+/**
+ * Round 11 (F4): a known site's name said alone, or "ma tahan X-i minna": the table's names and
+ * bare domains only, never a sound-alike, at least four letters ("err" alone is a hesitation).
+ */
+function looseSite(s: string): BrowserCommand | null {
+  const wish = WISH_GO.exec(s)
+  const wished = wish?.[1] ?? wish?.[2]
+  if (wished !== undefined) {
+    const site = siteUrl(wished)
+    return site === null ? null : { kind: 'goTo', url: site.url }
+  }
+  if (s.length < 4 || !BARE_NAME.test(s)) return null
+  const site = siteUrl(s, false)
+  return site === null ? null : { kind: 'goTo', url: site.url }
 }
 
 /**
  * browserIntent, plus what it was taken to be when a case ending came off a site name
- * ("mine whatsappi" is understood as "mine whatsapp"); understood is null otherwise.
+ * ("mine whatsappi" is understood as "mine whatsapp"); understood is null otherwise. loose (round
+ * 11): the command came from a site's name alone or "ma tahan X-i minna", words a message may hold;
+ * inpageStep takes them for dictation while he is writing.
  */
-export function browserUnderstood(text: string): { command: BrowserCommand; understood: string | null } | null {
+export function browserUnderstood(text: string): { command: BrowserCommand; understood: string | null; loose?: true } | null {
   const s = cleanForBrowser(text)
   if (s === '') return null
   const plain = (command: BrowserCommand): { command: BrowserCommand; understood: null } => ({ command, understood: null })
@@ -585,5 +623,6 @@ export function browserUnderstood(text: string): { command: BrowserCommand; unde
     const site = siteUrl(go[2])
     if (site) return { command: { kind: 'goTo', url: site.url }, understood: site.key === null ? null : `${go[1]} ${site.key}` }
   }
-  return null
+  const loose = looseSite(s)
+  return loose === null ? null : { command: loose, understood: null, loose: true }
 }
