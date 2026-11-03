@@ -12,10 +12,10 @@ import type { Lang } from './strings.ts'
  */
 
 export type AddresseeVerdict = 'command' | 'dictation' | 'ignore'
-export const ADDRESSEE_VERDICTS: readonly AddresseeVerdict[] = ['command', 'dictation', 'ignore']
+const ADDRESSEE_VERDICTS: readonly AddresseeVerdict[] = ['command', 'dictation', 'ignore']
 
 /** How many finals before this one the check is told. */
-export const ADDRESSEE_FINALS = 3
+const ADDRESSEE_FINALS = 3
 const FINAL_CHARS = 300
 
 export interface AddresseeRequest {

@@ -123,7 +123,7 @@ export type PhraseProblem = 'too_short' | 'too_quiet' | 'clipped' | 'model_error
 export const PHRASE_PROBLEMS: readonly PhraseProblem[] = ['too_short', 'too_quiet', 'clipped', 'model_error', 'slow']
 /** Why an enrolment replaced nothing (the old profile stays). */
 export type EnrolFailure = 'too_few_phrases' | 'too_little_speech' | 'held_out_failed' | 'write_failed' | 'model_unavailable'
-export const ENROL_FAILURES: readonly EnrolFailure[] = ['too_few_phrases', 'too_little_speech', 'held_out_failed', 'write_failed', 'model_unavailable']
+const ENROL_FAILURES: readonly EnrolFailure[] = ['too_few_phrases', 'too_little_speech', 'held_out_failed', 'write_failed', 'model_unavailable']
 export interface HeldOutResult {
   count: number
   scores: number[]
@@ -132,7 +132,7 @@ export interface HeldOutResult {
 }
 /** Whether only-owner can protect: only `ready` may be shown as protected. */
 export type ReadinessState = 'ready' | 'no_profile' | 'needs_retraining' | 'model_unavailable' | 'model_mismatch'
-export const READINESS_STATES: readonly ReadinessState[] = ['ready', 'no_profile', 'needs_retraining', 'model_unavailable', 'model_mismatch']
+const READINESS_STATES: readonly ReadinessState[] = ['ready', 'no_profile', 'needs_retraining', 'model_unavailable', 'model_mismatch']
 export interface SpeakerReadiness {
   state: ReadinessState
   protected: boolean
@@ -145,12 +145,12 @@ export interface SpeakerReadiness {
   threshold?: { value: number; source: 'factory' | 'per_profile'; stored?: number }
 }
 export type SpeakerTestResult = 'recognised' | 'not_recognised' | 'too_short' | 'noisy' | 'unavailable'
-export const SPEAKER_TEST_RESULTS: readonly SpeakerTestResult[] = ['recognised', 'not_recognised', 'too_short', 'noisy', 'unavailable']
+const SPEAKER_TEST_RESULTS: readonly SpeakerTestResult[] = ['recognised', 'not_recognised', 'too_short', 'noisy', 'unavailable']
 
 const oneOf = <T extends string>(list: readonly T[], value: unknown): T | undefined => list.find((x) => x === value)
 
 /** A readiness from the wire; `protected` is true only when the state is `ready` and the server said so. */
-export function parseReadiness(value: unknown): SpeakerReadiness | null {
+function parseReadiness(value: unknown): SpeakerReadiness | null {
   if (typeof value !== 'object' || value === null) return null
   const r = value as Record<string, unknown>
   const state = oneOf(READINESS_STATES, r.state)
@@ -292,7 +292,7 @@ const END_CAUSES: readonly EndCause[] = ['rule1', 'rule2', 'rule3', 'detector', 
 const msOrNull = (value: unknown): number | null | undefined => (value === null ? null : typeof value === 'number' && Number.isFinite(value) ? value : undefined)
 
 /** Round 10 (#7, lane LATE): a final's why, or null when anything in it is not a number or a known cause. */
-export function parseWhy(value: unknown): FinalWhy | null {
+function parseWhy(value: unknown): FinalWhy | null {
   if (typeof value !== 'object' || value === null) return null
   const r = value as Record<string, unknown>
   const cause = END_CAUSES.find((c) => c === r.cause)

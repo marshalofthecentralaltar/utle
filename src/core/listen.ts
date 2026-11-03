@@ -25,7 +25,7 @@ export const WAKE_REPEAT_MS = 1500
 /** What ends ACTIVE, with or without the word. */
 const STOP = new Set(['aitab', 'see on kõik', 'see oli kõik', 'lõpeta kuulamine', 'thats all', 'that is all', 'stop listening'])
 
-export type ListenMode = 'off' | 'passive' | 'active'
+type ListenMode = 'off' | 'passive' | 'active'
 
 export interface ListenState {
   mode: ListenMode
@@ -40,7 +40,7 @@ export interface ListenState {
 }
 
 /** off: nothing heard; ignored: PASSIVE, no word; woke: PASSIVE to ACTIVE; slept: ACTIVE to PASSIVE; stopped: a woken stop word in PASSIVE; passed: ACTIVE, the final goes on (or a repeated word). */
-export type ListenEvent = 'off' | 'ignored' | 'woke' | 'slept' | 'stopped' | 'passed'
+type ListenEvent = 'off' | 'ignored' | 'woke' | 'slept' | 'stopped' | 'passed'
 
 export interface ListenStep {
   state: ListenState
@@ -53,7 +53,7 @@ export function createListen(): ListenState {
   return { mode: 'off', until: 0, wokeAt: Number.NEGATIVE_INFINITY, busy: false, ignored: 0 }
 }
 
-export const isStopWord = (words: string): boolean => STOP.has(normalise(words))
+const isStopWord = (words: string): boolean => STOP.has(normalise(words))
 
 /** Listening switched on by hand: PASSIVE. Already on: unchanged. */
 export function listenOn(state: ListenState, _now: number): ListenState {

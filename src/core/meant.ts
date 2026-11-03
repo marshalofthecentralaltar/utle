@@ -69,9 +69,9 @@ export function besideCommands(commands: BrowserCommand[], page: Pick<PageContex
 // ---------- 34.2: the last commands and how they went ----------
 
 /** IntentRequestSchema's limits for one recent command. */
-export const RECENT_UTTERANCE_CHARS = 200
+const RECENT_UTTERANCE_CHARS = 200
 export const RECENT_RAN_CHARS = 200
-export const RECENT_FROM_CHARS = 320
+const RECENT_FROM_CHARS = 320
 /** How many earlier commands the model hears. */
 export const RECENT_COMMANDS = 3
 /** A strip line quoted in what ran is clipped to this. */

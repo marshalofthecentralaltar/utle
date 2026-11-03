@@ -32,7 +32,7 @@ export interface EntryResult {
 }
 
 /** E-mail endings said whole (normalised: "mail.ee" is "mailee"). */
-export const EMAIL_SUFFIXES: Readonly<Record<string, string>> = {
+const EMAIL_SUFFIXES: Readonly<Record<string, string>> = {
   gmail: '@gmail.com', 'gmail punkt com': '@gmail.com', 'gmail dot com': '@gmail.com', gmailcom: '@gmail.com',
   hotmail: '@hotmail.com', outlook: '@outlook.com', icloud: '@icloud.com', yahoo: '@yahoo.com',
   'mail punkt ee': '@mail.ee', 'mail dot ee': '@mail.ee', mailee: '@mail.ee',

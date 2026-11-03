@@ -85,7 +85,7 @@ export const MAX_CLIPPED_SHARE = 0.005
  * OWNER_THRESHOLD, picked on synthetic voices; it is conservative only in the sense that it is the
  * line measured to drop every other synthetic voice.
  */
-export const FACTORY_THRESHOLD = OWNER_THRESHOLD
+const FACTORY_THRESHOLD = OWNER_THRESHOLD
 export const FACTORY_PROVENANCE = 'factory: OWNER_THRESHOLD, picked on scripts/fixtures/speaker-set (synthetic TartuNLP voices, 2026-10); no other-speaker samples at enrolment'
 /** Round 10 (31.7): a per-profile threshold needs at least this many consenting other-speaker scores. */
 export const MIN_NEGATIVES = 30

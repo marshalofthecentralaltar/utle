@@ -7,7 +7,7 @@
  */
 
 /** The rule that answers a phrase, as phrases.test.ts runs it. model: only the model understands it. */
-export type PhraseRule = 'inpage' | 'browserIntent' | 'places' | 'placeVoice' | 'savedEntry' | 'readStop' | 'wake' | 'model'
+type PhraseRule = 'inpage' | 'browserIntent' | 'places' | 'placeVoice' | 'savedEntry' | 'readStop' | 'wake' | 'model'
 
 /**
  * What is in front when the phrase is said: no box, a focused field he did not arm, an armed empty

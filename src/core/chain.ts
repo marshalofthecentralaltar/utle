@@ -10,9 +10,6 @@ import type { IntentChain } from './pageIntent.ts'
 /** How long a final that ends with a connective is held for the next one, instead of the normal hold. */
 export const CONNECTIVE_HOLD_MS = 2500
 
-/** A final may continue the utterance delivered this recently when it starts with a connective. */
-export const CONTINUE_WINDOW_MS = CONNECTIVE_HOLD_MS
-
 /** Words that end a part and promise another: "mine whatsappi ja", "ava Karin siis". Longest first. */
 const TRAILING = ['pärast seda', 'ja siis', 'and then', 'after that', 'seejärel', 'siis', 'ning', 'then', 'ja']
 /** Words that open a continuation of what was just said: "siis ava Karin". A bare "ja" is too common to count. */

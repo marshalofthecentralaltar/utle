@@ -85,7 +85,7 @@ export interface TabSummary {
   active: boolean
 }
 
-export type IntentEdit =
+type IntentEdit =
   | { kind: 'undo' }
   | { kind: 'clear' }
   | { kind: 'deleteWord' }
@@ -121,7 +121,6 @@ export type PageIntent =
  * PageIntent so applyIntent in inpage.ts is unchanged; the engine turns a place into a goTo.
  */
 export type ModelIntent = PageIntent | PlaceIntent
-export type { PlaceIntent } from './places.ts'
 // ---------- end of wake word and places ----------
 
 export interface IntentAnswer {
@@ -221,7 +220,7 @@ const EditSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('replace'), from: Short.min(1), to: Short.min(1) }),
 ])
 
-export const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kind', [
+const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('dictate'), text: Text }),
   z.object({ kind: z.literal('command'), command: CommandSchema }),
   z.object({ kind: z.literal('edit'), edit: EditSchema }),
@@ -235,7 +234,7 @@ export const PageIntentSchema: z.ZodType<PageIntent> = z.discriminatedUnion('kin
 
 // ---------- wake word and places (29.4) ----------
 const PlaceIntentSchema: z.ZodType<PlaceIntent> = z.object({ kind: z.literal('place'), noun: z.string().min(1).max(PLACE_NOUN_CHARS + 20) })
-export const ModelIntentSchema: z.ZodType<ModelIntent> = z.union([PageIntentSchema, PlaceIntentSchema])
+const ModelIntentSchema: z.ZodType<ModelIntent> = z.union([PageIntentSchema, PlaceIntentSchema])
 // ---------- end of wake word and places ----------
 
 const Count = z.number().int().nonnegative()

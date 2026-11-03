@@ -4,7 +4,6 @@ import type { Doc } from './document.ts'
 import type { Op } from './ops.ts'
 import type { Lang } from './strings.ts'
 
-export type { Candidate } from './candidates.ts'
 
 /** What the interpreter decided an utterance means. Exactly one per utterance. */
 export type Intent =
@@ -20,7 +19,7 @@ export interface Pending {
 }
 
 /** The "which one" question an utterance is answering. picked is 0-based, null when the answer was not a number. */
-export interface ChoiceContext {
+interface ChoiceContext {
   utterance: string
   candidates: Candidate[]
   picked: number | null
