@@ -1,4 +1,7 @@
-import { CONTINUE_WINDOW_MS, endsWithConnective, startsWithConnective } from '../core/chain.ts'
+import { CONNECTIVE_HOLD_MS, endsWithConnective, startsWithConnective } from '../core/chain.ts'
+
+/** A final may continue the utterance delivered this recently when it starts with a connective. */
+const CONTINUE_WINDOW_MS = CONNECTIVE_HOLD_MS
 
 export interface Assembler {
   /** A final result from the recogniser, with any other readings it offered. */

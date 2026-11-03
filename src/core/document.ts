@@ -52,7 +52,7 @@ export const SAMPLE_DOC: Doc = [
 ]
 
 /** The same minutes in Estonian, with the same ids, for the Estonian-first profile. */
-export const SAMPLE_DOC_ET: Doc = [
+const SAMPLE_DOC_ET: Doc = [
   { id: 'b1', type: 'h1', text: 'Protokoll: tarnijate liitmise projekt' },
   { id: 'b2', type: 'p', text: 'Osalejad: Kadri Tamm, Marten Kask, Liis Org' },
   { id: 'b3', type: 'h2', text: 'Kokkuvõte' },

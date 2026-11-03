@@ -59,7 +59,7 @@ export interface LocalOptions {
 export const RECONNECT_MS = [1000, 2000, 4000, 5000] as const
 
 /** Round 9 (30.1): the wait before try number `attempt` (1 for the first try after a failure). */
-export function reconnectDelay(attempt: number): number {
+function reconnectDelay(attempt: number): number {
   return RECONNECT_MS[Math.min(Math.max(attempt, 1), RECONNECT_MS.length) - 1] ?? 5000
 }
 

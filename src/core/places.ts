@@ -160,7 +160,7 @@ export function placeNamed(nouns: readonly string[], noun: string): boolean {
 // ---------- saving a place by voice (29.4.3) ----------
 
 /** Words that are commands, never a place's noun: the command heads, and the words of the place shapes themselves. */
-export const COMMAND_WORDS: ReadonlySet<string> = new Set([
+const COMMAND_WORDS: ReadonlySet<string> = new Set([
   ...ENROL_COMMAND_WORDS,
   'vaata', 'pane', 'mis', 'eemalda', 'koht', 'kohta', 'see', 'seda', 'mu', 'minu', 'oma', 'aitab', 'tere', 'jah', 'ei',
   'open', 'show', 'save', 'remove', 'place', 'this', 'my', 'the',

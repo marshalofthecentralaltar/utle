@@ -19,7 +19,7 @@ export type OpErrorCode =
   | 'no_change'
   | 'bad_move'
 
-export interface OpError {
+interface OpError {
   code: OpErrorCode
   opIndex: number
   message: string

@@ -113,7 +113,7 @@ export function isReadStop(utterance: string): boolean {
 }
 
 /** idle: nothing read yet; speaking: sentence `at` is being spoken; stopped: "stopp" came at `at`; ended: the last sentence ended. */
-export type ReadPhase = 'idle' | 'speaking' | 'stopped' | 'ended'
+type ReadPhase = 'idle' | 'speaking' | 'stopped' | 'ended'
 
 export interface ReadState {
   sentences: readonly string[]

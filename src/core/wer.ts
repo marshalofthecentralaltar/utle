@@ -1,5 +1,5 @@
 /** Lowercase words with punctuation removed. Letters of any alphabet are kept. */
-export function words(text: string): string[] {
+function words(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, '')

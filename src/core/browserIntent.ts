@@ -386,7 +386,7 @@ const ORDINALS_TO: Record<string, number> = {
 }
 
 /** Lowercase, punctuation dropped except dots inside an address; "punkt" or "dot" between words is a dot. */
-export function cleanForBrowser(text: string): string {
+function cleanForBrowser(text: string): string {
   return text
     .toLowerCase()
     .replace(/\s+(?:punkt|dot)\s+/g, '.')

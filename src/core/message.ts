@@ -46,7 +46,7 @@ export const NOT_A_NAME: ReadonlySet<string> = new Set(['mulle', 'sulle', 'talle
  * "Marile"). Null when the word after the filler is a pronoun or a verb: "kirjuta siis mulle" is
  * dictation, not a chat with "Siis Mul". A real two-word name is returned as it is.
  */
-export function recipientFromSpoken(spoken: string): string | null {
+function recipientFromSpoken(spoken: string): string | null {
   const words = spoken.trim().split(/\s+/)
   const [first, second] = words
   if (words.length !== 2 || first === undefined || second === undefined || !FILLERS.has(first.toLowerCase())) return spoken

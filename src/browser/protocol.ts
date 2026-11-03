@@ -126,7 +126,7 @@ export type FormatStyle = 'bold' | 'italic' | 'underline' | 'heading' | 'normal'
 // ---------- mail (29.3) ----------
 export type MailField = 'subject' | 'cc'
 
-export type ContactKind = 'email' | 'tel'
+type ContactKind = 'email' | 'tel'
 
 /** Round 8 (29.3.3): an e-mail address or a phone number on the page (text, mailto: or tel: links). */
 export interface PageContact {
@@ -139,9 +139,9 @@ export interface PageContact {
 // ---------- end mail (29.3) ----------
 
 // ---------- reading aloud (29.5) ----------
-export type ReadWhat = 'page' | 'box' | 'selection' | 'continue' | 'stop'
+type ReadWhat = 'page' | 'box' | 'selection' | 'continue' | 'stop'
 /** What a read page, box or selection answers: the text read (capped at 20 000 characters) and its sentences in order. */
-export interface ReadingText {
+interface ReadingText {
   text: string
   sentences: string[]
 }

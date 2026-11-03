@@ -13,17 +13,17 @@ import type { Quick } from './quickReply.ts'
 import { STRINGS } from './strings.ts'
 import type { Lang, Strings } from './strings.ts'
 
-export type Mode = 'listening' | 'thinking' | 'confirming' | 'choosing' | 'asleep' | 'confirmingSend' | 'sending'
+type Mode = 'listening' | 'thinking' | 'confirming' | 'choosing' | 'asleep' | 'confirmingSend' | 'sending'
 
 /** A "which one" question waiting for a number. utterance is the instruction that raised it. */
-export interface Choice {
+interface Choice {
   utterance: string
   question: string
   candidates: Candidate[]
 }
 
 /** The document a message draft replaced, kept to come back when the draft is sent or dropped. */
-export interface Saved {
+interface Saved {
   doc: Doc
   history: Doc[]
   log: string[]
@@ -31,7 +31,7 @@ export interface Saved {
 }
 
 /** A message being written. to is null when it goes into whatever message box is focused. */
-export interface Draft {
+interface Draft {
   to: string | null
   saved: Saved
 }

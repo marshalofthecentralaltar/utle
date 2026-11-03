@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ASR_FRAME_SAMPLES } from '../src/speech/asrProtocol.ts'
-import { FACTORY_THRESHOLD, HELD_OUT_PHRASES, MAX_CLIPPED_SHARE, MIN_ENROL_SECONDS, MIN_JUDGE_SECONDS, MIN_NEGATIVES, MIN_PHRASE_RMS, MIN_PHRASE_SECONDS, NEGATIVE_MARGIN, OWNER_THRESHOLD, PER_PROFILE_FLOOR, clippedShare, cosine, createSpeakerGate, meanEmbedding, normalised, pickThreshold, profilePath, profileSummary, profileVersionOf, speakerGates, speakerTestResult, thresholdPolicy, verdict } from './speaker.ts'
+import { HELD_OUT_PHRASES, MAX_CLIPPED_SHARE, MIN_ENROL_SECONDS, MIN_JUDGE_SECONDS, MIN_NEGATIVES, MIN_PHRASE_RMS, MIN_PHRASE_SECONDS, NEGATIVE_MARGIN, OWNER_THRESHOLD, PER_PROFILE_FLOOR, clippedShare, cosine, createSpeakerGate, meanEmbedding, normalised, pickThreshold, profilePath, profileSummary, profileVersionOf, speakerGates, speakerTestResult, thresholdPolicy, verdict } from './speaker.ts'
 import * as speakerModule from './speaker.ts'
 import type { EmbeddingExtractor, EnrolPhrase } from './speaker.ts'
+
+/** The factory line is OWNER_THRESHOLD (server/speaker.ts). */
+const FACTORY_THRESHOLD = OWNER_THRESHOLD
 
 /**
  * A voice is a number from 0 to 1 carried in a frame's first sample. The fake extractor turns it
