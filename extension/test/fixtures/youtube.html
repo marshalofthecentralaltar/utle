@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="et">
+  <head>
+    <meta charset="utf-8" />
+    <title>YouTube</title>
+    <!-- Round 10 prompt 6 (lane EXIT): a stand-in for www.youtube.com, trimmed from the real page as seen
+         2026-11-02 in a fresh et-EE Chromium profile at 1280x900 (artifacts/exit/yt-probe.ts):
+         - the consent layer: tp-yt-paper-dialog#dialog, role="dialog", aria-modal="true", fixed, z 2202,
+           700x838 at x 290 y 31, over a full-window tp-yt-iron-overlay-backdrop (z 2201); its three
+           buttons "Keeldu kõigist", "Nõustu kõigiga", "Rohkem valikuid" in one row at y 757 to 797;
+           no text field inside. It shows on every page until a choice is made; the choice sets the
+           SOCS cookie and reloads the page, as the real one does.
+         - the search field: input[name="search_query"] in the masthead; Enter goes to
+           /results?search_query=<words>.
+         - the results: ytd-video-renderer cards with a#video-title links; the first eight titles are
+           the real ones for "lastelaulud" on that day.
+         The exit test routes https://www.youtube.com/** here (extension/test/exit.ts). -->
+    <style>
+      body { margin: 0; font: 14px/1.4 Roboto, Arial, sans-serif; background: #fff; color: #0f0f0f; }
+      #masthead { position: fixed; top: 0; left: 0; right: 0; height: 56px; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: #fff; z-index: 2000; }
+      #logo { font-weight: 700; font-size: 20px; text-decoration: none; color: #0f0f0f; }
+      form#search-form { flex: 1; display: flex; justify-content: center; }
+      input[name='search_query'] { width: 520px; height: 38px; box-sizing: border-box; padding: 0 16px; border: 1px solid #ccc; border-radius: 20px 0 0 20px; font-size: 16px; }
+      #search-icon-legacy { height: 40px; width: 64px; border: 1px solid #d3d3d3; border-radius: 0 20px 20px 0; background: #f8f8f8; }
+      #content { padding: 72px 24px 24px 96px; }
+      ytd-mini-guide-renderer { position: fixed; top: 56px; left: 0; bottom: 0; width: 72px; background: #fff; display: flex; flex-direction: column; gap: 16px; padding-top: 8px; }
+      ytd-mini-guide-renderer a { font-size: 10px; text-align: center; color: #0f0f0f; text-decoration: none; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+      .tile { height: 180px; border-radius: 12px; background: #e5e5e5; }
+      ytd-video-renderer { display: flex; gap: 16px; margin-bottom: 16px; }
+      ytd-video-renderer .thumb { width: 360px; height: 202px; border-radius: 12px; background: #d9d9d9; flex: none; }
+      a#video-title { font-size: 18px; color: #0f0f0f; text-decoration: none; display: block; margin-bottom: 6px; }
+      ytd-channel-name { color: #606060; font-size: 12px; }
+      tp-yt-iron-overlay-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 2201; display: block; }
+      tp-yt-paper-dialog#dialog { position: fixed; left: calc(50% - 350px); top: 31px; width: 700px; height: 838px; max-height: calc(100vh - 62px); z-index: 2202;
+        box-sizing: border-box; background: #fff; border-radius: 12px; display: flex; flex-direction: column; padding: 24px 32px 0; font-size: 14px; }
+      #dialog .scroll { flex: 1; overflow: auto; }
+      #dialog h1 { font-size: 24px; font-weight: 400; margin: 8px 0 16px; text-align: center; }
+      #dialog ul { padding-left: 20px; margin: 4px 0 12px; }
+      #dialog .legal-text { margin: 8px 0; }
+      #dialog .buttons { display: flex; gap: 12px; justify-content: center; padding: 16px 0 0; height: 40px; }
+      #dialog .buttons button, #dialog .buttons a { height: 40px; box-sizing: border-box; padding: 0 16px; border-radius: 20px; border: 0; background: #065fd4; color: #fff;
+        font: 500 14px Roboto, Arial, sans-serif; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; }
+      #dialog .buttons a { background: #f2f2f2; color: #0f0f0f; }
+      #dialog .footer { height: 72px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #606060; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="masthead">
+      <a id="logo" href="/" aria-label="YouTube'i avaleht">YouTube</a>
+      <form id="search-form" action="/results" method="get" role="search">
+        <input class="ytSearchboxComponentInput yt-searchbox-input title" name="search_query" type="text" autocomplete="off" placeholder="Otsige" aria-label="Otsige" />
+        <button id="search-icon-legacy" type="submit" aria-label="Search">⌕</button>
+      </form>
+      <a href="https://accounts.google.com/" aria-label="Logi sisse">Logi sisse</a>
+    </div>
+    <ytd-mini-guide-renderer class="style-scope ytd-app">
+      <a href="/">Avaleht</a><a href="/shorts">Shorts</a><a href="/feed/subscriptions">Tellimused</a><a href="/feed/you">Teie</a>
+    </ytd-mini-guide-renderer>
+    <div id="content"></div>
+    <script>
+      const RESULTS = {
+        lastelaulud: [
+          ['KIISUD KEERUTAVAD TANTSU - Liisa Liiva ja Laulupesa lapsed', 'Laulupesa', 'ywEwmfmVStE'],
+          ['Lastedisko lastelaulud - Halloweeni aeg', 'Lastedisko', 'b8LrY74Pa4g'],
+          ['BEEBIBOSS', 'Laulupesa', 'PMB9vamJGcQ'],
+          ['TANTSUKINGAD - Laulupesa ja Shate tantsukooli lapsed', 'Laulupesa', 'Zwvw8ey2wT4'],
+          ['5 väikest ahvi / 5 little monkeys EESTI KEELES', 'Sofia laulunurk', 'WjyC2zYSlhs'],
+          ['Laste tants "Astu, väike kitsetall"', 'Mudilaste muusika', 'f3E8aU3S7oo'],
+          ['Hüppa', 'Metoodikakeskus Ojake', 'tS1TwiFB19o'],
+          ['Lolala lõbusate lastelaulude suvekogumik 2 | Meie talu loomad, Kus on kass? jt.| 40 minutit', 'Lolala', 'uzZhsxJ0938'],
+        ],
+      }
+      const params = new URLSearchParams(location.search)
+      const query = params.get('search_query') ?? ''
+      const field = document.querySelector('input[name="search_query"]')
+      field.value = query
+      // The real masthead goes to the results on Enter (no native submit of a form).
+      field.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        if (field.value.trim() !== '') location.href = `/results?search_query=${encodeURIComponent(field.value.trim())}`
+      })
+      const content = document.getElementById('content')
+      const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+      if (location.pathname === '/results') {
+        document.title = `${query} - YouTube`
+        const key = query.toLowerCase().replace(/\s+/g, ' ').trim()
+        const rows = RESULTS[key] ?? [[`${query} (video 1)`, 'Kanal', 'aaaaaaaaaaa'], [`${query} (video 2)`, 'Kanal', 'bbbbbbbbbbb']]
+        content.innerHTML = `<div id="contents">${rows
+          .map(([title, channel, id]) => `<ytd-video-renderer class="style-scope ytd-item-section-renderer"><a id="thumbnail" href="/watch?v=${id}" aria-hidden="true" tabindex="-1"><div class="thumb"></div></a><div><a id="video-title" href="/watch?v=${id}" title="${esc(title)}">${esc(title)}</a><ytd-channel-name>${esc(channel)}</ytd-channel-name></div></ytd-video-renderer>`)
+          .join('')}</div>`
+      } else if (location.pathname === '/watch') {
+        document.title = 'Video - YouTube'
+        content.innerHTML = '<div id="movie_player" style="width:854px;height:480px;background:#000"></div><h1>Video</h1>'
+      } else {
+        content.innerHTML = `<div class="grid">${Array.from({ length: 9 }, (_, i) => `<div class="tile" aria-label="Video ${i + 1}"></div>`).join('')}</div>`
+      }
+
+      // The consent layer, until a choice is made (the SOCS cookie), on every page.
+      const consented = () => /(?:^|;\s*)SOCS=/.test(document.cookie)
+      window.consentShown = () => document.getElementById('dialog') !== null
+      if (!consented()) {
+        const backdrop = document.createElement('tp-yt-iron-overlay-backdrop')
+        backdrop.className = 'opened'
+        const dialog = document.createElement('tp-yt-paper-dialog')
+        dialog.id = 'dialog'
+        dialog.className = 'eom-v1-dialog style-scope ytd-consent-bump-v2-lightbox'
+        dialog.setAttribute('role', 'dialog')
+        dialog.setAttribute('aria-modal', 'true')
+        dialog.setAttribute('aria-labelledby', 'cb-header')
+        dialog.setAttribute('tabindex', '-1')
+        dialog.innerHTML = `<div class="scroll">
+          <div>Google'i ettevõte · et · <a href="https://accounts.google.com/">Logi sisse</a></div>
+          <h1 id="cb-header">Enne YouTube'i avamist</h1>
+          <div class="legal-text">Kasutame küpsisefaile ja andmeid, sh IP-aadresse, järgmiseks.</div>
+          <ul><li>Google'i teenuste osutamiseks ja haldamiseks</li><li>Teenuste katkestuste jälgimiseks ning rämpsposti, pettuste ja väärkasutuste eest kaitsmiseks</li><li>Vaatajaskonna seotuse ja saidi statistika mõõtmiseks, et mõista, kuidas meie teenuseid kasutatakse, ning nende teenuste kvaliteedi parandamiseks</li></ul>
+          <div class="legal-text">Kui teete valiku „Nõustu kõigiga“, kasutame küpsisefaile ja andmeid, sh IP-aadresse, ka järgmiseks.</div>
+          <ul><li>Uute teenuste arendamiseks ja täiustamiseks</li><li>Reklaamide esitamiseks ja nende tõhususe mõõtmiseks</li><li>Teie seadetest olenevalt isikupärastatud sisu kuvamiseks</li><li>Teie seadetest olenevalt isikupärastatud reklaamide kuvamiseks</li></ul>
+          <div class="legal-text">Kui teete valiku „Keeldu kõigist“, ei kasuta me küpsisefaile ega IP-aadresse nende täiendavate eesmärkide jaoks.</div>
+          <div class="legal-text">Isikupärastamata sisu ja reklaame mõjutavad sellised tegurid nagu hetkel vaadatav sisu ja teie asukoht (reklaamide esitamine põhineb üldisel asukohal). Isikupärastatud sisu ja reklaamid võivad hõlmata selliseid asju nagu videosoovitused, kohandatud YouTube'i avaleht ja reklaamid, mis on kohandatud varasema tegevuse alusel (näiteks vaadatud videote ja YouTube'is otsitu alusel). Kasutame küpsisefaile ja andmeid ka kasutuskogemuse vanuse jaoks kohandamiseks, kui see on asjakohane.</div>
+          <div class="legal-text">Valige „Rohkem valikuid”, et näha lisateavet, sealhulgas üksikasju privaatsusseadete haldamise kohta. Samuti võite alati külastada lehte g.co/privacytools.</div>
+        </div>
+        <div class="buttons">
+          <button id="reject" aria-label="Ei nõustu küpsiste ja muude andmete kasutamisega kirjeldatud eesmärkidel"><span>Keeldu kõigist</span></button>
+          <button id="accept" aria-label="Nõustun küpsiste ja muude andmete kasutamisega kirjeldatud eesmärkidel"><span>Nõustu kõigiga</span></button>
+          <a href="https://consent.youtube.com/d" aria-label="Rohkem valikuid">Rohkem valikuid</a>
+        </div>
+        <div class="footer"><a href="https://policies.google.com/privacy">Privaatsuseeskirjad</a> · <a href="https://policies.google.com/terms">Teenusetingimused</a></div>`
+        document.body.append(backdrop, dialog)
+        window.consentChoice = null
+        const choose = (value) => {
+          window.consentChoice = value
+          document.cookie = `SOCS=${value}; path=/; max-age=33696000`
+          // The real page reloads after the choice.
+          setTimeout(() => location.reload(), 150)
+        }
+        document.getElementById('accept').addEventListener('click', () => choose('accept'))
+        document.getElementById('reject').addEventListener('click', () => choose('reject'))
+      }
+    </script>
+  </body>
+</html>
