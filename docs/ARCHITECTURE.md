@@ -1223,7 +1223,7 @@ The owner, after round 5: "Inserting an e-mail, a phone number or an ID code is 
 
 ### 26.1 Storage: the values never leave the machine
 
-`chrome.storage.local` key `savedValues`: an array of `SavedItem { id, name, value, kind, aliases? }` (`src/core/saved.ts`), `kind` one of `email`, `tel`, `code`, `number`, `text`, never `password` (a secret is not stored). `savedFrom(stored)` cleans what storage holds: an entry without a string id, name and value or with another kind is dropped; names are cut to `SAVED_NAME_CHARS` (60) and values to `SAVED_VALUE_CHARS` (200); at most `MAX_SAVED` (50) entries.
+`chrome.storage.local` key `savedValues`: an array of `SavedItem { id, name, value, kind, aliases? }` (`src/core/saved.ts`), `kind` one of `email`, `tel`, `code`, `number`, `text`, and since round 11 `contact` (26.8), never `password` (a secret is not stored). `savedFrom(stored)` cleans what storage holds: an entry without a string id, name and value or with another kind is dropped; names are cut to `SAVED_NAME_CHARS` (60) and values to `SAVED_VALUE_CHARS` (200); at most `MAX_SAVED` (50) entries.
 
 The offscreen engine cannot read `chrome.storage` (an offscreen document has `chrome.runtime` only), so the service worker hands the list over: the offscreen document asks once at start (`utle-saved`, answered `{ items }`), and the worker sends `{ target: 'offscreen', type: 'saved', items }` on every change of the key (only when the document exists; it is never created for this). The engine keeps the list on the session (`InpageSession.saved`), where the rules and `applyIntent` find it. The model is told the NAMES only: the engine's `readPage` adds `page.saved = savedNames(items)` (at most `MAX_SAVED_NAMES` 20 names, each at most 60 characters; `PageContext.saved?: string[]`, `IntentRequestSchema` takes the same limits), and the server prints them on one line of the user turn, `saved: "minu e-post" | "töö telefon"` (or `saved: none`). A value is never in a request, never in a log line (the server logs nothing of the page in any case), and never in the strip's state except as the read-back line after it was typed, which is what is in the field anyway.
 
@@ -1288,6 +1288,49 @@ A section `#andmed` on `options.html`, above the other groups. For each item: it
 ### 26.7 Guidance
 
 The hint of 26.2 on the bar; the "Ütle:" lines on the settings page; `extension/README.md` "Minu andmed" (what to say, where it is stored, what the model sees); `HANDOFF.md` 1e. Strings: `inpage.insertedSaved`, `whichSaved`, `savedMissing`, `savedHint`, `entryGone`; a `saved` group for the page and the flow (Estonian and English). Constants: `MAX_SAVED` 50, `MAX_SAVED_NAMES` 20, `SAVED_NAME_CHARS` 60, `SAVED_VALUE_CHARS` 200. Tests: `src/core/saved.test.ts` (matching, families, the question, the hint, `savedFrom`), `src/core/savedEntry.test.ts` (the walk to ralf.tamm@gmail.com, katkesta at every step), `src/core/inpage.test.ts` (insert, which, choosing, the phrases of 26.4), `src/core/pageIntent.test.ts` (`insertSaved` validated), `extension/src/engine.test.ts` (names only in the request, the model's `insertSaved` resolved locally, entry mode), `extension/test/run.ts` (`openSettings` both ways, `savedEntry`, the screenshots `extension/test/out/andmed.png` and `andmed-saved.png`), `scripts/intent-eval.ts` (four saved-value cases on the form page). Not verified without a person: a real voice spelling letter by letter (how the recogniser writes "r", "emm", "ät"), real forms, and Tom using the keyboard form.
+### 26.8 Contacts and "vale" (round 11, lane FIRSTRUN, F5)
+
+The owner's demo of 2026-11-03: the recogniser wrote "Natim" for "Nadim" in an address in Gmail's To,
+the read-back offered only "edasi" or "valmis", and his correction was appended to the field.
+
+**The kind.** `contact` (`SavedKind`): the item's name is the person's name, the value is the e-mail
+address, aliases as for any item. `savedFrom` keeps it. It has no family (26.2), so "minu meil" is never
+a contact. Minu andmed offers it in the keyboard form's kind select ("Kontakt: nimi ja e-posti
+aadress"; the value must be an address) and as "Lisa kontakt" for the voice flow (26.5), which always
+asks the name and spells the address as an e-mail. The line under it: "Ütle: kirjuta meil Nadim, Nadim".
+
+**The rule** (`contactMatch` in `src/core/saved.ts`, tried in `inpageStep` after the saved values and
+before the mail rules of 29.3, never the model): "kirjuta | saada | koosta [uus] [meil | kiri …] <one or
+two words> [, et <body>]" and "write | send | email | mail [a mail] [to] <name> [saying <body>]". The
+words name a contact when their phonetic key (`phoneticKey` of `phonetic.ts`, unchanged) equals the key
+of its name or an alias: as said, with -ile, -ele or -i taken off, or with -le taken off where the name
+may have one more last letter ("Maasikale" is Maasikas). Exact keys only, so "Marile" is never Mart;
+"Natim" is Nadim because d and t share a key. Two contacts with the name: nothing is guessed. Then:
+
+- an armed one-line e-mail field (To, Cc) and no body: the address typed whole (`insertSaved`), line
+  `inpage.insertedContact`: "Saaja: Nadim (nadim.naide@example.com). Ütle „edasi“ või „vale“." (the name first);
+- otherwise `compose { to: address, body? }` (29.3.4), line `inpage.contactMail`: "Uus kiri: Nadim (nadim.naide@example.com).";
+- in a chat's composer the bare form ("kirjuta Marile") stays the chat (22); with a mail word it is the mail.
+
+By its name alone ("Nadim", "kirjuta Nadim" in To) a contact goes only into an e-mail field. The model
+sees the contact's name on the `saved:` line like any saved name (26.3).
+
+**"vale".** "vale", "valesti", "see on vale", "ei, vale", "kirjutasid valesti", "wrong", "that's wrong"
+in an armed one-line field that holds something (not a search box, not a password): `setText ''` (the old
+text on undo), line `inpage.wrongCleared` "Kustutasin. Ütle tähthaaval." / "Deleted. Spell it letter by
+letter.", and `session.spellNext` = the field's kind. The next utterance into the one-line field, unless
+it is "edasi", "valmis", "vale" or another rule's command, is dictated with `spelledKind(text, kind)`
+(`spelling.ts`: the field's kind; in a text field an "ät" makes it an address, else the letters are
+joined) and never asked of the model: "n a d i m punkt naide ät example punkt com" is
+nadim.naide@example.com. "edasi" and "valmis" are unchanged. The read-back lines offer it: `typedInto`
+"Kirjutasin: X (ütle „edasi“, „valmis“ või „vale“)", `insertedSaved` "… Ütle „valmis“, „edasi“ või „vale“.".
+
+**Tests.** `src/core/saved.test.ts` (contact), `src/core/inpage.test.ts` ("round 11: contact", "round 11:
+vale"), `src/core/savedEntry.test.ts` (a contact by voice), `extension/test/run.ts` (contact on the Gmail
+stand-in), `scripts/intent-eval.ts` (three rule cases, `UTLE_EVAL_ONLY=nadim`: the rules answer, the
+model is never asked). Not verified: a real voice spelling, real Gmail's To (a chip field), and whether
+the addressee check lets "vale" through after a read-back (lane WORDS, F6).
+
 ## 27. A hosted server (HOST lane, round 6, 2026-10-06)
 
 The real user's work laptop allows nothing to be installed: no Node, no `npm run dev`, no developer mode in Chrome. Until now the speech model (TalTech's zipformer, 149 MB, through the `sherpa-onnx-node` native addon) and the Claude calls ran in the local Vite dev server. This section moves that server onto a hosted machine (Railway, from a Docker image) behind a token, lets the extension be told its address and the token on the settings page, and packs the extension into a Chrome Web Store zip, so the laptop needs nothing but the extension from the store (unlisted). **The audio then leaves the machine**: the microphone's samples go over the network to the hosted server, and the page summary and the utterances go from there to Anthropic, as they already did from the dev server. `docs/PRIVACY.md` says so in plain words.
@@ -2715,6 +2758,17 @@ shows "Häält ei õnnestunud kinnitada." (`voiceUnverified`); `insufficient_aud
 pikemat käsku." on the bar's line, and `model_unavailable` says that the voice cannot be checked
 right now (`voiceUnsupported`). The third drop in a row still adds the retrain line.
 
+**Round 11 (F1, lane FIRSTRUN).** `profile_missing` is no rejected voice: every such drop shows
+"Õpeta mulle enne oma hääl." / "Teach me your voice first." (`voiceNoProfile`) with `voiceNoProfileHow`
+on the bar's line ("Vaata riba nupule „Seaded“ ja vali „Õpeta mu hääl lausetega“ või „Kuula kõiki“."),
+and never the retrain line: while the gate drops everything, nothing said can open the settings, so the
+line names the bar's button. `model_mismatch` says the voice must be taught again (`voiceMismatch`:
+"Hääl on õpetatud teise mudeliga. Õpeta hääl uuesti: riba nupp „Seaded“."). `rejected_other`,
+`insufficient_audio`, `model_unavailable`, `verification_error`, `mixed_speakers` and a drop without a
+reason keep the lines above. The mode itself does not stay on without a voice (31.7, "The wish and the
+mode in force"). Test: `extension/src/offscreenMain.test.ts` "foreignNotice per reason", eight cases in
+Estonian and English.
+
 ### 31.6 Tests and limits
 
 `src/speech/asrProtocol.test.ts` (each of the eight reasons through the parser and `authorizes`;
@@ -2786,6 +2840,26 @@ guard card ("Lülita sisse" / "Kuula kõiki"). Settings keep the test, "Kustuta 
 and the off choice; "õpi mu hääl uuesti" by voice opens `welcome.html#voice`. With only-owner on, an
 `insufficient_audio` drop asks for the longer form ("ütle pikemalt: „saada sõnum“ või „jah,
 kinnitan“"); "jah kinnitan" and "kinnitan" are yes.
+
+**The wish and the mode in force** (round 11, F1, lane FIRSTRUN). On 2026-11-03 the owner's demo ran
+2.5 minutes with only-my-voice on and no voice on the server: 19 finals `profile_missing`, nothing ran,
+and nothing said could change it. Now `chrome.storage.local.onlyOwnerWanted` is his choice and
+`onlyOwner` the mode in force, the one the offscreen document is made with. `src/core/guard.ts`
+`onlyOwnerEffective(wanted, readiness)`: in force only when wanted and the readiness is `ready`, or
+`model_unavailable` (a voice exists but the speaker model is down: fail closed, and the bar says nobody
+is obeyed); `no_profile`, `needs_retraining`, `model_mismatch` and an unknown readiness are off, the wish
+kept. "Lülita sisse" on the welcome card is always kept as the wish; it is in force only once the voice
+test knew him or the server says `ready`, otherwise the card says `strip.guardWaiting` ("Jätsin meelde:
+„Kuula ainult mind“ lülitub sisse, kui hääl on õpitud. Seni kuulan kõiki."), and it comes on by itself
+when the test knows him or the readiness becomes `ready`. The service worker settles the mode
+(`guardPatch`) at browser start from `/api/status` (`profile.enrolled` false is `no_profile`, true is
+`ready`) and whenever the offscreen document reports a readiness (the strip state's `voiceReady`, on
+every connection with the mode on and after an enrolment, a voice test or a status request); a change
+while listening makes the document again and listens on, and switching off puts `guardWaiting` on the
+bar. A store from before round 11 (only `onlyOwner: true`) is read as the wish. The settings page shows
+the wish as the pressed choice and `guardWaiting` under it (`#ownerWaiting`) while the mode waits.
+Tests: `src/core/guard.test.ts`, `extension/test/run.ts` (welcome-guard: no voice, the demo's state,
+ready).
 
 **Proof and limits.** `server/speaker.test.ts`, `server/asrSession.test.ts`, `src/speech/local.test.ts`,
 `extension/src/engine.test.ts`, the suite's welcome steps (`docs/proof/r10-voice-1..6.png`) and

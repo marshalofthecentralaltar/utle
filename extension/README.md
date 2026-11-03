@@ -659,11 +659,20 @@ are dwellable like the rest of the page.
 **Using it.** In a field (after `kirjuta siia`, a label number, or `valmis` from the field before) say
 `minu e-post`, `mu meil`, `pane mu email sinna`, `kirjuta mu telefon`, `sisesta minu isikukood`, `my email`.
 The value is typed whole at once, no model asked, and the bar reads it back: "Kirjutasin:
-ralf.tamm@gmail.com (minu e-post). Ütle „valmis“ või „edasi“." With two e-mails saved and no name the
+ralf.tamm@gmail.com (minu e-post). Ütle „valmis“, „edasi“ või „vale“." With two e-mails saved and no name the
 bar asks "Kumb: minu e-post või töö e-post?"; answer with the name, a word of it (`töö`) or `esimene` /
 `teine`. When a field you arm has a saved value of its kind, the bar says so: "Kast on valitud.
 Räägi. Või ütle „minu e-post“." Free phrasing goes to the model, which knows the names (never the values)
 and may pick the field first: `täida telefon`, `sisesta see gmaili aadress`.
+
+**Contacts (round 11).** Kind "Kontakt: nimi ja e-posti aadress" (or **Lisa kontakt** by voice): the
+name is the person's, the value the address. Then `kirjuta Nadimile`, `saada meil Nadimile`, `kirjuta
+Nadimile, et tulen homme` or, in Gmail's To, `kirjuta Nadim` put the address in To (or open a new mail
+to it), no model asked; the bar reads the name back: "Saaja: Nadim (nadim.naide@example.com)."
+
+**"vale" (round 11).** When the bar reads a one-line field back wrong, say `vale` (`valesti`, `see on
+vale`): the field is cleared ("Kustutasin. Ütle tähthaaval.") and the next thing you say is spelled
+letter by letter: `n a d i m punkt naide ät example punkt com`.
 
 **Where it is kept.** `chrome.storage.local`, key `savedValues`, on this computer only. The model is
 told the names; the values never leave the machine and are never in a log line. No passwords: a
