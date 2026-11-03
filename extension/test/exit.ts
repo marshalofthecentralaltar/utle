@@ -673,7 +673,15 @@ async function main(): Promise<void> {
           reactions.push(`${at()} ms: the consent is still in front; he says "Ütle, nõustu kõigiga"`)
           say(reactions.at(-1) ?? '')
           await room.play(scene([{ name: 'room-vesta-2', at: 0 }, { name: 'owner-accept', at: 5200 }]))
-          ok = await waitUntil(there, 30_000)
+          // Finding 5 (review 2): the bar told him the search was behind the window and to say it again once answered.
+          const behind = strip.some((s) => /Otsing on lehe akna taga/.test(s.line))
+          ok = await waitUntil(there, behind ? 10_000 : 30_000)
+          if (!ok && behind) {
+            reactions.push(`${at()} ms: the bar said the search is behind the window; with it answered he says "Ütle, otsi lastelaulud"`)
+            say(reactions.at(-1) ?? '')
+            await speak(sw, scene([{ name: 'owner-search', at: 0 }]))
+            ok = await waitUntil(there, 30_000)
+          }
           extra += `after "nõustu kõigiga": ${pageAt(ctx as BrowserContext, (u) => u.startsWith('https://www.youtube.com'))?.url() ?? '-'}`
         }
       }

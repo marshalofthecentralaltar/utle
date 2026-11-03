@@ -76,5 +76,11 @@
     "speaker": "vesta",
     "room": true,
     "text": "Bussipeatus on kohe maja taga."
+  },
+  {
+    "name": "owner-search",
+    "speaker": "mari",
+    "room": false,
+    "text": "Ütle, otsi lastelaulud."
   }
 ]

@@ -1073,6 +1073,21 @@ WhatsApp 8953/9759/9258/6824 ms, dictation 1199/1702/1301/1203 ms, "saada" 1894/
 word; machine time 195.1/242.2/209.4/205.8 s; the bar leaks in the overlap runs (finding 2), none in the control;
 the enrolment phrase 4/4 (finding 1). Gates after the fix: `npm run check` 61 files, 4243 tests; `run.ts` 330 PASS.
 
+**Review round 2: the ruling, the person follows the bar, run.ts cases.** Ruling (orchestrator): keep "tell him",
+do not hold the search. The consent comes once per profile, and a command held across a page reload could fire
+later when he no longer expects it, worse for a person who cannot stop it by hand; reversible later. The exit set
+has a new owner clip `owner-search` ("Ütle, otsi lastelaulud.", voice mari, `UTLE_EXIT_ONLY=owner-search npx tsx
+scripts/exit-set.ts` writes only it), and exit.ts's person, when the bar has said "Otsing on lehe akna taga", answers
+the consent and then says it (logged as a reaction). run.ts has three cases on stand-ins: (i) the YouTube stand-in
+with its consent open: the search's line says to answer the window and names „keeldu kõigist“ and „nõustu
+kõigiga“; (ii) a page with a small dialog that covers nothing and no search field: the old line; (iii) the YouTube
+stand-in after the consent is answered: the search runs (results for lastelaulud). Red first, run.ts on page.ts
+without the `fieldBehindDialog` call: "FAIL siteSearch EXIT 5 (i) ... not_found: This page has no search field.
+line="Sellel lehel ei ole otsingut. Ütle „otsi googlest“." consent=true", (ii) and (iii) PASS, "1 FAILED" in the
+whole suite (`artifacts/exit/suite-red-1.log`). Typecheck and lint pass on this tree. Not yet run here: the green
+run.ts, `npm run check`, and the three overlap runs and the control with the new clip; the batch was stopped by
+the session's low-memory reap at 15:08 (machine at about 4 GB free while Ralf uses the product on port 5173).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
