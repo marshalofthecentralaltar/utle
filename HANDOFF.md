@@ -959,6 +959,43 @@ line, so a miss says by how much. After the fix: full `UTLE_REAL=1 voice.ts` 55 
 Logs: `artifacts/live/` in the worktree (good-7a5ce7c, main-8c7b705, bisect-*, bisect-firstparent.log,
 bisect-inner.log, hover-1..5, full-voice, suite).
 
+## 1u. Round 10, prompt 6, lane QUICK (2026-11-02/03): where his dictated sentence's 3 s go; the early ask saves 0.18 s
+
+Method: epoch stamps on the server's `[asr] final ... at=` and `[addressee] ... at=` lines and voice.ts section 1's
+`STAGES:` line (no words), `artifacts/quick/stages.py` sets them side by side. Runs under the suite lock, CPU logged
+before each (`artifacts/quick/*-outcome.log`); "before" builds the extension from main's engine and recogniser.
+
+| stage (ms after his last word) | main p50 | main max | change p50 | change max |
+|---|---|---|---|---|
+| final leaves the server | 1062 | 1820 | 981 | 1204 |
+| check request reaches the server | 204 | 245 | 28 | 71 |
+| the check (Sonnet 5.5, quick slot) | 1876 | 2079 | 1401 | 1883 |
+| verdict to the sentence in the box | 114 | 184 | 102 | 162 |
+| landing | 3208 | 4256 | 2425 | 3320 |
+
+Main: 2986*, 2640, 3485, 4256*, 3208 (* started at CPU 77 and 88 %: void by the rule, our own vite loading). Change:
+3320, FAIL, 2331, 2520, 2300 (CPU 45 to 59 %). The change itself saves only the ask stage (204 to 28 ms); most of
+the landing difference is the model's own variance (the check took 1.4 to 2.1 s on main, 1.2 to 1.9 s after). What
+stops 2.0 s: the check (p50 1.4 to 1.9 s) on top of the final (about 1.0 s). The assumed 0.7 s client hold is not on
+this path (a dictated final reaches the engine about 0.2 s after it leaves the server). Haiku 5.5 is no faster on
+the 16 addressee cases (p50 1193 vs 1206 ms, run side by side) and missed one dictation case (stop max_tokens).
+
+Open defect (the change is the suspect): change run 2 never sent "saada" (`artifacts/quick/after-2.*`). In change
+runs 2 and 3 an extra addressee ask arrived 221 and 393 ms before "saada"'s final (main: none in 5 runs here and 5 in
+1s): the server's pause named a word the rules call dictation, the early ask went out, and in run 2 its "ignore"
+reached a judged final (the strip cleared). Not root-caused: the words are not logged by design; voice.ts now prints
+the strip's words after the sentence (`STRIP after the sentence:`) to name them next run. Cheapest candidate: drop
+the pause trigger and keep only the final's arrival, which carried the whole measured gain.
+
+Cost: two model calls per dictated sentence on main (the check about $0.0010, the verification intent ask about
+$0.0046 cached, Sonnet prices in scripts/prices.ts): about $0.56 per 100 sentences. After: the same two, plus the
+extra early ask in 2 of 5 runs: about $0.60 per 100. Full intent eval after: 106/106, addressee 16/16, recovery
+[2/2] PASS (the YouTube recovery watch: 2 of 8). Addressee cases before (main's file): 15/16, the miss a 5 s timeout
+on "ma ütlen sulle homme", no wrong verdict (`artifacts/quick/addressee-verdicts.txt`).
+
+Not run: voice.ts section 8, full `UTLE_REAL=1 voice.ts`, `run.ts` (the harness reaped the runner for low memory,
+2.2 GB free, while lane EXIT held the lock). `npm run check`: 60 files, 4241 tests, green.
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool

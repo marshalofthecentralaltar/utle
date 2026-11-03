@@ -311,6 +311,10 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
     console.log(`      TIMING${baseline ? ' (baseline)' : ''}: end of the sentence at ${sentenceEnd - speechStart} ms; first words on the strip ${firstHeardAt - sentenceEnd} ms after it; first words in the box ${firstAt - sentenceEnd} ms after it; final text in the box ${finalAt - sentenceEnd} ms after it (negative: while still speaking)`)
     // Round 10 prompt 6 (QUICK): epoch ms, to set beside the server's at= stamps ([asr] final, [addressee]).
     console.log(`      STAGES: sentenceEndAt=${sentenceEnd} landedAt=${finalAt}`)
+    // The fixture's own words on the strip after the sentence (the "saada" part), with epoch ms: what was heard and judged.
+    const after: string[] = []
+    for (const x of samples) if (x.t > sentenceEnd + 2000 && after[after.length - 1]?.split('@')[0] !== JSON.stringify(x.heard)) after.push(`${JSON.stringify(x.heard)}@${x.t}`)
+    console.log(`      STRIP after the sentence: ${after.join(' ')}`)
 
     const valuesBefore: string[] = []
     for (const x of samples) {

@@ -2840,9 +2840,10 @@ once and drops the checks still pending. Eval: 16 cases in `scripts/intent-eval.
 
 **Asked on the stable words (round 10 prompt 6, lane QUICK; `RecognizerHandlers.onStable`, the addressee
 wrapper in `extension/src/engine.ts`).** Where the time went on main (section 1 of `voice.ts`, the server's
-lines, HANDOFF 1u): from his last word the final reached the client about 0.6 s later; the client held it
-`LOCAL_HOLD_MS` (0.7 s) to join a next final; only then was the check asked, and it answered in 1.5 to 2.1 s;
-the typing took about 0.1 s. The check no longer waits for the hold. The recogniser names the stable words
+`at=` stamps, five runs, HANDOFF 1u): the final left the server 0.9 to 1.8 s after his last word (p50 1.06 s); the
+check's request reached the server 0.19 to 0.25 s after that (the client's delivery, the page read, the POST); the
+check answered in 1.4 to 2.1 s (p50 1.88 s); the typing took 0.06 to 0.18 s. A dictated final is not held by the
+client's `LOCAL_HOLD_MS` on this path, so the early ask saves the 0.2 s before the request, not 0.7 s. The recogniser names the stable words
 (`onStable(text, decision)`) when a final arrives, before the hold, and when the server's pause (33.3) names
 them; the engine asks the check for those words at once, with the finals before them and the page as it is
 then. When a final reaches the engine, a check asked for exactly its words, with exactly the same finals
