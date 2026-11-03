@@ -1048,6 +1048,9 @@ The gap sweep (`artifacts/exit/gap.ts` writes the scene with vesta's first word 
 The 1k-REALPAGES check (the strip leaves the consent's "Nõustu kõigiga" clickable) passed on the stand-in in every
 run; on the real youtube.com it is unverified.
 
+Gates on r10-exit (under the lock, 2026-11-03 14:10 to 14:14): `npm run check` 60 files, 4238 tests, exit 0;
+`run.ts` 330 PASS, ALL PASS (docs/proof restored after).
+
 ## 1a. The eval, run by Ralf on 2026-10-05 evening with his key
 
 - As first shipped: 0 of 62, every call a 400 "The compiled grammar is too large. Simplify your tool
