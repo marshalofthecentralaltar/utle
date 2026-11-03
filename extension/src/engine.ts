@@ -1541,16 +1541,26 @@ export function createEngine(given: EngineDeps): Engine {
      * One final (or continuation) through the check, in order; take runs it when it was for Ütle,
      * with whether the final before it was judged not for Ütle (read only once that verdict is in).
      */
+    /**
+     * Round 10 prompt 6 (QUICK, 32.3): the check asked on the stable words, before the client's hold
+     * released their final. A final takes it only for exactly its words, the same finals before them
+     * and the same epoch; anything else is asked again and this answer is dropped unread.
+     */
+    let early: { words: string; before: string[]; epoch: number; verdict: Promise<AddresseeVerdict | null> } | null = null
+    const earlyFor = (words: string, before: readonly string[]): Promise<AddresseeVerdict | null> | null =>
+      early !== null && early.words === words && early.epoch === checkEpoch && early.before.length === before.length && early.before.every((f, i) => f === before[i]) ? early.verdict : null
     const judge = (words: string, take: (u: Live | null, priorIgnored: boolean) => void): void => {
       const u = detachLive()
       const before = recentFinals(finals)
+      const asked = earlyFor(words, before)
+      early = null
       finals = recentFinals([...finals, words])
       const epoch = checkEpoch
       checks = checks
         .then(async () => {
           // Review 1: the verdict before this one has settled here, not when these words arrived.
           const priorIgnored = lastIgnored
-          const verdict = epoch === checkEpoch ? await verdictOf(words, before) : 'ignore'
+          const verdict = epoch === checkEpoch ? await (asked ?? verdictOf(words, before)) : 'ignore'
           if (epoch !== checkEpoch) {
             // Cancelled while it waited: dropped like everything else in flight, nothing counted.
             if (u !== null) queue = queue.then(() => takeBack(u))
@@ -1574,8 +1584,16 @@ export function createEngine(given: EngineDeps): Engine {
     /** Review 1: "katkesta" never waits behind a check (round 5: instant) and drops the pending ones. */
     const cancelNow = (utterance: string): void => {
       checkEpoch += 1
+      early = null
       lastIgnored = false
       inner.onUtterance(utterance)
+    }
+    handlers.onStable = (words) => {
+      // Only an ask starts here: nothing is shown, typed or run before the final (32.3).
+      if (!judged() || words.trim() === '' || isCancelAll(words)) return
+      const before = recentFinals(finals)
+      if (earlyFor(words, before) !== null) return
+      early = { words, before, epoch: checkEpoch, verdict: verdictOf(words, before).catch(() => null) }
     }
     handlers.onUtterance = (utterance) => {
       if (!judged()) return inner.onUtterance(utterance)
@@ -1613,6 +1631,10 @@ export function createEngine(given: EngineDeps): Engine {
     onUtteranceContinued(text, added, decision) {
       if (verifiedOwner(decision)) inner.onUtteranceContinued(text, added)
       else dropLive()
+    },
+    onStable(text, decision) {
+      // Round 10 prompt 6 (QUICK, 32.3): an early ask only for words of a verified owner decision.
+      if (verifiedOwner(decision)) inner.onStable?.(text)
     },
   })
   const heardBy: EngineHandlers = deps.onlyOwner === true ? ownerOnly(handlers) : handlers

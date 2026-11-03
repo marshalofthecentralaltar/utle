@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import type { BrowserContext, Page, Worker } from 'playwright'
 import { buildExtension } from '../../scripts/ext.ts'
+import { boxLanding } from '../../scripts/boxLanding.ts'
 import { STRINGS } from '../../src/core/strings.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -306,15 +307,19 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
       console.log(`        ${String(x.t - speechStart).padStart(6)} ms  ${JSON.stringify(x.box)}`)
     }
     const firstAt = samples.find((x) => x.box.trim() !== '')?.t ?? NaN
-    const finalAt = samples.find((x) => x.box.trim() === final && final !== '')?.t ?? NaN
+    // QUICK review 1: the landing and its previews read by boxLanding (tested), also when nothing was sent.
+    const landing = boxLanding(samples, final)
+    const finalAt = landing.at
     const firstHeardAt = samples.find((x) => x.t >= speechStart && x.heard.trim() !== '')?.t ?? NaN
     console.log(`      TIMING${baseline ? ' (baseline)' : ''}: end of the sentence at ${sentenceEnd - speechStart} ms; first words on the strip ${firstHeardAt - sentenceEnd} ms after it; first words in the box ${firstAt - sentenceEnd} ms after it; final text in the box ${finalAt - sentenceEnd} ms after it (negative: while still speaking)`)
+    // Round 10 prompt 6 (QUICK): epoch ms, to set beside the server's at= stamps ([asr] final, [addressee]).
+    console.log(`      STAGES: sentenceEndAt=${sentenceEnd} landedAt=${finalAt}`)
+    // The fixture's own words on the strip after the sentence (the "saada" part), with epoch ms: what was heard and judged.
+    const after: string[] = []
+    for (const x of samples) if (x.t > sentenceEnd + 2000 && after[after.length - 1]?.split('@')[0] !== JSON.stringify(x.heard)) after.push(`${JSON.stringify(x.heard)}@${x.t}`)
+    console.log(`      STRIP after the sentence: ${after.join(' ')}`)
 
-    const valuesBefore: string[] = []
-    for (const x of samples) {
-      if (x.t >= finalAt) break
-      if (x.box.trim() !== '' && valuesBefore[valuesBefore.length - 1] !== x.box) valuesBefore.push(x.box)
-    }
+    const valuesBefore = landing.previews
     const heardDuring = new Set(samples.filter((x) => x.t >= speechStart && x.t <= sentenceEnd + 2000 && x.heard !== '').map((x) => x.heard))
     check('1. "saada" sends exactly the sentence, once, and empties the box', delivered && list.length === 1 && final.length > 10 && (await lexical()) === '', `sent=${JSON.stringify(list)}`)
     check('2. no sampled box value contains "saada"', samples.every((x) => !plain(x.box).split(' ').some((w) => w.startsWith('saada'))))
@@ -322,7 +327,7 @@ async function dictateAndSend(extensionDir: string, baseline: boolean): Promise<
       // Round 10 (32.3, lane LISTEN review 1, b052456): the toggle mode asks the addressee check before
       // anything is typed, so his live words are on the strip and the box gets the whole sentence with
       // its verdict. Until round 9 (7a5ce7c) the box showed the words as he spoke them.
-      check('1. no words previewed into the box: its first text is the whole sentence (32.3)', Number.isFinite(finalAt) && valuesBefore.length === 0, `${valuesBefore.length}: ${JSON.stringify(valuesBefore)}`)
+      check('1. no words previewed into the box: its first text is the whole sentence (32.3)', valuesBefore.length === 0, `${valuesBefore.length}: ${JSON.stringify(valuesBefore)}; landed ${JSON.stringify(landing.text)}`)
       check('5. first words on the strip while speech is still playing (32.3)', firstHeardAt < sentenceEnd, `${firstHeardAt - sentenceEnd} ms`)
       // README promises the sentence in the box about 3 s after his last word. Five runs on main
       // (2026-11-02, HANDOFF 1s): 2729 to 3348 ms, the addressee verdict 1.4 to 1.8 s of it. 4500 ms

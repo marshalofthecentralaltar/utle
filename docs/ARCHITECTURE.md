@@ -2838,6 +2838,37 @@ only live feedback) and never previewed into the box: dictation lands with the f
 not live, and an ignored final clears the strip line. `katkesta` never waits behind a check: it runs at
 once and drops the checks still pending. Eval: 16 cases in `scripts/intent-eval.ts`.
 
+**Asked on the stable words (round 10 prompt 6, lane QUICK; `RecognizerHandlers.onStable`, the addressee
+wrapper in `extension/src/engine.ts`).** Where the time went on main (section 1 of `voice.ts`, the server's
+`at=` stamps, five runs, HANDOFF 1u): the final left the server 0.9 to 1.8 s after his last word (p50 1.06 s); the
+check's request reached the server 0.19 to 0.25 s after that (the client's delivery, the page read, the POST); the
+check answered in 1.4 to 2.1 s (p50 1.88 s); the typing took 0.06 to 0.18 s. A dictated final is not held by the
+client's `LOCAL_HOLD_MS` on this path, so the early ask saves the 0.2 s before the request, not 0.7 s. The recogniser names the stable words
+(`onStable(text, decision)`) only when a final arrives, before the hold; the engine asks the check for those
+words at once, with the finals before them and the page as it is then. When a final reaches the engine, a
+check asked for exactly its words, with exactly the same finals before them, since the last `katkesta`, is its
+check, pending or answered; anything else (a final joined with the next, a cancel in between) is asked as
+before, and the earlier answer is dropped unread. Nothing else of this section changes: nothing is typed before
+the final and its verdict, finals are taken in order, a verdict belongs to exact words and never to a piece of
+them. With only the owner on, the recogniser names stable words only for an authorized final and the engine's
+`ownerOnly` wall drops any without a verified owner decision (31.2). Cost: one check per final, as before.
+
+**Never on the server's pause (QUICK review 2).** The first version also asked when the server's pause (33.3)
+named the words. In section 1 that ask went out in 5 of 5 runs on the words before "saada", which the final did
+not keep: answered ignore and dropped unread, it sent the model words main never sends and took the calls per
+100 dictated sentences from 200 to 300 ($0.56 to $0.67), while the whole measured gain (the ask stage, 204 to
+23 ms p50) comes from the final's arrival. So the pause no longer starts an ask.
+
+**The check's call stays as it is (round 10 prompt 6, lane QUICK review 1; HANDOFF 1u).** Its shape does not
+make it faster: on the 16 addressee cases, back to back, the tool reply (49 output tokens), effort off,
+`max_tokens` 60, a one-word text reply (5 tokens) and a JSON reply (14 tokens) all answered 16/16 at p50 1.16
+to 1.35 s; the output's length is not the time. Outside the product, the first call of a fresh process was
+slower (p50 1.64 s, six processes) and a free `count_tokens` warm-up before it brought it to p50 1.44 s (four);
+idle gaps up to 45 s cost nothing measurable. A warm-up at server start was built and timed in section 1 and
+did not move the in-situ check (1.68 to 2.91 s warmed, against 1.56 and 1.61 s for main's two runs in the same
+hour), so it was not kept. What stops a 2.0 s landing is the check itself (about 1.2 to 1.9 s and its hour's
+variance) on top of the final's 1.0 s.
+
 ### 32.4 Proof
 
 `src/core/wake.test.ts`, `src/core/listen.test.ts`, engine tests "wake mode" and "always-on mode",
