@@ -1,0 +1,19 @@
+[
+  "extension/src/page/document.ts > extension/src/page/edit.ts",
+  "extension/src/page/edit.ts > extension/src/page/field.ts",
+  "extension/src/page/field.ts > extension/src/page/mail.ts",
+  "extension/src/page/document.ts > extension/src/page/edit.ts > extension/src/page/field.ts > extension/src/page/mail.ts > extension/src/page/messageBox.ts",
+  "extension/src/page/conversation.ts > extension/src/page/messageBox.ts > extension/src/page/document.ts > extension/src/page/edit.ts > extension/src/page/field.ts > extension/src/page/mail.ts > extension/src/page/read.ts",
+  "extension/src/page/document.ts > extension/src/page/edit.ts > extension/src/page/field.ts > extension/src/page/mail.ts > extension/src/page/read.ts",
+  "extension/src/page/mail.ts > extension/src/page/read.ts",
+  "extension/src/page/document.ts > extension/src/page/edit.ts > extension/src/page/field.ts > extension/src/page/mail.ts > extension/src/page/read.ts > extension/src/page/messageBox.ts",
+  "extension/src/page/document.ts > extension/src/page/edit.ts > extension/src/page/field.ts > extension/src/page/messageBox.ts",
+  "extension/src/page/document.ts > extension/src/page/edit.ts > extension/src/page/messageBox.ts",
+  "extension/src/page/document.ts > extension/src/page/messageBox.ts",
+  "src/core/message.ts > src/core/strings.ts > src/core/strings/en.ts > src/core/strings/types.ts > src/core/saved.ts",
+  "extension/src/engine/constants.ts > extension/src/engine/types.ts > extension/src/engine/work.ts",
+  "extension/src/engine/constants.ts > extension/src/engine/types.ts > extension/src/engine/work.ts > extension/src/engine/helpers.ts",
+  "extension/src/engine/helpers.ts > extension/src/engine/types.ts > extension/src/engine/work.ts",
+  "extension/src/engine/types.ts > extension/src/engine/work.ts",
+  "server/asrSession.ts > server/capture.ts > server/speaker.ts"
+]
