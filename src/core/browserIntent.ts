@@ -12,7 +12,7 @@ import { spokenNumber } from './quickReply.ts'
 /** The message of a failed result when the extension did not answer a command in time. */
 export const BRIDGE_TIMED_OUT = 'timed_out'
 
-export const SITES: Record<string, string> = {
+const SITE_URLS = {
   whatsapp: 'https://web.whatsapp.com/',
   'whats app': 'https://web.whatsapp.com/',
   vatsap: 'https://web.whatsapp.com/',
@@ -54,7 +54,10 @@ export const SITES: Record<string, string> = {
   cvkeskus: 'https://www.cvkeskus.ee/',
   'cv keskus': 'https://www.cvkeskus.ee/',
   töötukassa: 'https://www.tootukassa.ee/',
-}
+} satisfies Record<string, string>
+
+/** Looked up by any spoken name (possibly undefined), or by a known key (always a string). */
+export const SITES: Record<string, string> & typeof SITE_URLS = SITE_URLS
 
 const FIXED: Record<string, BrowserCommand> = {}
 function phrases(command: BrowserCommand, ...list: string[]): void {

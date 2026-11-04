@@ -19,7 +19,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true
   },
   "include": ["extension/src", "extension/test/standin.ts", "extension/test/standin-offscreen.ts", "extension/test/standin-offscreen-baseline.ts"]
 }
