@@ -310,6 +310,7 @@ function webAddress(url: string): boolean {
  * else is null, and the caller says it did not understand. The model never gets a second try here:
  * a voice command must answer at once.
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- a later round removes this
 export function pageIntentFrom(input: unknown, request: Pick<IntentRequest, 'page' | 'tabs'>): ModelIntent | null {
   // ---------- wake word and places (29.4) ----------
   // Round 8: a place by its noun, only one the request listed; the engine finds the address.

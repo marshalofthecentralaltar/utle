@@ -105,6 +105,7 @@ export function openDecoderExtras(root: string, env: NodeJS.ProcessEnv = process
 /** The worker's side: one shared recogniser and speaker gate, one stream per session id. */
 function serve(port: NonNullable<typeof parentPort>, recognizer: OnlineRecognizerLike<OnlineStreamLike>, gateFor: (profile?: string) => SpeakerGate, extras: DecoderExtras): void {
   const streams = new Map<number, Decoder>()
+  // oxlint-disable-next-line max-lines-per-function, complexity -- SPEECH removes this
   port.on('message', (message: ToWorker) => {
     switch (message.type) {
       case 'open':
@@ -257,7 +258,9 @@ export function hostInThread(recognizer: OnlineRecognizerLike, ms: number, speak
  * worker cannot start (an older Node that does not run .ts, or the file missing) with reason
  * 'load_failed', or with the worker's own reason when the model or the addon is missing there.
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- SPEECH removes this
 export function startWorkerHost(root: string, entry: string): Promise<HostStart> {
+  // oxlint-disable-next-line max-lines-per-function, complexity -- SPEECH removes this
   return new Promise((resolve) => {
     let worker: Worker
     try {

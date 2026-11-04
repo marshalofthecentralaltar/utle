@@ -464,6 +464,7 @@ const round3 = (x: number): number => Math.round(x * 1000) / 1000
  * judge (the mode off): an utterance whose speech RMS is below ENERGY_OTHER_RATIO of the owner's
  * enrolled RMS is `other`, everything else null. verify never uses loudness.
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- SPEECH removes this
 export function createSpeakerGate(extractor: EmbeddingExtractor | null, options: SpeakerGateOptions): SpeakerGate {
   const stored = readStored(options.profilePath)
   let profile: SpeakerProfile | null = stored.kind === 'v2' ? stored.profile : null

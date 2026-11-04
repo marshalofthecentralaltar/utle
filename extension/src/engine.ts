@@ -28,6 +28,7 @@ import { createWork } from './engine/work.ts'
 export { ASK_TIMEOUT_CAREFUL_MS, ASK_TIMEOUT_MS, BUSY_FROM_S, CAREFUL_WORDS, COMMAND_TIMEOUT_MS, ENROL_TIMEOUT_FACTOR, INTENT_LOOP_BUDGET_MS, JOB_WATCHDOG_MS, LAG_SHOWN_MS, LONG_COMMAND_WORDS, LONG_UTTERANCE_WORDS, MAX_STEP_FAILURES, PLACE_ASK_MS, SEND_PROBE_BOX, SETTLE_MS, STALE_MS, askTimeoutMs } from './engine/constants.ts'
 export type { AskFailure, Engine, EngineDeps, EngineHandlers, InpageLogic } from './engine/types.ts'
 
+// oxlint-disable-next-line max-lines-per-function, complexity -- MACHINES removes this
 export function createEngine(given: EngineDeps): Engine {
   /** Round 10 (33.4): the line the strip shows now, so the end of a timed scroll never writes over a newer one. */
   let shownLine = ''

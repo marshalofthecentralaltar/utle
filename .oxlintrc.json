@@ -8,5 +8,40 @@
     "extension/dist",
     "extension/test/.standin",
     "extension/test/vendor"
+  ],
+  "rules": {
+    "max-lines-per-function": ["error", { "max": 150, "skipBlankLines": true, "skipComments": true }],
+    "complexity": ["error", { "max": 40 }],
+    "typescript/no-explicit-any": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "extension/test/**", "scripts/**"],
+      "rules": {
+        "max-lines-per-function": "off",
+        "complexity": "off"
+      }
+    },
+    {
+      "files": ["src/core/**"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "patterns": [
+            {
+              "regex": "^(\\.\\./)+(speech|api|ui|server)(/|\\.tsx?$|$)",
+              "message": "src/core is pure: no imports from speech, api, ui or server (CLAUDE.md)."
+            },
+            {
+              "regex": "(^|/)src/(speech|api|ui)(/|$)",
+              "message": "src/core is pure: no imports from speech, api, ui or server (CLAUDE.md)."
+            },
+            {
+              "regex": "(^|/)server(/|\\.tsx?$|$)",
+              "message": "src/core is pure: no imports from speech, api, ui or server (CLAUDE.md)."
+            }
+          ]
+        }]
+      }
+    }
   ]
 }

@@ -94,6 +94,7 @@ export function initialInpage(lang: Lang): InpageSession {
  * utterance ended (present false when the page has no text field; armed false when the field is
  * one the page focused by itself, where nothing is typed, M7).
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- a later round removes this
 export function inpageStep(previous: InpageSession, utterance: string, box: BoxState): InpageStep {
   // Round 10 (#5, 34.4): the tie's question lasts one utterance. "üks" / "kaks" (and the like) clicks
   // that item; anything else ends the question and is heard as it always is.
@@ -221,6 +222,7 @@ function intentAction(intent: PageIntent): Action | null {
  * The line to show after the commands of a step ran: result is the first failure, or the last
  * success. Also keeps the session true to the page (for example hints off after a failed showHints).
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- a later round removes this
 export function inpageResult(
   session: InpageSession,
   commands: readonly BrowserCommand[],
@@ -925,6 +927,7 @@ function pushUndo(session: InpageSession, old: string): InpageSession {
   return { ...session, undo: [...session.undo, old].slice(-UNDO_LIMIT) }
 }
 
+// oxlint-disable-next-line max-lines-per-function, complexity -- a later round removes this
 function act(session: InpageSession, action: Action, box: BoxState): InpageStep {
   const s = STRINGS[session.lang]
   const none = (line: string): InpageStep => ({ session, commands: [], line })

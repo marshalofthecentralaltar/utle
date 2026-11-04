@@ -99,6 +99,7 @@ export const ET: Strings = {
   noParagraphOf: (n, total) => `Lõiku ${n} ei ole. Dokumendis on ${total} lõiku.`,
   paragraphDeleted: (n) => `Kustutan lõigu ${n}.`,
 
+  // oxlint-disable-next-line max-lines-per-function, complexity -- EDGES removes this
   browserDoing(command) {
     switch (command.kind) {
       case 'ping':

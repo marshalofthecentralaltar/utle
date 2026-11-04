@@ -148,6 +148,7 @@ interface Enrolment {
  * kept for the speaker gate, for enrolment and for capture. Without a detector, speech is the frames
  * whose RMS is at or above SILENCE_RMS, and every frame is kept, as before.
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- SPEECH removes this
 export function decoderInThread<S extends OnlineStreamLike>(recognizer: OnlineRecognizerLike<S>, gate: SpeakerGate | null = null, extras: DecoderExtras = {}): Decoder {
   const stream = recognizer.createStream()
   const filter: SpeechFilter | null = extras.vad ? createSpeechFilter(extras.vad()) : null
@@ -540,6 +541,7 @@ export function rms(samples: Float32Array): number {
  * `speaker`; nothing is sent until the judgement is in, so the final and its speaker are one frame.
  * Never logs: the text is the user's.
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- SPEECH removes this
 export function createAsrSession(decoder: Decoder, send: (message: AsrServerMessage) => void, options: AsrSessionOptions = {}): AsrSession {
   const schedule = options.schedule ?? ((step: () => void) => setImmediate(step))
   const now = options.now ?? (() => Date.now())

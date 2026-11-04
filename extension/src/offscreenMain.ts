@@ -287,6 +287,7 @@ export function createReadAloud(deps: ReadAloudDeps): ReadAloud {
 }
 // ---------- end of reading aloud ----------
 
+// oxlint-disable-next-line max-lines-per-function, complexity -- a later round removes this
 export function startOffscreen(logic: InpageLogic, options: OffscreenOptions = {}): void {
   const params = new URLSearchParams(location.search)
   // The token (27.3) comes in the document's address: an offscreen document cannot read chrome.storage.

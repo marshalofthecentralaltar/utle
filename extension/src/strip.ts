@@ -304,6 +304,7 @@ function control(className: string, name: string): HTMLButtonElement {
   return b
 }
 
+// oxlint-disable-next-line max-lines-per-function, complexity -- MACHINES removes this
 export function mountStrip(): void {
   // A real click into a field arms it for dictation from the first page load, before any command injects page.js.
   watchTrustedClicks()

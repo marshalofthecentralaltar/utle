@@ -96,6 +96,7 @@ export const EN: Strings = {
   noParagraphOf: (n, total) => `There is no paragraph ${n}. The document has ${total}.`,
   paragraphDeleted: (n) => `Paragraph ${n} deleted.`,
 
+  // oxlint-disable-next-line max-lines-per-function, complexity -- EDGES removes this
   browserDoing(command) {
     switch (command.kind) {
       case 'ping':

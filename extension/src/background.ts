@@ -374,6 +374,7 @@ async function switchTab(tab: Tab, to: Extract<BrowserCommand, { kind: 'switchTa
   return ok({ tab: tabInfo(updated ?? next) })
 }
 
+// oxlint-disable-next-line max-lines-per-function, complexity -- a later round removes this
 async function execute(command: BrowserCommand, senderWindowId: number | undefined): Promise<BrowserResult> {
   if (command.kind === 'ping') return ok()
 

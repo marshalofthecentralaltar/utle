@@ -132,6 +132,7 @@ function words(text: string): string[] {
  * server for the final of the utterance in progress, releases a settling quick reply at once, and
  * delivers what the assembler holds without the hold (joined with that final when one is coming).
  */
+// oxlint-disable-next-line max-lines-per-function, complexity -- SPEECH removes this
 export function createLocalRecognizer(
   handlers: RecognizerHandlers,
   isInstant: (text: string) => boolean,

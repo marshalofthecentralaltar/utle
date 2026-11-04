@@ -305,6 +305,7 @@ function parseWhy(value: unknown): FinalWhy | null {
 }
 
 /** Reads one text frame from the server; null for anything that is not a known message. */
+// oxlint-disable-next-line max-lines-per-function, complexity -- a later round removes this
 export function parseAsrMessage(raw: string): AsrServerMessage | null {
   let value: unknown
   try {

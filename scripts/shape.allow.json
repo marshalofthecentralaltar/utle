@@ -1,0 +1,21 @@
+{
+  "extension/src/engine.ts#createEngine": "610 lines: the engine's state machine inside a closure factory; MACHINES splits it into engine/machine.ts + shell (MACHINES removes this)",
+  "extension/src/engine/goals.ts#createGoals": "233 lines: goal state inside a closure factory; MACHINES moves it into the engine machine (MACHINES removes this)",
+  "extension/src/strip.ts#mountStrip": "328 lines: the strip's state and DOM in one closure; MACHINES (strip/machine.ts + DOM shell) if it fits its budget (MACHINES removes this)",
+  "server/asrSession.ts#createAsrSession": "438 lines: endpointing, holds and the final's cut in one closure; SPEECH (asrSession/machine.ts) (SPEECH removes this)",
+  "server/asrSession.ts#decoderInThread": "231 lines: the decoder thread shell; SPEECH splits it with asrSession (SPEECH removes this)",
+  "src/speech/local.ts#createLocalRecognizer": "417 lines: reconnects, continuation and the hold in one closure; SPEECH (SPEECH removes this)",
+  "server/speaker.ts#createSpeakerGate": "174 lines: the speaker decision inside the gate; SPEECH makes it a pure decision over scores and durations (SPEECH removes this)",
+  "server/asrWorker.ts#startWorkerHost": "216 lines: the worker host start; nearest owner SPEECH (not named in the round 13 prompt) (SPEECH removes this)",
+  "server/asrWorker.ts#startWorkerHost>Promise callback": "214 lines: the body of startWorkerHost's Promise; goes with startWorkerHost (SPEECH removes this)",
+  "server/asrWorker.ts#serve>port.on callback": "complexity 57: the worker's message switch; nearest owner SPEECH (not named in the round 13 prompt) (SPEECH removes this)",
+  "extension/src/offscreenMain.ts#startOffscreen": "223 lines: the offscreen document's state in one closure; no round 13 lane owns it (a later round removes this)",
+  "src/core/strings/et.ts#browserDoing": "complexity 68: per-language logic in the string table; EDGES makes it one function over data (EDGES removes this)",
+  "src/core/strings/en.ts#browserDoing": "complexity 68: per-language logic in the string table; EDGES makes it one function over data (EDGES removes this)",
+  "extension/src/background.ts#execute": "complexity 65: the command dispatch switch; no round 13 lane owns it (a later round removes this)",
+  "src/core/inpage.ts#inpageStep": "complexity 77: the in-page command rules; no round 13 lane owns it (a later round removes this)",
+  "src/core/inpage.ts#act": "complexity 60: the in-page action switch; no round 13 lane owns it (a later round removes this)",
+  "src/core/inpage.ts#inpageResult": "complexity 45: the in-page result mapping; no round 13 lane owns it (a later round removes this)",
+  "src/core/pageIntent.ts#pageIntentFrom": "complexity 44: the intent validator's switch; no round 13 lane owns it (a later round removes this)",
+  "src/speech/asrProtocol.ts#parseAsrMessage": "complexity 52: the socket message parser; no round 13 lane owns it (a later round removes this)"
+}

@@ -16,6 +16,7 @@ import type { AskFailure, EngineParts, GoalEnd, Heard, Job, Live, Outcome } from
 
 type GoalsParts = Pick<EngineParts, 'deps' | 'st' | 'inpageText' | 'say' | 'runSafe' | 'readBox' | 'takeBack' | 'setModelOff' | 'speakAloud' | 'scrollRan' | 'placeStep' | 'work'>
 
+// oxlint-disable-next-line max-lines-per-function, complexity -- MACHINES removes this
 export function createGoals({ deps, st, inpageText, say, runSafe, readBox, takeBack, setModelOff, speakAloud, scrollRan, placeStep, work }: GoalsParts) {
   const { newJob, beginWork, endWork, watch, think, showChain, pending, acting } = work
   /**
